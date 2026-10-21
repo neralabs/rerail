@@ -395,6 +395,12 @@
                 }
               }
             ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -442,6 +448,12 @@
                   "matches": "in-to-array"
                 }
               }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
             ]
           }
         }

@@ -11,6 +11,7 @@ use crate::code_rule_dsl::literal::{Parsed as LiteralParsed, SubDoc, sub_tree};
 use crate::code_rule_dsl::matcher::{
     BindingTest, Binds, FormatArgs, OPEN, PASSES, ParseTest, Prepared, Resolution, missing_fields,
 };
+use crate::code_rule_dsl::origin::Origin;
 use crate::code_rule_dsl::tape::TapeDoc;
 use crate::code_rule_dsl::value::NodeRef;
 use ast_grep_core::meta_var::MetaVarEnv;
@@ -285,7 +286,10 @@ impl Verdicts for Exported {
     }
 
     fn tree_rows<'t>(&self, node: Node<'t, SubDoc>, _env: &MetaVarEnv<'t, SubDoc>) -> Rows {
-        let Some(range) = sub_tree(&node).and_then(|tree| tree.host_range(node.node_id())) else {
+        let Some(range) = sub_tree(&node)
+            .and_then(|tree| tree.of_node(node.node_id(), node.range()))
+            .map(|ranges| ranges.primary())
+        else {
             return Ok(Vec::new());
         };
         Ok(vec![Verdict::holds(vec![

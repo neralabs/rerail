@@ -12,10 +12,10 @@ use super::storage::{StorageContext, unix_seconds};
 use super::{CLAUSE_WORK_BUDGET_EXCEEDED, ClauseId, FileState, LocalFailure};
 use crate::WORK_POOL;
 use crate::code_rule_dsl::eval::file_language;
-use crate::code_rule_dsl::json::{invalid, json_error};
+use crate::code_rule_dsl::json::{hex_digest, invalid, json_error};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::matcher::UtilLimit;
-use crate::code_rule_dsl::model::{CompiledCodeRule, FileInput};
+use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, FileInput, Query};
 use crate::code_rule_dsl::placement::placement_identity;
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::profile;
@@ -23,8 +23,9 @@ use crate::code_rule_dsl::soundness::UNREAD;
 use crate::code_rule_dsl::violations::{Captures, Span, Witness};
 use crate::code_rule_dsl::{language, tape};
 use crate::content_store::{
-    BusyRetries, CandidateCatalogIdentity, CandidateClause, HashKey, LocalResultPublication,
-    OverlayFilePublication, PublicationResult, StoreError, StoredFile, TapePayload, compress,
+    BusyRetries, CandidateCatalogIdentity, CandidateClause, DocumentPayload, HashKey,
+    LocalResultPublication, OverlayFilePublication, PublicationResult, StoreError, StoredFile,
+    TapePayload, compress,
 };
 use napi::Result;
 use rayon::prelude::*;
@@ -307,33 +308,50 @@ pub(super) fn restore_persisted_file(
         grammars.insert(file.input.language.clone(), Arc::clone(&grammar));
         grammar
     };
+    let derived = stored_documents
+        .derived
+        .get(&tape_id)
+        .map_or(&[][..], Vec::as_slice);
     // A failed, stale, or absent selector read is deliberately a cache miss. Do not make an
     // index availability problem a code-rule verdict. Evidence producers and unrestricted anchors
-    // likewise require ordinary evaluation.
+    // likewise require ordinary evaluation. A clause over a derived document (`ast.embedded`)
+    // reads that document's own tape index, whose kind codes are its grammar's.
     let lookups = file
         .candidates
         .ast
         .iter()
         .map(|&id| {
             let clause = &code_rules[id.0].clauses[id.1];
-            clause
-                .violation
-                .project
-                .is_empty()
-                .then(|| {
-                    candidate_grammar(&code_rules[id.0], id.1, &file.input)
-                        .anchors
-                        .root_kinds()
-                })
-                .flatten()
-                .map(|kinds| crate::content_store::SearchKindLookup {
-                    tape_id,
-                    index_version: crate::code_rule_dsl::transducer::POSITIONAL_INDEX_VERSION,
-                    kind_tokens: kinds
-                        .iter()
-                        .map(|&kind| crate::code_rule_dsl::transducer::kind_index_token(kind))
-                        .collect(),
-                })
+            if !clause.violation.project.is_empty() {
+                return None;
+            }
+            let matcher = candidate_grammar(&code_rules[id.0], id.1, &file.input);
+            let (tape_id, matcher) = match matcher.document {
+                None => (tape_id, matcher),
+                Some(via) => {
+                    let (tape_id, dialect) = derived_selector_tape(derived, via)?;
+                    // The clause's matcher of that document's dialect, as evaluation picks it
+                    // (`document_matcher`).
+                    let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &clause.kind else {
+                        return None;
+                    };
+                    let matcher = matchers.iter().find(|matcher| {
+                        matcher.document == Some(via) && matcher.language == dialect
+                    })?;
+                    // A clause that crosses to another document is bound by that document's
+                    // syntax errors too, which this index does not hold.
+                    (!matcher.crosses).then_some((tape_id, matcher))?
+                }
+            };
+            let kinds = matcher.anchors.root_kinds()?;
+            Some(crate::content_store::SearchKindLookup {
+                tape_id,
+                index_version: crate::code_rule_dsl::transducer::POSITIONAL_INDEX_VERSION,
+                kind_tokens: kinds
+                    .iter()
+                    .map(|&kind| crate::code_rule_dsl::transducer::kind_index_token(kind))
+                    .collect(),
+            })
         })
         .collect::<Option<Vec<_>>>();
     file.selector_skipped = lookups.is_some_and(|lookups| {
@@ -352,12 +370,77 @@ pub(super) fn restore_persisted_file(
         }
         return Ok(());
     }
-    documents::attach_stored_tape(store, tape_id, file, &grammar);
+    documents::attach_stored_tape(store, tape_id, derived, file, &grammar);
     Ok(())
+}
+
+/// The tape whose selector index tells whether a clause over `via`'s program has a witness root
+/// in this file, with that program's dialect: the one document the file derives through `via`
+/// from its own. `None` where the index cannot tell: the document is read through host errors,
+/// which its index does not hold, or the file derives no such document, or several.
+fn derived_selector_tape(
+    derived: &[crate::content_store::StoredDocument],
+    via: language::Via,
+) -> Option<(crate::content_store::TapeId, GrammarDialect)> {
+    let code = tape::via_code(via);
+    let mut documents = derived
+        .iter()
+        .filter(|document| document.parent_ordinal == 0 && document.via_id == code);
+    let document = documents.next()?;
+    if documents.next().is_some() || !document.host_errors.is_empty() {
+        return None;
+    }
+    Some((document.tape, document.grammar_id.and_then(tape_dialect)?))
 }
 
 pub(super) fn grammar_id(language: GrammarDialect) -> i64 {
     i64::from(language::tape_tag(language).expect("supported workspace grammar"))
+}
+
+/// A derived document's tape grammar id: its dialect's tape tag, marked derived (bit 8), with a
+/// fingerprint of the placeholders its source map omits in the bits above (0 where it omits none).
+/// A derived tape is its text's tree less those placeholders (`SegmentMap::omissions`): the same
+/// text under two maps omitting different ones has two tapes, and none need be the tape a file of
+/// that text parses to. The id keeps each its own row, never a primary's, while texts with the same
+/// omissions share one.
+pub(super) fn document_grammar_id(dialect: GrammarDialect, omissions: &[u8]) -> i64 {
+    let fingerprint = if omissions.is_empty() {
+        0
+    } else {
+        let digest = HashKey::sha256(omissions)
+            .sha256_bytes()
+            .expect("a SHA-256 key");
+        u64::from_be_bytes(digest[..8].try_into().expect("digest width")) >> 17
+    };
+    ((fingerprint as i64) << 9) | (1 << 8) | grammar_id(dialect)
+}
+
+/// The dialect of a stored tape's grammar id, a primary's (`grammar_id`) or a derived
+/// document's (`document_grammar_id`).
+pub(super) fn tape_dialect(grammar_id: i64) -> Option<GrammarDialect> {
+    u8::try_from(grammar_id & 0xff)
+        .ok()
+        .and_then(language::from_tape_tag)
+}
+
+/// A derived document's persisted parts (`DocumentPayload`), besides the text its image holds.
+struct DerivedBytes {
+    grammar_id: i64,
+    tape: Vec<u8>,
+    source_map: Vec<u8>,
+    host_errors: Vec<u8>,
+}
+
+impl DerivedBytes {
+    fn of(document: &tape::DerivedImage) -> std::result::Result<Self, String> {
+        let source_map = document.source_map_bytes();
+        Ok(Self {
+            grammar_id: document_grammar_id(document.dialect(), &document.omission_bytes()),
+            tape: document.tape.to_bytes()?,
+            source_map,
+            host_errors: document.host_error_bytes(),
+        })
+    }
 }
 
 /// A clause's stored identity, given its code rule's (`rule_hash`). `select_when` leaves are
@@ -402,16 +485,22 @@ pub(super) fn grammar_set() -> HashKey {
 }
 
 /// The inputs besides source content that one file's clause results depend on: its path (and so
-/// its dialect), language and Python module. Stored results are keyed by content and this.
+/// its dialect), language, Python module and nearest `package.json`. Stored results are keyed by
+/// content and this.
 pub(super) fn file_context(input: &FileInput) -> HashKey {
     let module = input
         .module
         .as_deref()
         .map(|module| format!("{module:?}"))
         .unwrap_or_default();
+    let package = input
+        .package
+        .as_deref()
+        .map(|package| format!("\0package\0{}", hex_digest(package.digest())))
+        .unwrap_or_default();
     HashKey::sha256(
         format!(
-            "rerail-file-context-v1\0{}\0{}\0{module}",
+            "rerail-file-context-v1\0{}\0{}\0{module}{package}",
             input.language, input.path
         )
         .as_bytes(),
@@ -670,7 +759,16 @@ pub(super) fn persist_files(
                     let _timer = profile::PhaseTimer::start(profile::Phase::TapeSerialize);
                     file.tape
                         .as_ref()
-                        .map(|(_, image)| image.to_bytes())
+                        .map(|(_, image)| {
+                            Ok::<_, String>((
+                                image.primary.to_bytes()?,
+                                image
+                                    .derived
+                                    .iter()
+                                    .map(DerivedBytes::of)
+                                    .collect::<std::result::Result<Vec<_>, String>>()?,
+                            ))
+                        })
                         .transpose()
                         .map_err(invalid)?
                 };
@@ -732,20 +830,46 @@ pub(super) fn persist_files(
             })
             .collect::<Result<Vec<_>>>()
     })?;
+    // Each file's derived documents, borrowing the bytes built above and the texts its image holds.
+    let documents = prepared
+        .iter()
+        .map(|(file, _, tape_bytes, _, _, _)| {
+            let (Some((_, image)), Some((_, derived))) = (&file.tape, tape_bytes) else {
+                return Vec::new();
+            };
+            image
+                .derived
+                .iter()
+                .zip(derived)
+                .map(|(document, bytes)| DocumentPayload {
+                    parent_ordinal: i64::from(document.parent),
+                    role_id: document.role.code(),
+                    via_id: tape::via_code(document.via),
+                    source: document.text.as_bytes(),
+                    grammar_id: bytes.grammar_id,
+                    tape: &bytes.tape,
+                    source_map: &bytes.source_map,
+                    host_errors: &bytes.host_errors,
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
     let publications = prepared
         .iter()
+        .zip(&documents)
         .map(
-            |(file, candidates, tape_bytes, grammar_id, aliases, local_results)| {
+            |((file, candidates, tape_bytes, grammar_id, aliases, local_results), documents)| {
                 OverlayFilePublication {
                     path: &file.input.path,
                     state_id: i64::from(file.source_revision),
                     source: file.input.source.as_bytes(),
                     aliases,
-                    tape: tape_bytes.as_deref().map(|bytes| TapePayload {
+                    tape: tape_bytes.as_ref().map(|(bytes, _)| TapePayload {
                         grammar_id: *grammar_id,
                         grammar_version: grammar_version(),
                         tape_format_version: i64::from(tape::TAPE_FORMAT_VERSION),
                         bytes,
+                        documents,
                     }),
                     catalog: keys.domain,
                     candidates,

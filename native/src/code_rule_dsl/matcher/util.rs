@@ -61,6 +61,9 @@ pub(crate) enum UtilLimit {
     Scope,
     /// Decoding values (`value`, `compare` over values) spent the rest of `maxVisitedNodes`.
     Value,
+    /// The parser stopped at a limit (Forte's nesting depth or step budget) before it read the
+    /// file: no clause reads it.
+    Parse,
 }
 
 impl UtilLimit {
@@ -77,6 +80,9 @@ impl UtilLimit {
             }
             Self::Value => {
                 "decoding values exceeded the work budget (maxVisitedNodes decoded nodes, with utility evaluations and counted nodes, per file)"
+            }
+            Self::Parse => {
+                "the parser stopped at a limit (its nesting depth or step budget) before it read the file"
             }
         }
     }

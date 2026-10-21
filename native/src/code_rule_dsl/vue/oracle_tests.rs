@@ -145,13 +145,14 @@ fn program_node(view: &View, start: usize, end: usize) -> Option<tree_sitter::No
         .filter(|node| node.byte_range() == (start..end))
 }
 
-/// The identifiers of the view's program, by the `.vue` bytes they stand for.
-fn identifiers(view: &View) -> HashMap<Range<usize>, Range<usize>> {
+/// The identifiers of the view's program, by the bytes of `source` they stand for.
+fn identifiers(view: &View, source: &str) -> HashMap<Range<usize>, Range<usize>> {
     let mut out = HashMap::new();
     let mut stack = vec![view.root()];
     while let Some(node) = stack.pop() {
         if node.kind().contains("identifier") {
-            out.entry(view.span(node)).or_insert(node.byte_range());
+            out.entry(view.span(node, source))
+                .or_insert(node.byte_range());
         }
         let mut cursor = node.walk();
         stack.extend(node.named_children(&mut cursor));
@@ -165,7 +166,7 @@ fn in_inline_handler(view: &View, source: &str, range: &Range<usize>) -> bool {
     let mut node = program_node(view, range.start, range.end);
     while let Some(current) = node {
         if current.kind() == "arrow_function" {
-            let text = &source[view.span(current)];
+            let text = &source[view.span(current, source)];
             return text.starts_with('@') || text.starts_with("v-on");
         }
         node = current.parent();
@@ -212,11 +213,12 @@ fn vue_view_scope_oracle() {
         let program = view.dialect().ast_grep(view.text());
         let table = ScopeTable::build(program.root(), view.dialect(), usize::MAX, &|| false)
             .expect("scope table");
-        let by_span = identifiers(&view);
+        let by_span = identifiers(&view, &source);
         // Where a binding's name stands in the file.
         let declared = |binding: &Binding| {
             let name = binding.name?;
-            program_node(&view, name.start as usize, name.end as usize).map(|node| view.span(node))
+            program_node(&view, name.start as usize, name.end as usize)
+                .map(|node| view.span(node, &source))
         };
         for reference in file["references"].as_array().expect("references") {
             let name = reference["name"].as_str().expect("name");

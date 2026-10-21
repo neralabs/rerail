@@ -86,3 +86,7 @@ rerail-sql-loop-tool *args:
 # The SQL engine's correctness gate on the `loop` profile (target-gate/): every `sql::` test, with the replayed cases (native/src/code_rule_dsl/sql/tests/replay.jsonl) and the differential at the case count that kills every seeded mutant. --mutants runs the replay and that differential on the clean build and under each mutant (RERAIL_SQL_MUTANT), and fails unless the clean build passes and every mutant is killed by both.
 rerail-sql-gate *args:
     @scripts/check/rerail-sql-gate.sh {{ args }}
+
+# Dashboard history load: seed a throwaway database with N audits, then time each history read, a poll, and /healthz under polling (--audits 4000).
+rerail-dashboard-history *args:
+    @node --import tsx benchmark/dashboard-history.ts {{ args }}

@@ -7,7 +7,14 @@ import { libraryUpsertBodySchema } from "../api/repository-contracts.js";
 import { parseArguments } from "../daemon/daemon.js";
 import { defaultRerailDatabasePath, openRerailDatabase } from "../engine/storage/database.js";
 import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
-import { IGNORED_DIRECTORIES, languageFor } from "../engine/code-rule/code-rule-enforcer.js";
+import {
+  IGNORED_DIRECTORIES,
+  languageFor,
+  sourceFactsCache,
+  sourceFileFacts,
+  type SourceFactsCache,
+  type SourceFileFacts,
+} from "../engine/code-rule/code-rule-enforcer.js";
 import {
   encodeCodeRuleWorkspaceRequest,
   loadNativeBinding,
@@ -199,7 +206,7 @@ function compileCodeRule(rule: CodeRule): { binding: NativeBinding; compiled: Na
   }
 }
 
-type SourceFile = { path: string; language: string; source: string; module?: string | string[] };
+type SourceFile = { path: string; language: string; source: string } & SourceFileFacts;
 /** The part of the Engine's evaluation the report reads: where each violation starts (zero-based), and each failure. */
 const evaluationSchema = z.object({
   evaluation: z.object({
@@ -254,11 +261,6 @@ function uncheckedPlaces(failures: Evaluation["failures"]): { files: Map<string,
   return { files, unattributed: [...unattributed] };
 }
 
-function moduleFor(binding: NativeBinding, root: string, path: string, language: string): { module?: string | string[] } {
-  const module = binding.modulePath(language, resolve(root, path));
-  return module === null ? {} : { module };
-}
-
 async function policyCaseResult(
   binding: NativeBinding,
   compiled: NativeCompiledCodeRuleDsl,
@@ -272,7 +274,9 @@ async function policyCaseResult(
   if (language === undefined) note = " (not a file type rules read)";
   else if (!compiled.inScope(sample.path)) note = " (outside the files this rule covers)";
   else {
-    const file = { path: sample.path, language, source: sample.content, ...moduleFor(binding, root, sample.path, language) };
+    // The graph reads the sample in place of the repository's file at its path.
+    const facts = await sourceFileFacts(root, sample.path, language, undefined, compiled.readsServerGraph(), { path: sample.path, source: sample.content });
+    const file = { path: sample.path, language, source: sample.content, ...facts };
     const evaluation = await evaluate(binding, compiled, [file], engine);
     caught = evaluation.violations.some(violation => violation.path === undefined || violation.path === sample.path);
     // A violation stands whatever else failed; without one, a clause that could not check the file decides nothing.
@@ -285,11 +289,11 @@ async function policyCaseResult(
 
 /** One file a repository scan would read, with its size on disk, or undefined when the scan skips it. */
 async function repositoryFile(
-  binding: NativeBinding,
   compiled: NativeCompiledCodeRuleDsl,
   root: string,
   absolute: string,
   bytesSoFar: number,
+  cache: SourceFactsCache,
 ): Promise<{ file: SourceFile; size: number } | undefined> {
   const path = relative(root, absolute).split(sep).join("/");
   const language = languageFor(path);
@@ -298,7 +302,10 @@ async function repositoryFile(
   if (size > REPOSITORY_MAX_FILE_BYTES || bytesSoFar + size > REPOSITORY_MAX_SOURCE_BYTES) return undefined;
   const source = await readFile(absolute);
   if (source.includes(0)) return undefined;
-  return { file: { path, language, source: source.toString("utf8"), ...moduleFor(binding, root, path, language) }, size };
+  return {
+    file: { path, language, source: source.toString("utf8"), ...(await sourceFileFacts(root, path, language, cache, compiled.readsServerGraph())) },
+    size,
+  };
 }
 
 async function sortedEntries(directory: string): Promise<Dirent[]> {
@@ -321,12 +328,13 @@ async function* repositoryPaths(root: string): AsyncGenerator<string> {
 }
 
 /** The files a repository scan would hand `compiled`: the same ignored directories, file types and bounds. */
-async function repositoryFiles(binding: NativeBinding, compiled: NativeCompiledCodeRuleDsl, root: string): Promise<SourceFile[]> {
+async function repositoryFiles(compiled: NativeCompiledCodeRuleDsl, root: string): Promise<SourceFile[]> {
   const files: SourceFile[] = [];
+  const cache = sourceFactsCache();
   let bytes = 0;
   for await (const absolute of repositoryPaths(root)) {
     if (files.length >= REPOSITORY_MAX_FILES) break;
-    const read = await repositoryFile(binding, compiled, root, absolute, bytes);
+    const read = await repositoryFile(compiled, root, absolute, bytes, cache);
     if (read === undefined) continue;
     bytes += read.size;
     files.push(read.file);
@@ -340,7 +348,7 @@ async function repositoryPass(
   root: string,
   engine: CodeRuleDslEngine,
 ): Promise<NonNullable<RuleDraftReport["repository"]>> {
-  const files = await repositoryFiles(binding, compiled, root);
+  const files = await repositoryFiles(compiled, root);
   const sources = new Map(files.map(file => [file.path, file.source]));
   const evaluation = await evaluate(binding, compiled, files, engine);
   const located = evaluation.violations

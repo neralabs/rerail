@@ -659,7 +659,10 @@
    "void-dom-elements-no-children/invalid-006.jsx",
    "void-dom-elements-no-children/invalid-007.jsx",
    "void-dom-elements-no-children/invalid-008.jsx",
-   "void-dom-elements-no-children/invalid-009.jsx"
+   "void-dom-elements-no-children/invalid-009.jsx",
+   "jsx-key/rerail-stencil-h.tsx",
+   "jsx-key/rerail-jsx-import-source-emotion.jsx",
+   "react-in-jsx-scope/rerail-jsx-import-source-preact.jsx"
   ]
  },
  "findings": [
@@ -932,6 +935,18 @@
    "path": "jsx-key/invalid-022.jsx",
    "line": 10,
    "column": 29
+  },
+  {
+   "rule": "react/jsx-key",
+   "path": "jsx-key/rerail-jsx-import-source-emotion.jsx",
+   "line": 2,
+   "column": 45
+  },
+  {
+   "rule": "react/jsx-key",
+   "path": "jsx-key/rerail-stencil-h.tsx",
+   "line": 2,
+   "column": 57
   },
   {
    "rule": "react/jsx-key",
@@ -3593,6 +3608,18 @@
   },
   {
    "rule": "react/react-in-jsx-scope",
+   "path": "jsx-key/rerail-jsx-import-source-emotion.jsx",
+   "line": 2,
+   "column": 45
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "jsx-key/rerail-stencil-h.tsx",
+   "line": 2,
+   "column": 57
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
    "path": "jsx-key/valid-002.jsx",
    "line": 1,
    "column": 1
@@ -5834,6 +5861,12 @@
    "path": "react-in-jsx-scope/invalid-005.jsx",
    "line": 1,
    "column": 36
+  },
+  {
+   "rule": "react/react-in-jsx-scope",
+   "path": "react-in-jsx-scope/rerail-jsx-import-source-preact.jsx",
+   "line": 2,
+   "column": 31
   },
   {
    "rule": "react/react-in-jsx-scope",

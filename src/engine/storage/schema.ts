@@ -392,6 +392,112 @@ export const auditResultPages = sqliteTable(
   ],
 );
 
+/*
+ * Audit history in the shape the dashboard reads it. `audits` stays the record; these tables are derived from it by
+ * the triggers in `audit-history.ts`, so every writer keeps them current, an older Rerail sharing the file included,
+ * and history reads never expand an audit's JSON. Nothing writes them directly.
+ */
+
+/**
+ * One row per distinct violation an audit reported: `(rule_id, violation_key)` once per audit, at the `ordinal` of
+ * its first copy in `audits.violations_json`, where its payload stays. `logged`: some copy was recorded in Log mode.
+ */
+export const auditViolations = sqliteTable(
+  "audit_violations",
+  {
+    auditId: text("audit_id").notNull(),
+    ordinal: integer("ordinal").notNull(),
+    sessionId: text("session_id").notNull(),
+    startedAt: integer("started_at").notNull(),
+    ruleId: text("rule_id"),
+    violationKey: text("violation_key").notNull(),
+    logged: integer("logged", { mode: "boolean" }).notNull(),
+  },
+  table => [
+    primaryKey({ columns: [table.auditId, table.ordinal] }),
+    index("audit_violations_session_started").on(table.sessionId, table.startedAt),
+    index("audit_violations_started").on(table.startedAt),
+    index("audit_violations_rule_started").on(table.ruleId, table.startedAt),
+    // An append looks up the audit's own rows by (rule, key).
+    index("audit_violations_audit_key").on(table.auditId, table.ruleId, table.violationKey),
+    // The rollup's maxima: a key's latest sighting, and its latest in Log mode, each one index probe.
+    index("audit_violations_key").on(table.sessionId, table.ruleId, table.violationKey, table.startedAt),
+    index("audit_violations_key_logged").on(table.sessionId, table.ruleId, table.violationKey, table.startedAt).where(sql`${table.logged} = 1`),
+  ],
+);
+
+/**
+ * Per session, rule and violation key: the latest audit start that reported it, and the latest that reported it in
+ * Log mode. A range `[since, now)` holds the violation exactly when `last_seen_at >= since`.
+ */
+export const ruleViolationRollup = sqliteTable(
+  "rule_violation_rollup",
+  {
+    sessionId: text("session_id").notNull(),
+    ruleId: text("rule_id").notNull(),
+    violationKey: text("violation_key").notNull(),
+    lastSeenAt: integer("last_seen_at").notNull(),
+    lastLoggedAt: integer("last_logged_at"),
+  },
+  table => [
+    primaryKey({ columns: [table.sessionId, table.ruleId, table.violationKey] }),
+    index("rule_violation_rollup_last_seen").on(table.lastSeenAt),
+  ],
+);
+
+/** Each distinct `audits.rule_revisions_json`: audits mostly share a handful, so "audits that compiled rule X" is a join. */
+export const auditRuleSets = sqliteTable("audit_rule_sets", {
+  ruleSetId: integer("rule_set_id").primaryKey(),
+  ruleRevisionsJson: text("rule_revisions_json").notNull().unique(),
+});
+
+/** The rule ids of one rule set. */
+export const auditRuleSetRules = sqliteTable(
+  "audit_rule_set_rules",
+  {
+    ruleSetId: integer("rule_set_id").notNull(),
+    ruleId: text("rule_id").notNull(),
+  },
+  table => [primaryKey({ columns: [table.ruleSetId, table.ruleId] })],
+);
+
+/** The rule set each audit compiled. */
+export const auditRuleSetUses = sqliteTable(
+  "audit_rule_set_uses",
+  {
+    auditId: text("audit_id").primaryKey(),
+    sessionId: text("session_id").notNull(),
+    startedAt: integer("started_at").notNull(),
+    ruleSetId: integer("rule_set_id").notNull(),
+  },
+  table => [
+    index("audit_rule_set_uses_session_started").on(table.sessionId, table.startedAt, table.ruleSetId),
+    index("audit_rule_set_uses_started").on(table.startedAt, table.ruleSetId),
+  ],
+);
+
+/**
+ * Scratch rows for one update of an audit's violations: the update trigger computes the audit's `audit_violations`
+ * rows here, then changes only the rows that differ, so a running scan's cumulative `progress` writes cost their new
+ * violations rather than all of them. Empty outside that trigger.
+ */
+export const auditViolationsStaging = sqliteTable(
+  "audit_violations_staging",
+  {
+    auditId: text("audit_id").notNull(),
+    ordinal: integer("ordinal").notNull(),
+    sessionId: text("session_id").notNull(),
+    startedAt: integer("started_at").notNull(),
+    ruleId: text("rule_id"),
+    violationKey: text("violation_key").notNull(),
+    logged: integer("logged", { mode: "boolean" }).notNull(),
+  },
+  table => [primaryKey({ columns: [table.auditId, table.ordinal] })],
+);
+
+/** The derived audit history keyed by session: the triggers on `audits` clear it along with the audits it came from. */
+export const DERIVED_AUDIT_HISTORY_TABLES = [auditViolations, auditViolationsStaging, ruleViolationRollup, auditRuleSetUses] as const;
+
 /**
  * How many failures an audit had beyond those `audits.failures_json` lists, which holds at most 20 per-file failures
  * besides those always listed; a row only for an audit that had more. A table of its own rather than a column of
@@ -407,7 +513,6 @@ export const auditUnlistedFailures = sqliteTable(
   },
   table => [check("audit_unlisted_failures_count", sql`${table.count} > 0`)],
 );
-
 export const auditSettings = sqliteTable("audit_settings", {
   workspaceRoot: text("workspace_root").primaryKey(),
   settings: text("settings_json", { mode: "json" }).$type<{ scope: AuditScope; mode: AuditMode }>().notNull(),

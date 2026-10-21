@@ -39,6 +39,27 @@ pub(super) fn language_capability(
     Ok((dialects, grammar))
 }
 
+/// The dialects of the programs a file of `dialects` embeds through `via` (`ast.embedded`), each
+/// keyed by its label: what an embedded clause compiles for. `None` where the language embeds
+/// nothing through `via`.
+pub(super) fn embedded_dialects(
+    dialects: &[(&'static str, GrammarDialect)],
+    via: language::Via,
+) -> Option<GrammarDialects> {
+    let mut embedded: GrammarDialects = Vec::new();
+    for &(_, host) in dialects {
+        for &(through, dialect) in host.embeds() {
+            if through == via && !embedded.iter().any(|&(_, known)| known == dialect) {
+                embedded.push((
+                    language::label(dialect).expect("embedded dialect has a file label"),
+                    dialect,
+                ));
+            }
+        }
+    }
+    (!embedded.is_empty()).then_some(embedded)
+}
+
 pub(super) fn grammar_gap(gaps: &mut Vec<String>, reason: String) -> AstMatcher {
     gaps.push(reason);
     AstMatcher::Never

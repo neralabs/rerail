@@ -11,8 +11,9 @@
 //    a `parsers.all` that returns the test list unexpanded, so case i is upstream's `valid[i]` / `invalid[i]`. Each
 //    case's `code` is written verbatim to fixtures/<rule>/<valid|invalid>-NNN.<jsx|tsx> (or under the case directory
 //    when the case names a `filename`). Cases needing Flow or Babel-only syntax are dropped.
-// 3. Runs the pinned plugin (common.mjs `config`: every chosen rule, default options) over every fixture file and
-//    each corpus, and writes fixtures.expected.json / corpus-<name>.expected.json.
+// 3. Writes Rerail's own cases (common.mjs `AUTHORED`) beside them and lists them in UPSTREAM.md. Runs the pinned plugin
+//    (common.mjs `config`: every chosen rule, default options) over every fixture file and each corpus, and writes
+//    fixtures.expected.json / corpus-<name>.expected.json.
 // 4. Writes ../../licenses/eslint-plugin-react/UPSTREAM.md and LICENSE.
 import { copyFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";

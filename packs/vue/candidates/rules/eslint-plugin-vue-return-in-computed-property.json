@@ -108,11 +108,17 @@
           },
           "setup-marker": {
             "kind": "empty_statement",
-            "regex": "^<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$)"
+            "host": {
+              "kind": "start_tag",
+              "regex": "^<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$)"
+            }
           },
           "any-marker": {
             "kind": "empty_statement",
-            "regex": "^<script\\b"
+            "host": {
+              "kind": "start_tag",
+              "regex": "^<script\\b"
+            }
           },
           "top-in-setup": {
             "all": [
@@ -1443,6 +1449,7 @@
       "forbid": {
         "ast": {
           "language": "vue",
+          "embedded": "script-block",
           "rule": {
             "all": [
               {
@@ -1520,6 +1527,7 @@
       "forbid": {
         "ast": {
           "language": "vue",
+          "embedded": "script-block",
           "rule": {
             "all": [
               {

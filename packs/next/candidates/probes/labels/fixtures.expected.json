@@ -18,26 +18,49 @@
    "next/use-server-sync-export"
   ],
   "files": [
-   "app/(shop)/[id]/loading.js",
-   "app/actions.ts",
-   "app/api/users/route.ts",
-   "app/components/form.tsx",
-   "app/dashboard/page.tsx",
-   "app/layout.tsx",
-   "app/page.tsx",
-   "components/client-button.tsx",
-   "lib/late-directive.ts",
-   "middleware.ts",
-   "pages/_app.tsx",
-   "pages/_document.tsx",
-   "pages/api/hello.ts",
-   "pages/index.tsx"
+   [
+    "app/(shop)/[id]/loading.js",
+    "app/actions.ts",
+    "app/adapters/react.ts",
+    "app/aliased/page.tsx",
+    "app/api/users/route.ts",
+    "app/components/form.tsx",
+    "app/dashboard/page.tsx",
+    "app/layout.tsx",
+    "app/page.tsx",
+    "app/shared/use-toggle.ts",
+    "app/unused/use-later.ts",
+    "app/zechub/page.tsx",
+    "app/zechub/widget.tsx",
+    "apps/docs/package.json",
+    "apps/docs/src/app/page.tsx",
+    "apps/web/app/page.tsx",
+    "apps/web/package.json",
+    "components/client-button.tsx",
+    "lib/late-directive.ts",
+    "middleware.ts",
+    "package.json",
+    "pages/_app.tsx",
+    "pages/_document.tsx",
+    "pages/api/hello.ts",
+    "pages/index.tsx",
+    "tools/vite-app/app/App.tsx",
+    "tools/vite-app/package.json",
+    "tsconfig-base.json",
+    "tsconfig.json"
+   ]
   ]
  },
  "findings": [
   {
    "rule": "next/app-route-file",
    "path": "app/(shop)/[id]/loading.js",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "next/app-route-file",
+   "path": "app/aliased/page.tsx",
    "line": 1,
    "column": 1
   },
@@ -66,10 +89,46 @@
    "column": 1
   },
   {
+   "rule": "next/app-route-file",
+   "path": "app/zechub/page.tsx",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "next/app-route-file",
+   "path": "apps/docs/src/app/page.tsx",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "next/app-route-file",
+   "path": "apps/web/app/page.tsx",
+   "line": 1,
+   "column": 1
+  },
+  {
    "rule": "next/client-hook-in-server-component",
    "path": "app/page.tsx",
    "line": 7,
    "column": 19
+  },
+  {
+   "rule": "next/client-hook-in-server-component",
+   "path": "app/shared/use-toggle.ts",
+   "line": 4,
+   "column": 16
+  },
+  {
+   "rule": "next/client-hook-in-server-component",
+   "path": "apps/docs/src/app/page.tsx",
+   "line": 4,
+   "column": 19
+  },
+  {
+   "rule": "next/client-hook-in-server-component",
+   "path": "apps/web/app/page.tsx",
+   "line": 4,
+   "column": 18
   },
   {
    "rule": "next/inline-server-action",
@@ -140,6 +199,12 @@
   {
    "rule": "next/use-client-directive",
    "path": "app/dashboard/page.tsx",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "next/use-client-directive",
+   "path": "app/zechub/widget.tsx",
    "line": 1,
    "column": 1
   },

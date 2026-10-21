@@ -67,13 +67,13 @@ struct SubFiles {
 pub(in crate::code_rule_dsl) type SharedTables =
     Arc<parking_lot::Mutex<Vec<Arc<crate::code_rule_dsl::scope::ScopeTable>>>>;
 
-/// What the native evaluator installs for a file besides its tree: its host path, its Python
-/// module path and the scope tables it has cached for the file's revision (the workspace's),
-/// which the input-set terminals' file scopes read (`FileScopeSlot::install`).
+/// What the native evaluator installs for a document besides its tree: the file it is of (its
+/// host path, Python module path and manifest, `FileScopeSlot::file`) and the scope tables it has
+/// cached for the file's revision (the workspace's), which the input-set terminals' file scopes
+/// read (`FileScopeSlot::install`). Every document of a file shares them.
 #[derive(Clone, Default)]
 pub(in crate::code_rule_dsl) struct FileContext {
-    pub(in crate::code_rule_dsl) path: Option<String>,
-    pub(in crate::code_rule_dsl) module: Option<Arc<crate::code_rule_dsl::module_path::ModulePath>>,
+    pub(in crate::code_rule_dsl) input: Option<Arc<crate::code_rule_dsl::model::FileInput>>,
     /// The cached scope tables, and those the batch's terminals build on the file since: one
     /// cell for every clone of the context, so the groups a grouped batch runs in parallel, each
     /// on its own session and thread (`SqlEngine::run_grouped`), build each table once between
@@ -328,6 +328,8 @@ pub(in crate::code_rule_dsl) struct Compiled {
 
 /// One clause's statements, and where each clause-scope capture is in the rows of the last.
 struct ClauseSql {
+    /// The dialect of the documents it runs on: its kind codes are that grammar's.
+    dialect: GrammarDialect,
     sql: Emitted,
     captures: Vec<(String, SlotKind, usize)>,
     /// Whether the clause enumerates `violation.each`: its statements run in rounds.
@@ -335,7 +337,7 @@ struct ClauseSql {
 }
 
 impl ClauseSql {
-    fn of(statement: &Statement, each: Option<&str>) -> Self {
+    fn of(dialect: GrammarDialect, statement: &Statement, each: Option<&str>) -> Self {
         let mut column = 2;
         let captures = statement
             .slots
@@ -361,6 +363,7 @@ impl ClauseSql {
             None => emit::clause(statement),
         };
         Self {
+            dialect,
             sql,
             captures,
             each: each.is_some(),
@@ -389,7 +392,7 @@ pub(in crate::code_rule_dsl) fn compile_enumerating(
         let statement = builder
             .clause_each(grammar, each)
             .map_err(SqlError::Unsupported)?;
-        let mut clause = ClauseSql::of(&statement, each);
+        let mut clause = ClauseSql::of(grammar.language, &statement, each);
         planner.clause(&mut clause, cfg!(test));
         clauses.push(clause);
     }
@@ -447,7 +450,9 @@ impl ProgramCompiler {
         self.phases.lower.add(lower.since(stages));
         self.phases.emit.add(stages);
         let statement = lowered?;
-        let mut clause = timed(&mut self.phases.emit, || ClauseSql::of(&statement, each));
+        let mut clause = timed(&mut self.phases.emit, || {
+            ClauseSql::of(grammar.language, &statement, each)
+        });
         drop(statement);
         timed(&mut self.phases.plan, || {
             self.planner.clause(&mut clause, false);
@@ -960,7 +965,9 @@ struct Plan {
     declarations: Vec<Option<Arc<frames::Declaration>>>,
     shapes: Shapes,
     stages: Vec<(GrammarDialect, Instance)>,
-    clauses: Vec<(Instance, Vec<CaptureColumn>)>,
+    /// Per clause: the dialect of the documents it runs on, its statements and its captures'
+    /// columns.
+    clauses: Vec<(GrammarDialect, Instance, Vec<CaptureColumn>)>,
     /// Per stage, the clause that is its only reader, where no other clause or stage reads it:
     /// such a stage is materialized for one consumer, so it runs inside that clause's run, after
     /// its root frame, and not where the clause's root frame is empty (`Runner::prepared_with`).
@@ -1002,7 +1009,7 @@ struct Planner {
     maker: ShapeMaker,
     classes: HashMap<String, usize>,
     marks: usize,
-    clauses: Vec<(Instance, Vec<CaptureColumn>)>,
+    clauses: Vec<(GrammarDialect, Instance, Vec<CaptureColumn>)>,
     error: Option<String>,
 }
 
@@ -1012,7 +1019,9 @@ impl Planner {
     fn clause(&mut self, clause: &mut ClauseSql, keep: bool) {
         let index = self.clauses.len();
         match self.plan_clause(index, clause, keep) {
-            Ok(instance) => self.clauses.push((instance, clause.captures.clone())),
+            Ok(instance) => self
+                .clauses
+                .push((clause.dialect, instance, clause.captures.clone())),
             Err(error) => {
                 self.error.get_or_insert(error);
             }
@@ -1133,7 +1142,7 @@ impl Planner {
                 readers[stage] = (readers[stage].0 + 2, None);
             }
         }
-        for (clause, (instance, _)) in self.clauses.iter().enumerate() {
+        for (clause, (_, instance, _)) in self.clauses.iter().enumerate() {
             for &stage in &shapes.bound(instance).shape.stages {
                 readers[stage] = (readers[stage].0 + 1, Some(clause));
             }
@@ -1196,7 +1205,7 @@ impl Plan {
     fn prepared(&self, index: usize) -> Bound<'_> {
         let instance = match index.checked_sub(self.stages.len()) {
             None => &self.stages[index].1,
-            Some(clause) => &self.clauses[clause].0,
+            Some(clause) => &self.clauses[clause].1,
         };
         self.shapes.bound(instance)
     }
@@ -2323,6 +2332,15 @@ impl Session {
             let mut insert_run = connection.prepare_cached(INSERT_RUN)?;
             let mut insert_root = connection.prepare_cached(INSERT_ROOT)?;
             for run in runs.iter().filter(|run| !run.files.is_empty()) {
+                // A statement's kind codes are its dialect's: it runs on documents of that
+                // dialect only (each document holds one language), so a kind filter or posting
+                // list never reads another grammar's codes.
+                debug_assert!(
+                    run.files
+                        .iter()
+                        .all(|(file, _)| batch.files[*file].dialect == clauses[run.statement].0),
+                    "a statement runs on documents of its dialect"
+                );
                 let id = run_id(None, run.statement);
                 for (file, roots) in &run.files {
                     match roots {
@@ -2394,7 +2412,7 @@ impl Session {
                     position[*file] = at;
                 }
                 let bound = plan.prepared(stages.len() + run.statement);
-                let captures = &clauses[run.statement].1;
+                let captures = &clauses[run.statement].2;
                 runner.at = ("clause", run.statement);
                 // The stages only this clause reads, run once in the batch after its root frame.
                 let mut deferred: Vec<(usize, Bound<'_>)> = Vec::new();

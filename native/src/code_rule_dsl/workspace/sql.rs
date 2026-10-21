@@ -447,7 +447,12 @@ impl SqlEngine {
         #[cfg(feature = "unbounded-work")]
         let paths: Vec<String> = docs
             .iter()
-            .map(|(_, context)| context.path.clone().unwrap_or_default())
+            .map(|(_, context)| {
+                context
+                    .input
+                    .as_ref()
+                    .map_or_else(String::new, |input| input.path.clone())
+            })
             .collect();
         #[cfg(feature = "unbounded-work")]
         let (found, statements, clause_times) = profiled(|| session.run(docs, runs));

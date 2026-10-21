@@ -594,7 +594,12 @@ fn render(entries: &[Entry], test_planned: &[String]) -> String {
         let _ = writeln!(out, "    {},", pascal(via));
     }
     out.push_str("    /// Tests' own embedding (`embed::TestScript`), of the test-only grammars `test_embeds` names.\n    #[cfg(test)]\n    TestScript,\n");
-    out.push_str("}\n\nimpl GrammarDialect {\n");
+    out.push_str("}\n\nimpl Via {\n");
+    out.push_str("    /// The registry's name of the embedding (`ast.embedded` names it).\n    pub(crate) const fn id(self) -> &'static str {\n        match self {\n");
+    for via in &unique_vias {
+        let _ = writeln!(out, "            Self::{} => {via:?},", pascal(via));
+    }
+    out.push_str("            #[cfg(test)]\n            Self::TestScript => \"test-script\",\n        }\n    }\n}\n\nimpl GrammarDialect {\n");
     out.push_str("    /// The dialects a file of this dialect embeds programs of, each with the `Via` that builds\n    /// them: every dialect of each language its registry entry `embeds`, in registry order.\n");
     out.push_str("    pub(crate) const fn embeds(self) -> &'static [(Via, GrammarDialect)] {\n        match self {\n");
     for entry in &supported {
@@ -643,7 +648,7 @@ fn render(entries: &[Entry], test_planned: &[String]) -> String {
         for dialect in &entry.dialects {
             let _ = writeln!(
                 out,
-                "    Dialect {{ lang: {}, label: {:?}, #[cfg(test)] suffixes: &{:?}, tape_tag: {} }},",
+                "    Dialect {{ lang: {}, label: {:?}, suffixes: &{:?}, tape_tag: {} }},",
                 variant(&dialect.label),
                 dialect.label,
                 dialect.suffixes,

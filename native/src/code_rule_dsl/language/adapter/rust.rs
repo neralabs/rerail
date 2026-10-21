@@ -5,6 +5,7 @@
 //! (`literal/rust_format.rs`, `matcher/format_args/rust.rs`). Names in macro token trees, and what
 //! needs types or macro expansion, are not read.
 
+use super::QueryWhen;
 use super::{
     Adapter, ArgumentFeature, ArgumentRules, CallFeature, CallRules, FormatArgFeature,
     FormatArgRules, Refusal, ScopeFeature, ScopeRules, SyntaxFeature, SyntaxRules, ValueFeature,
@@ -16,7 +17,7 @@ use crate::code_rule_dsl::calls::summary::{Callee, Summary};
 use crate::code_rule_dsl::calls::{self, FileTables};
 use crate::code_rule_dsl::compile::config::Options;
 use crate::code_rule_dsl::compile::options;
-use crate::code_rule_dsl::language::{Family, GrammarDialect};
+use crate::code_rule_dsl::language::{Family, SourceType};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::literal::{Grammar, LiteralHost};
 use crate::code_rule_dsl::matcher::{
@@ -51,6 +52,8 @@ impl Adapter for Rust {
     const LABEL: &'static str = "rust";
     const TERMINATORS: Terminators = Terminators::Newlines;
     const PACKAGES: bool = false;
+    const PACKAGE_MANIFESTS: bool = false;
+    const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = false;
     type Scope = Self;
     type Value = Self;
@@ -715,7 +718,6 @@ impl CallRules for Rust {
     const CALL_KINDS: &'static [&'static str] = &["call_expression"];
     const FUNCTION_KINDS: &'static [&'static str] = &["function_item"];
     const SEED_LANGUAGE: Option<&'static str> = None;
-    const TAPED: bool = false;
     const SUBCLASSES: bool = false;
 
     fn feature(_: CallFeature) -> Result<(), Refusal> {
@@ -844,15 +846,12 @@ impl SyntaxRules for Rust {
         options: Option<&LanguageOptions>,
         _: Option<&PythonOptions>,
         document: &Options,
-    ) -> napi::Result<bool> {
-        options::compile_ecma_when(value, path, options, document)
-    }
-
-    fn embedded_pattern(_: &str) -> Option<GrammarDialect> {
-        None
-    }
-
-    fn php_comment(_: GrammarDialect, _: u16) -> bool {
-        false
+    ) -> napi::Result<QueryWhen> {
+        // A Rust file has no module system: a `when.sourceType` reads ESLint's default, a module.
+        let (applies, types) = options::compile_ecma_when(value, path, options, document)?;
+        Ok((
+            applies && types.is_none_or(|types| types.contains(&SourceType::Module)),
+            None,
+        ))
     }
 }

@@ -1,6 +1,6 @@
 use super::AstMatcher;
 use super::binding::{match_binding_nodes, match_occurrence};
-use super::resolve::{file_table, file_usage, table_reading};
+use super::resolve::{file_source_type, file_table, file_usage, table_reading};
 use super::util::{THREE_VALUED, UNKNOWN};
 use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
@@ -151,7 +151,7 @@ impl BindingFilter {
             && self
                 .options
                 .as_deref()
-                .is_some_and(LanguageOptions::global_top_level);
+                .is_some_and(|options| options.global_top_level(file_source_type()));
         if global {
             ScopeName::Global
         } else {
@@ -168,10 +168,9 @@ impl BindingFilter {
                 || table.directives.off.contains(id.name));
         self.scope_name(table, id.scope) == ScopeName::Global
             && (commented
-                || self
-                    .options
-                    .as_deref()
-                    .is_some_and(|options| options.declares_in(id.name, VALUE | TYPE, None)))
+                || self.options.as_deref().is_some_and(|options| {
+                    options.declares_in(id.name, VALUE | TYPE, None, file_source_type())
+                }))
     }
 
     /// Whether typescript-eslint's JSX pragma (or, for fragments, fragment name) reads the variable

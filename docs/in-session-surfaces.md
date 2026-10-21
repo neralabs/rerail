@@ -8,7 +8,7 @@ Rerail installs an OMP widget and a Claude Code status line (the HUD) and gives 
 npx @neralabs/rerail setup
 ```
 
-Standard setup registers every surface below. For a source checkout, `node dist/cli/cli.js install --root "$PWD"` registers that build through the same registration code. Restart coding agent sessions afterward. No footer flag, extra OMP extension, prototype launcher or presentation settings file is required.
+Standard setup registers every surface below. For a source checkout, `just rerail-dev --install-bridge` registers that build through the same registration code. Restart coding agent sessions afterward. No footer flag, extra OMP extension, prototype launcher or presentation settings file is required.
 
 - Every coding agent gets one command set: `/rerail` (what Rerail is doing here, and every command), `/rerail-manage` (open the dashboard), `/rerail-create` (create a rule in your own words), `/rerail-stop`, `/rerail-start`, `/rerail-update`, `/rerail-uninstall` (remove Rerail from this computer; rules and history kept in a backup), `/rerail-help` (the same as `/rerail`) and `/rerail-show-me` (a demo: break a throwaway rule, get steered, fix it, clean up). Settings, audits, status, update checks, rollback and reset are CLI commands only (`rerail settings`, `rerail scan`, `rerail status`, `rerail update check`, `rerail update rollback`, `rerail reset`).
 - The default OMP and Pi extensions register the commands natively and own one below-editor footer widget and its lifecycle timers; they do not replace the native footer. `/rerail-create` and `/rerail-show-me` hand their instructions to the agent; `/rerail-uninstall` asks with a native selector.

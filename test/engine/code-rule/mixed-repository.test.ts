@@ -24,8 +24,8 @@ async function directory(prefix: string): Promise<string> {
 }
 
 const escapes = { stopBy: "end", kind: "function_call_expression", has: { field: "function", regex: "^htmlspecialchars$" } };
-const clause = (id: string, language: string, rule: object) => ({
-  id, violation: { code: id.toUpperCase(), anchor: "witness.span", message: id }, forbid: { ast: { language, rule } },
+const clause = (id: string, language: string, rule: object, embedded?: string) => ({
+  id, violation: { code: id.toUpperCase(), anchor: "witness.span", message: id }, forbid: { ast: { language, ...(embedded === undefined ? {} : { embedded }), rule } },
 });
 /** One code rule per language, each scoped to every file: a code rule reporting on another family's file would leak. */
 const CODE_RULES = [
@@ -33,7 +33,7 @@ const CODE_RULES = [
   { id: "mixed:typescript", clauses: [clause("console-log", "typescript", { pattern: "console.log($ARG)" })] },
   { id: "mixed:php", clauses: [clause("reaches-escape", "php", { kind: "function_call_expression", calls: { has: escapes } })] },
   { id: "mixed:blade", clauses: [
-    clause("reaches-escape", "blade", { kind: "function_call_expression", calls: { has: escapes } }),
+    clause("reaches-escape", "blade", { kind: "function_call_expression", calls: { has: escapes } }, "compiled-view"),
     clause("raw-echo", "blade", { kind: "raw_echo" }),
   ] },
 ].map(({ id, clauses }) => codeRuleSchema.parse({ format: "rerail.policy/v1", id, revision: 1, mode: "steer", scope: { include: ["**/*"], exclude: [] }, clauses }));

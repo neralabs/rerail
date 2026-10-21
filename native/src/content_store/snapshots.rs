@@ -1,6 +1,6 @@
 //! Git tree and snapshot storage.
 
-use super::objects::{put_source_tx, put_tape_tx, validate_tape_payload};
+use super::objects::{compress_documents, put_source_tx, put_tape_tx, validate_tape_payload};
 #[cfg(test)]
 use super::rows::intern_string;
 use super::rows::{
@@ -399,7 +399,12 @@ impl ContentStore {
                 .tape
                 .map(|payload| compress(payload.bytes, self.compression_level))
                 .transpose()?;
-            prepared.push((publication, source_frame, tape_frame));
+            let document_frames = publication
+                .tape
+                .map(|payload| compress_documents(payload.documents, self.compression_level))
+                .transpose()?
+                .unwrap_or_default();
+            prepared.push((publication, source_frame, tape_frame, document_frames));
         }
         let mut connection = self
             .connection
@@ -407,7 +412,7 @@ impl ContentStore {
             .expect("content store mutex poisoned");
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut stored = Vec::with_capacity(prepared.len());
-        for (publication, source_frame, tape_frame) in prepared {
+        for (publication, source_frame, tape_frame, document_frames) in prepared {
             let source_id = put_source_tx(
                 &transaction,
                 publication.source,
@@ -415,9 +420,13 @@ impl ContentStore {
                 publication.aliases,
             )?;
             let tape_id = match (publication.tape, tape_frame.as_deref()) {
-                (Some(payload), Some(frame)) => {
-                    Some(put_tape_tx(&transaction, source_id, payload, frame)?)
-                }
+                (Some(payload), Some(frame)) => Some(put_tape_tx(
+                    &transaction,
+                    source_id,
+                    payload,
+                    frame,
+                    &document_frames,
+                )?),
                 (None, None) => None,
                 _ => unreachable!("tape frame follows tape payload"),
             };

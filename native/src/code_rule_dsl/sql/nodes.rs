@@ -535,8 +535,15 @@ const COL_START: c_int = 15;
 const COL_END: c_int = 16;
 const COL_THASH: c_int = 17;
 const COL_NSIB: c_int = 18;
+/// Where `next_all`/`prev_all` start (`TapeNode::walk_anchor`'s neighbours). A tape holds one
+/// language, so siblings never overlap and a node with width starts them at its structural
+/// neighbours (`nsib`, `prev`). The columns stand for ast-grep's cursor where it differs: a
+/// zero-width node anchors at the first later sibling ending past it, and the root at its first
+/// child.
 const COL_ANEXT: c_int = 19;
 const COL_APREV: c_int = 20;
+/// The parent of the sibling walks: the parent, or the root itself for the root (whose walks run
+/// over its children).
 const COL_WPAR: c_int = 21;
 const COL_FFIRST: c_int = 22;
 

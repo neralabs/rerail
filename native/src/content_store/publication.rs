@@ -1,7 +1,7 @@
 //! Bulk overlay publication: object preparation, identity resolution, and the publish transaction.
 
 use super::connection::retry_busy;
-use super::objects::validate_tape_payload;
+use super::objects::{compress_documents, validate_tape_payload};
 use super::relationships::{
     execute_relationship_pass, prepare_relationship_pass, relationship_references_current,
 };
@@ -9,7 +9,7 @@ use super::rows::{hash_params, validate_relative_path};
 use super::{
     BusyRetries, CODEC_ZSTD, CandidateClause, ContentStore, HashKey, MAX_PUBLICATION_BATCH,
     OverlayFilePublication, PublicationResult, STRING_CLAUSE_KEY, STRING_PATH, SourceId,
-    StoreError, StoreResult, StoredFile, TapeId, WorkspaceId, compress,
+    StoreError, StoreResult, StoredFile, TapeId, TapePayload, WorkspaceId, compress,
 };
 use crate::WORK_POOL;
 use rayon::prelude::*;
@@ -172,6 +172,15 @@ impl ContentStore {
                             .filter(|_| tape_id.is_none())
                             .map(|payload| compress(payload.bytes, self.compression_level))
                             .transpose()?;
+                        // A stored tape's documents are stored with it: only a new tape's are
+                        // written.
+                        let document_frames = publication
+                            .tape
+                            .filter(|payload| tape_id.is_none() && !payload.documents.is_empty())
+                            .map(|payload| {
+                                compress_documents(payload.documents, self.compression_level)
+                            })
+                            .transpose()?;
                         Ok((
                             publication,
                             source_hash,
@@ -180,6 +189,7 @@ impl ContentStore {
                             tape_hash,
                             tape_id,
                             tape_frame,
+                            document_frames,
                         ))
                     },
                 )
@@ -340,7 +350,7 @@ impl ContentStore {
             .collect::<Vec<_>>();
         let mut stored = Vec::with_capacity(prepared.len());
         let mut overlay_rows = Vec::with_capacity(prepared.len());
-        for ((publication, _, _, _, _, _, _), (source_id, tape_id)) in
+        for ((publication, _, _, _, _, _, _, _), (source_id, tape_id)) in
             prepared.iter().zip(stored_objects)
         {
             let source_id = source_id.ok_or(StoreError::Vanished("source"))?;
@@ -475,6 +485,8 @@ type PreparedOverlayPublication<'a> = (
     Option<HashKey>,
     Option<TapeId>,
     Option<Vec<u8>>,
+    // The source and tape frames of the documents derived from a tape not stored yet.
+    Option<Vec<(Vec<u8>, Vec<u8>)>>,
 );
 
 struct PreparedObjectPass {
@@ -488,6 +500,8 @@ struct PreparedObjectPass {
     source_values: Vec<rusqlite::types::Value>,
     tape_sql: String,
     tape_values: Vec<rusqlite::types::Value>,
+    /// The `file_documents` rows of the new tapes that derive documents; `None` where none does.
+    document_sql: Option<(String, Vec<rusqlite::types::Value>)>,
 }
 
 fn hash_json(hash: HashKey) -> serde_json::Value {
@@ -510,17 +524,23 @@ fn prepare_missing_object_frames(
     stored_objects: &[(Option<SourceId>, Option<TapeId>)],
     compression_level: i32,
 ) -> StoreResult<()> {
-    for ((publication, _, _, source_frame, _, _, tape_frame), (source_id, tape_id)) in
-        prepared.iter_mut().zip(stored_objects)
+    for (
+        (publication, _, _, source_frame, _, _, tape_frame, document_frames),
+        (source_id, tape_id),
+    ) in prepared.iter_mut().zip(stored_objects)
     {
         if source_id.is_none() && source_frame.is_none() {
             *source_frame = Some(compress(publication.source, compression_level)?);
         }
         if let Some(tape) = publication.tape
             && tape_id.is_none()
-            && tape_frame.is_none()
         {
-            *tape_frame = Some(compress(tape.bytes, compression_level)?);
+            if tape_frame.is_none() {
+                *tape_frame = Some(compress(tape.bytes, compression_level)?);
+            }
+            if document_frames.is_none() && !tape.documents.is_empty() {
+                *document_frames = Some(compress_documents(tape.documents, compression_level)?);
+            }
         }
     }
     Ok(())
@@ -540,9 +560,10 @@ fn prepare_object_pass(
     let mut aliases = BTreeSet::<(HashKey, HashKey)>::new();
     let mut source_rows = Vec::new();
     let mut tape_rows = Vec::new();
+    let mut document_rows = Vec::new();
 
     for (
-        (publication, source_hash, _, source_frame, tape_hash, _, tape_frame),
+        (publication, source_hash, _, source_frame, tape_hash, _, tape_frame, document_frames),
         (source_id, tape_id),
     ) in prepared.iter().zip(stored_objects)
     {
@@ -605,6 +626,44 @@ fn prepare_object_pass(
             let frame = tape_frame.as_ref().ok_or(StoreError::Vanished("tape"))?;
             hashes.insert(hash);
             tape_rows.push((*source_hash, hash, payload, frame.clone()));
+            // The tape's derived documents: each an ordinary source and tape, and its row.
+            if !payload.documents.is_empty() {
+                let frames = document_frames
+                    .as_ref()
+                    .ok_or(StoreError::Vanished("derived document"))?;
+                for (index, (document, (document_source_frame, document_tape_frame))) in
+                    payload.documents.iter().zip(frames).enumerate()
+                {
+                    let document_source = HashKey::sha256(document.source);
+                    let document_tape = HashKey::sha256(document.tape);
+                    hashes.insert(document_source);
+                    hashes.insert(document_tape);
+                    source_rows.push((
+                        document_source,
+                        document.source.len(),
+                        document_source_frame.clone(),
+                    ));
+                    tape_rows.push((
+                        document_source,
+                        document_tape,
+                        TapePayload {
+                            grammar_id: document.grammar_id,
+                            grammar_version: payload.grammar_version,
+                            tape_format_version: payload.tape_format_version,
+                            bytes: document.tape,
+                            documents: &[],
+                        },
+                        document_tape_frame.clone(),
+                    ));
+                    document_rows.push((
+                        *source_hash,
+                        payload,
+                        index + 1,
+                        document,
+                        document_source,
+                    ));
+                }
+            }
         }
     }
 
@@ -733,6 +792,69 @@ fn prepare_object_pass(
         tape_values.push(CODEC_ZSTD.into());
     }
 
+    // Every row joins its primary tape and its own tape, both written above in this transaction
+    // (or already stored), by identity.
+    let document_sql = (!document_rows.is_empty())
+        .then(|| {
+            let mut sql = String::from(
+                "WITH input(source_algorithm,source_lane0,source_lane1,source_lane2,source_lane3,grammar_id,\
+                 grammar_version,format_version,ordinal,parent_ordinal,role_id,via_id,document_algorithm,\
+                 document_lane0,document_lane1,document_lane2,document_lane3,document_grammar_id,source_map,\
+                 host_errors) AS (VALUES ",
+            );
+            let mut values = Vec::with_capacity(document_rows.len() * 20);
+            for (index, (source, payload, ordinal, document, document_source)) in
+                document_rows.into_iter().enumerate()
+            {
+                if index != 0 {
+                    sql.push(',');
+                }
+                sql.push_str("(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+                values.extend(
+                    hash_params(source)
+                        .into_iter()
+                        .map(rusqlite::types::Value::Integer),
+                );
+                values.push(payload.grammar_id.into());
+                values.push(payload.grammar_version.into());
+                values.push(payload.tape_format_version.into());
+                values.push(
+                    i64::try_from(ordinal)
+                        .map_err(|_| {
+                            StoreError::Invalid("too many derived documents".to_owned())
+                        })?
+                        .into(),
+                );
+                values.push(document.parent_ordinal.into());
+                values.push(document.role_id.into());
+                values.push(document.via_id.into());
+                values.extend(
+                    hash_params(document_source)
+                        .into_iter()
+                        .map(rusqlite::types::Value::Integer),
+                );
+                values.push(document.grammar_id.into());
+                values.push(document.source_map.to_vec().into());
+                values.push(document.host_errors.to_vec().into());
+            }
+            sql.push_str(
+                ") INSERT OR IGNORE INTO file_documents(tape_id,ordinal,parent_ordinal,role_id,via_id,document_tape_id,source_map,host_errors) \
+                 SELECT pt.tape_id,i.ordinal,i.parent_ordinal,i.role_id,i.via_id,dt.tape_id,i.source_map,i.host_errors FROM input i \
+                 JOIN hashes ph INDEXED BY hashes_by_prefix ON ph.algorithm_id=i.source_algorithm AND ph.lane0=i.source_lane0 \
+                 AND ph.lane1=i.source_lane1 AND ph.lane2=i.source_lane2 AND ph.lane3=i.source_lane3 \
+                 JOIN source_objects ps ON ps.canonical_hash_id=ph.hash_id \
+                 JOIN tape_objects pt ON pt.source_id=ps.source_id AND pt.grammar_id=i.grammar_id \
+                 AND pt.grammar_version=i.grammar_version AND pt.tape_format_version=i.format_version \
+                 JOIN hashes dh INDEXED BY hashes_by_prefix ON dh.algorithm_id=i.document_algorithm AND dh.lane0=i.document_lane0 \
+                 AND dh.lane1=i.document_lane1 AND dh.lane2=i.document_lane2 AND dh.lane3=i.document_lane3 \
+                 JOIN source_objects ds ON ds.canonical_hash_id=dh.hash_id \
+                 JOIN tape_objects dt ON dt.source_id=ds.source_id AND dt.grammar_id=i.document_grammar_id \
+                 AND dt.grammar_version=i.grammar_version AND dt.tape_format_version=i.format_version",
+            );
+            Ok::<_, StoreError>((sql, values))
+        })
+        .transpose()?;
+
     Ok(PreparedObjectPass {
         hashes_json,
         strings_json,
@@ -744,6 +866,7 @@ fn prepare_object_pass(
         source_values,
         tape_sql,
         tape_values,
+        document_sql,
     })
 }
 
@@ -848,6 +971,12 @@ fn execute_object_pass(
         .prepare_cached(&pass.tape_sql)?
         .execute(rusqlite::params_from_iter(pass.tape_values.iter()))?;
     statements += 1;
+    if let Some((sql, values)) = &pass.document_sql {
+        transaction
+            .prepare_cached(sql)?
+            .execute(rusqlite::params_from_iter(values.iter()))?;
+        statements += 1;
+    }
     Ok(statements)
 }
 

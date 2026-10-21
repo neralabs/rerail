@@ -37,13 +37,19 @@ function compile(ruleId: string): NativeCompiledCodeRuleDsl {
   return runtime.compile(JSON.stringify(document.rule), "json", capabilities);
 }
 
-/** The 1-based lines the rule reports in `source`, each with its message. */
+/**
+ * The 1-based lines the rule reports in `source`, each with its message. The file sits in a CommonJS package, as a
+ * `.js` file reading `require` does: the rules follow each file's module system.
+ */
 function findings(compiled: NativeCompiledCodeRuleDsl, source: string): { line: number; message: string }[] {
   const input = JSON.stringify({
     format: "rerail.repository-snapshot/v1",
     revision: 0,
     facts: [],
-    files: [{ language: "typescript", path: "src/server.js", source }],
+    files: [
+      { language: "json", path: "package.json", source: '{ "type": "commonjs" }\n' },
+      { language: "typescript", path: "src/server.js", source },
+    ],
   });
   const result = evaluationSchema.parse(JSON.parse(compiled.evaluate(input, "report")));
   expect(result.failures).toEqual([]);

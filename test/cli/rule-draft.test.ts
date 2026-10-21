@@ -142,6 +142,38 @@ describe("rerail rules test", () => {
     expect(report.cases[0]).toMatchObject({ expected: "caught", caught: false, ok: false, label: "src/a.ts" });
   });
 
+  it("reads a case's own text into a Next app's server graph, not the repository's file at its path", async () => {
+    // The repository holds a client page; the caught case is a server page at the same path, the passed one a new
+    // client page.
+    const repo = await repository({
+      "package.json": '{ "dependencies": { "next": "16.0.0" } }\n',
+      "app/page.tsx": "'use client';\nexport default function Page() {}\n",
+    });
+    const file = writeDraft(repo, {
+      kind: "code",
+      rule: {
+        format: "rerail.policy/v1", id: "acme:server-graph", revision: 1, mode: "steer",
+        scope: { include: ["**/*.tsx"], exclude: [] },
+        clauses: [{
+          id: "server",
+          forbid: { ast: { language: "typescript", file: { package: { serverGraph: true } }, rule: { kind: "program" } } },
+          violation: { anchor: "witness.span", code: "SERVER", message: "A server module." },
+        }],
+      },
+      cases: {
+        caught: [{ path: "app/page.tsx", content: "export default function Page() {}\n" }],
+        passed: [{ path: "app/new/page.tsx", content: "'use client';\nexport default function Page() {}\n" }],
+      },
+    });
+
+    const { report } = await testReport(file, repo);
+
+    expect(report.cases.map(({ expected, caught, ok }) => ({ expected, caught, ok }))).toEqual([
+      { expected: "caught", caught: true, ok: true },
+      { expected: "passed", caught: false, ok: true },
+    ]);
+  });
+
   it("reports a policy the Engine cannot compile as not valid", async () => {
     const repo = await repository();
     const file = writeDraft(repo, { kind: "code", rule: noConsolePolicy("(unclosed") });

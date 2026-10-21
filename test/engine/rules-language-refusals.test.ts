@@ -9,12 +9,13 @@ import { validateCodeRule } from "../../src/engine/rules.js";
 
 type Json = Record<string, unknown>;
 
+// A Blade query's PHP semantics read the template's compiled view.
 const document = (language: string, rule: unknown, ast: Json = {}, violation: Json = {}): Json => ({
   format: "rerail.policy/v1",
   id: "test:refusal",
   revision: 1,
   mode: "steer",
-  clauses: [{ id: "check", violation: { code: "TEST", anchor: "witness.span", message: "Test", ...violation }, forbid: { ast: { language, rule, ...ast } } }],
+  clauses: [{ id: "check", violation: { code: "TEST", anchor: "witness.span", message: "Test", ...violation }, forbid: { ast: { language, ...(language === "blade" ? { embedded: "compiled-view" } : {}), rule, ...ast } } }],
 });
 const withDefine = (language: string, util: Json, rule: Json): Json => ({
   format: "rerail.policy/v1",

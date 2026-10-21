@@ -22,10 +22,16 @@
               "follows": {
                 "stopBy": {
                   "kind": "empty_statement",
-                  "regex": "^<script\\b"
+                  "host": {
+                    "kind": "start_tag",
+                    "regex": "^<script\\b"
+                  }
                 },
                 "kind": "empty_statement",
-                "regex": "^<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$)"
+                "host": {
+                  "kind": "start_tag",
+                  "regex": "^<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$)"
+                }
               }
             }
           },
@@ -365,6 +371,7 @@
       "forbid": {
         "ast": {
           "language": "vue",
+          "embedded": "script-block",
           "rule": {
             "all": [
               {
@@ -381,7 +388,9 @@
                   "inside": {
                     "stopBy": "end",
                     "kind": "statement_block",
-                    "regex": "^<template\\b"
+                    "host": {
+                      "kind": "template_element"
+                    }
                   }
                 }
               },

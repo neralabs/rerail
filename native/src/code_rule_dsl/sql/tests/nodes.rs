@@ -1,7 +1,8 @@
 //! The `node` table against the tape's own walks, node by node: every axis the lowering joins on
 //! (children, descendants, ancestors, the byte-positioned `next`, `next_all`/`prev_all` from the
 //! walk anchor, kind postings, named positions, first field children) must list exactly the nodes
-//! the matcher's walks visit, in their order.
+//! the matcher's walks visit, in their order, over every document of a file (a Blade view's and a
+//! Vue component's programs are documents of the batch of their own).
 
 use super::differential::tape;
 use crate::code_rule_dsl::language::dialect_by_label;
@@ -30,6 +31,10 @@ const SOURCES: &[(&str, &str)] = &[
         "blade",
         "<div>{{ $a }}</div>\n@if ($b)\n  <p>{{ $c }}</p>\n@endif\n<x-y :a=\"$d\" />\n",
     ),
+    (
+        "vue",
+        "<template><p :a=\"b(c)\">{{ d }}</p></template>\n<script setup lang=\"ts\">\nconst e = f(;\n</script>\n",
+    ),
 ];
 
 fn ids<'t>(
@@ -40,9 +45,19 @@ fn ids<'t>(
 
 #[test]
 fn every_axis_lists_the_nodes_the_tape_walks_visit() {
+    // Every document of each source: its own tree, then each program it embeds (`embed`).
     let docs: Vec<_> = SOURCES
         .iter()
-        .map(|(label, source)| tape(dialect_by_label(label).expect("dialect"), source))
+        .flat_map(|(label, source)| {
+            let file = tape(dialect_by_label(label).expect("dialect"), source);
+            let guests = file.guests();
+            std::iter::once(file).chain(guests.into_iter().flat_map(|guests| {
+                guests
+                    .iter()
+                    .map(|guest| guest.doc.clone())
+                    .collect::<Vec<_>>()
+            }))
+        })
         .collect();
     let zero_width = with_nodes(docs, |connection, batch| {
         let query = |sql: &str, file: usize, node: u32| -> Vec<i64> {

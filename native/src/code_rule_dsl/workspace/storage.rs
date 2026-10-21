@@ -1,10 +1,10 @@
 //! The shared content store: the process-wide store registry, background maintenance (search-index
 //! backlog) and a workspace's storage context.
 
-use super::persisted::{grammar_set, grammar_version};
+use super::persisted::{grammar_set, grammar_version, tape_dialect};
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
-use crate::code_rule_dsl::{language, tape};
+use crate::code_rule_dsl::tape;
 use crate::content_store::{
     CapacityState, ContentStore, MAX_COLLECTION_BATCH, OperationDeadline, SnapshotId, StoreError,
     StoreResult, WorkspaceId, WorkspaceRegistration,
@@ -200,15 +200,15 @@ pub(super) fn index_stored_tapes(
 }
 
 /// The tape document of one backlog tape, or `None` when this build cannot decode it: an unknown
-/// grammar tag, a source that is not UTF-8, or a tape image this grammar rejects.
+/// grammar tag, a source that is not UTF-8, or a tape image this grammar rejects. A derived
+/// document's tape (`file_documents`) is an ordinary row: it decodes in its own dialect over its
+/// own text, and gets a search index of its own.
 fn decode_stored_tape(
     unindexed: crate::content_store::UnindexedTape,
     grammars: &mut HashMap<i64, Arc<tape::Grammar>>,
     stop: &AtomicBool,
 ) -> Option<tape::TapeDoc> {
-    let language = u8::try_from(unindexed.grammar)
-        .ok()
-        .and_then(language::from_tape_tag)?;
+    let language = tape_dialect(unindexed.grammar)?;
     let grammar = match grammars.get(&unindexed.grammar) {
         Some(grammar) => Arc::clone(grammar),
         None => {
@@ -220,9 +220,13 @@ fn decode_stored_tape(
     let source = String::from_utf8(unindexed.source).ok()?;
     let image = tape::TapeImage::from_bytes(&unindexed.image, &grammar).ok()?;
     let lines = Arc::new(LineTable::new(&source, Terminators::of(language)));
-    tape::TapeDoc::restore_with_lines(Arc::new(source), grammar, &image, lines, &|| {
-        stop.load(Ordering::Acquire)
-    })
+    tape::TapeDoc::restore_with_lines(
+        Arc::new(source),
+        grammar,
+        &tape::FileImage::single(image),
+        lines,
+        &|| stop.load(Ordering::Acquire),
+    )
     .ok()
 }
 

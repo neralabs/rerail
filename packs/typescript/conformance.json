@@ -17,7 +17,12 @@
       "paths": [
         "src"
       ],
-      "exclude": []
+      "exclude": [
+        "**/*.js",
+        "**/*.jsx",
+        "**/*.mjs",
+        "**/*.cjs"
+      ]
     }
   ],
   "tools": [

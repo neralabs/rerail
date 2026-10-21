@@ -5,7 +5,7 @@
 use super::super::CodeRuleDslRuntime;
 use super::super::matcher::UtilLimit;
 use super::api::{CodeRuleDslWorkspace, WorkspaceApplyTask};
-use super::index::{WorkspaceIndexTask, repository_module};
+use super::index::{WorkspaceIndexTask, repository_module, repository_package};
 use super::ingest::{BINARY_REQUEST_MAGIC, PACKAGE_CONTEXT_PATH_VISITS};
 use super::persisted::{decode_local_result, encode_local_result};
 use super::storage::{StorageContext, storage_context_in};
@@ -300,6 +300,159 @@ fn hosts_and_repository_ingestion_share_one_python_module_derivation() {
     assert_eq!(repository_module("loose/x.py"), None);
 }
 
+#[test]
+fn hosts_repository_ingestion_and_file_sets_share_one_package_derivation() {
+    let directory = TempDir::new("package-facts");
+    let root = directory.0.join("repo");
+    let oversized = format!(
+        "{{\"type\":\"module\",\"description\":\"{}\"}}",
+        "x".repeat(1024 * 1024)
+    );
+    let root_manifest = r#"{ "name": "root", "type": "esm", "bin": { "a": "./bin/../cli.js", "b": "/abs.js", "c": "../out.js" },
+        "engines": { "node": "not a range" }, "devEngines": { "runtime": [{ "name": "bun" }, { "name": "node", "version": "^20.9" }] },
+        "dependencies": { "react": "19" }, "devDependencies": { "vitest": "4" } }"#;
+    let files = [
+        ("package.json", root_manifest),
+        ("a.js", ""),
+        (
+            "esm/package.json",
+            r#"{ "type": "module", "bin": "x.js", "engines": { "node": ">=22" } }"#,
+        ),
+        ("esm/deep/a.js", ""),
+        (
+            "esm/cjs/package.json",
+            r#"{ "type": "commonjs", "peerDependencies": { "vue": "3" } }"#,
+        ),
+        ("esm/cjs/a.js", ""),
+        ("broken/package.json", "{ \"type\": \"module\""),
+        ("broken/a.js", ""),
+        ("large/package.json", oversized.as_str()),
+        ("large/a.js", ""),
+        ("linked/a.js", ""),
+        ("sub/a.js", ""),
+    ];
+    for (path, source) in files {
+        let file = root.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, source).unwrap();
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(
+        root.join("esm/package.json"),
+        root.join("linked/package.json"),
+    )
+    .unwrap();
+    git(&root, &["init", "-q"]);
+    git(&root, &["add", "."]);
+    git(
+        &root,
+        &[
+            "-c",
+            "user.name=rerail",
+            "-c",
+            "user.email=rerail@example.invalid",
+            "commit",
+            "-q",
+            "-m",
+            "fixture",
+        ],
+    );
+    // What a host sends: `packageFacts`, in the shape of the wire's `package`.
+    let host_as = |root: &std::path::Path, path: &str, label: &str| {
+        super::super::package_facts(
+            label.to_owned(),
+            root.join(path).to_string_lossy().into_owned(),
+            root.to_string_lossy().into_owned(),
+        )
+        .map(|facts| {
+            let mut wire = json!({ "folder": facts.folder, "type": facts.package_type });
+            if !facts.bin.is_empty() {
+                wire["bin"] = json!(facts.bin);
+            }
+            if let Some(version) = facts.node_version {
+                wire["nodeVersion"] = json!(version);
+            }
+            if !facts.dependencies.is_empty() {
+                wire["dependencies"] = json!(facts.dependencies);
+            }
+            wire
+        })
+    };
+    let host = |root: &std::path::Path, path: &str| host_as(root, path, "javascript");
+    let repository = git_workspace::discover(&root).unwrap();
+    let mut manifests = crate::code_rule_dsl::package_manifest::Manifests::new(root.clone());
+    let mut indexed = |path: &str, language: &str| {
+        repository_package(&mut manifests, &repository, path, language)
+            .map(|manifest| manifest.to_wire())
+    };
+    // A workspace or snapshot holding the same texts (the symlink is not one of its entries).
+    let entries = files
+        .iter()
+        .filter_map(|(path, source)| {
+            let directory = crate::code_rule_dsl::package_manifest::manifest_directory(path)?;
+            Some((
+                directory,
+                StdArc::new(crate::code_rule_dsl::package_manifest::Manifest::parse(
+                    directory.to_owned(),
+                    source.as_bytes(),
+                )),
+            ))
+        })
+        .collect::<HashMap<_, _>>();
+    let in_file_set = |path: &str| {
+        crate::code_rule_dsl::package_manifest::manifest_in(path, |directory| {
+            entries.get(directory)
+        })
+        .map(|manifest| manifest.to_wire())
+    };
+    // The nearest manifest decides. `bin` targets resolve against its folder (an absolute one or
+    // one outside it never names a file below it); an unparsable `engines.node` falls through to
+    // `devEngines.runtime`'s `node` entry. One without a valid `type`, malformed, oversized or a
+    // symlink has nothing else either.
+    let unreadable = |folder: &str| json!({ "folder": folder, "type": "unset" });
+    for (path, expected) in [
+        (
+            "a.js",
+            json!({ "folder": "", "type": "unset", "bin": ["cli.js"], "nodeVersion": "^20.9",
+                "dependencies": ["react", "vitest"] }),
+        ),
+        (
+            "esm/deep/a.js",
+            json!({ "folder": "esm", "type": "module", "bin": ["x.js"], "nodeVersion": ">=22" }),
+        ),
+        (
+            "esm/cjs/a.js",
+            json!({ "folder": "esm/cjs", "type": "commonjs", "dependencies": ["vue"] }),
+        ),
+        ("broken/a.js", unreadable("broken")),
+        ("large/a.js", unreadable("large")),
+        ("sub/a.js", indexed("a.js", "javascript").unwrap()),
+    ] {
+        assert_eq!(host(&root, path), Some(expected.clone()), "{path}");
+        assert_eq!(
+            indexed(path, "javascript"),
+            Some(expected.clone()),
+            "{path}"
+        );
+        assert_eq!(in_file_set(path), Some(expected), "{path}");
+    }
+    #[cfg(unix)]
+    for read in [
+        host(&root, "linked/a.js"),
+        indexed("linked/a.js", "javascript"),
+    ] {
+        assert_eq!(read, Some(unreadable("linked")));
+    }
+    // Only ECMA files carry one, and no manifest above the root counts.
+    assert_eq!(indexed("a.js", "python"), None);
+    assert_eq!(host_as(&root, "a.py", "python"), None);
+    assert!(
+        super::super::reads_package_manifests("javascript".to_owned())
+            && !super::super::reads_package_manifests("python".to_owned())
+    );
+    assert_eq!(host(&root.join("sub"), "a.js"), None);
+}
+
 fn package_marker_code_rule() -> CompiledCodeRuleDsl {
     compile(
         "package-marker-context",
@@ -425,6 +578,561 @@ fn package_marker_changes_refresh_unchanged_siblings_and_match_a_fresh_index() {
     assert_eq!(all_pages(&workspace, MAXIMUM_PAGE_BYTES), json!([]));
     assert_fresh("after-delete");
     workspace.close();
+}
+
+#[test]
+fn package_json_entries_give_unhosted_ecma_files_their_nearest_manifest() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let code_rule = compile(
+        "package-depends-on",
+        json!([{
+            "id": "next-file",
+            "violation": { "anchor": "witness.span", "code": "NEXT", "message": "next file" },
+            "forbid": { "ast": { "language": "typescript",
+                "file": { "package": { "dependsOn": ["next"] } }, "rule": { "kind": "program" } } }
+        }]),
+    );
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace.add_code_rule(&code_rule, None).unwrap();
+    let source =
+        |path: &str| json!({ "path": path, "language": "typescript", "source": "export {};\n" });
+    let manifest = |path: &str, dependency: &str| {
+        json!({ "path": path, "language": "json",
+            "source": format!("{{ \"dependencies\": {{ \"{dependency}\": \"1\" }} }}") })
+    };
+    let reported = || {
+        located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES))
+            .into_iter()
+            .map(|(path, _, _)| path)
+            .collect::<Vec<_>>()
+    };
+    // Sources before their manifest, in separate requests, as a batching host may send them.
+    apply_host(
+        &workspace,
+        1,
+        json!([source("app/a.ts"), source("apps/web/b.ts")]),
+        &[],
+    );
+    assert!(reported().is_empty());
+    apply_host(
+        &workspace,
+        2,
+        json!([manifest("package.json", "next")]),
+        &[],
+    );
+    assert_eq!(reported(), ["app/a.ts", "apps/web/b.ts"]);
+    // A nearer manifest wins below it.
+    apply_host(
+        &workspace,
+        3,
+        json!([manifest("apps/web/package.json", "vite")]),
+        &[],
+    );
+    assert_eq!(reported(), ["app/a.ts"]);
+    // Removing it, the root's applies again; a host's own `package` stays authoritative.
+    let hosted = json!({ "path": "apps/web/c.ts", "language": "typescript", "source": "export {};\n",
+        "package": { "folder": "apps/web", "type": "unset" } });
+    apply_host(&workspace, 4, json!([hosted]), &["apps/web/package.json"]);
+    assert_eq!(reported(), ["app/a.ts", "apps/web/b.ts"]);
+    // Editing the root manifest's dependencies changes the result.
+    apply_host(
+        &workspace,
+        5,
+        json!([manifest("package.json", "react")]),
+        &[],
+    );
+    assert!(reported().is_empty());
+    workspace.close();
+}
+
+/// A workspace deriving a Next server graph for files the host sent no `package` for refreshes it
+/// whenever a request changes what the graph reads, even a request with no such file: removing
+/// the page that reached a module, editing the alias configuration (or a base it `extends`), or
+/// editing the manifest alone.
+#[test]
+fn a_derived_server_graph_follows_removals_configuration_and_manifest_edits() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let code_rule = compile(
+        "server-graph",
+        json!([{
+            "id": "server",
+            "violation": { "anchor": "witness.span", "code": "SERVER", "message": "server module" },
+            "forbid": { "ast": { "language": "typescript",
+                "file": { "package": { "serverGraph": true } }, "rule": { "kind": "program" } } }
+        }]),
+    );
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace.add_code_rule(&code_rule, None).unwrap();
+    let file = |path: &str, language: &str, source: &str| json!({ "path": path, "language": language, "source": source });
+    let next = r#"{ "dependencies": { "next": "16" } }"#;
+    let reported = || {
+        located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES))
+            .into_iter()
+            .map(|(path, _, _)| path)
+            .collect::<Vec<_>>()
+    };
+    apply_host(
+        &workspace,
+        1,
+        json!([
+            file("package.json", "json", next),
+            file(
+                "tsconfig.json",
+                "json",
+                r#"{ "extends": "./tsconfig.base.json" }"#
+            ),
+            file(
+                "tsconfig.base.json",
+                "json",
+                r#"{ "compilerOptions": { "paths": { "@/*": ["./lib/*"] } } }"#
+            ),
+            file(
+                "app/page.tsx",
+                "tsx",
+                "import '@/hook';\nexport default function Page() {}\n"
+            ),
+            file("lib/hook.ts", "typescript", "export const hook = 1;\n"),
+        ]),
+        &[],
+    );
+    assert_eq!(reported(), ["app/page.tsx", "lib/hook.ts"]);
+    // A base configuration's edit alone moves the alias, and with it the module.
+    apply_host(
+        &workspace,
+        2,
+        json!([file(
+            "tsconfig.base.json",
+            "json",
+            r#"{ "compilerOptions": { "paths": { "@/*": ["./other/*"] } } }"#
+        )]),
+        &[],
+    );
+    assert_eq!(reported(), ["app/page.tsx"]);
+    apply_host(
+        &workspace,
+        3,
+        json!([file(
+            "tsconfig.base.json",
+            "json",
+            r#"{ "compilerOptions": { "paths": { "@/*": ["./lib/*"] } } }"#
+        )]),
+        &[],
+    );
+    assert_eq!(reported(), ["app/page.tsx", "lib/hook.ts"]);
+    // Removing the page leaves the module unreached.
+    apply_host(&workspace, 4, json!([]), &["app/page.tsx"]);
+    assert!(reported().is_empty());
+    apply_host(
+        &workspace,
+        5,
+        json!([file(
+            "app/page.tsx",
+            "tsx",
+            "import '@/hook';\nexport default function Page() {}\n"
+        )]),
+        &[],
+    );
+    assert_eq!(reported(), ["app/page.tsx", "lib/hook.ts"]);
+    // A manifest edit alone derives the graph again rather than dropping it.
+    apply_host(
+        &workspace,
+        6,
+        json!([file(
+            "package.json",
+            "json",
+            r#"{ "name": "app", "dependencies": { "next": "16" } }"#
+        )]),
+        &[],
+    );
+    assert_eq!(reported(), ["app/page.tsx", "lib/hook.ts"]);
+    workspace.close();
+}
+
+/// A manifest that gains (or regains) `next` after its sources arrived derives the graph for
+/// them, and a nested package created or removed between a page and what it imports moves the
+/// boundary of the enclosing graph.
+#[test]
+fn a_derived_server_graph_follows_a_late_next_dependency_and_nested_packages() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let code_rule = compile(
+        "server-graph-boundaries",
+        json!([
+            { "id": "server",
+              "violation": { "anchor": "witness.span", "code": "SERVER", "message": "server" },
+              "forbid": { "ast": { "language": "typescript",
+                  "file": { "package": { "serverGraph": true } }, "rule": { "kind": "program" } } } },
+            { "id": "client",
+              "violation": { "anchor": "witness.span", "code": "CLIENT", "message": "client" },
+              "forbid": { "ast": { "language": "typescript",
+                  "file": { "package": { "serverGraph": false } }, "rule": { "kind": "program" } } } }
+        ]),
+    );
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace.add_code_rule(&code_rule, None).unwrap();
+    let file = |path: &str, language: &str, source: &str| json!({ "path": path, "language": language, "source": source });
+    let reported = || {
+        let mut reported = located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES))
+            .into_iter()
+            .map(|(path, code, _)| format!("{path} {code}"))
+            .collect::<Vec<_>>();
+        reported.sort();
+        reported
+    };
+    // Sources first, then a manifest without `next`: no graph, so neither value holds.
+    apply_host(
+        &workspace,
+        1,
+        json!([
+            file(
+                "app/page.tsx",
+                "tsx",
+                "import './sub/bridge';\nexport default function Page() {}\n"
+            ),
+            file(
+                "app/sub/bridge.ts",
+                "typescript",
+                "export * from '../shared/hook';\n"
+            ),
+            file(
+                "app/shared/hook.ts",
+                "typescript",
+                "export const hook = 1;\n"
+            ),
+        ]),
+        &[],
+    );
+    apply_host(
+        &workspace,
+        2,
+        json!([file("package.json", "json", "{}")]),
+        &[],
+    );
+    assert!(reported().is_empty());
+    let server = [
+        "app/page.tsx server",
+        "app/shared/hook.ts server",
+        "app/sub/bridge.ts server",
+    ];
+    let next = r#"{ "dependencies": { "next": "16" } }"#;
+    apply_host(
+        &workspace,
+        3,
+        json!([file("package.json", "json", next)]),
+        &[],
+    );
+    assert_eq!(reported(), server);
+    // Losing and regaining `next`.
+    apply_host(
+        &workspace,
+        4,
+        json!([file("package.json", "json", "{}")]),
+        &[],
+    );
+    assert!(reported().is_empty());
+    apply_host(
+        &workspace,
+        5,
+        json!([file("package.json", "json", next)]),
+        &[],
+    );
+    assert_eq!(reported(), server);
+    // A nested package around the bridge is no edge: the hook beyond it leaves the graph.
+    apply_host(
+        &workspace,
+        6,
+        json!([file("app/sub/package.json", "json", "{}")]),
+        &[],
+    );
+    assert_eq!(
+        reported(),
+        ["app/page.tsx server", "app/shared/hook.ts client"]
+    );
+    apply_host(&workspace, 7, json!([]), &["app/sub/package.json"]);
+    assert_eq!(reported(), server);
+    workspace.close();
+}
+
+/// A derived graph keeps what it read of files outside the code rule's scope across requests: the
+/// page that reaches an in-scope hook, and a root `app` folder's file of no source.
+#[test]
+fn a_derived_server_graph_keeps_inputs_outside_the_code_rules_scope() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let scoped = CodeRuleDslRuntime::compile(
+        json!({
+            "format": "rerail.policy/v1", "id": "server-graph-scoped", "revision": 1,
+            "mode": "steer",
+            "scope": { "include": ["app/shared/**", "src/**"], "exclude": [] },
+            "clauses": [{ "id": "server",
+                "violation": { "anchor": "witness.span", "code": "SERVER", "message": "server" },
+                "forbid": { "ast": { "language": "typescript",
+                    "file": { "package": { "serverGraph": true } }, "rule": { "kind": "program" } } } }],
+        })
+        .to_string(),
+        "json".into(),
+        CAPABILITIES.into(),
+    )
+    .unwrap();
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace.add_code_rule(&scoped, None).unwrap();
+    let file = |path: &str, language: &str, source: &str| json!({ "path": path, "language": language, "source": source });
+    let reported = || {
+        located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES))
+            .into_iter()
+            .map(|(path, _, _)| path)
+            .collect::<Vec<_>>()
+    };
+    apply_host(
+        &workspace,
+        1,
+        json!([
+            file(
+                "package.json",
+                "json",
+                r#"{ "dependencies": { "next": "16" } }"#
+            ),
+            file(
+                "app/page.tsx",
+                "tsx",
+                "import './shared/hook';\nexport default function Page() {}\n"
+            ),
+            file(
+                "app/shared/hook.ts",
+                "typescript",
+                "export const hook = 1;\n"
+            ),
+            file("app/styles.json", "json", "{}"),
+            file(
+                "src/app/page.tsx",
+                "tsx",
+                "export default function Page() {}\n"
+            ),
+        ]),
+        &[],
+    );
+    // The page outside the scope still reaches the hook; the root app folder hides src/app.
+    assert_eq!(reported(), ["app/shared/hook.ts"]);
+    // Editing the hook alone reads the page from the earlier request.
+    apply_host(
+        &workspace,
+        2,
+        json!([file(
+            "app/shared/hook.ts",
+            "typescript",
+            "export const hook = 2;\n"
+        )]),
+        &[],
+    );
+    assert_eq!(reported(), ["app/shared/hook.ts"]);
+    // Editing the src/app page alone keeps the root app folder present.
+    apply_host(
+        &workspace,
+        3,
+        json!([file(
+            "src/app/page.tsx",
+            "tsx",
+            "export default function Page() { return 2; }\n"
+        )]),
+        &[],
+    );
+    assert_eq!(reported(), ["app/shared/hook.ts"]);
+    // Removing every root app file uncovers src/app; a file of no source there hides it again.
+    apply_host(
+        &workspace,
+        4,
+        json!([]),
+        &["app/page.tsx", "app/shared/hook.ts", "app/styles.json"],
+    );
+    assert_eq!(reported(), ["src/app/page.tsx"]);
+    apply_host(
+        &workspace,
+        5,
+        json!([file("app/styles.json", "json", "{}")]),
+        &[],
+    );
+    assert!(reported().is_empty());
+    workspace.close();
+}
+
+#[test]
+fn a_server_graph_change_evaluates_again_only_the_files_whose_membership_it_changes() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let code_rule = compile(
+        "server-graph-membership",
+        json!([{ "id": "server",
+            "violation": { "anchor": "witness.span", "code": "SERVER", "message": "server" },
+            "forbid": { "ast": { "language": "typescript",
+                "file": { "package": { "serverGraph": true } }, "rule": { "kind": "program" } } } }]),
+    );
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace.add_code_rule(&code_rule, None).unwrap();
+    let file = |path: &str, language: &str, source: &str| json!({ "path": path, "language": language, "source": source });
+    let evaluated = |response: &Value| response["evaluation"]["metrics"]["files"].as_u64();
+    let first = apply_json(
+        &workspace,
+        1,
+        json!([
+            file(
+                "package.json",
+                "json",
+                r#"{ "dependencies": { "next": "16" } }"#
+            ),
+            file(
+                "app/page.tsx",
+                "tsx",
+                "import './a';\nexport default function Page() {}\n"
+            ),
+            file("app/a.ts", "typescript", "export const a = 1;\n"),
+            file("lib/b.ts", "typescript", "export const b = 1;\n"),
+            file("lib/c.ts", "typescript", "export const c = 1;\n"),
+        ]),
+    );
+    // The four sources and the manifest.
+    assert_eq!(evaluated(&first), Some(5));
+    // The page now imports a new module: the graph gains it, and no file already held changes
+    // membership but the page, which the request carries.
+    let second = apply_json(
+        &workspace,
+        2,
+        json!([
+            file(
+                "app/page.tsx",
+                "tsx",
+                "import './a';\nimport './new';\nexport default function Page() {}\n"
+            ),
+            file("app/new.ts", "typescript", "export const n = 1;\n"),
+        ]),
+    );
+    assert_eq!(evaluated(&second), Some(2));
+    let mut reported = located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES))
+        .into_iter()
+        .map(|(path, _, _)| path)
+        .collect::<Vec<_>>();
+    reported.sort();
+    assert_eq!(reported, ["app/a.ts", "app/new.ts", "app/page.tsx"]);
+    workspace.close();
+}
+
+#[test]
+fn a_syntax_error_is_no_failure_where_the_file_gates_exclude_the_file() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    // A negated outward relation: unsound under syntax errors, so an admitted errored file fails.
+    let gated = |file: Option<Value>| {
+        let mut ast = json!({ "language": "typescript",
+            "when": { "sourceType": "commonjs" },
+            "rule": { "kind": "identifier",
+                "not": { "inside": { "kind": "function_declaration", "stopBy": "end" } } } });
+        if let Some(file) = file {
+            ast["file"] = file;
+        }
+        CodeRuleDslRuntime::compile(
+            json!({
+                "format": "rerail.policy/v1", "id": "gated", "revision": 1, "mode": "steer",
+                "scope": { "include": ["**/*"], "exclude": [] },
+                "clauses": [{ "id": "gated",
+                    "violation": { "anchor": "witness.span", "code": "GATED", "message": "gated" },
+                    "forbid": { "ast": ast } }],
+            })
+            .to_string(),
+            "json".into(),
+            CAPABILITIES.into(),
+        )
+        .unwrap()
+    };
+    let failures = |compiled: &CompiledCodeRuleDsl, files: Value| {
+        let mut workspace = CodeRuleDslWorkspace::new();
+        workspace.add_code_rule(compiled, None).unwrap();
+        let response = apply_json(&workspace, 1, files);
+        workspace.close();
+        response["evaluation"]["failures"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter(|failure| failure["code"] == "source-incomplete")
+            .map(|failure| failure["path"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    let file = |path: &str, language: &str, source: &str| json!({ "path": path, "language": language, "source": source });
+    let typeless = || {
+        json!([
+            file("package.json", "json", r#"{ "name": "a" }"#),
+            // An ES module by its syntax, with a syntax error.
+            file(
+                "esm.js",
+                "javascript",
+                "import x from 'x';\nfunction f() { x(; }\n"
+            ),
+            file(
+                "cjs.js",
+                "javascript",
+                "require('x');\nfunction f() { x(; }\n"
+            ),
+        ])
+    };
+    // Node's syntax detection makes esm.js a module, which the commonjs-gated query skips.
+    let any_runtime = gated(None);
+    assert_eq!(failures(&any_runtime, typeless()), ["cjs.js"]);
+    // A file whose JSX runtime the query does not list is skipped too.
+    let preact = gated(Some(json!({ "jsxRuntime": ["react"] })));
+    assert_eq!(
+        failures(
+            &preact,
+            json!([file(
+                "a.cjs",
+                "javascript",
+                "/** @jsxImportSource preact */\nx(;\n"
+            )])
+        ),
+        Vec::<String>::new()
+    );
+}
+
+/// An errored file reads the module system and JSX runtime its candidates' file gates ask for
+/// once, however many gated candidates the syntax errors leave incomplete.
+#[test]
+fn an_errored_file_derives_its_file_gate_facts_once_for_all_gated_candidates() {
+    use crate::code_rule_dsl::matcher::{JSX_RUNTIME_DERIVATIONS, SOURCE_TYPE_DERIVATIONS};
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    const CANDIDATES: usize = 4;
+    // Negated outward relations: unsound under syntax errors, so each admitted clause fails.
+    let clauses = (0..CANDIDATES)
+        .map(|index| {
+            json!({ "id": format!("gated-{index}"),
+                "violation": { "anchor": "witness.span", "code": "GATED", "message": "gated" },
+                "forbid": { "ast": { "language": "typescript",
+                    "when": { "sourceType": "commonjs" }, "file": { "jsxRuntime": ["unknown"] },
+                    "rule": { "kind": "identifier", "regex": format!("^x{index}$"),
+                        "not": { "inside": { "kind": "function_declaration", "stopBy": "end" } } } } } })
+        })
+        .collect::<Vec<_>>();
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace
+        .add_code_rule(&compile("gated", json!(clauses)), None)
+        .unwrap();
+    SOURCE_TYPE_DERIVATIONS.set(0);
+    JSX_RUNTIME_DERIVATIONS.set(0);
+    // A typeless package leaves the module system to the file's syntax.
+    let response = apply_json(
+        &workspace,
+        1,
+        json!([
+            { "path": "package.json", "language": "json", "source": r#"{ "name": "a" }"# },
+            { "path": "cjs.js", "language": "javascript",
+                "source": "require('x');\nfunction f() { x(; }\n" },
+        ]),
+    );
+    workspace.close();
+    let incomplete = response["evaluation"]["failures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|failure| failure["code"] == "source-incomplete" && failure["path"] == "cjs.js")
+        .count();
+    assert_eq!(incomplete, CANDIDATES, "{response}");
+    assert_eq!(
+        (SOURCE_TYPE_DERIVATIONS.get(), JSX_RUNTIME_DERIVATIONS.get()),
+        (1, 1)
+    );
 }
 
 #[test]
@@ -1797,6 +2505,7 @@ fn an_evaluation_whose_deadline_passes_between_clauses_is_known_cut_short() {
             language: "python".into(),
             source: StdArc::new("print(1)\n".to_owned()),
             module: None,
+            package: None,
         },
         1,
         code_rules,
@@ -1859,6 +2568,7 @@ fn a_clause_with_nothing_to_match_answers_past_the_file_budget() {
             language: "python".into(),
             source: StdArc::new("print(1)\n".to_owned()),
             module: None,
+            package: None,
         },
         1,
         code_rules,
@@ -3308,4 +4018,454 @@ fn budget_verdicts_are_kept_per_set_and_preferred() {
         let (selected, _) = edited_keys.select(&results, &expected, "a.py");
         assert_eq!(selected[&(0, 0)].1, None);
     }
+}
+
+/// A Next package with no server graph (one of its folders cannot be read on disk, or a file set
+/// holds more sources than `module_graph::MAX_GRAPH_FILES`) gives its files no membership:
+/// neither `serverGraph: true` nor `serverGraph: false` holds, rather than every file outside.
+#[test]
+fn a_package_without_a_server_graph_gives_its_files_no_membership() {
+    let next = r#"{ "dependencies": { "next": "16" } }"#;
+    let page = "export default function Page() {}\n";
+    // The file-set path: one source past the bound.
+    let mut files = vec![
+        json!({ "path": "package.json", "language": "json", "source": next }),
+        json!({ "path": "app/page.tsx", "language": "tsx", "source": page }),
+    ];
+    files.extend((0..20_000).map(|index| {
+        json!({ "path": format!("lib/m{index}.ts"), "language": "typescript",
+            "source": "export {};\n" })
+    }));
+    let snapshot = json!({ "facts": [], "files": files,
+        "format": "rerail.repository-snapshot/v1", "revision": 0 });
+    let (snapshot, _) =
+        crate::code_rule_dsl::eval::parse_snapshot(&snapshot.to_string(), true).unwrap();
+    let package = snapshot.files[1]
+        .package
+        .as_ref()
+        .expect("the page's manifest");
+    assert_eq!(package.in_server_graph("app/page.tsx"), None);
+    // The disk path: a folder of the package cannot be read.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = TempDir::new("unread-server-graph");
+        let root = directory.0.join("repo");
+        for (path, source) in [
+            ("package.json", next),
+            ("app/page.tsx", page),
+            ("app/locked/x.ts", "export {};\n"),
+        ] {
+            let file = root.join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, source).unwrap();
+        }
+        let membership = || {
+            crate::code_rule_dsl::package_manifest::Manifests::new(root.clone())
+                .reading_server_graphs(true)
+                .of_file(&root.join("app/page.tsx"))
+                .expect("the page's manifest")
+                .in_server_graph("app/page.tsx")
+        };
+        let locked = root.join("app/locked");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let unread = membership();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(unread, None);
+        assert_eq!(membership(), Some(true));
+    }
+}
+
+/// A folder below the root whose path resolves outside it (a committed `vendor -> /home/user`)
+/// holds no manifest: the lookup reads nothing there and goes on to the folders above it.
+#[cfg(unix)]
+#[test]
+fn a_symlinked_folder_pointing_outside_the_root_holds_no_manifest() {
+    let directory = TempDir::new("manifest-outside-root");
+    let root = directory.0.join("repo");
+    let outside = directory.0.join("outside");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(outside.join("app")).unwrap();
+    std::fs::write(
+        outside.join("package.json"),
+        r#"{ "type": "module", "dependencies": { "next": "16" } }"#,
+    )
+    .unwrap();
+    std::fs::write(outside.join("x.js"), "").unwrap();
+    std::os::unix::fs::symlink(&outside, root.join("vendor")).unwrap();
+    // A symlink to a folder inside the root still reads its manifest.
+    std::fs::create_dir_all(root.join("inner")).unwrap();
+    std::fs::write(root.join("inner/package.json"), r#"{ "type": "module" }"#).unwrap();
+    std::os::unix::fs::symlink(root.join("inner"), root.join("alias")).unwrap();
+    let package = |path: &str| {
+        crate::code_rule_dsl::package_manifest::Manifests::new(root.clone())
+            .reading_server_graphs(true)
+            .of_file(&root.join(path))
+            .map(|manifest| manifest.to_wire())
+    };
+    assert_eq!(package("vendor/x.js"), None);
+    assert_eq!(
+        package("alias/x.js"),
+        Some(json!({ "folder": "alias", "type": "module" }))
+    );
+    std::fs::write(root.join("package.json"), "{}").unwrap();
+    assert_eq!(
+        package("vendor/x.js"),
+        Some(json!({ "folder": "", "type": "unset" }))
+    );
+}
+
+/// A clean tree's reuse follows the configuration a nested package's `extends` reaches outside
+/// it: editing the base's `jsxImportSource` leaves the tree's key as it was, but each restored
+/// file's results are keyed by its context (`file_context`), whose package digest carries the
+/// `jsxImportSource` read again, so the file is evaluated again rather than restored.
+#[test]
+fn a_reused_directory_follows_a_configuration_base_outside_it() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let code_rule = compile(
+        "jsx-other",
+        json!([{
+            "id": "other",
+            "violation": { "anchor": "witness.span", "code": "OTHER", "message": "other JSX" },
+            "forbid": { "ast": { "language": "typescript",
+                "file": { "jsxRuntime": ["other"] }, "rule": { "kind": "program" } } }
+        }]),
+    );
+    let base = |source: &str| {
+        format!("{{ \"compilerOptions\": {{ \"jsxImportSource\": \"{source}\" }} }}\n")
+    };
+    let preact = base("preact");
+    let directory = backdated_repository(
+        "reuse-outside-base",
+        &[
+            ("tsconfig.base.json", preact.as_bytes()),
+            (
+                "packages/web/package.json",
+                br#"{ "dependencies": { "react": "19" } }"#,
+            ),
+            (
+                "packages/web/tsconfig.json",
+                br#"{ "extends": "../../tsconfig.base.json" }"#,
+            ),
+            ("packages/web/src/a.ts", b"export const a = 1;\n"),
+        ],
+    );
+    let root = directory.0.join("repo");
+    let index = || {
+        let mut workspace = storage_workspace(&root, directory.store());
+        workspace.add_code_rule(&code_rule, None).unwrap();
+        let indexed = index_workspace(&workspace);
+        let violations = located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES));
+        workspace.completion_task().compute().unwrap();
+        workspace.close();
+        (indexed, violations)
+    };
+    let other = vec![("packages/web/src/a.ts".to_owned(), "other".to_owned(), 0)];
+    let (indexed, violations) = index();
+    assert_eq!(violations, other, "{indexed}");
+    let (indexed, violations) = index();
+    assert_eq!(violations, other, "{indexed}");
+    assert_eq!(indexed["restoredFiles"], json!(1), "{indexed}");
+    // The edit dirties only the root tree; `packages/` stays clean.
+    std::fs::write(root.join("tsconfig.base.json"), base("react")).unwrap();
+    let (indexed, violations) = index();
+    assert_eq!(violations, vec![], "{indexed}");
+    assert_eq!(indexed["restoredFiles"], json!(0), "{indexed}");
+}
+
+/// A request that fails after the workspace derived its package context (here, the store refuses
+/// a removal that is no repository path) leaves that context as it was: later server graphs read
+/// only what the workspace accepted.
+#[test]
+fn a_request_that_fails_partway_leaves_the_package_context_unchanged() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let code_rule = compile(
+        "server-graph-atomic",
+        json!([{ "id": "server",
+            "violation": { "anchor": "witness.span", "code": "SERVER", "message": "server" },
+            "forbid": { "ast": { "language": "typescript",
+                "file": { "package": { "serverGraph": true } }, "rule": { "kind": "program" } } } }]),
+    );
+    let directory = TempDir::new("context-atomic");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    let workspace = stored_workspace(&store, "/context-atomic", &code_rule);
+    let file = |path: &str, language: &str, source: &str| json!({ "path": path, "language": language, "source": source });
+    let next = r#"{ "dependencies": { "next": "16" } }"#;
+    let page = |import: &str| format!("import '{import}';\nexport default function Page() {{}}\n");
+    let reported = || {
+        let mut reported = located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES))
+            .into_iter()
+            .map(|(path, _, _)| path)
+            .collect::<Vec<_>>();
+        reported.sort();
+        reported
+    };
+    apply_host(
+        &workspace,
+        1,
+        json!([
+            file("package.json", "json", next),
+            file("app/page.tsx", "tsx", &page("./a")),
+            file("app/a.ts", "typescript", "export const a = 1;\n"),
+            file("lib/b.ts", "typescript", "export const b = 1;\n"),
+        ]),
+        &[],
+    );
+    assert_eq!(reported(), ["app/a.ts", "app/page.tsx"]);
+    let context = || {
+        let state = workspace.state.lock().unwrap();
+        (
+            state.graph_entries.keys().cloned().collect::<Vec<_>>(),
+            state.server_graph_directories.clone(),
+            state.module_configs.clone(),
+            state
+                .manifests
+                .iter()
+                .map(|(directory, manifest)| (directory.clone(), *manifest.digest()))
+                .collect::<Vec<_>>(),
+        )
+    };
+    let before = context();
+    let mut task = WorkspaceApplyTask {
+        state: Arc::clone(&workspace.state),
+        closed: Arc::clone(&workspace.closed),
+        request_json: json!({ "revision": 2, "removed": ["../escape.ts"], "files": [
+            file("app/page.tsx", "tsx", &page("../lib/b")),
+            file("tsconfig.json", "json", "{}"),
+            file("web/package.json", "json", next),
+            file("web/app/page.tsx", "tsx", &page("./c")),
+        ] })
+        .to_string(),
+        request_buffer: None,
+        request_direct: None,
+    };
+    task.compute().unwrap_err();
+    assert!(
+        context() == before,
+        "the failed request changed the context"
+    );
+    // A later request deriving the graph again reads the page the workspace holds.
+    apply_host(
+        &workspace,
+        3,
+        json!([file("lib/c.ts", "typescript", "export const c = 1;\n")]),
+        &[],
+    );
+    assert_eq!(reported(), ["app/a.ts", "app/page.tsx"]);
+    workspace.close();
+}
+
+/// A code rule `id` whose clauses read the documents Vue and Blade files derive
+/// (`ast.embedded`), and a Python file's own tree.
+fn derived_documents_code_rule(id: &str) -> CompiledCodeRuleDsl {
+    let clause = |id: &str, ast: Value| {
+        json!({
+            "id": id,
+            "violation": { "anchor": "witness.span", "code": "DERIVED", "message": id },
+            "forbid": { "ast": ast }
+        })
+    };
+    CodeRuleDslRuntime::compile(
+        json!({
+            "format": "rerail.policy/v1", "id": id, "revision": 1, "mode": "steer",
+            "scope": { "include": ["**/*"], "exclude": [] },
+            "clauses": [
+                clause("vue-script", json!({ "language": "vue", "embedded": "script-block",
+                    "rule": { "kind": "lexical_declaration" } })),
+                clause("blade-view", json!({ "language": "blade", "embedded": "compiled-view",
+                    "rule": { "kind": "binary_expression" } })),
+                clause("python", json!({ "language": "python", "rule": { "kind": "call" } })),
+            ],
+        })
+        .to_string(),
+        "json".into(),
+        include_str!("../capabilities.json").into(),
+    )
+    .unwrap()
+}
+
+/// Vue and Blade files whose derived documents hold witnesses, others whose do not, and a
+/// single-language file.
+fn derived_document_files() -> Value {
+    let file = |path: &str, language: &str, source: &str| json!({ "path": path, "language": language, "source": source });
+    json!([
+        file(
+            "src/Counter.vue",
+            "vue",
+            "<script setup>\nconst count = ref(0)\nconst double = count.value * 2\n</script>\n\
+             <template>\n  <p>{{ double }}</p>\n</template>\n",
+        ),
+        file(
+            "src/Plain.vue",
+            "vue",
+            "<script setup>\nload()\n</script>\n<template>\n  <p>{{ title }}</p>\n</template>\n",
+        ),
+        file(
+            "views/sum.blade.php",
+            "blade",
+            "<h1>{{ $title }}</h1>\n@if ($count > 0)\n  <p>{{ $a + $b }}</p>\n@endif\n",
+        ),
+        file("views/plain.blade.php", "blade", "<p>{{ $name }}</p>\n"),
+        file("probe.py", "python", "print(1)\n"),
+    ])
+}
+
+/// The stored tape of `path` in `workspace`'s overlay.
+fn overlay_tape(
+    store: &ContentStore,
+    workspace: &CodeRuleDslWorkspace,
+    path: &str,
+) -> crate::content_store::TapeId {
+    let workspace_id = workspace
+        .state
+        .lock()
+        .unwrap()
+        .storage
+        .as_ref()
+        .unwrap()
+        .workspace_id;
+    store
+        .overlay_file(workspace_id, path)
+        .unwrap()
+        .unwrap()
+        .tape
+        .unwrap()
+}
+
+/// Vue and Blade files published to the store and evaluated again from it: each file's tape and
+/// the documents it derives (`file_documents`) restore, and an `ast.embedded` clause finds the
+/// witnesses a fresh parse finds. A single-language file has no `file_documents` row, and a
+/// clause over a derived document is narrowed by that document's own selector index.
+#[test]
+fn derived_documents_restored_from_the_store_evaluate_as_a_fresh_parse() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("derived-documents");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    let files = derived_document_files();
+    let first = stored_workspace(
+        &store,
+        "/derived-first",
+        &derived_documents_code_rule("derived-first"),
+    );
+    apply_json(&first, 1, files.clone());
+    for path in ["src/Counter.vue", "views/sum.blade.php"] {
+        let tape = overlay_tape(&store, &first, path);
+        let rows = store.file_documents_bulk(&[tape]).unwrap();
+        let [row] = &rows[&tape][..] else {
+            panic!("{path} derives one document: {rows:?}");
+        };
+        assert_eq!((row.ordinal, row.parent_ordinal), (1, 0), "{path}");
+        assert_eq!(row.role_id, tape::DocumentRole::Generated.code(), "{path}");
+        assert!(
+            row.source.is_some(),
+            "{path}: the derived tape is a row of its own"
+        );
+    }
+    let python = overlay_tape(&store, &first, "probe.py");
+    assert!(
+        store.file_documents_bulk(&[python]).unwrap().is_empty(),
+        "a single-language file has no document rows"
+    );
+    first.close();
+    super::storage::index_stored_tapes(
+        &store,
+        &std::sync::atomic::AtomicBool::new(false),
+        &mut None,
+    );
+
+    // A new catalog reuses no result: its clauses run over the stored documents.
+    let code_rule = derived_documents_code_rule("derived-second");
+    let restored = stored_workspace(&store, "/derived-second", &code_rule);
+    let applied = apply_json(&restored, 1, files.clone());
+    let mut unstored = CodeRuleDslWorkspace::new();
+    unstored.add_code_rule(&code_rule, None).unwrap();
+    let fresh = apply_json(&unstored, 1, files);
+    unstored.close();
+    for key in ["violations", "failures"] {
+        assert_eq!(
+            applied["evaluation"][key], fresh["evaluation"][key],
+            "{key}"
+        );
+    }
+    let witnesses = located(&applied["evaluation"]["violations"]);
+    for (path, clause) in [
+        ("src/Counter.vue", "vue-script"),
+        ("views/sum.blade.php", "blade-view"),
+    ] {
+        assert!(
+            witnesses
+                .iter()
+                .any(|(at, id, _)| at == path && id == clause),
+            "{path}: {witnesses:?}"
+        );
+    }
+    let state = restored.state.lock().unwrap();
+    for path in ["src/Counter.vue", "views/sum.blade.php"] {
+        let file = &state.files[path];
+        assert!(
+            !file.selector_skipped && (file.tape_cache_hit || file.tape_decompressed),
+            "{path} read its stored documents"
+        );
+    }
+    // A derived document with no witness root, by its own index, is not decoded at all.
+    for path in ["src/Plain.vue", "views/plain.blade.php"] {
+        assert!(state.files[path].selector_skipped, "{path}");
+    }
+    drop(state);
+    restored.close();
+}
+
+/// A stored primary tape whose derived document's tape is gone is not stored: the file is parsed
+/// again, never restored without the document it derives.
+#[test]
+fn a_stored_tape_missing_a_derived_tape_is_parsed_again() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("derived-missing");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    let files = json!([{ "path": "src/Counter.vue", "language": "vue", "source":
+        "<script setup>\nconst count = ref(0)\n</script>\n<template>\n  <p>{{ count }}</p>\n</template>\n" }]);
+    let first = stored_workspace(
+        &store,
+        "/derived-missing-first",
+        &derived_documents_code_rule("derived-missing-first"),
+    );
+    let expected = located(&apply_json(&first, 1, files.clone())["evaluation"]["violations"]);
+    assert_eq!(expected.len(), 1, "{expected:?}");
+    let tape = overlay_tape(&store, &first, "src/Counter.vue");
+    first.close();
+    {
+        // The store's own foreign keys refuse this: a raw connection stands for lost rows.
+        let connection = rusqlite::Connection::open(directory.store()).unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", "OFF")
+            .unwrap();
+        let deleted = connection
+            .execute(
+                "DELETE FROM tape_objects WHERE tape_id IN (SELECT document_tape_id FROM file_documents)",
+                [],
+            )
+            .unwrap();
+        assert_eq!(deleted, 1);
+    }
+    let [document] = &store.file_documents_bulk(&[tape]).unwrap()[&tape][..] else {
+        panic!("the row outlives its tape");
+    };
+    assert_eq!(document.source, None);
+
+    let restored = stored_workspace(
+        &store,
+        "/derived-missing-second",
+        &derived_documents_code_rule("derived-missing-second"),
+    );
+    let applied = apply_json(&restored, 1, files);
+    assert_eq!(located(&applied["evaluation"]["violations"]), expected);
+    {
+        let state = restored.state.lock().unwrap();
+        let file = &state.files["src/Counter.vue"];
+        assert!(
+            !file.tape_cache_hit && !file.tape_decompressed,
+            "the file was parsed, not restored in part"
+        );
+    }
+    restored.close();
 }

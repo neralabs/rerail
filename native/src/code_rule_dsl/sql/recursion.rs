@@ -231,6 +231,7 @@ fn visit<'r>(rule: &'r AstMatcher, stop: bool, seen: &mut dyn FnMut(&'r AstMatch
                 Semantic::FormatArgs(test) => inner.extend(test.unused.iter()),
                 Semantic::Parse(test) => inner.push(&test.rule),
                 Semantic::Host(test) => inner.push(&test.rule),
+                Semantic::Embedded(test) => inner.extend(test.rules()),
                 Semantic::Resolves(_)
                 | Semantic::Value(_)
                 | Semantic::Arguments(_)
@@ -559,6 +560,11 @@ fn holds(rule: &AstMatcher, scopes: &[Held], names: &mut Held) {
                 );
             }
             Semantic::Parse(test) => names.extend(
+                test.exports
+                    .iter()
+                    .map(|name| (name.clone(), SlotKind::Text)),
+            ),
+            Semantic::Embedded(test) => names.extend(
                 test.exports
                     .iter()
                     .map(|name| (name.clone(), SlotKind::Text)),

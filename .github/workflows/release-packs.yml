@@ -3,14 +3,12 @@ name: Release packs
 # Releases the rule packs under packs/, each its own npm package @neralabs/rerail-pack-<id> (docs/pack-format.md,
 # "Versioning and release"). Core's release is release.yml, on `v*` tags; this workflow never touches core.
 #
-# A push to main does two independent things:
-#   version  With changesets pending, opens or updates the "Version packs" pull request, which runs
-#            `npm run version:packs`: each pack's version and CHANGELOG.md, written by changesets. Merging it is the
-#            release.
-#   publish  Every pack whose package.json version has no `<name>@<version>` git tag is validated (the whole pack
-#            validation of test/engine/catalog/packs.test.ts), packed, checked to hold only what its `files` allows,
-#            published under `next` with trusted publishing, and tagged. A pack never published at all needs its
-#            first publish by hand; the run reports it and fails after publishing the others.
+# The "Version packs" pull request (each pack's version and CHANGELOG.md, written by changesets) is opened by
+# version-packs.yml; merging it is the release. On a push to main this workflow publishes:
+#   Every pack whose package.json version has no `<name>@<version>` git tag is validated (the whole pack
+#   validation of test/engine/catalog/packs.test.ts), packed, checked to hold only what its `files` allows, published
+#   under `next` with trusted publishing, and tagged. A pack never published at all needs its first publish by hand;
+#   the run reports it and fails after publishing the others.
 # A pull request touching packs runs the validation and packing as a dry run and publishes nothing.
 # `workflow_dispatch` promotes one released pack version from `next` to `latest`.
 
@@ -46,38 +44,6 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # The Version packs pull request is opened with the neralabs-ci app's token, not GITHUB_TOKEN, so CI runs on it.
-  version:
-    name: Version packs pull request
-    if: github.event_name == 'push'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - id: app-token
-        name: Get the neralabs-ci app token
-        uses: actions/create-github-app-token@v3
-        with:
-          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          permission-contents: write
-          permission-pull-requests: write
-
-      - name: Checkout repository
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - uses: ./.github/actions/node-deps
-
-      - name: Open or update the Version packs pull request
-        uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
-        with:
-          github-token: ${{ steps.app-token.outputs.token }}
-          version-script: npm run version:packs
-          commit-message: Version packs
-          pr-title: Version packs
-
   plan:
     name: Packs to publish
     if: github.event_name != 'workflow_dispatch'
@@ -227,7 +193,7 @@ jobs:
         env:
           FIRST: ${{ needs.plan.outputs.first }}
         run: |
-          echo "::error::Never published, so not published by this run: ${FIRST}. Publish each by hand and configure its trusted publisher (docs/pack-format.md, \"Publishing a new pack\")."
+          echo "::error::Never published, so not published by this run: ${FIRST}. Publish each by hand and configure its trusted publisher (docs/publishing-a-new-pack.md)."
           exit 1
 
   promote:

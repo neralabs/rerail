@@ -66,47 +66,112 @@ struct Snippet {
 
 /// What rules over one language's fixtures are built from.
 struct Vocabulary {
+    /// The family the semantic leaves are generated for (`Fixture::family`).
     label: &'static str,
+    /// The files' language and the program the rules read (`Fixture`).
+    language: &'static str,
+    embedded: Option<&'static str>,
     files: Vec<(String, String)>,
+    /// Per file, the document the rules read: its own tree, or the program it embeds.
+    docs: Vec<TapeDoc>,
     kinds: Vec<String>,
     fields: Vec<String>,
     snippets: Vec<Snippet>,
     regexes: Vec<String>,
 }
 
-const FIXTURES: &[(&str, &[&str])] = &[
-    (
-        "python",
-        &[
+/// One vocabulary's fixtures: the files' language (`ast.language`), the program of theirs the
+/// rules read (`ast.embedded`: its `via`; `None` for the file's own tree), the language family the
+/// semantic leaves are generated for, and the files.
+struct Fixture {
+    language: &'static str,
+    embedded: Option<&'static str>,
+    family: &'static str,
+    paths: &'static [&'static str],
+}
+
+const FIXTURES: &[Fixture] = &[
+    Fixture {
+        language: "python",
+        embedded: None,
+        family: "python",
+        paths: &[
             "python/scope/usage/F841.py",
             "python/value/ruff/SIM116.py",
             "python/calls/project/pkg/models.py",
         ],
-    ),
-    (
-        "typescript",
-        &[
+    },
+    Fixture {
+        language: "typescript",
+        embedded: None,
+        family: "typescript",
+        paths: &[
             "ecma/scope/typescript/bindings.ts",
             "ecma/scope/typescript/constants.ts",
             "ecma/value/eslint/no-dupe-keys.ts",
         ],
-    ),
-    (
-        "php",
-        &[
+    },
+    Fixture {
+        language: "php",
+        embedded: None,
+        family: "php",
+        paths: &[
             "php/calls/php/trace.php",
             "php/calls/php/project/more.php",
             "php/scope/php/unanalysed.php",
         ],
-    ),
-    (
-        "rust",
-        &[
+    },
+    Fixture {
+        language: "rust",
+        embedded: None,
+        family: "rust",
+        paths: &[
             "rust/calls/crate/src/lib.rs",
             "rust/calls/crate/src/util.rs",
             "rust/calls/crate/src/net/tcp.rs",
         ],
-    ),
+    },
+    // Files that embed code are several documents (`embed`): rules over a Blade view's template
+    // and over the PHP it compiles to, and over a Vue component's template and its scripts.
+    Fixture {
+        language: "blade",
+        embedded: None,
+        family: "blade",
+        paths: BLADE,
+    },
+    Fixture {
+        language: "blade",
+        embedded: Some("compiled-view"),
+        family: "php",
+        paths: BLADE,
+    },
+    Fixture {
+        language: "vue",
+        embedded: None,
+        family: "vue",
+        paths: VUE,
+    },
+    Fixture {
+        language: "vue",
+        embedded: Some("script-block"),
+        family: "typescript",
+        paths: VUE,
+    },
+];
+
+const BLADE: &[&str] = &[
+    "blade/blade/fixtures/conditionals.blade.php",
+    "blade/blade/fixtures/loops.blade.php",
+    "blade/blade/fixtures/php_blocks.blade.php",
+    "blade/blade/fixtures/components.blade.php",
+    "blade/blade/fixtures/echoes.blade.php",
+];
+
+const VUE: &[&str] = &[
+    "vue/language/view/fixtures/script-setup-ts.vue",
+    "vue/language/view/fixtures/options-api.vue",
+    "vue/language/view/fixtures/two-scripts.vue",
+    "vue/language/view/fixtures/directives.vue",
 ];
 
 pub(super) fn tape(dialect: GrammarDialect, source: &str) -> TapeDoc {
@@ -144,21 +209,36 @@ const ARGUMENT_KINDS: &[&str] = &[
 ];
 
 impl Vocabulary {
-    fn of(label: &'static str, paths: &[&str]) -> Self {
-        let dialect = dialect_by_label(label).expect("dialect");
-        let catalog = dialect.kinds();
+    fn of(fixture: &Fixture) -> Self {
+        let label = fixture.family;
+        let dialect = dialect_by_label(fixture.language).expect("dialect");
         let mut kinds = BTreeSet::new();
         let mut fields = BTreeSet::new();
         let mut snippets = Vec::new();
         let mut words = BTreeSet::new();
         let mut files = Vec::new();
-        for path in paths {
+        let mut docs = Vec::new();
+        for path in fixture.paths {
             let source = std::fs::read_to_string(format!(
                 "{}/{path}",
                 crate::code_rule_dsl::fixtures_dir!()
             ))
             .unwrap_or_else(|error| panic!("{path}: {error}"));
-            let doc = tape(dialect, &source);
+            let file = tape(dialect, &source);
+            // The document the rules read: the file's own tree, or the program it embeds.
+            let doc = match fixture.embedded {
+                None => file.clone(),
+                Some(via) => file
+                    .guests()
+                    .and_then(|guests| {
+                        guests
+                            .iter()
+                            .find(|guest| guest.via.id() == via)
+                            .map(|guest| guest.doc.clone())
+                    })
+                    .unwrap_or_else(|| panic!("{path} embeds no program via {via}")),
+            };
+            let catalog = ast_grep_core::Doc::get_lang(&doc).kinds();
             let root = AstGrep::doc(doc.clone());
             for id in 0..doc.transducer_len() as u32 {
                 let node = node_at(&root, id);
@@ -214,6 +294,7 @@ impl Vocabulary {
                 }
             }
             files.push((path.to_string(), source));
+            docs.push(doc);
         }
         let mut regexes: Vec<String> = words
             .iter()
@@ -233,7 +314,10 @@ impl Vocabulary {
         }
         Self {
             label,
+            language: fixture.language,
+            embedded: fixture.embedded,
             files,
+            docs,
             kinds: kinds.into_iter().collect(),
             fields: fields.into_iter().collect(),
             snippets,
@@ -272,6 +356,10 @@ impl Generator<'_> {
     }
 
     fn pattern(&mut self) -> String {
+        // A program whose every snippet holds a `$`-name (a Blade view's PHP) has none to edit.
+        if self.vocabulary.snippets.is_empty() {
+            return format!("${}", self.single());
+        }
         let snippet = self.rng.pick(&self.vocabulary.snippets);
         let mut edits: Vec<(Range<usize>, String)> = Vec::new();
         if let Some(arguments) = &snippet.arguments
@@ -810,8 +898,9 @@ impl Generator<'_> {
         let terms = 1 + self.rng.below(if depth == 0 { 3 } else { 2 });
         for _ in 0..terms {
             let deep = depth < 3;
-            // A semantic leaf now and then, near the root.
-            if depth < 2 && self.rng.chance(18) {
+            // A semantic leaf now and then, near the root (a template host's family reads none).
+            if depth < 2 && !matches!(self.vocabulary.label, "blade" | "vue") && self.rng.chance(18)
+            {
                 self.leaf(&mut rule, depth);
                 continue;
             }
@@ -1096,7 +1185,10 @@ impl Generator<'_> {
             }
         }
         let mut ast = Map::new();
-        ast.insert("language".into(), json!(self.vocabulary.label));
+        ast.insert("language".into(), json!(self.vocabulary.language));
+        if let Some(via) = self.vocabulary.embedded {
+            ast.insert("embedded".into(), json!(via));
+        }
         let mut rule = self.rule(0);
         if let Some(reference) = recursive
             && self.rng.chance(85)
@@ -1319,7 +1411,10 @@ impl Generator<'_> {
             inner["regex"] = json!(*self.rng.pick(&["^[a-z]", "s", "[0-9]", "^%"]));
         }
         let tree = |has: Value| json!({ "grammar": grammar, "has": has });
-        let mut ast = json!({ "language": self.vocabulary.label });
+        let mut ast = json!({ "language": self.vocabulary.language });
+        if let Some(via) = self.vocabulary.embedded {
+            ast["embedded"] = json!(via);
+        }
         let mut each = "K";
         let mut host = match self.rng.below(4) {
             0 => json!({ "any": literal, "parse": tree(inner) }),
@@ -1661,7 +1756,8 @@ fn census_under(
                     }
                     (
                         _,
-                        "language" | "params" | "position" | "reverse" | "min" | "max" | "offset",
+                        "language" | "embedded" | "params" | "position" | "reverse" | "min" | "max"
+                        | "offset",
                         _,
                     ) => {
                         continue;
@@ -1732,17 +1828,14 @@ fn generated_rules_agree_with_the_native_matcher() {
     let seed = env_number("RERAIL_SQL_DIFF_SEED", 0x5e7_c0de);
     let wanted = env_number("RERAIL_SQL_DIFF_CASES", 500) as usize;
     let started = Instant::now();
-    let vocabularies: Vec<Vocabulary> = FIXTURES
-        .iter()
-        .map(|(label, paths)| Vocabulary::of(label, paths))
-        .collect();
+    let vocabularies: Vec<Vocabulary> = FIXTURES.iter().map(Vocabulary::of).collect();
     let inputs: Vec<Value> = vocabularies
         .iter()
         .map(|vocabulary| {
             let files: Vec<(&str, &str, &str)> = vocabulary
                 .files
                 .iter()
-                .map(|(path, source)| (vocabulary.label, path.as_str(), source.as_str()))
+                .map(|(path, source)| (vocabulary.language, path.as_str(), source.as_str()))
                 .collect();
             snapshot(&files)
         })
@@ -1773,6 +1866,9 @@ fn generated_rules_agree_with_the_native_matcher() {
         (0usize, 0usize, 0usize, 0usize);
     let mut unsupported = Vec::new();
     let mut differences = Vec::new();
+    // Per vocabulary (`language`, and `/via` for an embedded program's): cases compared and
+    // rejected by the front end.
+    let mut per_vocabulary = std::collections::BTreeMap::<String, (usize, usize)>::new();
     while compared < wanted {
         let batch: Vec<(usize, Value, Value, bool)> = (0..256)
             .map(|index| {
@@ -1788,10 +1884,22 @@ fn generated_rules_agree_with_the_native_matcher() {
                 run_case(ast, violation, &inputs[*language], &capabilities)
             })
             .collect();
-        for ((_, ast, violation, recursive), outcome) in batch.iter().zip(outcomes) {
+        for ((language, ast, violation, recursive), outcome) in batch.iter().zip(outcomes) {
             let each = violation.get("each").is_some();
             if compared >= wanted {
                 break;
+            }
+            let vocabulary = &vocabularies[*language];
+            let counts = per_vocabulary
+                .entry(match vocabulary.embedded {
+                    Some(via) => format!("{}/{via}", vocabulary.language),
+                    None => vocabulary.language.to_owned(),
+                })
+                .or_default();
+            match outcome {
+                Outcome::Rejected => counts.1 += 1,
+                Outcome::NativeLimit => {}
+                _ => counts.0 += 1,
             }
             if !matches!(outcome, Outcome::Rejected | Outcome::NativeLimit) {
                 census(ast, &mut operators);
@@ -1848,6 +1956,7 @@ fn generated_rules_agree_with_the_native_matcher() {
     eprintln!(
         "recursion or each: {with_either} compared cases ({with_recursion} reaching a recursive utility, {with_each} under violation.each); {native_limits} cases not compared: the native matcher hit a utility limit (depth or work)"
     );
+    eprintln!("per vocabulary (compared, rejected): {per_vocabulary:?}");
     eprintln!("operators in compared cases: {operators:?}");
     let seconds =
         |at: usize| ENGINE_NANOS[at].load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e9;
@@ -1913,7 +2022,7 @@ fn generated_rules_agree_with_the_native_matcher() {
         .map(|(language, ast, violation)| {
             let at = FIXTURES
                 .iter()
-                .position(|(label, _)| label == language)
+                .position(|fixture| fixture.language == *language && fixture.embedded.is_none())
                 .expect("a fixture language");
             (ast, run_case(ast, violation, &inputs[at], &capabilities))
         })
@@ -1962,25 +2071,15 @@ fn generated_rules_agree_with_the_native_matcher() {
 /// batches of two files: why each that does not agree does not. Every one is in scope, so none
 /// may be refused.
 fn program_failures(seed: u64, vocabularies: &[Vocabulary], capabilities: &Value) -> Vec<String> {
-    let docs: Vec<(GrammarDialect, Vec<TapeDoc>)> = vocabularies
-        .iter()
-        .map(|vocabulary| {
-            let dialect = dialect_by_label(vocabulary.label).expect("dialect");
-            let docs = (vocabulary.files.iter())
-                .map(|(_, source)| tape(dialect, source))
-                .collect();
-            (dialect, docs)
-        })
-        .collect();
     let outcomes = program_cases(seed)
         .into_par_iter()
         .map(|(language, clauses)| {
-            let at = FIXTURES
+            let vocabulary = vocabularies
                 .iter()
-                .position(|(label, _)| *label == language)
+                .find(|vocabulary| vocabulary.language == language && vocabulary.embedded.is_none())
                 .expect("a fixture language");
-            let (dialect, docs) = &docs[at];
-            let outcome = run_program(*dialect, &clauses, docs, 2, capabilities);
+            let dialect = dialect_by_label(vocabulary.language).expect("dialect");
+            let outcome = run_program(dialect, &clauses, &vocabulary.docs, 2, capabilities);
             (clauses, outcome)
         })
         .collect::<Vec<_>>();
@@ -2262,21 +2361,24 @@ fn replayed_cases_agree() {
         )
         .to_owned()
     });
-    // Each language's snapshot, and its files' tapes for the programs (`run_program`).
-    let inputs: Vec<(&str, Value, Vec<TapeDoc>)> = FIXTURES
+    // Each vocabulary's snapshot, and the documents its rules read for the programs
+    // (`run_program`).
+    type Input<'f> = (&'f str, Option<&'f str>, Value, Vec<TapeDoc>);
+    let inputs: Vec<Input<'_>> = FIXTURES
         .iter()
-        .map(|(label, paths)| {
-            let vocabulary = Vocabulary::of(label, paths);
+        .map(|fixture| {
+            let vocabulary = Vocabulary::of(fixture);
             let files: Vec<(&str, &str, &str)> = vocabulary
                 .files
                 .iter()
-                .map(|(path, source)| (*label, path.as_str(), source.as_str()))
+                .map(|(path, source)| (fixture.language, path.as_str(), source.as_str()))
                 .collect();
-            let dialect = dialect_by_label(label).expect("dialect");
-            let docs = (vocabulary.files.iter())
-                .map(|(_, source)| tape(dialect, source))
-                .collect();
-            (*label, snapshot(&files), docs)
+            (
+                fixture.language,
+                fixture.embedded,
+                snapshot(&files),
+                vocabulary.docs,
+            )
         })
         .collect();
     let mut capabilities: Value = serde_json::from_str(CAPABILITIES).expect("capabilities");
@@ -2291,20 +2393,22 @@ fn replayed_cases_agree() {
             Some(_) => (&case["clauses"], &Value::Null),
             None => (&case["ast"], &case["violation"]),
         };
-        let language = match clauses {
-            Some(clauses) => clauses[0]["language"].as_str(),
-            None => ast["language"].as_str(),
-        }
-        .expect("a language");
-        let (_, input, docs) = inputs
+        let first = match clauses {
+            Some(clauses) => &clauses[0],
+            None => ast,
+        };
+        let language = first["language"].as_str().expect("a language");
+        let embedded = first["embedded"].as_str();
+        let (_, _, input, docs) = inputs
             .iter()
-            .find(|(label, ..)| *label == language)
+            .find(|(label, via, ..)| *label == language && *via == embedded)
             .expect("a fixture language");
         STATEMENT_PROFILE.set(Some(Default::default()));
         LAST_TIMES.set((0.0, 0.0));
         let outcome = match clauses {
             Some(clauses) => run_program(
-                dialect_by_label(language).expect("dialect"),
+                // The dialect of the documents the clauses read.
+                *ast_grep_core::Doc::get_lang(&docs[0]),
                 clauses,
                 docs,
                 case["batch"].as_u64().unwrap_or(2) as usize,
@@ -2434,10 +2538,7 @@ pub(super) fn inner_scans(plan: &[(i64, i64, String)]) -> Vec<String> {
 #[test]
 fn emitted_joins_never_scan_a_whole_table_on_the_inner_side() {
     use crate::code_rule_dsl::test_support::grammar_matchers;
-    let vocabularies: Vec<Vocabulary> = FIXTURES
-        .iter()
-        .map(|(label, paths)| Vocabulary::of(label, paths))
-        .collect();
+    let vocabularies: Vec<Vocabulary> = FIXTURES.iter().map(Vocabulary::of).collect();
     let mut capabilities: Value = serde_json::from_str(CAPABILITIES).expect("capabilities");
     capabilities["limits"]["maxWitnesses"] = json!(1_000_000);
     let mut generators: Vec<Generator<'_>> = vocabularies
@@ -2516,17 +2617,14 @@ fn pushed_down_programs_agree_with_their_sql_lowering() {
     let seed = env_number("RERAIL_SQL_DIFF_SEED", 0x5e7_c0de);
     let wanted = env_number("RERAIL_SQL_PUSHDOWN_CASES", 5000) as usize;
     let started = Instant::now();
-    let vocabularies: Vec<Vocabulary> = FIXTURES
-        .iter()
-        .map(|(label, paths)| Vocabulary::of(label, paths))
-        .collect();
+    let vocabularies: Vec<Vocabulary> = FIXTURES.iter().map(Vocabulary::of).collect();
     let inputs: Vec<Value> = vocabularies
         .iter()
         .map(|vocabulary| {
             let files: Vec<(&str, &str, &str)> = vocabulary
                 .files
                 .iter()
-                .map(|(path, source)| (vocabulary.label, path.as_str(), source.as_str()))
+                .map(|(path, source)| (vocabulary.language, path.as_str(), source.as_str()))
                 .collect();
             snapshot(&files)
         })
