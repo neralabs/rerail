@@ -1,0 +1,67 @@
+{
+  "kind": "code",
+  "rule": {
+    "format": "rerail.policy/v1",
+    "id": "local:pack-message-shouting",
+    "revision": 1,
+    "mode": "steer",
+    "description": "Write NEVER, MUST and ALWAYS in lower case in rule pack messages; SQL keywords and quoted code may stay in capitals.",
+    "scope": {
+      "include": [
+        "packs/*/rules/*.json",
+        "packs/*/candidates/rules/*.json"
+      ],
+      "exclude": []
+    },
+    "clauses": [
+      {
+        "id": "shouting",
+        "forbid": {
+          "regex": {
+            "source": "file.content",
+            "pattern": "\"violation\"\\s*:\\s*(?:\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\")*\\})*\\})*\\})*\\})*\\})*\\})*\\})*?)+?\"message\"\\s*:\\s*(?:(?:\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\")*\\})*\\})*\\})*\\})*\\})*\\})*\\})*?)*?\\{(?:(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\")*\\})*\\})*\\})*\\})*\\})*\\})*\\})*?,)?\\s*\"(?:(?:[^$\"\\\\]|\\\\.)(?:[^\"\\\\]|\\\\.)*)?\"\\s*:\\s*)?\"(?:'(?:[^'\"\\\\]|\\\\.)*'[^\"\\\\`'\\w$])*(?:\\w+(?:'\\w+)*|[^\"\\\\`'\\w$](?:'(?:[^'\"\\\\]|\\\\.)*'[^\"\\\\`'\\w$])*|\\$+(?:\\w+|\\{[^{}\"\\\\]*\\}|[^\"\\\\`'\\w${])|\\\\.|`(?:[^`\"\\\\]|\\\\.)+`)*?\\b(?P<HIT>NEVER|MUST|ALWAYS)(?:\\s+NOT)?\\s+[a-z`]"
+          }
+        },
+        "violation": {
+          "code": "MESSAGE_SHOUTS",
+          "anchor": "capture.HIT",
+          "message": "Write `$HIT` in lower case and state the instruction plainly."
+        }
+      }
+    ]
+  },
+  "cases": {
+    "caught": [
+      {
+        "path": "packs/python/rules/ruff-s501-request-with-no-cert-validation.json",
+        "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"ruff-s501-request-with-no-cert-validation\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Keep `verify=True`; you MUST NOT turn off certificate checks.\"\n      }\n    }\n  ]\n}\n"
+      },
+      {
+        "path": "packs/php/candidates/rules/phpstan-no-debug.json",
+        "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"phpstan-no-debug\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": {\n          \"$option\": \"functions\",\n          \"cases\": {\n            \"[\\\"dd\\\"]\": \"Remove this dd() call.\"\n          },\n          \"default\": \"NEVER leave dump() in committed code; log through the logger instead.\"\n        }\n      }\n    }\n  ]\n}\n"
+      },
+      {
+        "path": "packs/python/rules/bandit-b113-request-without-timeout.json",
+        "content": "{\"format\":\"rerail.policy/v1\",\"id\":\"bandit-b113-request-without-timeout\",\"revision\":1,\"mode\":\"steer\",\"description\":\"Pass a timeout to every requests call.\",\"scope\":{\"include\":[\"**/*.py\"],\"exclude\":[]},\"clauses\":[{\"id\":\"c\",\"forbid\":{\"regex\":{\"source\":\"file.content\",\"pattern\":\"requests\\\\.get\\\\(\"}},\"violation\":{\"code\":\"X\",\"anchor\":\"witness.span\",\"message\":\"ALWAYS pass a timeout to this requests call.\"}}]}"
+      }
+    ],
+    "passed": [
+      {
+        "path": "packs/python/rules/bandit-b108-hardcoded-tmp-directory.json",
+        "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"bandit-b108-hardcoded-tmp-directory\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Use `tempfile.mkdtemp()`; a fixed /tmp path must never be shared between runs.\"\n      }\n    }\n  ]\n}\n"
+      },
+      {
+        "path": "packs/sql/candidates/rules/sqlfluff-identity-column.json",
+        "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"sqlfluff-identity-column\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Declare this column GENERATED ALWAYS AS IDENTITY instead of SERIAL.\"\n      }\n    }\n  ]\n}\n"
+      },
+      {
+        "path": "packs/python/rules/ruff-s501-request-with-no-cert-validation.json",
+        "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"ruff-s501-request-with-no-cert-validation\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Keep `verify=True` where the spec says `MUST NOT skip` certificate checks.\"\n      }\n    }\n  ]\n}\n"
+      },
+      {
+        "path": "packs/php/candidates/probes/rules/phpstan-no-debug.json",
+        "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"phpstan-no-debug\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"NEVER leave dump() in committed code.\"\n      }\n    }\n  ]\n}\n"
+      }
+    ]
+  }
+}

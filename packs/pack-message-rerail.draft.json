@@ -1,0 +1,59 @@
+{
+  "kind": "code",
+  "rule": {
+    "format": "rerail.policy/v1",
+    "id": "local:pack-message-rerail",
+    "revision": 1,
+    "mode": "steer",
+    "description": "Keep the name Rerail out of rule pack messages, which already show it beside every finding; quoted code may hold it.",
+    "scope": {
+      "include": [
+        "packs/*/rules/*.json",
+        "packs/*/candidates/rules/*.json"
+      ],
+      "exclude": []
+    },
+    "clauses": [
+      {
+        "id": "rerail",
+        "forbid": {
+          "regex": {
+            "source": "file.content",
+            "pattern": "\"violation\"\\s*:\\s*(?:\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\")*\\})*\\})*\\})*\\})*\\})*\\})*\\})*?)+?\"message\"\\s*:\\s*(?:(?:\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\")*\\})*\\})*\\})*\\})*\\})*\\})*\\})*?)*?\\{(?:(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\")*\\})*\\})*\\})*\\})*\\})*\\})*\\})*?,)?\\s*\"(?:(?:[^$\"\\\\]|\\\\.)(?:[^\"\\\\]|\\\\.)*)?\"\\s*:\\s*)?\"(?:'(?:[^'\"\\\\]|\\\\.)*'[^\"\\\\`'\\w$])*(?:\\w+(?:'\\w+)*|[^\"\\\\`'\\w$](?:'(?:[^'\"\\\\]|\\\\.)*'[^\"\\\\`'\\w$])*|\\$+(?:\\w+|\\{[^{}\"\\\\]*\\}|[^\"\\\\`'\\w${])|\\\\.|`(?:[^`\"\\\\]|\\\\.)+`)*?\\b(?P<HIT>(?i:rerail))\\b"
+          }
+        },
+        "violation": {
+          "code": "MESSAGE_NAMES_RERAIL",
+          "anchor": "capture.HIT",
+          "message": "Reword this message without `$HIT`, which the reader already sees with every message; backtick only code to write."
+        }
+      }
+    ]
+  },
+  "cases": {
+    "caught": [
+      {
+        "path": "packs/python/rules/ruff-s113-request-without-timeout.json",
+        "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"ruff-s113-request-without-timeout\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Rerail found a request without a timeout; pass `timeout=`.\"\n      }\n    }\n  ]\n}\n"
+      },
+      {
+        "path": "packs/python/rules/bandit-b602-subprocess-popen-with-shell-equals-true.json",
+        "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"bandit-b602-subprocess-popen-with-shell-equals-true\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": {\n          \"$option\": \"strict\",\n          \"cases\": {\n            \"true\": \"Pass the command as a list of arguments instead of `shell=True`.\"\n          },\n          \"default\": \"Pass a list of arguments instead of `shell=True`, so rerail stops reporting it.\"\n        }\n      }\n    }\n  ]\n}\n"
+      }
+    ],
+    "passed": [
+      {
+        "path": "packs/php/rules/phpcs-no-silenced-errors.json",
+        "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"phpcs-no-silenced-errors\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Add a `// rerail-ignore <id> -- <reason>` comment only where silencing is intended.\"\n      }\n    }\n  ]\n}\n"
+      },
+      {
+        "path": "packs/complexity/rules/complexity-cyclomatic-python.json",
+        "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"complexity-cyclomatic-python\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Keep Python functions at cyclomatic complexity 6 or lower; Rerail counts a match once.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"options\",\n      \"define\": {\n        \"options\": {\n          \"notes\": {\n            \"type\": \"array\",\n            \"default\": [\n              {\n                \"message\": \"Rerail counts each match once.\"\n              }\n            ]\n          }\n        }\n      }\n    },\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Split `$NAME` into smaller functions, each with one job.\"\n      }\n    }\n  ]\n}\n"
+      },
+      {
+        "path": "packs/python/candidates/probes/rules/ruff-s113-request-without-timeout.json",
+        "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"ruff-s113-request-without-timeout\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Rerail found a request without a timeout.\"\n      }\n    }\n  ]\n}\n"
+      }
+    ]
+  }
+}

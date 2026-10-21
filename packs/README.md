@@ -42,31 +42,68 @@ inactive and reported as `not supported yet` until core reads the language.
 
 ## Message wording
 
-[`pack-message-wording.draft.json`](pack-message-wording.draft.json) is a rule for working in this repository, not
-part of any pack. It steers the coding agent while it writes a rule's violation message:
+Three rules steer the coding agent while it writes a rule's violation message. They are for working in this
+repository and part of no pack. Each is added on its own (into your library, on, for this repository), so each can be
+turned off or set to Log on its own, per repository or folder.
+
+All three read every violation message in `packs/*/rules/*.json` and `packs/*/candidates/rules/*.json`, each case of
+one an option chooses included (but not the option's name), and report a violation once, at its first offending word.
+A word in backticks or single quotes is code or a configured value, and passes; double quotes don't count. The rest of
+the [message criteria](../docs/pack-format.md#message) are left to review.
+
+### Tool names
 
 ```sh
-rerail rules add packs/pack-message-wording.draft.json   # into your library, on, for this repository
+rerail rules add packs/pack-message-tool-names.draft.json
 ```
 
-It reads every violation message in `packs/*/rules/*.json` and `packs/*/candidates/rules/*.json`, each case of one an
-option chooses included (but not the option's name), and steers when a message names an upstream tool (as a pasted
-rule id does when it starts with the tool's name), names Rerail, or writes NEVER, MUST or ALWAYS in capitals before a
-lower-case word (so a SQL keyword such as `GENERATED ALWAYS AS` passes). A word in backticks or single quotes is code
-or a configured value, and passes; double quotes don't count. Each violation is reported once, at its first such
-word. The rest of the [message criteria](../docs/pack-format.md#message) are left to review.
+[`local:pack-message-tool-names`](pack-message-tool-names.draft.json) flags a message that names an upstream tool:
+eslint, oxlint, biome, ruff, bandit, pylint, flake8, clippy, sqlfluff, phpstan, psalm, phpcs, tlint, bladestan, lizard,
+blade-parser or unicorn, in any case and as a whole word (so also `typescript-eslint`). A pasted rule id is flagged
+when it starts with a tool's name.
 
 What it gets wrong:
 
-- **A message holding its own rule id is caught only when the id names a tool**: 523 of the 595 ids do; the `n-`,
+- **A message holding its own rule id is flagged only when the id names a tool**: 523 of the 595 ids do; the `n-`,
   `next-`, `react-`, `vitest-` and `complexity-` ones don't. A rule reads JSON as text only, and a regex cannot compare
   the document's `id` with its message.
-- **An apostrophe that pairs with no quote**, such as a Rust lifetime (`'a`) or `print()'s`, ends what it reads of a
-  message, unless a quote later in the message pairs with it: then what that quote opened counts as unquoted.
 - **Backticks hide any word**, so backticking a tool name or a rule id silences it without fixing the message.
+- The [quoting limits](#what-all-three-get-wrong) below.
 
-Test a change with `rerail rules test packs/pack-message-wording.draft.json`, raise its `revision`, and add it again;
-`test/cli/pack-message-wording.test.ts` runs its cases.
+### Rerail
+
+```sh
+rerail rules add packs/pack-message-rerail.draft.json
+```
+
+[`local:pack-message-rerail`](pack-message-rerail.draft.json) flags a message that names Rerail, in any case. A
+`` `// rerail-ignore` `` comment in backticks passes.
+
+What it gets wrong: backticks hide the name as they do a tool's, and the [quoting limits](#what-all-three-get-wrong)
+below.
+
+### Shouting
+
+```sh
+rerail rules add packs/pack-message-shouting.draft.json
+```
+
+[`local:pack-message-shouting`](pack-message-shouting.draft.json) flags NEVER, MUST or ALWAYS in capitals before a
+lower-case word (`MUST NOT turn` included). A SQL keyword such as `GENERATED ALWAYS AS` passes.
+
+What it gets wrong:
+
+- **Shouting before anything but a lower-case word passes**: `NEVER.` at the end of a sentence, `NEVER, ever`.
+- The [quoting limits](#what-all-three-get-wrong) below.
+
+### What all three get wrong
+
+- **An apostrophe that pairs with no quote**, such as a Rust lifetime (`'a`) or `print()'s`, ends what a rule reads of
+  a message, unless a quote later in the message pairs with it: then what that quote opened counts as unquoted.
+
+Test a change with `rerail rules test packs/<rule>.draft.json`, raise its `revision`, and add it again. A new rule is
+one more `packs/pack-message-<name>.draft.json`: `test/cli/pack-message-wording.test.ts` runs the cases of every
+`packs/*.draft.json`.
 
 ## Third-party material
 

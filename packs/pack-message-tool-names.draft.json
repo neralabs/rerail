@@ -2,10 +2,10 @@
   "kind": "code",
   "rule": {
     "format": "rerail.policy/v1",
-    "id": "local:pack-message-wording",
+    "id": "local:pack-message-tool-names",
     "revision": 1,
     "mode": "steer",
-    "description": "Keep rule pack messages free of upstream tool names, the name Rerail, and NEVER, MUST or ALWAYS in capitals; quoted code may hold any word.",
+    "description": "Keep upstream tool names, and rule ids that start with one, out of rule pack messages; quoted code may name a tool.",
     "scope": {
       "include": [
         "packs/*/rules/*.json",
@@ -27,34 +27,6 @@
           "anchor": "capture.HIT",
           "message": "Reword this message to say what to change, without `$HIT` or a rule id; backtick only code to write, such as a suppression comment."
         }
-      },
-      {
-        "id": "rerail",
-        "forbid": {
-          "regex": {
-            "source": "file.content",
-            "pattern": "\"violation\"\\s*:\\s*(?:\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\")*\\})*\\})*\\})*\\})*\\})*\\})*\\})*?)+?\"message\"\\s*:\\s*(?:(?:\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\")*\\})*\\})*\\})*\\})*\\})*\\})*\\})*?)*?\\{(?:(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\")*\\})*\\})*\\})*\\})*\\})*\\})*\\})*?,)?\\s*\"(?:(?:[^$\"\\\\]|\\\\.)(?:[^\"\\\\]|\\\\.)*)?\"\\s*:\\s*)?\"(?:'(?:[^'\"\\\\]|\\\\.)*'[^\"\\\\`'\\w$])*(?:\\w+(?:'\\w+)*|[^\"\\\\`'\\w$](?:'(?:[^'\"\\\\]|\\\\.)*'[^\"\\\\`'\\w$])*|\\$+(?:\\w+|\\{[^{}\"\\\\]*\\}|[^\"\\\\`'\\w${])|\\\\.|`(?:[^`\"\\\\]|\\\\.)+`)*?\\b(?P<HIT>(?i:rerail))\\b"
-          }
-        },
-        "violation": {
-          "code": "MESSAGE_NAMES_RERAIL",
-          "anchor": "capture.HIT",
-          "message": "Reword this message without `$HIT`, which the reader already sees with every message; backtick only code to write."
-        }
-      },
-      {
-        "id": "shouting",
-        "forbid": {
-          "regex": {
-            "source": "file.content",
-            "pattern": "\"violation\"\\s*:\\s*(?:\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\")*\\})*\\})*\\})*\\})*\\})*\\})*\\})*?)+?\"message\"\\s*:\\s*(?:(?:\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\")*\\})*\\})*\\})*\\})*\\})*\\})*\\})*?)*?\\{(?:(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\")*\\})*\\})*\\})*\\})*\\})*\\})*\\})*?,)?\\s*\"(?:(?:[^$\"\\\\]|\\\\.)(?:[^\"\\\\]|\\\\.)*)?\"\\s*:\\s*)?\"(?:'(?:[^'\"\\\\]|\\\\.)*'[^\"\\\\`'\\w$])*(?:\\w+(?:'\\w+)*|[^\"\\\\`'\\w$](?:'(?:[^'\"\\\\]|\\\\.)*'[^\"\\\\`'\\w$])*|\\$+(?:\\w+|\\{[^{}\"\\\\]*\\}|[^\"\\\\`'\\w${])|\\\\.|`(?:[^`\"\\\\]|\\\\.)+`)*?\\b(?P<HIT>NEVER|MUST|ALWAYS)(?:\\s+NOT)?\\s+[a-z`]"
-          }
-        },
-        "violation": {
-          "code": "MESSAGE_SHOUTS",
-          "anchor": "capture.HIT",
-          "message": "Write `$HIT` in lower case and state the instruction plainly."
-        }
       }
     ]
   },
@@ -75,18 +47,6 @@
       {
         "path": "packs/javascript/rules/eslint-sort-keys.json",
         "content": "{\"format\":\"rerail.policy/v1\",\"id\":\"eslint-sort-keys\",\"revision\":1,\"mode\":\"steer\",\"description\":\"Pass a timeout to every requests call.\",\"scope\":{\"include\":[\"**/*.py\"],\"exclude\":[]},\"clauses\":[{\"id\":\"c\",\"forbid\":{\"regex\":{\"source\":\"file.content\",\"pattern\":\"requests\\\\.get\\\\(\"}},\"violation\":{\"code\":\"X\",\"anchor\":\"witness.span\",\"message\":{\"$option\":\"caseSensitive\",\"cases\":{\"false\":{\"$option\":\"order\",\"cases\":{\"asc\":{\"$option\":\"natural\",\"cases\":{\"true\":\"Sort these keys in natural ascending order.\"},\"default\":\"Sort these keys in ascending order.\"}},\"default\":{\"$option\":\"natural\",\"cases\":{\"true\":\"Sort these keys in natural descending order.\"},\"default\":\"Sort these keys in descending order.\"}}},\"default\":{\"$option\":\"order\",\"cases\":{\"desc\":{\"$option\":\"natural\",\"cases\":{\"true\":\"Sort these keys in natural descending order.\"},\"default\":\"Sort these keys in descending order.\"}},\"default\":{\"$option\":\"natural\",\"cases\":{\"true\":\"Sort these keys in natural ascending order.\"},\"default\":\"Sort these keys in ascending order, as Biome does.\"}}}}}]}"
-      },
-      {
-        "path": "packs/python/rules/ruff-s113-request-without-timeout.json",
-        "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"ruff-s113-request-without-timeout\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Rerail found a request without a timeout; pass `timeout=`.\"\n      }\n    }\n  ]\n}\n"
-      },
-      {
-        "path": "packs/python/rules/ruff-s501-request-with-no-cert-validation.json",
-        "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"ruff-s501-request-with-no-cert-validation\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Keep `verify=True`; you MUST NOT turn off certificate checks.\"\n      }\n    }\n  ]\n}\n"
-      },
-      {
-        "path": "packs/php/candidates/rules/phpstan-no-debug.json",
-        "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"phpstan-no-debug\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": {\n          \"$option\": \"functions\",\n          \"cases\": {\n            \"[\\\"dd\\\"]\": \"Remove this dd() call.\"\n          },\n          \"default\": \"NEVER leave dump() in committed code; log through the logger instead.\"\n        }\n      }\n    }\n  ]\n}\n"
       },
       {
         "path": "packs/javascript/rules/eslint-no-console-levels.json",
@@ -119,20 +79,8 @@
         "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"eslint-no-restricted-syntax\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Don't add 'eslint' to this list; it's a reserved key.\"\n      }\n    }\n  ]\n}\n"
       },
       {
-        "path": "packs/php/rules/phpcs-no-silenced-errors.json",
-        "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"phpcs-no-silenced-errors\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Add a `// rerail-ignore <id> -- <reason>` comment only where silencing is intended.\"\n      }\n    }\n  ]\n}\n"
-      },
-      {
         "path": "packs/rust/candidates/rules/clippy-redundant-static-lifetimes.json",
         "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"clippy-redundant-static-lifetimes\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Remove this 'static; keep 'biome' as the option value.\"\n      }\n    }\n  ]\n}\n"
-      },
-      {
-        "path": "packs/python/rules/bandit-b108-hardcoded-tmp-directory.json",
-        "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"bandit-b108-hardcoded-tmp-directory\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Use `tempfile.mkdtemp()`; a fixed /tmp path must never be shared between runs.\"\n      }\n    }\n  ]\n}\n"
-      },
-      {
-        "path": "packs/sql/candidates/rules/sqlfluff-identity-column.json",
-        "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"sqlfluff-identity-column\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Declare this column GENERATED ALWAYS AS IDENTITY instead of SERIAL.\"\n      }\n    }\n  ]\n}\n"
       },
       {
         "path": "packs/python/candidates/probes/rules/bandit-b101-assert-used.json",
