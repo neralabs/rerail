@@ -140,8 +140,8 @@ Fix these, or tell the user in one line why you won't.
 ```
 
 The block already gives the location, the rule id, the lead and the latitude ("fix or explain"), so the message only
-advises what to do about this code. Check 8 enforces the description criteria a machine can check, and reports the
-message criteria it can check as advisories; review covers the rest (`just rerail-guidance-review` shows every rule's
+advises what to do about this code. Check 8 enforces the description criteria a machine can check; review covers the
+rest of the description criteria and all of the message criteria (`just rerail-guidance-review` shows every rule's
 description, messages and the block for each of its cases).
 
 ### Description
@@ -190,14 +190,12 @@ For example: `This exception is silently discarded with pass. Handle or log it, 
 suppression is intentional.`, or `` `$NAME` has cyclomatic complexity $CCN, over the ceiling of 6. Decompose it into smaller
 functions. ``
 
-These criteria are advisory and never block a merge. Check 8 reports a message that misses 3, 5 or 6 where a machine
-can tell, as an advisory that fails neither the pack nor the rule. The guidance review covers the rest.
+These criteria are for reviewers and never block a merge: no check reads a message's text.
 
 ## The validation contract
 
 Implemented: `validatePack(directory, { corpora?, corpusRoot?, listed? })` in `conformance/pack-validation.ts` runs
-checks 1 to 8 over one pack and returns each check's failures, each rule's status (`ok`, `failed` or `not-supported-yet`)
-and check 8's message advisories.
+checks 1 to 8 over one pack and returns each check's failures and each rule's status (`ok`, `failed` or `not-supported-yet`).
 `test/engine/catalog/packs.test.ts` calls it for every directory under `packs/`, with one test per check and one per rule, and has
 the validator's own tests over the fixture packs in `fixtures/packs/`. `npm test` runs it with the local core.
 Running it against the newest published core inside each pack's range is for pack CI, which does not exist yet.
@@ -305,17 +303,9 @@ Precisely:
 8. Every rule document's description, shipped and candidate (not probes), meets the parts of the
    [description](#description) criteria a machine can check (`textFailures`): it is present, one sentence ending in a
    period, at most 200 characters, with no backticks, and names no upstream tool outside quoted text (`'…'` or
-   `` `…` ``). Messages are advisory (`messageAdvisories`): each message, and each text a message an option chooses can
-   be, that is over 200 characters, holds its rule's id or the upstream rule code `conformance.json` says it ports
-   (quoted or not; a code that is a plain word, such as `precedence`, is not looked for), names an upstream tool, Rerail
-   or steering outside quoted text, hedges ("consider", "may be", "may permit", "possibly", or a review or audit as the
-   action) or is emphatic (NEVER, MUST, ALWAYS, "strongly", "extremely") is listed in the result's `advisories`, which
-   fail neither the pack nor the rule. On a pull request, CI's Message advisories job lists them for the rule documents
-   the pull request adds or changes, in one comment that collapses the earlier ones as outdated (a pull request from a
-   fork gets them in the job summary). `node --import tsx scripts/review/message-advisories.ts` lists them for the
-   documents changed since `--base <commit>`, or for every document with `--all`. Whether a message gives advice at
-   all is left to review: a check for it flagged 240 of 595 rules, among them 35 of the 65 Python steers the study
-   rated good.
+   `` `…` ``). Violation messages are not checked: the [message](#message) criteria are for review. A message's
+   `$` placeholders are checked by check 1, since a rule whose message names a capture its clause doesn't bind does not
+   compile.
 
 **Languages not supported yet.** A pack may hold code rules for a language core's
 [language registry](language-packs.md) lists as `planned`, or rules that read a capability their language has

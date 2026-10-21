@@ -75,69 +75,6 @@ jobs:
           npm run check:ui-tokens
           npm run check:reference
 
-  # Check 8's message advisories (docs/pack-format.md, "Message") on the rule documents a pull request adds or changes.
-  # They fail nothing: the job posts them as one comment and collapses the earlier ones as outdated, or leaves the latest
-  # one when the advisories are unchanged. Fork pull requests get a read-only token, so they read the job summary instead.
-  message-advisories:
-    name: Message advisories
-    if: github.event_name == 'pull_request' && github.head_ref != 'changeset-release/main'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      issues: write
-      pull-requests: write
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-        with:
-          # The pull request's merge commit and its first parent, the base the documents are compared with.
-          fetch-depth: 2
-          persist-credentials: false
-
-      - uses: ./.github/actions/node-deps
-
-      - name: List the advisories
-        run: |
-          node --import tsx scripts/review/message-advisories.ts --base HEAD^1 --out "$RUNNER_TEMP/message-advisories.md"
-          if [ -s "$RUNNER_TEMP/message-advisories.md" ]; then
-            cat "$RUNNER_TEMP/message-advisories.md" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "No message advisories on the rule documents this pull request adds or changes." >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Post the advisories on the pull request
-        if: github.event.pull_request.head.repo.full_name == github.repository
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number }}
-        run: |
-          set -euo pipefail
-          marker='<!-- rerail-message-advisories -->'
-          body="$RUNNER_TEMP/message-advisories.md"
-          # The comments this job posted that are not collapsed yet, oldest first, one base64 [id, body] pair a line.
-          open="$RUNNER_TEMP/message-advisories-open.txt"
-          gh api graphql -F owner="${REPO%/*}" -F name="${REPO#*/}" -F number="$PR" -f query='
-            query($owner: String!, $name: String!, $number: Int!) {
-              repository(owner: $owner, name: $name) { pullRequest(number: $number) {
-                comments(last: 100) { nodes { id body isMinimized author { login } } } } } }' \
-            --jq ".data.repository.pullRequest.comments.nodes[] | select(.author.login == \"github-actions\" or .author.login == \"github-actions[bot]\") | select(.body | startswith(\"$marker\")) | select(.isMinimized | not) | [.id, .body] | @base64" \
-            > "$open"
-          latest="$(tail -n 1 "$open")"
-          if [ -n "$latest" ] && [ -s "$body" ] && [ "$(printf '%s' "$latest" | base64 -d | jq -r '.[1]')" = "$(cat "$body")" ]; then
-            echo "The latest comment already lists these advisories."
-            exit 0
-          fi
-          while read -r entry; do
-            id="$(printf '%s' "$entry" | base64 -d | jq -r '.[0]')"
-            gh api graphql -f id="$id" \
-              -f query='mutation($id: ID!) { minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) { minimizedComment { isMinimized } } }' \
-              > /dev/null || echo "::warning::could not collapse the earlier message advisories comment $id"
-          done < "$open"
-          if [ -s "$body" ]; then gh api "repos/$REPO/issues/$PR/comments" -F body=@"$body" > /dev/null; fi
-
   # Pull requests that touch none of the engine's inputs skip the Rust jobs. The engine's tests also
   # read conformance/, fixtures/, the packs' rules and the language registry (languages/ and its
   # generated TS module); package.json holds the cargo commands, .gitattributes the LFS objects the

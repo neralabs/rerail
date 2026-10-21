@@ -59,8 +59,6 @@ export interface PackValidation {
   /** Each check's failures, in a stable order; an empty list passes. */
   checks: Record<PackCheckName, string[]>;
   rules: PackRuleResult[];
-  /** Check 8's messages that miss the message criteria a machine can check; advice that fails neither the pack nor a rule. */
-  advisories: string[];
   pass: boolean;
 }
 
@@ -429,9 +427,8 @@ function readAuthored(directory: string): { authored: Set<string>; failures: str
 
 const PACK_LIST_MODULE = "src/engine/catalog/pack-list.generated.ts";
 
-/** The longest description, for people browsing the catalog, and the longest message, for the agent (docs/pack-format.md, "Rule text"). */
+/** The longest description, for people browsing the catalog (docs/pack-format.md, "Rule text"). */
 export const DESCRIPTION_CHARS = 200;
-export const MESSAGE_CHARS = 200;
 /** Upstream tools a rule's text must not name; a tool's plugins share its name (`eslint-plugin-react`, `typescript-eslint`). */
 const TOOL_NAMES = /\b(?:eslint|oxlint|biome|ruff|bandit|pylint|flake8|clippy|sqlfluff|phpstan|psalm|phpcs|tlint|bladestan|lizard)\b/iu;
 /** A sentence end inside the text: a full stop or question mark, then a capital. */
@@ -440,37 +437,19 @@ const SENTENCE_BREAK = /[.?]\s+\p{Lu}/u;
 const QUOTED = /'[^']*'|`[^`]*`/gu;
 /** Abbreviations whose full stop ends no sentence. */
 const ABBREVIATION = /\b(?:e\.g|i\.e|etc|vs)\./giu;
-/**
- * A message that hedges instead of advising: "consider", "may be", "possibly", or a review or audit as the whole action.
- * "May" that permits or explains ("callbacks may nest 2 deep", "the object may override it") is not a hedge.
- */
-const HEDGE = /\b(?:consider(?:ing)?|maybe|perhaps|possibly|might|may (?:be|not|permit|cause|lead|expose)|should be reviewed)\b|(?:^|[.;]\s+)(?:review|audit)\b/iu;
-/** A message that shouts or presses: capitals, or an intensifier ("strongly discouraged"). */
-const EMPHATIC = /\b(?:NEVER|MUST|ALWAYS)\b|\b(?:strongly|extremely)\b/u;
-
-/** Every text a message can be: the message, or each case and template of a message an option chooses. */
-function messageTexts(message: unknown): string[] {
-  if (typeof message === "string") return [message];
-  if (message === null || typeof message !== "object") return [];
-  return Object.entries(message).flatMap(([key, value]) => (key === "$option" ? [] : messageTexts(value)));
-}
-
-/** A rule document's JSON, or undefined for one that does not parse: check 1 reports it. */
-function parsedDocument(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-}
 
 /**
- * Check 8 (text), the part that fails: a rule document's description meets the description criteria a machine can
- * check. It is one sentence ending in a period, at most DESCRIPTION_CHARS, with no backticks and no tool name.
+ * Check 8 (text): a rule document's description meets the description criteria a machine can check. It is one
+ * sentence ending in a period, at most DESCRIPTION_CHARS, with no backticks and no tool name. Violation messages are
+ * left to review (docs/pack-format.md, "Message"): no check reads them.
  */
 export function textFailures(file: string, text: string): string[] {
-  const document = parsedDocument(text);
-  if (document === undefined) return [];
+  let document: unknown;
+  try {
+    document = JSON.parse(text);
+  } catch {
+    return []; // Check 1 reports a document that does not parse.
+  }
   const description = (document as { description?: unknown }).description;
   if (typeof description !== "string" || description.trim() === "") return [`${file}: has no description`];
   const failures: string[] = [];
@@ -481,53 +460,6 @@ export function textFailures(file: string, text: string): string[] {
   if (TOOL_NAMES.test(plain)) failures.push(`${file}: description names an upstream tool: ${description}`);
   if (description.includes("`")) failures.push(`${file}: description holds code (backticks): ${description}`);
   return failures;
-}
-
-/**
- * The pattern for a rule id or upstream rule code standing alone in a message, any case, `-` and `_` alike; none for one
- * that is a plain word (Clippy's `precedence`), which a message may well use as a word.
- */
-function codePattern(code: unknown): RegExp | undefined {
-  if (typeof code !== "string" || !/[\d_-]/u.test(code)) return undefined;
-  const body = code.split(/[-_]/u).map(part => part.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")).join("[-_]");
-  return new RegExp(`(?<![\\w-])${body}(?![\\w-])`, "iu");
-}
-
-/**
- * Check 8 (text), the advisory part: each violation message that misses the message criteria a machine can check. It
- * is over MESSAGE_CHARS, repeats the rule id the block already shows, names an upstream tool or the upstream rule code
- * it ports (`upstreamRule`, from conformance.json), names Rerail or steering, hedges, or is emphatic. Whether it gives
- * advice, and says when to leave the code alone, is for review.
- */
-export function messageAdvisories(file: string, text: string, upstreamRule?: string): string[] {
-  const document = parsedDocument(text);
-  if (document === undefined) return [];
-  const id = codePattern((document as { id?: unknown }).id);
-  const code = codePattern(upstreamRule);
-  const advisories: string[] = [];
-  const seen = new Set<string>();
-  const walk = (value: unknown): void => {
-    if (Array.isArray(value)) value.forEach(walk);
-    else if (value !== null && typeof value === "object") {
-      for (const [key, inner] of Object.entries(value)) {
-        if (key !== "message") walk(inner);
-        else for (const message of messageTexts(inner)) {
-          if (seen.has(message)) continue;
-          seen.add(message);
-          const plain = message.replace(QUOTED, "''");
-          if (message.length > MESSAGE_CHARS) advisories.push(`${file}: message is ${message.length} characters, over ${MESSAGE_CHARS}: ${message}`);
-          if (id?.test(message) === true) advisories.push(`${file}: message holds its rule id, which the block already shows: ${message}`);
-          if (TOOL_NAMES.test(plain)) advisories.push(`${file}: message names an upstream tool: ${message}`);
-          if (code?.test(message) === true) advisories.push(`${file}: message names its upstream rule code ${upstreamRule}: ${message}`);
-          if (/\b(?:rerail|steer)/iu.test(plain)) advisories.push(`${file}: message names Rerail or steering: ${message}`);
-          if (HEDGE.test(plain)) advisories.push(`${file}: message hedges instead of advising: ${message}`);
-          if (EMPHATIC.test(plain)) advisories.push(`${file}: message is emphatic: ${message}`);
-        }
-      }
-    }
-  };
-  walk((document as { clauses?: unknown }).clauses);
-  return advisories;
 }
 
 /**
@@ -789,15 +721,12 @@ export async function validatePack(directory: string, options: ValidatePackOptio
   for (const failure of manifestFailures(directory, packJson, options.listed ?? resolve(dirname(directory)) === PACKS_DIRECTORY)) fail("manifest", failure);
 
   // Check 8: text. Every rule document's description, shipped and candidate, meets the parts of the description
-  // criteria a machine can check; its violation messages are only advised on. Probes are facts the ports are built on,
-  // read by no one, so are left out.
+  // criteria a machine can check; violation messages are left to review. Probes are facts the ports are built on, read
+  // by no one, so are left out.
   const listedBy = new Map((pack?.rules ?? []).map(rule => [rule.document, rule.id]));
   const documents = [...filesUnder(directory, join(directory, "rules")), ...candidateDocuments(directory, filesUnder(directory, join(directory, "candidates"))).filter(file => !file.startsWith("candidates/probes/"))];
-  const advisories: string[] = [];
   for (const file of documents) {
-    const text = readFileSync(join(directory, file), "utf8");
-    for (const failure of textFailures(file, text)) fail("text", failure, listedBy.get(file));
-    advisories.push(...messageAdvisories(file, text, portByDocument.get(file)?.upstream.rule));
+    for (const failure of textFailures(file, readFileSync(join(directory, file), "utf8"))) fail("text", failure, listedBy.get(file));
   }
 
   const rules = (pack?.rules ?? []).map((rule): PackRuleResult => {
@@ -807,5 +736,5 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     if (result?.kind === "not-supported-yet") return { id: rule.id, document: rule.document, status: "not-supported-yet", reason: result.reason };
     return { id: rule.id, document: rule.document, status: "ok" };
   });
-  return { id, directory, checks, rules, advisories, pass: Object.values(checks).every(failures => failures.length === 0) };
+  return { id, directory, checks, rules, pass: Object.values(checks).every(failures => failures.length === 0) };
 }

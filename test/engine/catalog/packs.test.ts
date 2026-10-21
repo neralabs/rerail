@@ -1,7 +1,6 @@
 /**
  * The pack validation contract (docs/pack-format.md): every packs/<id>/ directory passes checks 1 to 8, one test per
- * check, and reports each rule's status; a rule core cannot read yet is skipped as not supported yet. Check 8's message
- * advisories fail nothing; CI's Message advisories job posts them on a pull request. Check 4 scores
+ * check, and reports each rule's status; a rule core cannot read yet is skipped as not supported yet. Check 4 scores
  * ported rules on the tools' fixtures, and on the pinned corpora that are checked out (RERAIL_PACK_CORPORA=1: every
  * corpus, a missing checkout failing; 0: none).
  *
@@ -15,7 +14,7 @@ import { join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, test, vi } from "vitest";
 import { z } from "zod";
-import { messageAdvisories, PACK_CHECKS, packedFileFailures, textFailures, validatePack, type PackCheckName, type PackValidation, type ValidatePackOptions } from "../../../conformance/pack-validation.js";
+import { PACK_CHECKS, packedFileFailures, textFailures, validatePack, type PackCheckName, type PackValidation, type ValidatePackOptions } from "../../../conformance/pack-validation.js";
 import { compareDeterministicStrings } from "../../../src/engine/stable-json.js";
 import { fixturesPath } from "../../support/oracles.js";
 
@@ -380,8 +379,8 @@ describe("validatePack", () => {
     expect(validation.pass).toBe(false);
   });
 
-  it("advises on a message that names Rerail and its rule id, and passes the pack and the rule", async () => {
-    const message = "Rerail found a pass. Remove it (pass-statement)";
+  it("passes a rule whatever its message says: messages are left to review", async () => {
+    const message = `NEVER keep this pass (pass-statement); Rerail flags it.${" Remove it.".repeat(20)}`;
     const validation = await validatePack(
       changed("valid", directory => editJson(join(directory, "rules", "pass-statement.json"), document => ({
         ...document,
@@ -392,65 +391,12 @@ describe("validatePack", () => {
     expect(failing(validation)).toEqual({});
     expect(validation.pass).toBe(true);
     expect(validation.rules.find(rule => rule.id === "pass-statement")?.status).toBe("ok");
-    expect(validation.advisories).toEqual([
-      `rules/pass-statement.json: message holds its rule id, which the block already shows: ${message}`,
-      `rules/pass-statement.json: message names Rerail or steering: ${message}`,
-    ]);
   });
 
   describe("check 8: text", () => {
-    it("advises on every text a message an option chooses can be, once each", () => {
-      const long = `Remove this pass statement${"!".repeat(190)}.`;
-      const document = { description: "Remove pass statements.", clauses: [{ violation: { message: { $option: "strict", cases: { true: long, false: "Remove this pass statement." }, default: "Remove this pass statement." } } }] };
-      expect(textFailures("rules/pass.json", JSON.stringify(document))).toEqual([]);
-      expect(messageAdvisories("rules/pass.json", JSON.stringify(document))).toEqual([`rules/pass.json: message is 217 characters, over 200: ${long}`]);
-    });
-
-    it("lets a message open with what was found and run to more than one sentence", () => {
-      const document = { id: "complexity-cyclomatic-typescript", description: "Keep functions at cyclomatic complexity 6 or below.", clauses: [{ violation: { message: "`$NAME` has cyclomatic complexity $CCN, over the ceiling of 6. Decompose it into smaller functions." } }] };
-      expect(messageAdvisories("rules/x.json", JSON.stringify(document))).toEqual([]);
-    });
-
-    it("advises on a message that shouts or names its rule id, even in quoted text", () => {
-      const message = "NEVER leave this branching; put `// rerail-ignore complexity-cyclomatic-typescript -- <reason>` above it.";
-      const document = { id: "complexity-cyclomatic-typescript", description: "Keep functions at cyclomatic complexity 6 or below.", clauses: [{ violation: { message } }] };
-      expect(messageAdvisories("rules/x.json", JSON.stringify(document))).toEqual([
-        `rules/x.json: message holds its rule id, which the block already shows: ${message}`,
-        `rules/x.json: message is emphatic: ${message}`,
-      ]);
-    });
-
-    it("advises on a message that hedges or presses, and not on a may that permits or explains", () => {
-      const advised = (message: string): string[] => messageAdvisories("rules/x.json", JSON.stringify({ id: "x", clauses: [{ violation: { message } }] }));
-      for (const message of [
-        "Consider using a list literal instead of `str.split`",
-        "Using xml.sax to parse untrusted XML may permit XML attacks; use defusedxml.",
-        "Loop control variable `$NAME` may not be used within loop body",
-        "Audit URL opening for permitted schemes; file or custom schemes may be unexpected.",
-      ]) expect(advised(message)).toEqual([`rules/x.json: message hedges instead of advising: ${message}`]);
-      const pressed = "Star-arg unpacking after a keyword argument is strongly discouraged";
-      expect(advised(pressed)).toEqual([`rules/x.json: message is emphatic: ${pressed}`]);
-      expect(advised("Flatten this callback with a named function; callbacks may nest 2 deep.")).toEqual([]);
-      expect(advised("Call Object.prototype.$PROP.call(obj, ...) instead; the object may override $PROP or have no prototype.")).toEqual([]);
-    });
-
-    it("advises on a message that names the upstream rule code it ports, in any case, quoted or not", () => {
-      const advised = (message: string, upstream: string): string[] => messageAdvisories("rules/x.json", JSON.stringify({ id: "bandit-b101-assert-used", clauses: [{ violation: { message } }] }), upstream);
-      expect(advised("Bandit B101 (assert-used)", "B101")).toEqual([
-        "rules/x.json: message names an upstream tool: Bandit B101 (assert-used)",
-        "rules/x.json: message names its upstream rule code B101: Bandit B101 (assert-used)",
-      ]);
-      expect(advised("Keep it with `# noqa: b101` if the assert guards a test.", "B101")).toEqual([
-        "rules/x.json: message names its upstream rule code B101: Keep it with `# noqa: b101` if the assert guards a test.",
-      ]);
-      expect(advised("Raise an error instead of this assert; asserts are stripped with -O.", "B101")).toEqual([]);
-      expect(advised("Add parentheses to make the precedence explicit.", "precedence")).toEqual([]);
-    });
-
     it("reads no sentence end in an abbreviation or quoted text, and no tool name in a quoted value", () => {
-      const document = { description: "Use field init shorthand, e.g. Point { x } for Point { x: x }.", clauses: [{ violation: { message: "Resolve this 'eslint' comment ('Note. Later'), e.g. Fix it now." } }] };
+      const document = { description: "Use field init shorthand, e.g. Point { x } for Point { x: x }, not 'eslint' style.", clauses: [] };
       expect(textFailures("rules/x.json", JSON.stringify(document))).toEqual([]);
-      expect(messageAdvisories("rules/x.json", JSON.stringify(document))).toEqual([]);
     });
   });
 

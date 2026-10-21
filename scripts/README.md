@@ -15,5 +15,4 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   and packing, publishing under `next`, promotion to `latest`, and the lockfile sync after `changeset version`.
 - `review/`: the guidance review (`just rerail-guidance-review`): every rule pack rule run on its examples and upstream
   fixtures, with the steer the coding agent reads, in a local page where each rule's guidance is approved or sent back
-  with comments. Also the message advisories (`message-advisories.ts`) CI posts on a pull request for the rule
-  documents it adds or changes.
+  with comments.
