@@ -223,6 +223,23 @@ CREATE INDEX IF NOT EXISTS context_check_results_by_check
 ON context_check_results(check_id, source_id);
 CREATE INDEX IF NOT EXISTS context_check_results_by_context
 ON context_check_results(context_hash_id);
+-- The clauses of one code rule a source's evaluation under a context found nothing in, 64 to a
+-- word: bit i of `evaluated` is clause 64*word+i of the rule whose completion check `check_id` is.
+-- Results that found something (a witness, a failure, a syntax report) are context_check_results
+-- rows; a clause in neither is unknown. Older binaries never read this table, and every reference
+-- cascades, so their reclamation cannot leave a word naming another check, context or source.
+CREATE TABLE IF NOT EXISTS context_check_completions (
+    source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE,
+    context_hash_id INTEGER NOT NULL REFERENCES hashes(hash_id) ON DELETE CASCADE,
+    check_id INTEGER NOT NULL REFERENCES candidate_checks(check_id) ON DELETE CASCADE,
+    word INTEGER NOT NULL CHECK(word >= 0),
+    evaluated INTEGER NOT NULL,
+    PRIMARY KEY(source_id, context_hash_id, check_id, word)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS context_check_completions_by_check
+ON context_check_completions(check_id, source_id);
+CREATE INDEX IF NOT EXISTS context_check_completions_by_context
+ON context_check_completions(context_hash_id);
 
 -- A directory can be restored only when both its Git tree and the package-marker chain that
 -- determines Python module contexts agree.

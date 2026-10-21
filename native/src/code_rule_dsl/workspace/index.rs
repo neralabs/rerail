@@ -212,7 +212,7 @@ fn restore_prepared_file(
     state: &mut WorkspaceState,
     input: FileInput,
     stored: StoredPathObjects,
-    persisted: &[crate::content_store::StoredLocalResult],
+    persisted: &crate::content_store::StoredLocalResults,
 ) -> Result<bool> {
     // A `calls` closure reads each Python file's call summary, which only a job records.
     if CrossFileScheduler::needs_job(state, &input) {
@@ -226,7 +226,8 @@ fn restore_prepared_file(
         &code_rules,
         &mut state.candidate_sets,
     );
-    let Some(restored) = restore_complete_results(&mut file, &state.code_rules, persisted) else {
+    let Some(restored) = restore_complete_results(&mut file, &state.code_rules, &[persisted])
+    else {
         return Ok(false);
     };
     file.source_digest = stored

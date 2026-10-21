@@ -130,11 +130,12 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
         if let Some(storage) = context.storage {
             let source_hash = HashKey::from_sha256_digest(file.source_digest);
             let result_key = (source_hash, result_context(file));
-            let persisted = result_manifest
-                .get(&result_key)
-                .map(|results| results.as_slice());
+            let persisted = result_manifest.get(&result_key).map(Arc::as_ref);
             if context.summarize {
-                CrossFileScheduler::restore_summary(file, persisted.unwrap_or_default());
+                CrossFileScheduler::restore_summary(
+                    file,
+                    persisted.map_or(&[][..], |persisted| &persisted.results),
+                );
             }
             restore_persisted_file(
                 &stored_documents,

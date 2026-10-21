@@ -2844,6 +2844,26 @@ fn stored_local_results(store: &std::path::Path) -> Vec<(String, String, i64, i6
         .unwrap()
 }
 
+/// Every stored completion word as `(path, context, word, bits)`, in that order.
+fn stored_completions(store: &std::path::Path) -> Vec<(String, i64, i64, i64)> {
+    let connection = rusqlite::Connection::open(store).unwrap();
+    let mut statement = connection
+        .prepare(
+            "SELECT ps.value,r.context_hash_id,r.word,r.evaluated FROM context_check_completions r \
+             JOIN workspace_overlay o ON o.source_id=r.source_id \
+             JOIN paths p ON p.path_id=o.path_id JOIN strings ps ON ps.string_id=p.string_id \
+             ORDER BY 1,2,3",
+        )
+        .unwrap();
+    statement
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap()
+}
+
 #[test]
 fn stored_local_results_and_their_read_back_are_unchanged_by_eviction_round_trips() {
     let _slot = WORKSPACE_TEST_SLOT.lock();
@@ -2880,6 +2900,20 @@ fn stored_local_results_and_their_read_back_are_unchanged_by_eviction_round_trip
             "{clause}: {stored:?}"
         );
     }
+    // A result that found nothing is a bit of its code rule's completion word, not a row.
+    for path in ["a.py", "b.py"] {
+        assert!(
+            !stored.iter().any(|row| row.0 == path && row.1 == "never"),
+            "{path}: {stored:?}"
+        );
+    }
+    let completions = stored_completions(&directory.store());
+    for path in ["a.py", "b.py"] {
+        assert!(
+            completions.iter().any(|word| word.0 == path),
+            "{path}: {completions:?}"
+        );
+    }
     for (path, clause, _, raw_length, frame) in &stored {
         let bytes = zstd::stream::decode_all(std::io::Cursor::new(frame)).unwrap();
         assert_eq!(bytes.len() as i64, *raw_length, "{path} {clause}");
@@ -2911,6 +2945,11 @@ fn stored_local_results_and_their_read_back_are_unchanged_by_eviction_round_trip
             stored,
             "revision {revision}"
         );
+        assert_eq!(
+            stored_completions(&directory.store()),
+            completions,
+            "revision {revision}"
+        );
     }
     workspace.close();
 
@@ -2924,6 +2963,11 @@ fn stored_local_results_and_their_read_back_are_unchanged_by_eviction_round_trip
     assert_eq!(
         stored_local_results(&directory.store()),
         stored,
+        "after restart"
+    );
+    assert_eq!(
+        stored_completions(&directory.store()),
+        completions,
         "after restart"
     );
     restarted.close();
@@ -4011,12 +4055,60 @@ fn budget_verdicts_are_kept_per_set_and_preferred() {
         [stored(&own, None), stored(&scoped, budget)],
         [stored(&scoped, budget), stored(&own, None)],
     ] {
-        let (selected, undecodable) = keys.select(&results, &expected, "a.py");
+        let results = crate::content_store::StoredLocalResults {
+            results: results.to_vec(),
+            completions: Vec::new(),
+        };
+        let (selected, undecodable) = keys.select(&[&results], &expected, "a.py");
         assert!(!undecodable);
         assert_eq!(selected[&(0, 0)].1, budget);
         // Another set does not read this set's budget verdict.
-        let (selected, _) = edited_keys.select(&results, &expected, "a.py");
+        let (selected, _) = edited_keys.select(&[&results], &expected, "a.py");
         assert_eq!(selected[&(0, 0)].1, None);
+    }
+
+    // A completion word answers a clause empty where no row answers it, for the code rule of its
+    // identity only, and only its code rule's clauses: a row (here the budget verdict) wins.
+    let word = |rule, evaluated| crate::content_store::StoredCompletion {
+        rule,
+        word: 0,
+        evaluated,
+    };
+    let both = std::collections::HashSet::from([(0, 0), (1, 0)]);
+    let words = crate::content_store::StoredLocalResults {
+        results: Vec::new(),
+        completions: vec![word(keys.rules[0], 0b1), word(keys.rules[1], 0b10)],
+    };
+    let (selected, undecodable) = keys.select(&[&words], &both, "a.py");
+    assert!(!undecodable);
+    assert_eq!(
+        selected.keys().copied().collect::<Vec<_>>(),
+        [(0, 0)],
+        "bit 1 names no clause of the one-clause code rule"
+    );
+    let (witnesses, failure, syntax) = &selected[&(0, 0)];
+    assert!(witnesses.is_empty() && failure.is_none() && syntax.is_none());
+    let other = crate::content_store::StoredLocalResults {
+        results: Vec::new(),
+        completions: vec![word(keys.rules[1], 0b1)],
+    };
+    assert!(edited_keys.select(&[&other], &both, "a.py").0.is_empty());
+    assert_eq!(
+        keys.select(&[&other], &both, "a.py")
+            .0
+            .into_keys()
+            .collect::<Vec<_>>(),
+        [(1, 0)]
+    );
+    let verdict = crate::content_store::StoredLocalResults {
+        results: vec![stored(&scoped, budget)],
+        completions: Vec::new(),
+    };
+    for persisted in [[&words, &verdict], [&verdict, &words]] {
+        assert_eq!(
+            keys.select(&persisted, &expected, "a.py").0[&(0, 0)].1,
+            budget
+        );
     }
 }
 

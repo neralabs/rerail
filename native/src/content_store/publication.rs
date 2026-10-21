@@ -9,12 +9,14 @@ use super::rows::{hash_params, validate_relative_path};
 use super::{
     BusyRetries, CODEC_ZSTD, CandidateClause, ContentStore, HashKey, MAX_PUBLICATION_BATCH,
     OverlayFilePublication, PublicationResult, STRING_CLAUSE_KEY, STRING_PATH, SourceId,
-    StoreError, StoreResult, StoredFile, TapeId, TapePayload, WorkspaceId, compress,
+    StoreError, StoreResult, StoredFile, TapeId, TapePayload, WorkspaceId, completion_candidate,
+    compress,
 };
 use crate::WORK_POOL;
 use rayon::prelude::*;
 use rusqlite::limits::Limit;
 use rusqlite::{Connection, Transaction, TransactionBehavior, params};
+use std::borrow::Cow;
 #[cfg(test)]
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -448,10 +450,9 @@ impl ContentStore {
         max_data_statements_per_pass = max_data_statements_per_pass.max(statement_count);
         transaction_statements += 2;
         reconciliation_passes += 1;
-        if publications
-            .iter()
-            .any(|publication| !publication.local_results.is_empty())
-        {
+        if publications.iter().any(|publication| {
+            !publication.local_results.is_empty() || !publication.local_completions.is_empty()
+        }) {
             self.local_result_cache
                 .lock()
                 .expect("local result cache mutex poisoned")
@@ -589,13 +590,10 @@ fn prepare_object_pass(
         for result in publication.local_results {
             hashes.insert(result.context);
         }
-        let candidates = publication.candidates.iter().chain(
-            publication
-                .local_results
-                .iter()
-                .map(|result| &result.candidate),
-        );
-        for candidate in candidates {
+        for completion in publication.local_completions {
+            hashes.insert(completion.context);
+        }
+        for candidate in publication_checks(publication) {
             let known = known_catalog.is_some_and(|catalog_id| {
                 known_interned.clauses.contains_key(&(
                     catalog_id,
@@ -982,6 +980,28 @@ fn execute_object_pass(
 
 pub(super) type PublicationCandidateIdentity = (HashKey, Option<CandidateClause>);
 
+/// Every check `publication` names: its candidates', its results' and its completion words'.
+fn publication_checks<'p>(
+    publication: &'p OverlayFilePublication<'_>,
+) -> impl Iterator<Item = Cow<'p, CandidateClause>> {
+    publication
+        .candidates
+        .iter()
+        .chain(
+            publication
+                .local_results
+                .iter()
+                .map(|result| &result.candidate),
+        )
+        .map(Cow::Borrowed)
+        .chain(
+            publication
+                .local_completions
+                .iter()
+                .map(|completion| Cow::Owned(completion_candidate(completion.rule))),
+        )
+}
+
 fn publication_candidate_identities(
     publications: &[OverlayFilePublication<'_>],
 ) -> Vec<PublicationCandidateIdentity> {
@@ -990,16 +1010,11 @@ fn publication_candidate_identities(
     for publication in publications {
         let catalog = publication.catalog.key();
         identities.entry((catalog, None)).or_insert((catalog, None));
-        for candidate in publication.candidates.iter().chain(
-            publication
-                .local_results
-                .iter()
-                .map(|result| &result.candidate),
-        ) {
+        for candidate in publication_checks(publication) {
             let key = (candidate.rule, candidate.clause.clone());
             identities
                 .entry((catalog, Some(key)))
-                .or_insert_with(|| (catalog, Some(candidate.clone())));
+                .or_insert_with(|| (catalog, Some(candidate.into_owned())));
         }
     }
     identities.into_values().collect()

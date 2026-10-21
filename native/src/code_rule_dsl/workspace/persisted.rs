@@ -24,8 +24,8 @@ use crate::code_rule_dsl::violations::{Captures, Span, Witness};
 use crate::code_rule_dsl::{language, tape};
 use crate::content_store::{
     BusyRetries, CandidateCatalogIdentity, CandidateClause, DocumentPayload, HashKey,
-    LocalResultPublication, OverlayFilePublication, PublicationResult, StoreError, StoredFile,
-    TapePayload, compress,
+    LocalCompletionPublication, LocalResultPublication, OverlayFilePublication, PublicationResult,
+    StoreError, StoredFile, StoredLocalResults, TapePayload, compress,
 };
 use napi::Result;
 use rayon::prelude::*;
@@ -52,7 +52,7 @@ thread_local! {
 pub(super) fn restore_complete_results(
     file: &mut FileState,
     code_rules: &[Arc<CompiledCodeRule>],
-    persisted: &[crate::content_store::StoredLocalResult],
+    persisted: &[&StoredLocalResults],
 ) -> Option<HashSet<ClauseId>> {
     let expected = file
         .candidates
@@ -225,7 +225,7 @@ pub(super) fn restore_persisted_file(
     file: &mut FileState,
     grammars: &mut BTreeMap<String, Arc<tape::Grammar>>,
     code_rules: &[Arc<CompiledCodeRule>],
-    persisted_results: Option<&[crate::content_store::StoredLocalResult]>,
+    persisted_results: Option<&StoredLocalResults>,
     source_hash: HashKey,
 ) -> Result<()> {
     let Some(stored) = stored_documents.objects.get(&source_hash) else {
@@ -240,11 +240,8 @@ pub(super) fn restore_persisted_file(
         .chain(&file.candidates.ast)
         .copied()
         .collect::<HashSet<_>>();
-    let (selected, _) = result_keys(code_rules)?.select(
-        persisted_results.into_iter().flatten(),
-        &eligible,
-        &file.input.path,
-    );
+    let (selected, _) =
+        result_keys(code_rules)?.select(persisted_results.as_slice(), &eligible, &file.input.path);
     let mut restored = HashSet::new();
     for (id, (witnesses, failure, syntax)) in selected {
         file.witnesses.insert(id, witnesses);
@@ -532,6 +529,11 @@ pub(super) struct ResultKeys {
     set_rules: Vec<HashKey>,
     /// Every stored check of the set's clauses: the clause, and whether it is the set-scoped one.
     identities: HashMap<CandidateClause, (ClauseId, bool)>,
+    /// The code rules of each identity in `rules`, for the completion words stored under it.
+    by_rule: HashMap<HashKey, Vec<usize>>,
+    /// Each code rule's clause count, by code rule index: its identity covers its clause ids, so a
+    /// completion word's bit names the same clause of every code rule of that identity.
+    clause_counts: Vec<usize>,
 }
 
 impl ResultKeys {
@@ -582,12 +584,21 @@ impl ResultKeys {
                 }
             }
         }
+        let mut by_rule = HashMap::<HashKey, Vec<usize>>::new();
+        for (code_rule_index, rule) in rules.iter().enumerate() {
+            by_rule.entry(*rule).or_default().push(code_rule_index);
+        }
         Ok(Self {
             domain,
             catalog: identity(set)?,
             rules,
             set_rules,
             identities,
+            by_rule,
+            clause_counts: code_rules
+                .iter()
+                .map(|code_rule| code_rule.clauses.len())
+                .collect(),
         })
     }
 
@@ -608,16 +619,17 @@ impl ResultKeys {
 
     /// The clauses `persisted` answers among `expected`, each with its decoded result: a
     /// set-scoped result is preferred to the code rule's own, and among equals the later one is
-    /// taken. Also whether some answering result did not decode (another encoding: a miss).
-    pub(super) fn select<'a>(
+    /// taken; a clause no result row answers is answered empty by a completion word that holds
+    /// it. Also whether some answering row did not decode (another encoding: a miss).
+    pub(super) fn select(
         &self,
-        persisted: impl IntoIterator<Item = &'a crate::content_store::StoredLocalResult>,
+        persisted: &[&StoredLocalResults],
         expected: &HashSet<ClauseId>,
         path: &str,
     ) -> (HashMap<ClauseId, DecodedResult>, bool) {
         let mut selected = HashMap::<ClauseId, (bool, DecodedResult)>::new();
         let mut undecodable = false;
-        for result in persisted {
+        for result in persisted.iter().flat_map(|stored| &stored.results) {
             let Some(&(id, scoped)) = self.identities.get(&result.candidate) else {
                 continue;
             };
@@ -635,11 +647,58 @@ impl ResultKeys {
                 None => undecodable = true,
             }
         }
+        for completion in persisted.iter().flat_map(|stored| &stored.completions) {
+            let Some(code_rules) = self.by_rule.get(&completion.rule) else {
+                continue;
+            };
+            let first = (completion.word as usize).saturating_mul(64);
+            for &code_rule in code_rules {
+                let mut bits = completion.evaluated;
+                while bits != 0 {
+                    let clause = first.saturating_add(bits.trailing_zeros() as usize);
+                    bits &= bits - 1;
+                    if clause >= self.clause_counts[code_rule] {
+                        break;
+                    }
+                    let id = (code_rule, clause);
+                    if expected.contains(&id) {
+                        selected
+                            .entry(id)
+                            .or_insert_with(|| (false, (Vec::new(), None, None)));
+                    }
+                }
+            }
+        }
         let selected = selected
             .into_iter()
             .map(|(id, (_, decoded))| (id, decoded))
             .collect();
         (selected, undecodable)
+    }
+
+    /// `evaluated`'s clauses whose results found nothing, as completion words under `context`:
+    /// each the code rule's identity, a word index and its bits.
+    fn completions(
+        &self,
+        context: HashKey,
+        evaluated: impl IntoIterator<Item = ClauseId>,
+    ) -> Vec<LocalCompletionPublication> {
+        let mut words = BTreeMap::<(usize, u32), u64>::new();
+        for (code_rule, clause) in evaluated {
+            let word = u32::try_from(clause / 64).expect("a code rule's clauses fit 2^32 words");
+            *words.entry((code_rule, word)).or_default() |= 1 << (clause % 64);
+        }
+        words
+            .into_iter()
+            .map(
+                |((code_rule, word), evaluated)| LocalCompletionPublication {
+                    rule: self.rules[code_rule],
+                    context,
+                    word,
+                    evaluated,
+                },
+            )
+            .collect()
     }
 }
 
@@ -782,7 +841,11 @@ pub(super) fn persist_files(
                     .collect::<BTreeSet<_>>();
                 let context = file_context(&file.input);
                 let stamped = CrossFileScheduler::stamped_context(file, context);
-                let mut local_results = local_result_ids
+                let mut local_results = Vec::new();
+                // The clauses whose results found nothing (no witness, no failure, no syntax
+                // report), by context: stored as their code rules' completion words, not rows.
+                let mut empty = BTreeMap::<HashKey, Vec<ClauseId>>::new();
+                for (id, context) in local_result_ids
                     .iter()
                     .filter(|id| {
                         !file.transient_failure
@@ -797,24 +860,29 @@ pub(super) fn persist_files(
                         };
                         Some((id, context))
                     })
-                    .map(|(id, context)| {
-                        let witnesses = file.witnesses.get(id).map(Vec::as_slice).unwrap_or(&[]);
-                        let failure = file.failures.get(id).copied();
-                        let bytes =
-                            encode_local_result(witnesses, failure, file.syntax.as_deref())?;
-                        let frame =
-                            compress(&bytes, 3).map_err(|error| invalid(error.to_string()))?;
-                        Ok(LocalResultPublication {
-                            candidate: candidate(id, failure),
-                            context,
-                            raw_length: bytes.len(),
-                            frame,
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
+                {
+                    let witnesses = file.witnesses.get(id).map(Vec::as_slice).unwrap_or(&[]);
+                    let failure = file.failures.get(id).copied();
+                    if witnesses.is_empty() && failure.is_none() && file.syntax.is_none() {
+                        empty.entry(context).or_default().push(*id);
+                        continue;
+                    }
+                    let bytes = encode_local_result(witnesses, failure, file.syntax.as_deref())?;
+                    let frame = compress(&bytes, 3).map_err(|error| invalid(error.to_string()))?;
+                    local_results.push(LocalResultPublication {
+                        candidate: candidate(id, failure),
+                        context,
+                        raw_length: bytes.len(),
+                        frame,
+                    });
+                }
                 if !file.transient_failure {
                     local_results.extend(CrossFileScheduler::summary_publication(file)?);
                 }
+                let local_completions = empty
+                    .into_iter()
+                    .flat_map(|(context, ids)| keys.completions(context, ids))
+                    .collect::<Vec<_>>();
                 let grammar_id = file_language(&file.input).map_or(0, grammar_id);
                 let aliases = clean_blob_alias(storage, file)
                     .into_iter()
@@ -825,7 +893,7 @@ pub(super) fn persist_files(
                     tape_bytes,
                     grammar_id,
                     aliases,
-                    local_results,
+                    (local_results, local_completions),
                 ))
             })
             .collect::<Result<Vec<_>>>()
@@ -858,7 +926,10 @@ pub(super) fn persist_files(
         .iter()
         .zip(&documents)
         .map(
-            |((file, candidates, tape_bytes, grammar_id, aliases, local_results), documents)| {
+            |(
+                (file, candidates, tape_bytes, grammar_id, aliases, (local_results, completions)),
+                documents,
+            )| {
                 OverlayFilePublication {
                     path: &file.input.path,
                     state_id: i64::from(file.source_revision),
@@ -874,6 +945,7 @@ pub(super) fn persist_files(
                     catalog: keys.domain,
                     candidates,
                     local_results,
+                    local_completions: completions,
                     candidates_current: false,
                 }
             },

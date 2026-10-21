@@ -7,7 +7,7 @@ use super::publication::{
 use super::rows::hash_params;
 use super::{
     CODEC_ZSTD, HashKey, OverlayFilePublication, SourceId, StoreError, StoreResult, TapeId,
-    WorkspaceId,
+    WorkspaceId, completion_candidate,
 };
 use rusqlite::Transaction;
 use rusqlite::types::{ToSqlOutput, ValueRef};
@@ -21,7 +21,8 @@ pub(super) struct PreparedSqlStatement {
 
 pub(super) struct PreparedRelationshipPass {
     statements: Vec<PreparedSqlStatement>,
-    /// The distinct contexts of `results`, as the JSON array of their hash parameters.
+    /// The distinct contexts of `results` and `completions`, as the JSON array of their hash
+    /// parameters.
     contexts: Option<String>,
     /// Each local result as its source, the index of its context in `contexts`, its check, its
     /// raw length, and its frame's offset and length in `frames`.
@@ -30,16 +31,21 @@ pub(super) struct PreparedRelationshipPass {
     /// result insert, which `substr` slices, so the insert's parameter count is independent of
     /// how many results a publication carries.
     frames: Vec<u8>,
+    /// Each completion word as its source, the index of its context in `contexts`, its rule's
+    /// completion check, its word and its bits.
+    completions: Vec<(SourceId, usize, i64, u32, u64)>,
 }
 
 impl PreparedRelationshipPass {
     /// The data statements `execute_relationship_pass` runs: the overlay upsert, the context
-    /// intern and lookup, and one insert of every local result: at most four, however many
-    /// results the publication carries (the design's ten-statement bound per pass).
+    /// intern and lookup, one insert of every local result and one of every completion word: at
+    /// most five, however many results the publication carries (the design's ten-statement bound
+    /// per pass).
     pub(super) fn statement_count(&self) -> usize {
         self.statements.len()
             + usize::from(self.contexts.is_some())
             + usize::from(!self.results.is_empty())
+            + usize::from(!self.completions.is_empty())
     }
 }
 
@@ -53,6 +59,17 @@ const INSERT_LOCAL_RESULTS: &str = "INSERT OR IGNORE INTO context_check_results(
      CAST(json_extract(value,'$[2]') AS INTEGER),?3,CAST(json_extract(value,'$[3]') AS INTEGER),\
      substr(?2,CAST(json_extract(value,'$[4]') AS INTEGER)+1,CAST(json_extract(value,'$[5]') AS INTEGER)) \
      FROM json_each(?1)";
+
+/// The one statement that stores a publication's completion words, adding each word's bits to
+/// the stored word's: both say which clauses were evaluated and found nothing. `?1` is the JSON
+/// array of `[source, context hash id, check, word, bits]` rows, the bits as a signed integer.
+const INSERT_LOCAL_COMPLETIONS: &str = "INSERT INTO context_check_completions(source_id,\
+     context_hash_id,check_id,word,evaluated) \
+     SELECT CAST(json_extract(value,'$[0]') AS INTEGER),CAST(json_extract(value,'$[1]') AS INTEGER),\
+     CAST(json_extract(value,'$[2]') AS INTEGER),CAST(json_extract(value,'$[3]') AS INTEGER),\
+     CAST(json_extract(value,'$[4]') AS INTEGER) FROM json_each(?1) WHERE true \
+     ON CONFLICT(source_id,context_hash_id,check_id,word) \
+     DO UPDATE SET evaluated=evaluated|excluded.evaluated";
 
 pub(super) fn prepare_relationship_pass<'a>(
     workspace_id: WorkspaceId,
@@ -89,6 +106,7 @@ pub(super) fn prepare_relationship_pass<'a>(
     });
 
     let mut local_results = Vec::<(SourceId, HashKey, i64, i64, &[u8])>::new();
+    let mut local_completions = Vec::<(SourceId, HashKey, i64, u32, u64)>::new();
     for (_, _, source_id, _, publication) in rows {
         let catalog_key = publication.catalog.key();
         let catalog_id = *interned
@@ -115,6 +133,20 @@ pub(super) fn prepare_relationship_pass<'a>(
                 result.frame.as_slice(),
             ));
         }
+        for completion in publication.local_completions {
+            let candidate = completion_candidate(completion.rule);
+            let check_id = *interned
+                .clauses
+                .get(&(catalog_id, candidate.rule, candidate.clause))
+                .ok_or(StoreError::Vanished("candidate check"))?;
+            local_completions.push((
+                *source_id,
+                completion.context,
+                check_id,
+                completion.word,
+                completion.evaluated,
+            ));
+        }
     }
 
     // A result's context is interned by the object pass, which a publication of stored objects
@@ -124,6 +156,7 @@ pub(super) fn prepare_relationship_pass<'a>(
     let contexts = local_results
         .iter()
         .map(|(_, context, ..)| *context)
+        .chain(local_completions.iter().map(|(_, context, ..)| *context))
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
@@ -182,11 +215,21 @@ pub(super) fn prepare_relationship_pass<'a>(
             frames.len()
         )));
     }
+    let completions = local_completions
+        .into_iter()
+        .map(|(source_id, context, check_id, word, evaluated)| {
+            let context = contexts
+                .binary_search(&context)
+                .expect("every completion context is collected");
+            (source_id, context, check_id, word, evaluated)
+        })
+        .collect();
     Ok(PreparedRelationshipPass {
         statements,
         contexts: contexts_json,
         results,
         frames,
+        completions,
     })
 }
 
@@ -246,7 +289,15 @@ pub(super) fn execute_relationship_pass(
     let Some(contexts) = &pass.contexts else {
         return Ok(());
     };
-    let mut context_ids = vec![None; pass.results.iter().map(|row| row.1 + 1).max().unwrap_or(0)];
+    let mut context_ids = vec![
+        None;
+        pass.results
+            .iter()
+            .map(|row| row.1 + 1)
+            .chain(pass.completions.iter().map(|row| row.1 + 1))
+            .max()
+            .unwrap_or(0)
+    ];
     {
         let mut statement = transaction.prepare_cached(
             "SELECT CAST(i.key AS INTEGER),h.hash_id FROM json_each(?1) i \
@@ -266,32 +317,57 @@ pub(super) fn execute_relationship_pass(
             }
         }
     }
-    if pass.results.is_empty() {
-        return Ok(());
-    }
-    let mut rows = String::with_capacity(2 + pass.results.len() * 48);
-    rows.push('[');
-    for (index, (source_id, context, check_id, raw_length, offset, length)) in
-        pass.results.iter().enumerate()
-    {
-        let context_id = context_ids[*context].ok_or_else(|| {
+    let context_id = |context: usize| {
+        context_ids[context].ok_or_else(|| {
             StoreError::Corrupt("a local result context was not interned".to_owned())
-        })?;
-        if index != 0 {
-            rows.push(',');
+        })
+    };
+    if !pass.results.is_empty() {
+        let mut rows = String::with_capacity(2 + pass.results.len() * 48);
+        rows.push('[');
+        for (index, (source_id, context, check_id, raw_length, offset, length)) in
+            pass.results.iter().enumerate()
+        {
+            let context_id = context_id(*context)?;
+            if index != 0 {
+                rows.push(',');
+            }
+            write!(
+                rows,
+                "[{},{context_id},{check_id},{raw_length},{offset},{length}]",
+                source_id.0
+            )
+            .expect("writing to a String cannot fail");
         }
-        write!(
+        rows.push(']');
+        transaction.prepare_cached(INSERT_LOCAL_RESULTS)?.execute((
             rows,
-            "[{},{context_id},{check_id},{raw_length},{offset},{length}]",
-            source_id.0
-        )
-        .expect("writing to a String cannot fail");
+            ToSqlOutput::Borrowed(ValueRef::Blob(&pass.frames)),
+            CODEC_ZSTD,
+        ))?;
     }
-    rows.push(']');
-    transaction.prepare_cached(INSERT_LOCAL_RESULTS)?.execute((
-        rows,
-        ToSqlOutput::Borrowed(ValueRef::Blob(&pass.frames)),
-        CODEC_ZSTD,
-    ))?;
+    if !pass.completions.is_empty() {
+        let mut rows = String::with_capacity(2 + pass.completions.len() * 48);
+        rows.push('[');
+        for (index, (source_id, context, check_id, word, evaluated)) in
+            pass.completions.iter().enumerate()
+        {
+            let context_id = context_id(*context)?;
+            if index != 0 {
+                rows.push(',');
+            }
+            // SQLite integers are signed: the word's 64 bits travel as their two's complement.
+            write!(
+                rows,
+                "[{},{context_id},{check_id},{word},{}]",
+                source_id.0, *evaluated as i64
+            )
+            .expect("writing to a String cannot fail");
+        }
+        rows.push(']');
+        transaction
+            .prepare_cached(INSERT_LOCAL_COMPLETIONS)?
+            .execute([rows])?;
+    }
     Ok(())
 }
