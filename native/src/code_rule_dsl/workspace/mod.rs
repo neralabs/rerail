@@ -81,7 +81,8 @@ const FILE_CLAUSE_WORK_EXCEEDED: &str = "file clause work budget exceeded";
 /// file is evaluated again by the next apply that offers it.
 const STORED_RESULT_UNAVAILABLE: &str = "the file's stored result could not be read";
 /// Persisted per-file clause results are reused only under a key covering every input the result
-/// depends on: source content, file context (`file_context`) and engine build (`candidate_catalog`).
+/// depends on: source content, file context (`file_context`), the clause's own code rule and the
+/// engine build (`ResultKeys`).
 const REUSE_LOCAL_RESULTS: bool = true;
 /// Directory reuse restores complete per-file results only after a tree-and-package-marker
 /// completion record proves the entire clean directory was evaluated.

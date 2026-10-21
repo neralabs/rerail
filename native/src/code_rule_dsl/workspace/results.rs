@@ -3,7 +3,7 @@
 
 use super::crossfile::CrossFileScheduler;
 use super::ingest::{candidate_dispatch, make_file};
-use super::persisted::{candidate_catalog, restore_complete_results};
+use super::persisted::{restore_complete_results, result_keys};
 use super::{CandidateSets, ClauseId, FileState, WorkspaceState};
 use crate::WORK_POOL;
 use crate::code_rule_dsl::eval::{
@@ -152,6 +152,8 @@ pub(super) fn profile_result(
             "tapeCacheHits": metrics.tape_cache_hits,
             "tapeDecompressions": metrics.tape_decompressions,
             "restoredLocalResults": metrics.restored_local_results,
+            "evaluatedFiles": metrics.evaluated_files,
+            "evaluatedClauses": metrics.evaluated_clauses,
         }),
     );
     serde_json::to_string(&value)
@@ -249,7 +251,7 @@ pub(super) fn evicted_file_states(
     }
     let results = storage
         .store
-        .local_check_results_by_key(&keys, candidate_catalog(&state.code_rules)?)
+        .local_check_results_by_key(&keys, result_keys(&state.code_rules)?.domain)
         .map_err(|error| invalid(error.to_string()))?;
     let mut candidate_sets = CandidateSets::new();
     evicted

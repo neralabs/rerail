@@ -144,6 +144,8 @@ pub(crate) fn evaluation_json(
                 "tapeCacheHits": evaluation.metrics.tape_cache_hits,
                 "tapeDecompressions": evaluation.metrics.tape_decompressions,
                 "restoredLocalResults": evaluation.metrics.restored_local_results,
+                "evaluatedFiles": evaluation.metrics.evaluated_files,
+                "evaluatedClauses": evaluation.metrics.evaluated_clauses,
             }),
         );
     }

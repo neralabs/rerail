@@ -643,77 +643,110 @@ fn overlay_publication_replaces_payload_and_candidates_atomically() {
     );
 }
 
+/// With the data-layer policies a Python file stores up to about 700 check results (250 on
+/// average), and a workspace publishes its files 64 at a time, so a publication of heavy files
+/// carried up to 47,000. Bound six variables to a row, at SQLite's default 32,766 variables
+/// that took nine inserts, and the pass (overlay, context intern and lookup, the inserts) failed
+/// with "relationship publication prepared 11 statements; maximum is 10" (12 on a heavier one).
+/// The insert is now one statement whatever the count, and binds three variables, so a low
+/// variable limit (here 40, which one file's object pass fits) does not split it either.
 #[test]
-fn local_results_publish_across_sqlite_variable_limit_chunks() {
-    let (_path, store) = store("bulk-local-results");
-    store
-        .connection
-        .lock()
-        .unwrap()
-        .set_limit(Limit::SQLITE_LIMIT_VARIABLE_NUMBER, 40)
-        .unwrap();
-    let snapshot = store
-        .put_snapshot(
-            published_tree(&store, HashKey::git_sha1([3; 20])),
-            1,
-            HashKey::sha256(b"grammar"),
-            1,
+fn a_publication_of_many_local_results_stays_within_the_statement_budget() {
+    const CHECKS: usize = 700;
+    for (files, variable_limit) in [(64, None), (1, Some(40))] {
+        let (_path, store) = store("bulk-local-results");
+        if let Some(limit) = variable_limit {
+            store
+                .connection
+                .lock()
+                .unwrap()
+                .set_limit(Limit::SQLITE_LIMIT_VARIABLE_NUMBER, limit)
+                .unwrap();
+        }
+        let limit = usize::try_from(
+            store
+                .connection
+                .lock()
+                .unwrap()
+                .limit(Limit::SQLITE_LIMIT_VARIABLE_NUMBER)
+                .unwrap(),
         )
         .unwrap();
-    let workspace = store
-        .open_workspace("/bulk-results", "repo", "owner", snapshot, 1, 100)
-        .unwrap();
-    let catalog = candidate_catalog("bulk-results");
-    let results = (0..12)
-        .map(|index| {
-            let bytes = format!("result-{index}").into_bytes();
-            LocalResultPublication {
-                candidate: CandidateClause {
-                    rule: HashKey::sha256(format!("policy-{index}").as_bytes()),
-                    clause: format!("check-{index}"),
-                },
-                context: HashKey::sha256(format!("bulk-context-{}", index % 2).as_bytes()),
-                raw_length: bytes.len(),
-                frame: zstd::stream::encode_all(Cursor::new(bytes), 3).unwrap(),
-            }
-        })
-        .collect::<Vec<_>>();
-    let publication = OverlayFilePublication {
-        path: "src/results.py",
-        state_id: 1,
-        source: b"pass\n",
-        aliases: &[],
-        tape: None,
-        catalog,
-        candidates: &[],
-        local_results: &results,
-        candidates_current: false,
-    };
-    let stored = store.publish_overlay_file(workspace, publication).unwrap();
-    // Six results a statement at 40 variables: two statements, each naming both contexts.
-    for context in 0..2 {
-        let mut restored = store
-            .local_check_results(
-                stored.source,
-                HashKey::sha256(format!("bulk-context-{context}").as_bytes()),
-                catalog,
-            )
-            .unwrap()
-            .into_iter()
-            .map(|result| (result.candidate.clause, result.bytes))
-            .collect::<Vec<_>>();
-        restored.sort();
-        let mut expected = (0..12)
-            .filter(|index| index % 2 == context)
-            .map(|index| {
+        // The shape that failed: overlay, contexts and one insert per variable-limit chunk.
+        assert!(2 + (files * CHECKS).div_ceil(limit / 6) > 10);
+        let (workspace, catalog) = local_result_workspace(&store, "bulk-results");
+        let frames = (0..CHECKS)
+            .map(|check| {
+                let bytes = format!("result-{check}").into_bytes();
                 (
-                    format!("check-{index}"),
-                    format!("result-{index}").into_bytes(),
+                    bytes.len(),
+                    zstd::stream::encode_all(Cursor::new(bytes), 3).unwrap(),
                 )
             })
             .collect::<Vec<_>>();
-        expected.sort();
-        assert_eq!(restored, expected, "context {context}");
+        let results = (0..files)
+            .map(|file| {
+                frames
+                    .iter()
+                    .enumerate()
+                    .map(|(check, (raw_length, frame))| LocalResultPublication {
+                        candidate: CandidateClause {
+                            rule: HashKey::sha256(format!("policy-{}", check % 12).as_bytes()),
+                            clause: format!("check-{check}"),
+                        },
+                        context: HashKey::sha256(format!("bulk-context-{file}").as_bytes()),
+                        raw_length: *raw_length,
+                        frame: frame.clone(),
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let paths = (0..files)
+            .map(|file| format!("src/results_{file}.py"))
+            .collect::<Vec<_>>();
+        let sources = (0..files)
+            .map(|file| format!("value = {file}\n").into_bytes())
+            .collect::<Vec<_>>();
+        let publications = (0..files)
+            .map(|file| OverlayFilePublication {
+                path: &paths[file],
+                state_id: 1,
+                source: &sources[file],
+                aliases: &[],
+                tape: None,
+                catalog,
+                candidates: &[],
+                local_results: &results[file],
+                candidates_current: false,
+            })
+            .collect::<Vec<_>>();
+        let published = store
+            .publish_overlay_files(workspace, &publications)
+            .unwrap();
+        assert!(published.max_data_statements_per_pass <= 10);
+        for file in [0, files - 1] {
+            let mut restored = store
+                .local_check_results(
+                    published.files[file].source,
+                    HashKey::sha256(format!("bulk-context-{file}").as_bytes()),
+                    catalog,
+                )
+                .unwrap()
+                .into_iter()
+                .map(|result| (result.candidate.clause, result.bytes))
+                .collect::<Vec<_>>();
+            restored.sort();
+            let mut expected = (0..CHECKS)
+                .map(|check| {
+                    (
+                        format!("check-{check}"),
+                        format!("result-{check}").into_bytes(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            expected.sort();
+            assert_eq!(restored, expected, "file {file}");
+        }
     }
 }
 

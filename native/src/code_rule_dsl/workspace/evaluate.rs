@@ -3,7 +3,7 @@
 
 use super::crossfile::{CrossFileConsumer, CrossFileScheduler};
 use super::documents;
-use super::persisted::{candidate_catalog, restore_persisted_file, result_context};
+use super::persisted::{restore_persisted_file, result_context, result_keys};
 use super::sql::{Pipeline, SQL_UNSUPPORTED, SQL_UNSUPPORTED_MESSAGE, SqlEngine};
 use super::storage::StorageContext;
 use super::{
@@ -86,7 +86,7 @@ type Evaluated = Vec<(String, FileState, Result<Metrics>)>;
 /// Restores what the store holds for each job and evaluates the rest: serially for a few files,
 /// on the worker pool for more.
 pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<Evaluated> {
-    let catalog = candidate_catalog(context.code_rules)?;
+    let domain = result_keys(context.code_rules)?.domain;
     let result_manifest = match context.storage.filter(|_| REUSE_LOCAL_RESULTS) {
         Some(storage) => {
             let keys = jobs
@@ -104,7 +104,7 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
             }
             storage
                 .store
-                .local_check_results_by_key(&keys, catalog)
+                .local_check_results_by_key(&keys, domain)
                 .map_err(|error| invalid(error.to_string()))?
         }
         None => HashMap::new(),
@@ -578,8 +578,11 @@ impl FilePass {
     /// The file's regex clauses, and its AST clauses' input limits. `partial`: the pass runs some
     /// of the file's clauses only (`FileState::unstored`).
     fn begin(file: &mut FileState, code_rules: &[Arc<CompiledCodeRule>], partial: bool) -> Self {
+        let evaluated_clauses = file.candidates.regex.len() + file.candidates.ast.len();
         let mut metrics = Metrics {
             files: 1,
+            evaluated_files: usize::from(evaluated_clauses > 0),
+            evaluated_clauses,
             avoided_tape_decompressions: usize::from(file.selector_skipped),
             tape_cache_hits: usize::from(file.tape_cache_hit),
             tape_decompressions: usize::from(file.tape_decompressed),

@@ -246,12 +246,23 @@ workspace in turn, in one process:
 1. a fresh workspace on the engine registers every rule (on SQL, this compiles the program);
 2. the full scan, timed: the enforcer's stored repository audit. A content store in a temporary directory attaches,
    the Git checkout is indexed chunk by chunk (`indexRepositoryAsync` with the enforcer's bounds), the final apply runs
-   quietly, the revision is recorded and every result page is read. `--store off` scans as the enforcer does where no
-   store attaches instead: batches of 32 files, closed at 1 MiB, each with the workspace-wide pass deferred;
-3. `--edits` edits (default 20), each appending a comment to the Python file at the minimum, median, p95 or maximum
+   quietly, the revision is recorded and every result page is read. `--store-path <file.sqlite>` attaches that one
+   store to every workspace instead, created if missing and kept, so later workspaces (and later runs) reuse what
+   earlier ones stored. `--store off` scans as the enforcer does where no store attaches instead: batches of 32
+   files, closed at 1 MiB, each with the workspace-wide pass deferred;
+3. with `--reapply on`, the unchanged re-apply, timed: every scanned file applied again as it is to the workspace that
+   holds them, in the walk's batches, then the final apply;
+4. `--edits` edits (default 20), each appending a comment to the Python file at the minimum, median, p95 or maximum
    size in turn, applied as the enforcer applies one (inline through `tryApply` below 4,096 characters, else
    `applyBufferAsync`), each followed by `evictInactive`;
-4. `evictInactive` and `--idle-ms` of idle time (default 5,000), and the workspace closes.
+5. `evictInactive` and `--idle-ms` of idle time (default 5,000), and the workspace closes.
+
+`--passes <n>` runs the workspaces `n` times in turn; with `--store-path`, a second pass is the warm one. Each scan
+records what it evaluated and what it reused (the apply profile's counters, so the run sets
+`RERAIL_CODE_RULE_PROFILE`): `restoredFiles`, the files the index restored whole from completed directories;
+`reuse.files`, the files that went through an evaluation job; `reuse.evaluatedFiles` and `reuse.evaluatedClauses`,
+those that ran at least one clause and the clauses run; `reuse.restoredLocalResults`, the clause results restored
+from the store instead; and the store's read and write time.
 
 A worker thread samples the process's resident set every 10 ms, so a peak inside a long synchronous native call
 (a rule's compile, `addCodeRule`) is seen; `getrusage`'s high-water mark is reported beside it. Per workspace the
@@ -279,8 +290,7 @@ done
 
 Most of those rules scope `nera-data-layer/…` paths of a landing checkout and so read nothing in a data-layer
 checkout, as in #2622. The twelve ported data-layer linters (`--rules $RERAIL_BENCH_HOME/data-layer/policies`) are
-the SQL engine's own workload; they need `--store off` while the content store refuses their publications (more
-than 10 relationship statements per batch).
+the SQL engine's own workload.
 
 ### The production-path loop
 
@@ -288,8 +298,8 @@ than 10 relationship statements per batch).
 --output-dir <dir> [--addon <addon>]` is the SQL engine's production-shape check: the workspace path the enforcer
 takes, not the speed loop's whole-tree apply. It runs `run` on native, then on SQL, each in its own process (each peak
 is its own), then `compare`, and fails when the findings differ. The workload (`PROD_PATH` in
-`workspaces/workspaces.ts`) is workspace 01 with `--store off` (the stored index refuses the data-layer policies'
-publications), a fixed 40% of its files in scope (`--sample 40`: those whose path's sha256, first four bytes mod 100,
+`workspaces/workspaces.ts`) is workspace 01 walked as the enforcer walks it without a store (`--store off`), a fixed
+40% of its files in scope (`--sample 40`: those whose path's sha256, first four bytes mod 100,
 is below 40; 2,350 files), applied in the enforcer's 32-file chunks, then 8 edits (twice each of the minimum, median,
 p95 and maximum Python file) and no idle wait. Native takes about 10 s for the scan; `--only`, `--sample` and
 `--edits` override the workload.

@@ -13,7 +13,7 @@ use super::ingest::{
 #[cfg(feature = "code-rule-profile")]
 use super::memory::record_workspace_residency;
 use super::memory::workspace_memory_profile;
-use super::persisted::{Persisted, candidate_catalog, persist_files};
+use super::persisted::{Persisted, persist_files, result_keys};
 use super::results::{
     ResultText, evicted_file_states, profile_result, replace_global_changes, serialize_result,
     serialize_result_page,
@@ -1322,7 +1322,7 @@ impl Task for WorkspaceCompletionTask {
             if state.store_cooling_down() {
                 return Err(invalid(StoreError::Busy.to_string()));
             }
-            let catalog = candidate_catalog(&state.code_rules)?;
+            let catalog = result_keys(&state.code_rules)?.catalog;
             // Files a busy store left unpublished are published before the completion is
             // recorded; a store that stays busy keeps them unpublished and reports busy.
             publish_unpublished(&mut state, &storage, &self.closed)?;

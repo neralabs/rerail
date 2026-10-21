@@ -1,12 +1,12 @@
 //! A code rule placed per folder of a checkout: where it runs, at which mode, whether linters'
-//! suppression comments silence it, and the result catalog its placement keys.
+//! suppression comments silence it, and the result identity its placement keys.
 
 use super::super::test_support::CAPABILITIES;
 use super::super::{CodeRuleDslRuntime, CompiledCodeRuleDsl};
 use super::api::{CodeRuleDslWorkspace, WorkspaceApplyTask};
-use super::persisted::candidate_catalog;
+use super::persisted::result_keys;
 use super::tests::WORKSPACE_TEST_SLOT;
-use crate::content_store::CandidateCatalogIdentity;
+use crate::content_store::HashKey;
 use napi::Task;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -107,8 +107,11 @@ fn violations(workspace: &CodeRuleDslWorkspace, paths: &[&str]) -> Vec<(String, 
     violations
 }
 
-fn catalog(workspace: &CodeRuleDslWorkspace) -> CandidateCatalogIdentity {
-    candidate_catalog(&workspace.state.lock().unwrap().code_rules).unwrap()
+/// The placed code rule's result identity: what its stored results are kept under.
+fn result_identity(workspace: &CodeRuleDslWorkspace) -> HashKey {
+    result_keys(&workspace.state.lock().unwrap().code_rules)
+        .unwrap()
+        .rules[0]
 }
 
 #[test]
@@ -186,20 +189,22 @@ fn an_invalid_placement_registers_nothing() {
 }
 
 #[test]
-fn the_result_catalog_differs_when_only_the_placement_differs() {
+fn the_result_identity_differs_when_only_the_placement_differs() {
     let steer = placed(Some(r#"[{"folder": "", "mode": "steer"}]"#));
     let log = placed(Some(r#"[{"folder": "", "mode": "log"}]"#));
     let narrowed = placed(Some(r#"[{"folder": "web", "mode": "steer"}]"#));
     let unplaced = placed(None);
     let again = placed(None);
-    let catalogs = [&steer, &log, &narrowed, &unplaced].map(catalog);
-    for (index, catalog) in catalogs.iter().enumerate() {
+    let identities = [&steer, &log, &narrowed, &unplaced].map(result_identity);
+    for (index, identity) in identities.iter().enumerate() {
         assert!(
-            catalogs[index + 1..].iter().all(|other| other != catalog),
-            "catalog {index} is shared"
+            identities[index + 1..]
+                .iter()
+                .all(|other| other != identity),
+            "identity {index} is shared"
         );
     }
-    assert_eq!(catalog(&again), catalogs[3]);
+    assert_eq!(result_identity(&again), identities[3]);
     for workspace in [steer, log, narrowed, unplaced, again] {
         workspace.close();
     }
@@ -258,7 +263,7 @@ fn the_deciding_folder_s_suppressions_choice_decides_whether_a_disable_comment_s
 }
 
 #[test]
-fn the_result_catalog_differs_when_only_the_suppressions_choice_differs() {
+fn the_result_identity_differs_when_only_the_suppressions_choice_differs() {
     let omitted = placed(Some(r#"[{"folder": "", "mode": "log"}]"#));
     let honour = placed(Some(
         r#"[{"folder": "", "mode": "log", "suppressions": "honour"}]"#,
@@ -266,8 +271,8 @@ fn the_result_catalog_differs_when_only_the_suppressions_choice_differs() {
     let ignore = placed(Some(
         r#"[{"folder": "", "mode": "log", "suppressions": "ignore"}]"#,
     ));
-    assert_eq!(catalog(&omitted), catalog(&honour));
-    assert_ne!(catalog(&honour), catalog(&ignore));
+    assert_eq!(result_identity(&omitted), result_identity(&honour));
+    assert_ne!(result_identity(&honour), result_identity(&ignore));
     for workspace in [omitted, honour, ignore] {
         workspace.close();
     }
