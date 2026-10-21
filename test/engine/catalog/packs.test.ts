@@ -1,6 +1,7 @@
 /**
  * The pack validation contract (docs/pack-format.md): every packs/<id>/ directory passes checks 1 to 8, one test per
- * check, and reports each rule's status; a rule core cannot read yet is skipped as not supported yet. Check 4 scores
+ * check, and reports each rule's status and check 8's message advisories, as warnings that fail nothing; a rule core
+ * cannot read yet is skipped as not supported yet. Check 4 scores
  * ported rules on the tools' fixtures, and on the pinned corpora that are checked out (RERAIL_PACK_CORPORA=1: every
  * corpus, a missing checkout failing; 0: none).
  *
@@ -14,7 +15,7 @@ import { join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, test, vi } from "vitest";
 import { z } from "zod";
-import { PACK_CHECKS, packedFileFailures, textFailures, validatePack, type PackCheckName, type PackValidation, type ValidatePackOptions } from "../../../conformance/pack-validation.js";
+import { messageAdvisories, PACK_CHECKS, packedFileFailures, textFailures, validatePack, type PackCheckName, type PackValidation, type ValidatePackOptions } from "../../../conformance/pack-validation.js";
 import { compareDeterministicStrings } from "../../../src/engine/stable-json.js";
 import { fixturesPath } from "../../support/oracles.js";
 
@@ -54,6 +55,14 @@ describe.each(packs)("pack %s", id => {
 
   it.each(PACK_CHECKS)("check $number: $name", { timeout: TIMEOUT }, async ({ name }) => {
     expect((await validated()).checks[name]).toEqual([]);
+  });
+
+  // A warning annotation becomes a GitHub Actions ::warning in CI; the default reporter prints none, so stderr has them too.
+  it("check 8: message advisories, reported as warnings that fail nothing", { timeout: TIMEOUT }, async ({ annotate }) => {
+    for (const advisory of (await validated()).advisories) {
+      console.warn(`advisory: ${advisory}`);
+      await annotate(advisory, "warning");
+    }
   });
 
   test.for(listedRules(id))("rule %s", { timeout: TIMEOUT }, async (ruleId, { skip }) => {
@@ -371,16 +380,6 @@ describe("validatePack", () => {
       directory => editJson(join(directory, "rules", "pass-statement.json"), ({ description: _description, ...document }) => document),
       { text: ["rules/pass-statement.json: has no description"] },
     ],
-    [
-      "a message that names Rerail, whatever its form",
-      directory => editJson(join(directory, "rules", "pass-statement.json"), document => ({
-        ...document,
-        clauses: (document.clauses as { violation: object }[]).map(clause => ({ ...clause, violation: { ...clause.violation, message: "Rerail found a pass. Remove it" } })),
-      })),
-      {
-        text: ["rules/pass-statement.json: message names Rerail or steering: Rerail found a pass. Remove it"],
-      },
-    ],
   ];
 
   it.each(cases)("fails %s", async (_name, change, expected) => {
@@ -389,16 +388,50 @@ describe("validatePack", () => {
     expect(validation.pass).toBe(false);
   });
 
+  it("advises on a message that names Rerail and its rule id, and passes the pack and the rule", async () => {
+    const message = "Rerail found a pass. Remove it (pass-statement)";
+    const validation = await validatePack(
+      changed("valid", directory => editJson(join(directory, "rules", "pass-statement.json"), document => ({
+        ...document,
+        clauses: (document.clauses as { violation: object }[]).map(clause => ({ ...clause, violation: { ...clause.violation, message } })),
+      }))),
+      { corpora: false },
+    );
+    expect(failing(validation)).toEqual({});
+    expect(validation.pass).toBe(true);
+    expect(validation.rules.find(rule => rule.id === "pass-statement")?.status).toBe("ok");
+    expect(validation.advisories).toEqual([
+      `rules/pass-statement.json: message holds its rule id, which the block already shows: ${message}`,
+      `rules/pass-statement.json: message names Rerail or steering: ${message}`,
+    ]);
+  });
+
   describe("check 8: text", () => {
-    it("checks every text a message an option chooses can be, once each", () => {
-      const long = `Remove this pass statement${"!".repeat(130)}.`;
+    it("advises on every text a message an option chooses can be, once each", () => {
+      const long = `Remove this pass statement${"!".repeat(190)}.`;
       const document = { description: "Remove pass statements.", clauses: [{ violation: { message: { $option: "strict", cases: { true: long, false: "Remove this pass statement." }, default: "Remove this pass statement." } } }] };
-      expect(textFailures("rules/pass.json", JSON.stringify(document))).toEqual([`rules/pass.json: message is 157 characters, over 140: ${long}`]);
+      expect(textFailures("rules/pass.json", JSON.stringify(document))).toEqual([]);
+      expect(messageAdvisories("rules/pass.json", JSON.stringify(document))).toEqual([`rules/pass.json: message is 217 characters, over 200: ${long}`]);
+    });
+
+    it("lets a message open with what was found and run to more than one sentence", () => {
+      const document = { id: "complexity-cyclomatic-typescript", description: "Keep functions at cyclomatic complexity 6 or below.", clauses: [{ violation: { message: "`$NAME` has cyclomatic complexity $CCN, over the ceiling of 6. Decompose it into smaller functions." } }] };
+      expect(messageAdvisories("rules/x.json", JSON.stringify(document))).toEqual([]);
+    });
+
+    it("advises on a message that shouts or names its rule id, even in quoted text", () => {
+      const message = "NEVER leave this branching; put `// rerail-ignore complexity-cyclomatic-typescript -- <reason>` above it.";
+      const document = { id: "complexity-cyclomatic-typescript", description: "Keep functions at cyclomatic complexity 6 or below.", clauses: [{ violation: { message } }] };
+      expect(messageAdvisories("rules/x.json", JSON.stringify(document))).toEqual([
+        `rules/x.json: message holds its rule id, which the block already shows: ${message}`,
+        `rules/x.json: message shouts: ${message}`,
+      ]);
     });
 
     it("reads no sentence end in an abbreviation or quoted text, and no tool name in a quoted value", () => {
       const document = { description: "Use field init shorthand, e.g. Point { x } for Point { x: x }.", clauses: [{ violation: { message: "Resolve this 'eslint' comment ('Note. Later'), e.g. Fix it now." } }] };
       expect(textFailures("rules/x.json", JSON.stringify(document))).toEqual([]);
+      expect(messageAdvisories("rules/x.json", JSON.stringify(document))).toEqual([]);
     });
   });
 

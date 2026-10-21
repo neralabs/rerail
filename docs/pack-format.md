@@ -140,8 +140,9 @@ Fix these, or tell the user in one line why you won't.
 ```
 
 The block already gives the location, the rule id, the lead and the latitude ("fix or explain"), so the message only
-says what to change in this code. Check 8 enforces the criteria a machine can check; review covers the rest
-(`just rerail-guidance-review` shows every rule's description, messages and the block for each of its cases).
+advises what to do about this code. Check 8 enforces the description criteria a machine can check, and reports the
+message criteria it can check as advisories; review covers the rest (`just rerail-guidance-review` shows every rule's
+description, messages and the block for each of its cases).
 
 ### Description
 
@@ -168,31 +169,33 @@ pack's README, under "Rule details". For example: `Avoid dd() and dump() calls; 
 
 ### Message
 
-1. An imperative action: it starts with a verb saying what to change ("Pass a timeout…", "Split this function…"), not
-   what was detected.
-2. Specific to the finding: it uses the values the clause captures where they help (`$CCN`, `$NAME`, thresholds), and
-   never a binding the clause doesn't define.
-3. A concrete fix direction: it names the replacement, so the agent can act without reading the rule's docs.
-4. Correct for every match of its clause; a rule with several clauses has a fitting message for each.
-5. Agrees with the clause's suggested `fix`, when it has one.
-6. A short reason only when it changes the decision, where the agent might otherwise reasonably decline.
-7. No Rerail or upstream vocabulary: no tool names, rule codes, versions or implementation text, and no "steer", "rule
-   pack" or "mode".
-8. Nothing the block adds: no location, no rule id, no "Rerail", no "fix it or explain".
-9. A calibrated tone: no hedging ("Consider maybe…"), no shouting (NEVER, MUST, ALWAYS).
-10. One action.
-11. It stands alone as one line in a list of findings.
-12. One sentence, ending with a period, at most 140 characters, counting placeholders as written.
-13. The description's voice without copying it: the description is the intent, for a person; the message is the
-    action for this instance.
+The message is advice to the agent. In the study of the Python pack's steers (NER-1910), the steers that worked said
+what is wrong, why it matters, what to change and when it is fine to leave it. The ones that did harm stated a fact or
+a ban with nothing to act on, or were obeyed without judgement and broke working code.
 
-For example, `Bandit B113 (request_without_timeout)` becomes
-`Pass a timeout to this requests call; without one a slow server can hang the program.`
+1. It gives advice: it says what to change in this code and names the replacement. A fact or a ban alone ("Use of the
+   insecure ECB cipher mode.", "Do not use bare except") is not advice.
+2. Where following it can be wrong, because the matcher can't see the intent or the fix changes behaviour, it says when
+   to leave the code alone or what the fix trades off ("…`strict=False` if truncation is intended").
+3. It is calibrated, not emphatic: no shouting (NEVER, MUST, ALWAYS), and no alarm the finding doesn't warrant.
+4. It is right for every match of its clause, agrees with the clause's `fix` when it has one, and uses only bindings the
+   clause defines.
+5. It leaves out what the block adds: no rule id, location, "Rerail" or "fix it or explain". It names no upstream tool.
+6. At most 200 characters, counting placeholders as written. It may open with what was found and run to more than one
+   sentence.
+
+For example: `This exception is silently discarded with pass. Handle or log it, or catch a specific expected exception when
+suppression is intentional.`, or `` `$NAME` has cyclomatic complexity $CCN, over the ceiling of 6. Decompose it into smaller
+functions. ``
+
+These criteria are advisory and never block a merge. Check 8 reports a message that misses 3, 5 or 6 where a machine
+can tell, as an advisory that fails neither the pack nor the rule. The guidance review covers the rest.
 
 ## The validation contract
 
 Implemented: `validatePack(directory, { corpora?, corpusRoot?, listed? })` in `conformance/pack-validation.ts` runs
-checks 1 to 8 over one pack and returns each check's failures and each rule's status (`ok`, `failed` or `not-supported-yet`).
+checks 1 to 8 over one pack and returns each check's failures, each rule's status (`ok`, `failed` or `not-supported-yet`)
+and check 8's message advisories.
 `test/engine/catalog/packs.test.ts` calls it for every directory under `packs/`, with one test per check and one per rule, and has
 the validator's own tests over the fixture packs in `fixtures/packs/`. `npm test` runs it with the local core.
 Running it against the newest published core inside each pack's range is for pack CI, which does not exist yet.
@@ -297,11 +300,13 @@ Precisely:
 7. `match` must be present: without it set-up never recommends the pack. For a directory under `packs/`,
    `src/engine/catalog/pack-list.generated.ts` must list the pack's id and equal what `npm run generate:packs` writes.
    Fixture packs elsewhere are not published, so no list names them; `listed: true` checks the list for them too.
-8. Every rule document's text, shipped and candidate (not probes), meets the parts of the [rule text](#rule-text)
-   criteria a machine can check (`textFailures`). The description is present, one sentence ending in a period, at most
-   200 characters, with no backticks. Each message, and each text a message an option chooses can be, is at most 140
-   characters and doesn't shout (NEVER, MUST, ALWAYS) or name Rerail or steering; its form is left to review.
-   Neither names an upstream tool outside quoted text (`'…'` or `` `…` ``). The rest of the criteria are for review.
+8. Every rule document's description, shipped and candidate (not probes), meets the parts of the
+   [description](#description) criteria a machine can check (`textFailures`): it is present, one sentence ending in a
+   period, at most 200 characters, with no backticks, and names no upstream tool outside quoted text (`'…'` or
+   `` `…` ``). Messages are advisory (`messageAdvisories`): each message, and each text a message an option chooses can
+   be, that is over 200 characters, holds its rule's id (quoted or not), names an upstream tool, Rerail or steering
+   outside quoted text, or shouts (NEVER, MUST, ALWAYS) is listed in the result's `advisories`, which fail neither the
+   pack nor the rule. `packs.test.ts` reports each as a warning annotation, which CI shows on the pull request.
 
 **Languages not supported yet.** A pack may hold code rules for a language core's
 [language registry](language-packs.md) lists as `planned`, or rules that read a capability their language has

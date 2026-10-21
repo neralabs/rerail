@@ -59,6 +59,8 @@ export interface PackValidation {
   /** Each check's failures, in a stable order; an empty list passes. */
   checks: Record<PackCheckName, string[]>;
   rules: PackRuleResult[];
+  /** Check 8's messages that miss the message criteria a machine can check; advice that fails neither the pack nor a rule. */
+  advisories: string[];
   pass: boolean;
 }
 
@@ -429,7 +431,7 @@ const PACK_LIST_MODULE = "src/engine/catalog/pack-list.generated.ts";
 
 /** The longest description, for people browsing the catalog, and the longest message, for the agent (docs/pack-format.md, "Rule text"). */
 export const DESCRIPTION_CHARS = 200;
-export const MESSAGE_CHARS = 140;
+export const MESSAGE_CHARS = 200;
 /** Upstream tools a rule's text must not name; a tool's plugins share its name (`eslint-plugin-react`, `typescript-eslint`). */
 const TOOL_NAMES = /\b(?:eslint|oxlint|biome|ruff|bandit|pylint|flake8|clippy|sqlfluff|phpstan|psalm|phpcs|tlint|bladestan|lizard)\b/iu;
 /** A sentence end inside the text: a full stop or question mark, then a capital. */
@@ -446,33 +448,44 @@ function messageTexts(message: unknown): string[] {
   return Object.entries(message).flatMap(([key, value]) => (key === "$option" ? [] : messageTexts(value)));
 }
 
+/** A rule document's JSON, or undefined for one that does not parse: check 1 reports it. */
+function parsedDocument(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * Check 8 (text): a rule document's description and violation messages meet the rule text criteria a machine can
- * check. A description is one sentence ending in a period, at most DESCRIPTION_CHARS, with no backticks and no tool
- * name; a message is at most MESSAGE_CHARS, naming no tool, Rerail or steering, and not shouting. A message's form (one
- * sentence, a final period) is left to review: an upstream message the rewrite gained nothing over is kept as written.
+ * Check 8 (text), the part that fails: a rule document's description meets the description criteria a machine can
+ * check. It is one sentence ending in a period, at most DESCRIPTION_CHARS, with no backticks and no tool name.
  */
 export function textFailures(file: string, text: string): string[] {
-  let document: unknown;
-  try {
-    document = JSON.parse(text);
-  } catch {
-    return []; // Check 1 reports a document that does not parse.
-  }
-  const failures: string[] = [];
-  const sentence = (what: string, value: string, limit: number, form: boolean): void => {
-    const plain = value.replace(QUOTED, "''").replace(ABBREVIATION, "");
-    if (value.length > limit) failures.push(`${file}: ${what} is ${value.length} characters, over ${limit}: ${value}`);
-    if (form && !value.endsWith(".")) failures.push(`${file}: ${what} does not end with a period: ${value}`);
-    if (form && SENTENCE_BREAK.test(plain)) failures.push(`${file}: ${what} is more than one sentence: ${value}`);
-    if (TOOL_NAMES.test(plain)) failures.push(`${file}: ${what} names an upstream tool: ${value}`);
-  };
+  const document = parsedDocument(text);
+  if (document === undefined) return [];
   const description = (document as { description?: unknown }).description;
-  if (typeof description !== "string" || description.trim() === "") failures.push(`${file}: has no description`);
-  else {
-    sentence("description", description, DESCRIPTION_CHARS, true);
-    if (description.includes("`")) failures.push(`${file}: description holds code (backticks): ${description}`);
-  }
+  if (typeof description !== "string" || description.trim() === "") return [`${file}: has no description`];
+  const failures: string[] = [];
+  const plain = description.replace(QUOTED, "''").replace(ABBREVIATION, "");
+  if (description.length > DESCRIPTION_CHARS) failures.push(`${file}: description is ${description.length} characters, over ${DESCRIPTION_CHARS}: ${description}`);
+  if (!description.endsWith(".")) failures.push(`${file}: description does not end with a period: ${description}`);
+  if (SENTENCE_BREAK.test(plain)) failures.push(`${file}: description is more than one sentence: ${description}`);
+  if (TOOL_NAMES.test(plain)) failures.push(`${file}: description names an upstream tool: ${description}`);
+  if (description.includes("`")) failures.push(`${file}: description holds code (backticks): ${description}`);
+  return failures;
+}
+
+/**
+ * Check 8 (text), the advisory part: each violation message that misses the message criteria a machine can check. It
+ * is over MESSAGE_CHARS, repeats the rule id the block already shows, names an upstream tool, Rerail or steering, or
+ * shouts. Whether it gives advice, and says when to leave the code alone, is for review.
+ */
+export function messageAdvisories(file: string, text: string): string[] {
+  const document = parsedDocument(text);
+  if (document === undefined) return [];
+  const id = (document as { id?: unknown }).id;
+  const advisories: string[] = [];
   const seen = new Set<string>();
   const walk = (value: unknown): void => {
     if (Array.isArray(value)) value.forEach(walk);
@@ -482,15 +495,18 @@ export function textFailures(file: string, text: string): string[] {
         else for (const message of messageTexts(inner)) {
           if (seen.has(message)) continue;
           seen.add(message);
-          sentence("message", message, MESSAGE_CHARS, false);
-          if (/\b(?:rerail|steer)/iu.test(message.replace(QUOTED, "''"))) failures.push(`${file}: message names Rerail or steering: ${message}`);
-          if (/\b(?:NEVER|MUST|ALWAYS)\b/u.test(message)) failures.push(`${file}: message shouts: ${message}`);
+          const plain = message.replace(QUOTED, "''");
+          if (message.length > MESSAGE_CHARS) advisories.push(`${file}: message is ${message.length} characters, over ${MESSAGE_CHARS}: ${message}`);
+          if (typeof id === "string" && id !== "" && message.includes(id)) advisories.push(`${file}: message holds its rule id, which the block already shows: ${message}`);
+          if (TOOL_NAMES.test(plain)) advisories.push(`${file}: message names an upstream tool: ${message}`);
+          if (/\b(?:rerail|steer)/iu.test(plain)) advisories.push(`${file}: message names Rerail or steering: ${message}`);
+          if (/\b(?:NEVER|MUST|ALWAYS)\b/u.test(message)) advisories.push(`${file}: message shouts: ${message}`);
         }
       }
     }
   };
   walk((document as { clauses?: unknown }).clauses);
-  return failures;
+  return advisories;
 }
 
 /**
@@ -751,12 +767,16 @@ export async function validatePack(directory: string, options: ValidatePackOptio
   // Check 7: manifest. Set-up can recommend the pack: its match is there, and core's pack list names it.
   for (const failure of manifestFailures(directory, packJson, options.listed ?? resolve(dirname(directory)) === PACKS_DIRECTORY)) fail("manifest", failure);
 
-  // Check 8: text. Every rule document's description and violation messages, shipped and candidate, meet the parts of
-  // the rule text criteria a machine can check. Probes are facts the ports are built on, read by no one, so are left out.
+  // Check 8: text. Every rule document's description, shipped and candidate, meets the parts of the description
+  // criteria a machine can check; its violation messages are only advised on. Probes are facts the ports are built on,
+  // read by no one, so are left out.
   const listedBy = new Map((pack?.rules ?? []).map(rule => [rule.document, rule.id]));
   const documents = [...filesUnder(directory, join(directory, "rules")), ...candidateDocuments(directory, filesUnder(directory, join(directory, "candidates"))).filter(file => !file.startsWith("candidates/probes/"))];
+  const advisories: string[] = [];
   for (const file of documents) {
-    for (const failure of textFailures(file, readFileSync(join(directory, file), "utf8"))) fail("text", failure, listedBy.get(file));
+    const text = readFileSync(join(directory, file), "utf8");
+    for (const failure of textFailures(file, text)) fail("text", failure, listedBy.get(file));
+    advisories.push(...messageAdvisories(file, text));
   }
 
   const rules = (pack?.rules ?? []).map((rule): PackRuleResult => {
@@ -766,5 +786,5 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     if (result?.kind === "not-supported-yet") return { id: rule.id, document: rule.document, status: "not-supported-yet", reason: result.reason };
     return { id: rule.id, document: rule.document, status: "ok" };
   });
-  return { id, directory, checks, rules, pass: Object.values(checks).every(failures => failures.length === 0) };
+  return { id, directory, checks, rules, advisories, pass: Object.values(checks).every(failures => failures.length === 0) };
 }
