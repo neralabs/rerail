@@ -3,7 +3,7 @@
   "id": "sqlfluff-al04-aliasing-unique-table",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0 AL04, which reads SELECT statements: report a table relation whose alias (its explicit alias, else its table name) repeats the alias of an earlier relation in the same FROM clause, or of a relation in a subquery of the same SELECT, other than the subquery the relation aliases; a relation that calls one of the postgres dialect's value table functions (unnest, generate_series) has no table alias; names compare as SQLFluff's raw_normalized does, with quotes removed and case kept.",
+  "description": "Give every table in a SQL FROM clause a unique alias; a repeated alias makes column references ambiguous.",
   "scope": {
     "include": [
       "**/*.sql"

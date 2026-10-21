@@ -143,7 +143,7 @@ What each rule matches beyond its one-line description: exact matching, edge cas
 
 ### `sqlfluff-al04-aliasing-unique-table`
 
-Port of SQLFluff 4.4.0 AL04. Reports each later table relation whose explicit alias (or, unaliased, its table name) matches an earlier one in the same FROM clause, compared under PostgreSQL name folding.
+Port of SQLFluff 4.4.0 AL04, which reads SELECT statements: report a table relation whose alias (its explicit alias, else its table name) repeats the alias of an earlier relation in the same FROM clause, or of a relation in a subquery of the same SELECT, other than the subquery the relation aliases; a relation that calls one of the postgres dialect's value table functions (unnest, generate_series) has no table alias; names compare as SQLFluff's raw_normalized does, with quotes removed and case kept.
 
 ### `sqlfluff-al05-aliasing-unused`
 
@@ -203,15 +203,15 @@ Port of SQLFluff 4.4.0 RF01 (references.from), default settings. Flags the table
 
 ### `sqlfluff-rf04-references-keywords`
 
-Port of SQLFluff 4.4.0 RF04 (references.keywords) with defaults (unquoted_identifiers_policy = aliases, quoted_identifiers_policy = none). Reports a naked identifier of more than one character that names a table or column alias or a CREATE TABLE column definition and is a keyword. SQLFluff reads the file's dialect's unreserved keywords; the engine has no dialect setting, so the regex holds the keywords that SQLFluff's postgres and mysql dialects both list as unreserved (a reserved word cannot be a naked alias there). ALTER TABLE ... ADD COLUMN names are skipped, as SQLFluff's postgres dialect reads them as column references.
+Port of SQLFluff 4.4.0 RF04 (references.keywords) with its defaults (unquoted_identifiers_policy = aliases, quoted_identifiers_policy = none): report a naked identifier of more than one character that names a table or column alias or a CREATE TABLE column definition and is a keyword. SQLFluff reads the naked identifier against its dialect's unreserved keywords; the engine reads every .sql file as PostgreSQL, so the regex holds exactly SQLFluff's postgres unreserved keywords (dialect_selector('postgres').sets('unreserved_keywords'), 836 words). A column definition is one of a CREATE TABLE column list, with its type, as in SQLFluff's postgres dialect: an ALTER TABLE ... ADD COLUMN name, a typed or partition table's `name WITH OPTIONS`, a foreign table's column and a composite type's attribute are column references or plain words there, and a column definition list after a table function's alias is parameters, so they are skipped.
 
 ### `sqlfluff-rf05-references-special-chars`
 
-Port of SQLFluff 4.4.0 RF05 (references.special_chars) with defaults (both identifier policies all, no space or additional characters allowed). Reports a naked or quoted identifier whose name, without quotes and underscores, holds a character other than a Unicode letter or digit (a doubled quote included). A name in a SELECT element that has an alias is not read (only the alias is), nor is a PostgreSQL extension name.
+Port of SQLFluff 4.4.0's RF05 (references.special_chars) with its defaults (both identifier policies all, no space or additional characters allowed): report a naked or quoted identifier whose name, without its quotes and underscores, holds a character other than a Unicode letter or digit (a doubled quote included). A name in a SELECT element that has an alias is not read (only the alias is), and neither is a PostgreSQL extension name or a routine's parameter name (a parameter to SQLFluff, not an identifier).
 
 ### `sqlfluff-rf06-references-quoting`
 
-Port of SQLFluff 4.4.0 RF06 (references.quoting) with defaults (prefer_quoted_identifiers and prefer_quoted_keywords false, case_sensitive true), under SQLFluff's postgres dialect. Reports a double-quoted identifier whose name has no upper-case letter, matches the postgres naked-identifier template [\p{L}_][\p{L}\p{N}_$]* and is not one of the dialect's reserved words (its anti-template, embedded in the rule). A dollar-quoted routine body is not read.
+Port of SQLFluff 4.4.0's RF06 (references.quoting) with its defaults (prefer_quoted_identifiers and prefer_quoted_keywords false, case_sensitive true), under SQLFluff's postgres dialect, the reading the engine gives every .sql file: report a double-quoted identifier that would mean the same unquoted, because its name has no upper-case letter (PostgreSQL folds unquoted names to lower case), matches the postgres dialect's naked-identifier template [\p{L}_][\p{L}\p{N}_$]* and is none of the dialect's reserved words (its anti-template, embedded here). PostgreSQL lexes every double-quoted token as a quoted identifier; the engine reads one as an identifier, or as a literal where its grammar takes a name as a string (a column list, an index or extension name). A routine body (dollar-quoted, a string to SQLFluff) is not read.
 
 ### `sqlfluff-st01-structure-else-null`
 
@@ -227,4 +227,4 @@ Port of SQLFluff 4.4.0 ST08 (structure.distinct). Three cases: in a SELECT DISTI
 
 ### `sqlfluff-st10-structure-constant-expression`
 
-Port of SQLFluff 4.4.0 ST10 (structure.constant_expression). Reports =, != or <> whose operands are the same non-literal written identically, or two literals other than the allowed 1 = 1 and 1 = 0, anchored at the operator. A typed literal (timestamp '...') is not a literal there. An operand that is itself an arithmetic, bitwise or other binary expression is not one of SQLFluff's adjacent operands, so such comparisons are skipped.
+Port of SQLFluff 4.4.0's ST10 (structure.constant_expression): report =, != or <> whose operands are the same non-literal written identically, or two literals other than the allowed 1 = 1 and 1 = 0 (compared without a string's quotes, so '1' = 1 is allowed too), anchored at the operator. SQLFluff's operands are the pieces adjacent to the operator, as its postgres dialect reads them: a positional parameter ($1) is a literal; a date, time, timestamp or interval literal is one operand and no literal; any other typed string (name 'x') is a type then a string, so on the left its string is the operand and on the right the type, which matches nothing; a right operand followed by COLLATE is the collated expression, a left one is the collation name, which matches nothing; an operand that is itself an arithmetic, bitwise or other binary expression is not adjacent, so such comparisons are skipped.
