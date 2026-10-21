@@ -38,13 +38,22 @@ export interface NotOverfitResult {
 export const REGEX_NAME_LIMIT = 10;
 
 /**
- * A test text this long holding fewer than one identifier per SPARSE_TEXT characters is a stress test, read by node
- * regexes only around its identifiers (`regexNames`). Of every gated tool-pack's test texts, only ESLint's five
- * qualify: 100,000 to 1,000,011 characters with one or two identifiers. Every other text over 20,000 characters holds
- * at least one identifier per 16.
+ * A test text this long holding fewer than one identifier per SPARSE_TEXT characters is a stress test of upstream's
+ * own engine, which Rerail does not run: not-overfit does not read it. Of every gated tool-pack's test texts, only
+ * ESLint's five qualify (100,000 to 1,000,011 characters with one or two identifiers, none of them unique to these
+ * texts apart from the 100,000- and 200,000-letter `aaaa…` ones); every other text over 20,000 characters holds at least
+ * one identifier per 16. A node regex such as `^[^\[]*[\w$]\[`, tried at every offset of a 1,000,000-backslash string,
+ * backtracks across all of it each time: reading them cost a cold javascript/eslint shard half an hour.
  */
 const LONG_TEXT = 20_000;
 const SPARSE_TEXT = 1_000;
+
+function isStressTest(text: string): boolean {
+  if (text.length <= LONG_TEXT) return false;
+  let identifiers = 0;
+  for (const _ of text.matchAll(IDENTIFIER)) identifiers += 1;
+  return identifiers * SPARSE_TEXT < text.length;
+}
 
 const POSIX_CLASSES: Record<string, string> = {
   alnum: "A-Za-z0-9", alpha: "A-Za-z", digit: "0-9", lower: "a-z", upper: "A-Z", space: "\\s", word: "\\w", xdigit: "0-9A-Fa-f", punct: "!-\\/:-@\\[-`{-~",
@@ -271,24 +280,11 @@ function regexNames(regex: PolicyRegex, texts: string[], unexplained: (word: str
     // so whether the regex depends on it there is a separate question.
     const tested = new Set<number>();
     const identifiers = [...text.matchAll(IDENTIFIER)].map((match) => ({ start: match.index, end: match.index + match[0].length, word: match[0] }));
+    compiled.lastIndex = 0;
     const matches: { start: number; end: number }[] = [];
-    const collect = (from: number, to: number) => {
-      const slice = text.slice(from, to);
-      compiled.lastIndex = 0;
-      for (let match = compiled.exec(slice); match !== null; match = compiled.exec(slice)) {
-        if (match[0].length === 0) compiled.lastIndex = afterEmptyMatch(slice, match.index);
-        else matches.push({ start: from + match.index, end: from + match.index + match[0].length });
-      }
-    };
-    if (regex.wholeText || text.length <= LONG_TEXT || identifiers.length * SPARSE_TEXT >= text.length) collect(0, text.length);
-    else {
-      // A node regex tried at every offset of a stress text backtracks across all of it: ESLint's 1,000,000-backslash
-      // strings cost a quarter of an hour of CPU per such regex. Only matches touching an identifier count, so the text
-      // is read in the window around each identifier it could select, the window the in-place test reads.
-      for (const identifier of identifiers) {
-        if (selected.has(identifier.word) || !unexplained(identifier.word)) continue;
-        collect(Math.max(0, identifier.start - 512), Math.min(text.length, identifier.end + 512));
-      }
+    for (let match = compiled.exec(text); match !== null; match = compiled.exec(text)) {
+      if (match[0].length === 0) compiled.lastIndex = afterEmptyMatch(text, match.index);
+      else matches.push({ start: match.index, end: match.index + match[0].length });
     }
     for (const { start, end } of matches) {
       for (const identifier of identifiers) {
@@ -389,12 +385,13 @@ export function notOverfitGate(document: { clauses?: unknown }, inputs: NotOverf
   const unchecked: string[] = [];
   const lowerExplained = new Set([...inputs.keywords, ...inputs.implementation, ...inputs.sharedImplementation].map((word) => word.toLowerCase()));
   const lowerComment = new Set([...inputs.commentVocabulary].map((word) => word.toLowerCase()));
+  const fixtureTexts = inputs.fixtureTexts.filter((text) => !isStressTest(text));
   for (const regex of policyRegexes(document)) {
     // A case-insensitive regex matches upstream's own names in any case, so explain them in any case.
     const caseless = /\(\?[ims]*i[ims]*[:)]/u.test(regex.text);
     const isUnexplained = (word: string) => explained(word, regex.commentText) === undefined
       && !(caseless && (lowerExplained.has(word.toLowerCase()) || (regex.commentText && lowerComment.has(word.toLowerCase()))));
-    const found = regexNames(regex, inputs.fixtureTexts, isUnexplained, explainedNear, REGEX_NAME_LIMIT);
+    const found = regexNames(regex, fixtureTexts, isUnexplained, explainedNear, REGEX_NAME_LIMIT);
     if (found === undefined) {
       unchecked.push(`${regex.pointer}: ${regex.text}`);
       continue;
