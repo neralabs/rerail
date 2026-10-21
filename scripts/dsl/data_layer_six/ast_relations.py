@@ -232,3 +232,54 @@ def narrow_deferred_windows(clause):
   elif stage['name'] in ('last_methods','last_module_functions'):
    columns=[*node_columns,'name',*(['cls','class_name'] if stage['name']=='last_methods' else [])]
    stage['query']=stage['query'].replace('SELECT *,row_number()','SELECT '+','.join(columns)+',row_number()',1)
+
+def shared_syntax_relations(clause,direct_graph=True):
+ """Use declared tape facts; keep every detector and source gate in SQL/AST."""
+ import copy
+ plan=clause['relational'];raw=plan['inputs'].get('raw_nodes')
+ if raw is None or not clause['id'].startswith(('quality-contracts','quality-conditional')):return False
+ batched_reachability(clause)
+ original=copy.deepcopy(raw)
+ def gate_only(rule):
+  if not isinstance(rule,dict):return
+  parts=rule.get('all')
+  if isinstance(parts,list) and P('NODE') in parts:
+   captures=[P('NODE'),optional(I(P('PARENT'),'neighbor')),*[optional(F(f,P(f.upper()))) for f in FIELDS]]
+   rule['all']=[*[item for item in parts if item not in captures],K('module')];return
+  for value in rule.values():
+   if isinstance(value,dict):gate_only(value)
+   elif isinstance(value,list):
+    for item in value:gate_only(item)
+ gate_only(original['evidence']['query']['ast']['rule'])
+ original['evidence']['project']={'path':'file.path'}
+ del plan['inputs']['raw_nodes'];plan['inputs']['syntax_gate']=original
+ fields=[f for f in FIELDS if any(name.startswith(f+'_') for name in raw['evidence']['project'])]
+ demanded=list(dict.fromkeys(['__path','__start','__end','id','parent','edge_parent','ordinal','text',*raw['evidence']['project'],*[f+'_id' for f in fields]]))
+ plan['syntax']={'columns':demanded,'name':'nodes','gate':'syntax_gate','fields':fields,
+  'excludeKinds':['comment','string_start','string_content','string_end','escape_sequence','line_continuation'],
+  'edges':'edges','ownership':'ownership','owners':{
+   'fn':{'kind':'function_definition'},'cls':{'kind':'class_definition'},'top_fn':{'kind':'function_definition','outermost':True}}}
+ if clause['id'].startswith('quality-conditional'):
+  plan['syntax']['emptyTextKinds']=['module','class_definition','function_definition','decorated_definition','block','expression_statement','argument_list','keyword_argument','assignment','augmented_assignment','return_statement','if_statement','elif_clause','else_clause','match_statement','case_clause','for_statement']
+ plan['stages']=[s for s in plan['stages'] if s['name'] not in ('nodes','edges','ownership')]
+ # Replace authored identity expressions with the corresponding canonical field ID.
+ identity=re.compile(r"(?P<prefix>\b[A-Za-z_]\w*\.)?(?P<field>[a-z_]+)_kind\|\|':'\|\|(?P=prefix)?(?P=field)_start\|\|':'\|\|(?P=prefix)?(?P=field)_end")
+ def lower(value):
+  if isinstance(value,str):
+   value=identity.sub(lambda m:(m['prefix'] or '')+m['field']+'_id',value)
+   return re.sub(r'json_quote\(((?:[a-z_]\w*\.)?id)\)',r'json_quote(CAST(\1 AS TEXT))',value)
+  if isinstance(value,dict):return {k:lower(v) for k,v in value.items()}
+  if isinstance(value,list):return [lower(v) for v in value]
+  return value
+ columns=[c for c in demanded if c!='text']
+ for stage in plan['stages']:
+  if 'query' in stage:stage['query']=lower(stage['query'])
+  if stage['name']=='arguments':stage['query']=stage['query'].replace('SELECT n.*,','SELECT '+','.join('n.'+c for c in columns)+',',1)
+  if stage['name'] in ('last_methods','last_module_functions'):
+   extra=['name',*(['cls','class_name'] if stage['name']=='last_methods' else [])]
+   stage['query']=stage['query'].replace('SELECT *,row_number()','SELECT '+','.join([*columns,*extra])+',row_number()',1)
+ plan['query']=lower(plan['query'])
+ for stage in plan['stages']:
+  if 'reachability' in stage:
+   stage['reachability']={'roots':lower(stage['reachability']['roots']),**({'syntax':'nodes'} if direct_graph else {'edges':'SELECT __path,src,dst FROM edges','graph':'forest'})}
+ return True

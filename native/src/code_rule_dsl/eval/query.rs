@@ -763,7 +763,7 @@ impl Drop for TapeCacheSlot {
 }
 
 /// A file's tape and line table, reused only within the current evaluation.
-pub(super) fn file_tape(
+pub(in crate::code_rule_dsl) fn file_tape(
     language: GrammarDialect,
     file: &FileInput,
 ) -> Result<(crate::code_rule_dsl::tape::TapeDoc, Arc<LineTable>)> {

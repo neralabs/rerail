@@ -2,7 +2,7 @@
 import collections
 import json
 
-LEAF_PHASES = {"input-extract", "sql-input", "sql-validate", "sql-materialize", "sql-index", "sql-analyze", "sql-result", "sql-reach-prepare", "sql-reach-walk", "sql-reach-index"}
+LEAF_PHASES = {"syntax-prepare", "syntax-owners", "sql-release", "input-extract", "sql-input", "sql-validate", "sql-materialize", "sql-index", "sql-analyze", "sql-result", "sql-reach-prepare", "sql-reach-walk", "sql-reach-index"}
 
 
 def aggregate(log):

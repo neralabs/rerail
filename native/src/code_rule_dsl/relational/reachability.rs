@@ -9,6 +9,7 @@ pub(in crate::code_rule_dsl) struct Reachability {
     pub(in crate::code_rule_dsl) edges: String,
     pub(in crate::code_rule_dsl) batch_size: usize,
     pub(in crate::code_rule_dsl) forest: bool,
+    pub(in crate::code_rule_dsl) syntax: Option<String>,
 }
 
 pub(super) fn create(
@@ -30,9 +31,12 @@ pub(super) fn create(
     );
     #[cfg(feature = "code-rule-profile")]
     let span = super::super::profile::trace::Span::start("sql-reach-prepare", &stage.name);
+    // Unary plus preserves each scalar value and removes declared affinity from
+    // CTAS identity columns. Otherwise INTEGER source columns force a numeric
+    // comparison against the untyped key catalog and disable its key index term.
     db.execute_batch(&format!(
-        "CREATE TEMP TABLE {roots} AS SELECT DISTINCT __path,id FROM ({root_query}) WHERE __path IS NOT NULL AND id IS NOT NULL;
-         CREATE TEMP TABLE {edges} AS SELECT DISTINCT __path,src,dst FROM ({edge_query}) WHERE __path IS NOT NULL AND src IS NOT NULL AND dst IS NOT NULL;
+        "CREATE TEMP TABLE {roots} AS SELECT DISTINCT __path,+id AS id FROM ({root_query}) WHERE __path IS NOT NULL AND id IS NOT NULL;
+         CREATE TEMP TABLE {edges} AS SELECT DISTINCT __path,+src AS src,+dst AS dst FROM ({edge_query}) WHERE __path IS NOT NULL AND src IS NOT NULL AND dst IS NOT NULL;
          CREATE TEMP TABLE {keys}(__path TEXT NOT NULL,key,compact INTEGER NOT NULL);
          INSERT INTO {keys} SELECT __path,key,row_number() OVER(ORDER BY __path,key) FROM (
            SELECT __path,id AS key FROM {roots} UNION SELECT __path,src FROM {edges} UNION SELECT __path,dst FROM {edges});

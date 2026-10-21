@@ -191,11 +191,12 @@ export interface CodeRuleDslRelational {
   locations?: string[];
   /** Evaluate independent inputs and SQL stages per file, caching final local findings. */
   partitionBy?: "file" | "repository";
+  syntax?: { name: string; gate: string; fields?: string[]; columns?: string[]; excludeKinds?: string[]; emptyTextKinds?: string[]; edges?: string; ownership?: string; owners?: Record<string,{kind:string;outermost?:boolean}> };
   inputs: Record<string, CodeRuleDslRelation>;
   references?: { language: "python"; siblingLinks?: NonNullable<CodeRuleDslAstRule["calls"]>["siblingLinks"]; constructorFields?: NonNullable<CodeRuleDslAstRule["calls"]>["constructorFields"] };
   stages?: ({ name: string } & (
     | { query: string; indexes?: string[][]; deferred?: Record<string, string>; reachability?: never }
-    | { reachability: { roots: string; edges: string; batchSize?: number; graph?: "directed" | "forest" }; query?: never; indexes?: never; deferred?: never }
+    | { reachability: { roots: string; edges?: string; syntax?: string; batchSize?: number; graph?: "directed" | "forest" }; query?: never; indexes?: never; deferred?: never }
   ))[];
   query: string;
   key?: string[];

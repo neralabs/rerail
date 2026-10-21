@@ -1,5 +1,8 @@
 # Native forest traversal and deferred SQL columns
 
+This report records the implementation at `f52817f`.
+The [shared syntax follow-up](shared-syntax-implementation.md) removes repeated preparation and uses direct parser identities.
+
 The engine supports strict forest traversal, deferred source text, and release of intermediate SQL relations.
 The data-layer quality policy uses these features.
 Rule decisions, inference, joins, aggregation, and diagnostics remain in SQL.

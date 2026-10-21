@@ -343,6 +343,7 @@ pub(super) fn evaluate_global(
     snapshot: &Snapshot,
     closed: &std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<Evaluation> {
+    let _syntax = crate::code_rule_dsl::relational::syntax::Pool::install();
     let resident = std::sync::Arc::clone(&state.code_rules[index]);
     let code_rule = resident.as_ref();
     let _graph = state.crossfile.evaluation_slot();
@@ -532,6 +533,19 @@ fn evaluate_file_relations(
             let _tapes = crate::code_rule_dsl::eval::TapeCacheSlot::install();
             if let Some(language) = crate::code_rule_dsl::eval::file_language(&input) {
                 crate::code_rule_dsl::eval::TapeCacheSlot::seed(language, &input, &document.image)?;
+            }
+            let _syntax = crate::code_rule_dsl::relational::syntax::Pool::install();
+            if matches!(&clause.kind, ClauseKind::Relational(plan) if plan.syntax.is_some()) {
+                let facts = match document.syntax.get() {
+                    Some(facts) => std::sync::Arc::clone(facts),
+                    None => {
+                        let facts = crate::code_rule_dsl::relational::syntax::Pool::get(&input)?;
+                        let _ = document.syntax.set(std::sync::Arc::clone(&facts));
+                        facts
+                    }
+                };
+                crate::code_rule_dsl::relational::syntax::Pool::seed(&input, facts);
+                state.documents.account_syntax(&version);
             }
             let snapshot = Snapshot {
                 revision,
