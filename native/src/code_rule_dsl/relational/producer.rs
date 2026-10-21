@@ -5,6 +5,8 @@ use std::{
     cell::Cell,
     sync::{Arc, atomic::AtomicUsize},
 };
+#[cfg(feature = "code-rule-profile")]
+mod completed;
 const MAX_STAGES: usize = 100;
 const MAX_OUTPUT_BYTES: usize = 256 * 1024 * 1024;
 thread_local! { static READERS: Cell<usize> = const { Cell::new(0) }; }
@@ -72,6 +74,10 @@ impl Completed {
     pub fn publish(self, db: &Connection, name: &str, work: &Arc<AtomicUsize>) -> Result<()> {
         #[cfg(feature = "code-rule-profile")]
         let _span = crate::code_rule_dsl::profile::trace::Span::start("producer-publish", name);
+        #[cfg(feature = "code-rule-profile")]
+        if std::env::var("RERAIL_SQL_COMPLETED_OUTPUT").is_ok_and(|v| v == "virtual") {
+            return completed::publish(self, db, name, Arc::clone(work));
+        }
         db.execute_batch(&format!(
             "CREATE TEMP TABLE {} (__path TEXT,root,node)",
             quote(name)

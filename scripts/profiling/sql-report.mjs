@@ -18,6 +18,8 @@ const workload = {
   executor: "relational", command: profile.command, nativeSha256: parity?.nativeSha256,
   workloadSha256: parity?.workloadSha256, policyDigests: parity?.policyDigests,
   allocator: parity?.allocator, phaseCpuMs: parity?.phaseCpuMs,
+  executionSettings: { completedOutput: profile.completedOutput ?? "table", insertBatch: profile.insertBatch,
+    nativeInput: profile.nativeInput, sharedInputIndex: profile.sharedInputIndex, retainSqlStages: profile.retainSqlStages },
   phaseMarkers: profile.native.phaseMarkers, host: profile.host,
   results: { parity: passed, exitCode: profile.exitCode, timedOut: profile.timedOut,
     sql: applyCpuMs === undefined ? undefined : { apply: { cpuMs: applyCpuMs } },
