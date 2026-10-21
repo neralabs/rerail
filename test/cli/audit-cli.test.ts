@@ -103,7 +103,7 @@ describe("rerail scan and settings CLI", () => {
     // Rerail may read sessions on this computer already (set-up's one approval; `setup-json.test.ts` asks it).
     await writeFile(join(process.env.RERAIL_HOME!, "consent.json"), JSON.stringify({ sessions: { approvedAt: "2026-10-16T00:00:00.000Z" } }));
     await commands.get("rerail-start")!.handler("", { ui });
-    expect(asked).toEqual([`You’re working in ${name}. Can Rerail read it to pick the rule packs that look right?`]);
+    expect(asked).toEqual([`Find rule packs for ${name}?`]);
     expect(notices.at(-1)).toBe(SETUP_CANCELLED);
     expect(workspaceStartState(root)).toBe("stopped");
     // The person's "start" answer, run as the coding agent relays it.

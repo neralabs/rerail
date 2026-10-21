@@ -8,7 +8,6 @@ import { rulesDashboardUrl, type RulesDashboardScope } from "../api/session-cont
 import {
   CODING_AGENT_NAMES,
   codingAgentHome,
-  connectedCodingAgents,
   refreshCodingAgents,
   registrationRoot as packageRegistrationRoot,
 } from "../setup/coding-agents.js";
@@ -283,8 +282,8 @@ export function noBrowserReason(env: NodeJS.ProcessEnv, platform: NodeJS.Platfor
   return undefined;
 }
 
-/** The dashboard's hash route for each page set-up links to. The review page is WR. */
-const DASHBOARD_ROUTES: Record<DashboardPage, string> = { rules: "rules", review: "rule-packs?review=1" };
+/** The dashboard's hash route for each page set-up links to. */
+const DASHBOARD_ROUTES: Record<DashboardPage, string> = { rules: "rules" };
 
 /**
  * The daemon of the active install; it serves every repository. A running daemon from another package (an older
@@ -329,10 +328,6 @@ export function setupEnvironment(context: SetupContext, port?: number): SetupEnv
         harnesses: agents,
         ...(repoRoot === undefined ? {} : { workspaceDir: repoRoot }),
       });
-    },
-    async connectedAgents() {
-      // A dry run plans every write; an agent with nothing to write is connected already.
-      return connectedCodingAgents(registrationRoot(context), codingAgentHome());
     },
     sessionsApproved() {
       try {
@@ -506,7 +501,7 @@ async function install(context: SetupContext, parsed: SetupArguments, cwd: strin
   if (active !== undefined && (answering || origin === "start")) return undefined;
   await context.updater.install();
   if (answering || workspaceStartState(cwd, parsed.databasePath) === "started") return undefined;
-  return renderInstalled({ version: context.updater.packageVersionLabel }, lane).replace(/\n$/u, "");
+  return renderInstalled(lane).replace(/\n$/u, "");
 }
 
 /** The run's carry: its own arguments, with the place's configured database when it names none. */
