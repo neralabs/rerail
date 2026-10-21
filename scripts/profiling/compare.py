@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 
-def compare(baseline, experiment, allow_policy_changes=False):
+def compare(baseline, experiment, allow_policy_changes=False, allow_engine_changes=False):
     before, after = baseline["parity"], experiment["parity"]
     if set(baseline.get("sampleModules", ["rerail_engine"])) != set(experiment.get("sampleModules", ["rerail_engine"])):
         raise ValueError("Profiler modes do not match: sampleModules")
@@ -17,7 +17,7 @@ def compare(baseline, experiment, allow_policy_changes=False):
     if not before.get("workloadSha256") or not after.get("workloadSha256"):
         raise ValueError("Profiles require a workload fingerprint from the current driver")
     for key in ["commit", "files", "bytes", "workloadSha256", "nativeSha256", "allocator"]:
-        if before[key] != after[key]:
+        if before[key] != after[key] and not (key == "nativeSha256" and allow_engine_changes):
             raise ValueError(f"Profiles do not match: {key}")
     changed = {key: {"baseline": before["policyDigests"].get(key), "experiment": after["policyDigests"].get(key)}
                for key in before["policyDigests"].keys() | after["policyDigests"].keys()
@@ -40,6 +40,7 @@ def compare(baseline, experiment, allow_policy_changes=False):
             "changedSettings": {key: {"baseline": baseline.get(key), "experiment": experiment.get(key)}
                                 for key in ["insertBatch", "nativeInput", "sharedInputIndex", "retainSqlStages"] if baseline.get(key) != experiment.get(key)},
             "changedPolicies": changed,
+            "changedNative": ({"baseline": before["nativeSha256"], "experiment": after["nativeSha256"]} if before["nativeSha256"] != after["nativeSha256"] else None),
             "nativeSha256": before["nativeSha256"], "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."}
 
 
@@ -49,8 +50,9 @@ if __name__ == "__main__":
     parser.add_argument("experiment", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--allow-policy-changes", action="store_true", help="Compare authored SQL rewrites; report every changed policy digest")
+    parser.add_argument("--allow-engine-changes", action="store_true", help="Compare engine changes; retain workload, policy and parity guards and report both binary hashes")
     args = parser.parse_args()
-    result = compare(json.loads(args.baseline.read_text()), json.loads(args.experiment.read_text()), args.allow_policy_changes)
+    result = compare(json.loads(args.baseline.read_text()), json.loads(args.experiment.read_text()), args.allow_policy_changes, args.allow_engine_changes)
     text = json.dumps(result, indent=2) + "\n"
     if args.output:
         args.output.write_text(text)

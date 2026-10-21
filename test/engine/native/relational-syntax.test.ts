@@ -177,3 +177,37 @@ it("rejects unavailable gates and fields, conflicting names and incompatible gra
   Object.assign(value.clauses[0]!.relational.stages[0]!.reachability, { edges: "SELECT __path,src,dst FROM edges" });
   expect(() => compile(value)).toThrow();
 });
+
+it("matches the SQL forest oracle for every descendant row across files and exclusions", () => {
+  const value = policy();
+  Object.assign(value.clauses[0]!.relational.syntax, { excludeKinds: ["comment", "string_content"] });
+  value.clauses[0]!.relational.query = "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,d.root,d.node,n.kind FROM descendants d JOIN nodes n ON n.__path=d.__path AND n.id=d.node";
+  value.clauses[0]!.relational.key = ["root", "node"];
+  const control = structuredClone(value);
+  Object.assign(control.clauses[0]!.relational.stages[0]!, { reachability: { roots: "SELECT __path,id FROM nodes WHERE kind='function_definition'", edges: "SELECT __path,src,dst FROM edges", graph: "forest" } });
+  const current = [...files, { path: "ü.py", language: "python", source: "def π():\n # comment\n def child(): return '文字'\n return child()\n" }];
+  const actual = evaluate(compile(value), current), expected = evaluate(compile(control), current);
+  expect(actual.failures).toEqual([]); expect(expected.failures).toEqual([]);
+  expect(actual.violations.length).toBeGreaterThan(10);
+  expect(actual.violations).toEqual(expected.violations);
+});
+
+it("keeps a failed producer separate from another completed relation", () => {
+  const value = policy(), bad = structuredClone(value.clauses[0]!);
+  bad.id = "bad";
+  bad.relational.stages[0]!.reachability.roots = "SELECT __path,999999 AS id FROM nodes WHERE kind='module'";
+  value.clauses.push(bad);
+  const result = evaluate(compile(value));
+  expect(result.failures).toHaveLength(1);
+  expect(result.failures[0].clauseId).toBe("bad");
+  expect(result.violations).toHaveLength(2);
+  expect(result.violations.every((v: { clauseId: string }) => v.clauseId === "nodes")).toBe(true);
+});
+
+it("publishes successful empty relations before SQL reasons about absence", () => {
+  const value = policy();
+  value.clauses[0]!.relational.stages[0]!.reachability.roots = "SELECT __path,id FROM nodes WHERE 0";
+  value.clauses[0]!.relational.query = "SELECT __path AS path,__start AS start_byte,__end AS end_byte,id FROM nodes n WHERE kind='function_definition' AND NOT EXISTS(SELECT 1 FROM descendants d WHERE d.__path=n.__path AND d.root=n.id)";
+  const result = evaluate(compile(value));
+  expect(result.failures).toEqual([]); expect(result.violations).toHaveLength(2);
+});

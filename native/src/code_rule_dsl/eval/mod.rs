@@ -296,6 +296,7 @@ pub(super) fn evaluate_clauses(
         clauses: covered,
     };
     let _calls = stateless_calls(code_rule, snapshot, clauses, &mut evaluation.metrics)?;
+    let mut relational_jobs = Vec::new();
     for clause in clauses {
         match &clause.kind {
             ClauseKind::Forbid(query) => {
@@ -444,10 +445,14 @@ pub(super) fn evaluate_clauses(
                             rows
                         })
                         .collect::<Result<Vec<_>>>()?;
-                    merge(
-                        &mut evaluation,
-                        super::relational::evaluate(code_rule, clause, plan, rows, &partition),
-                    );
+                    relational_jobs.push(super::relational::Job {
+                        code_rule,
+                        clause,
+                        rows,
+                        facts: Vec::new(),
+                        snapshot: partition,
+                        budget: super::budget::Context::capture(),
+                    });
                 }
             }
             ClauseKind::Llm => evaluation.failures.push(failure(
@@ -457,6 +462,9 @@ pub(super) fn evaluate_clauses(
                 None,
             )),
         }
+    }
+    for result in super::relational::evaluate_batch(relational_jobs) {
+        merge(&mut evaluation, result);
     }
     if evaluation.metrics.witnesses > limits.max_witnesses
         && !evaluation.failures.iter().any(|failure| {
@@ -480,9 +488,32 @@ fn merge(evaluation: &mut Evaluation, mut other: Evaluation) {
     evaluation.metrics.witnesses += other.metrics.witnesses;
 }
 
+/// Full file-local projections preserve the original local semantic side tables.
+pub(super) fn relational_rows(
+    code_rule: &CompiledCodeRule,
+    clause: &CompiledClause,
+    plan: &super::relational::Plan,
+    snapshot: &Snapshot,
+    metrics: &mut Metrics,
+) -> Result<Vec<evidence::Rows>> {
+    let _calls = stateless_calls(code_rule, snapshot, std::slice::from_ref(clause), metrics)?;
+    plan.inputs
+        .iter()
+        .map(|(_, input)| {
+            stateless_rows(
+                code_rule,
+                clause,
+                (input, evidence::Side::Counted),
+                snapshot,
+                metrics,
+            )
+        })
+        .collect()
+}
+
 /// An evidence relation's rows in a stateless snapshot: each file of the code rule's scope and the
 /// relation's domain evaluated alone, so that one file's failure makes only its rows unknown.
-fn stateless_rows(
+pub(super) fn stateless_rows(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
     (relation, side): (&FactQuery, evidence::Side),

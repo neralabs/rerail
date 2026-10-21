@@ -5,6 +5,8 @@ use crate::code_rule_dsl::{
     violations::Span,
 };
 use ast_grep_core::source::SgNode;
+mod packed;
+use packed::{Columns, Fields, Postings};
 use rusqlite::{Connection, types::Value, vtab::Context};
 use std::{
     cell::RefCell,
@@ -51,9 +53,6 @@ pub(super) trait Source: Send + Sync {
         self.len()
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize;
-    fn initialize(&self) -> rusqlite::Result<()> {
-        Ok(())
-    }
     fn indexed(&self, column: usize) -> bool;
     fn range_upper_compatible(&self, _lower: usize, _upper: usize) -> bool {
         false
@@ -81,8 +80,9 @@ pub(super) struct Counters {
     pub columns: AtomicU64,
 }
 struct OwnerIndex {
-    values: Vec<Option<u32>>,
-    postings: HashMap<u32, Vec<usize>>,
+    values: Vec<u32>,
+    postings: Postings,
+    distinct: usize,
 }
 type Selections = parking_lot::Mutex<HashMap<(Vec<String>, bool), Arc<Selection>>>;
 pub(in crate::code_rule_dsl) struct Facts {
@@ -90,10 +90,10 @@ pub(in crate::code_rule_dsl) struct Facts {
     lines: Arc<LineTable>,
     rows: Vec<u32>,
     positions: Vec<Option<usize>>,
-    ordinal: Vec<usize>,
-    children: HashMap<u32, Vec<usize>>,
-    kinds: HashMap<String, Vec<usize>>,
-    fields: HashMap<(u32, u16), u32>,
+    packed: Columns,
+    children: Postings,
+    kinds: Postings,
+    fields: Fields,
     owners: parking_lot::Mutex<HashMap<(String, bool), Arc<OwnerIndex>>>,
     selections: Selections,
 }
@@ -107,56 +107,39 @@ impl Facts {
         if !doc.syntax_error_ranges().is_empty() {
             return Err(invalid("syntax source is incomplete"));
         }
-        let mut facts = Self {
-            positions: vec![None; doc.transducer_len()],
+        let packed = Columns::build(&doc)?;
+        let rows = (0..doc.transducer_len() as u32)
+            .filter(|&id| packed.flags[id as usize] & 1 != 0)
+            .collect::<Vec<_>>();
+        let mut positions = vec![None; doc.transducer_len()];
+        for (row, &id) in rows.iter().enumerate() {
+            positions[id as usize] = Some(row);
+        }
+        let children = Postings::build(
+            doc.transducer_len(),
+            rows.iter()
+                .enumerate()
+                .filter_map(|(r, &id)| packed.parent(id).map(|p| (p, r))),
+        )?;
+        let kinds = Postings::build(
+            packed.kind_names.len(),
+            rows.iter()
+                .enumerate()
+                .map(|(r, &id)| (packed.kind[id as usize], r)),
+        )?;
+        let fields = Fields::build(&packed)?;
+        let facts = Self {
             doc,
             lines,
-            rows: Vec::new(),
-            ordinal: Vec::new(),
-            children: HashMap::new(),
-            kinds: HashMap::new(),
-            fields: HashMap::new(),
+            rows,
+            positions,
+            packed,
+            children,
+            kinds,
+            fields,
             owners: parking_lot::Mutex::new(HashMap::new()),
             selections: parking_lot::Mutex::new(HashMap::new()),
         };
-        for id in 0..facts.doc.transducer_len() as u32 {
-            if crate::code_rule_dsl::budget::step_budget_exhausted() {
-                return Err(invalid("interrupted: syntax preparation"));
-            }
-            let field = facts.doc.transducer_field(id);
-            if field != 0
-                && let Some(parent) = facts.doc.transducer_parent(id)
-            {
-                facts.fields.entry((parent, field)).or_insert(id);
-            }
-            let node = facts.doc.node(id);
-            let kind = node.kind();
-            if facts.doc.transducer_flags(id) & 1 == 0 {
-                continue;
-            }
-            let row = facts.rows.len();
-            facts.positions[id as usize] = Some(row);
-            facts.rows.push(id);
-            facts.ordinal.push(0);
-            if let Some(rows) = facts.kinds.get_mut(kind.as_ref()) {
-                rows.push(row)
-            } else {
-                facts.kinds.insert(kind.into_owned(), vec![row]);
-            }
-            if let Some(parent) = facts.doc.transducer_parent(id) {
-                facts.children.entry(parent).or_default().push(row);
-            }
-        }
-        for children in facts.children.values_mut() {
-            children.sort_by_key(|&r| {
-                let id = facts.rows[r];
-                let span = facts.doc.transducer_span(id);
-                (span.start, span.end, facts.doc.node(id).kind().into_owned())
-            });
-            for (ordinal, &row) in children.iter().enumerate() {
-                facts.ordinal[row] = ordinal;
-            }
-        }
         Ok(Arc::new(facts))
     }
 
@@ -172,19 +155,17 @@ impl Facts {
             rows: Vec::new(),
             reverse: vec![None; self.rows.len()],
             ordinal: Vec::new(),
+            visible: Arc::new(Vec::new()),
         };
         let mut ordinals = HashMap::new();
         for (r, &id) in self.rows.iter().enumerate() {
             if crate::code_rule_dsl::budget::step_budget_exhausted() {
                 return Err(invalid("interrupted: syntax selection"));
             }
-            if excludes
-                .iter()
-                .any(|k| k == self.doc.node(id).kind().as_ref())
-            {
+            if excludes.iter().any(|k| k == self.packed.kind(id)) {
                 continue;
             }
-            let parent = self.doc.transducer_parent(id);
+            let parent = self.packed.parent(id);
             let ordinal = ordinals.entry(parent).or_insert(0);
             let current = *ordinal;
             *ordinal += 1;
@@ -195,6 +176,7 @@ impl Facts {
             selected.rows.push(r);
             selected.ordinal.push(current);
         }
+        selected.visible = Arc::new(selected.rows.iter().map(|&r| self.rows[r]).collect());
         let selected = Arc::new(selected);
         if cache.len() >= 4 {
             cache.clear();
@@ -221,15 +203,13 @@ impl Facts {
         // The preorder table is ordered by source start. Check only equal-start nodes.
         let at = self
             .rows
-            .partition_point(|&id| self.doc.transducer_span(id).start < start);
+            .partition_point(|&id| self.packed.span(id).start < start);
         self.rows[at..]
             .iter()
-            .take_while(|&&id| self.doc.transducer_span(id).start == start)
+            .take_while(|&&id| self.packed.span(id).start == start)
             .any(|&id| {
-                self.doc.transducer_span(id).end == end
-                    && !excludes
-                        .iter()
-                        .any(|k| k == self.doc.node(id).kind().as_ref())
+                self.packed.span(id).end == end
+                    && !excludes.iter().any(|k| k == self.packed.kind(id))
             })
             .then(|| self.lines.span(start, end))
     }
@@ -242,44 +222,49 @@ impl Facts {
         #[cfg(feature = "code-rule-profile")]
         let _span = crate::code_rule_dsl::profile::trace::Span::start("syntax-owners", &owner.kind);
         let mut values = Vec::with_capacity(self.rows.len());
-        let mut postings: HashMap<u32, Vec<usize>> = HashMap::new();
-        for (row, &id) in self.rows.iter().enumerate() {
+
+        for &id in &self.rows {
             if crate::code_rule_dsl::budget::step_budget_exhausted() {
                 return Err(invalid("interrupted: syntax owners"));
             }
             let parent = self
-                .doc
-                .transducer_parent(id)
+                .packed
+                .parent(id)
                 .and_then(|p| self.positions[p as usize])
-                .and_then(|p| values[p]);
-            let own = (self.doc.node(id).kind().as_ref() == owner.kind).then_some(id);
+                .map(|p| values[p])
+                .filter(|&v| v != packed::NONE);
+            let own = (self.packed.kind(id) == owner.kind).then_some(id);
             let value = if owner.outermost {
                 parent.or(own)
             } else {
                 own.or(parent)
             };
-            values.push(value);
-            if let Some(id) = value {
-                postings.entry(id).or_default().push(row);
-            }
+            values.push(value.unwrap_or(packed::NONE));
         }
-        let index = Arc::new(OwnerIndex { values, postings });
+        let postings = Postings::build(
+            self.doc.transducer_len(),
+            values
+                .iter()
+                .enumerate()
+                .filter_map(|(r, &v)| (v != packed::NONE).then_some((v, r))),
+        )?;
+        let distinct = postings.offsets.windows(2).filter(|w| w[0] != w[1]).count();
+        let index = Arc::new(OwnerIndex {
+            values,
+            postings,
+            distinct,
+        });
         if cache.len() >= 4 {
             cache.clear();
         }
         cache.insert(key, Arc::clone(&index));
         Ok(index)
     }
-    pub(super) fn descendants(&self, root: i64) -> Result<&[u32]> {
-        let root = u32::try_from(root)
-            .ok()
-            .filter(|id| (*id as usize) < self.positions.len())
-            .ok_or_else(|| invalid("invalid syntax root"))?;
-        let start = self.positions[root as usize]
-            .ok_or_else(|| invalid("syntax root is not an eligible node"))?;
-        let end = self.doc.transducer_descendants(root).end;
-        let count = self.rows[start..].partition_point(|&id| id < end);
-        Ok(&self.rows[start..start + count])
+    pub(super) fn subtree_ends(&self) -> &[u32] {
+        &self.packed.subtree_end
+    }
+    fn visible(&self, excludes: &[String]) -> Result<Arc<Vec<u32>>> {
+        Ok(Arc::clone(&self.select(excludes, false)?.visible))
     }
 }
 
@@ -391,6 +376,7 @@ struct Selection {
     rows: Vec<usize>,
     reverse: Vec<Option<usize>>,
     ordinal: Vec<usize>,
+    visible: Arc<Vec<u32>>,
 }
 struct Meter {
     work: Arc<AtomicUsize>,
@@ -441,7 +427,7 @@ impl Source for Nodes {
             Column::Id | Column::Start => 1,
             Column::Parent => 8,
             Column::Kind => self.len().div_ceil(50),
-            Column::Owner(o) => self.len().div_ceil(o.postings.len().max(1)),
+            Column::Owner(o) => self.len().div_ceil(o.distinct.max(1)),
             _ => self.len(),
         };
         if batch {
@@ -523,9 +509,10 @@ impl Source for Nodes {
                     }
                 }
                 (Column::Kind, Value::Text(k)) => {
-                    if let Some(v) = self.facts.kinds.get(k) {
+                    if let Some(&kind) = self.facts.packed.kind_ids.get(k) {
+                        let v = self.facts.kinds.get(kind);
                         self.charge(v.len())?;
-                        rows.extend_from_slice(v)
+                        rows.extend(v.iter().map(|&r| r as usize));
                     }
                 }
                 (Column::Start, Value::Integer(start)) => {
@@ -549,19 +536,17 @@ impl Source for Nodes {
                     }
                 }
                 (Column::Parent, Value::Integer(id)) => {
-                    if let Ok(id) = u32::try_from(*id)
-                        && let Some(v) = self.facts.children.get(&id)
-                    {
+                    if let Ok(id) = u32::try_from(*id) {
+                        let v = self.facts.children.get(id);
                         self.charge(v.len())?;
-                        rows.extend_from_slice(v)
+                        rows.extend(v.iter().map(|&r| r as usize));
                     }
                 }
                 (Column::Owner(o), Value::Integer(id)) => {
-                    if let Ok(id) = u32::try_from(*id)
-                        && let Some(v) = o.postings.get(&id)
-                    {
+                    if let Ok(id) = u32::try_from(*id) {
+                        let v = o.postings.get(id);
                         self.charge(v.len())?;
-                        rows.extend_from_slice(v)
+                        rows.extend(v.iter().map(|&r| r as usize));
                     }
                 }
                 _ => return Ok(None),
@@ -580,20 +565,20 @@ impl Source for Nodes {
         let row = self.selected.rows[row];
         let id = self.facts.rows[row];
         let doc = &self.facts.doc;
-        let node = doc.node(id);
-        let span = doc.transducer_span(id);
+
+        let span = self.facts.packed.span(id);
         match &self.columns[c].1 {
             Column::Path => ctx.set_result(&self.path),
             Column::Id => ctx.set_result(&i64::from(id)),
             Column::Start => ctx.set_result(&(span.start as i64)),
             Column::End => ctx.set_result(&(span.end as i64)),
-            Column::Parent => ctx.set_result(&doc.transducer_parent(id).map(i64::from)),
-            Column::Kind => ctx.set_result(&node.kind().as_ref()),
+            Column::Parent => ctx.set_result(&self.facts.packed.parent(id).map(i64::from)),
+            Column::Kind => ctx.set_result(&self.facts.packed.kind(id)),
             Column::Line => ctx.set_result(&(self.facts.lines.line(span.start) as i64)),
             Column::Text => ctx.set_result(&if self
                 .empty_text_kinds
                 .iter()
-                .any(|k| k == node.kind().as_ref())
+                .any(|k| k == self.facts.packed.kind(id))
             {
                 ""
             } else {
@@ -603,26 +588,28 @@ impl Source for Nodes {
                 text
             }),
             Column::Ordinal => ctx.set_result(&(ordinal as i64)),
-            Column::Owner(o) => ctx.set_result(&o.values[row].map(i64::from)),
+            Column::Owner(o) => {
+                ctx.set_result(&(o.values[row] != packed::NONE).then_some(i64::from(o.values[row])))
+            }
             Column::ParentStart | Column::ParentEnd | Column::ParentKind => {
-                let parent = doc.transducer_parent(id);
+                let parent = self.facts.packed.parent(id);
                 match self.columns[c].1 {
                     Column::ParentStart => {
-                        ctx.set_result(&parent.map(|p| doc.transducer_span(p).start as i64))
+                        ctx.set_result(&parent.map(|p| self.facts.packed.span(p).start as i64))
                     }
                     Column::ParentEnd => {
-                        ctx.set_result(&parent.map(|p| doc.transducer_span(p).end as i64))
+                        ctx.set_result(&parent.map(|p| self.facts.packed.span(p).end as i64))
                     }
-                    _ => ctx.set_result(&parent.map(|p| doc.node(p).kind().into_owned())),
+                    _ => ctx.set_result(&parent.map(|p| self.facts.packed.kind(p).to_owned())),
                 }
             }
             Column::Field(field, part) => {
-                let value = self.facts.fields.get(&(id, *field)).copied();
+                let value = self.facts.fields.get(id, *field);
                 match part {
                     0 => ctx.set_result(&value.map(i64::from)),
-                    1 => ctx.set_result(&value.map(|n| doc.transducer_span(n).start as i64)),
-                    2 => ctx.set_result(&value.map(|n| doc.transducer_span(n).end as i64)),
-                    3 => ctx.set_result(&value.map(|n| doc.node(n).kind().into_owned())),
+                    1 => ctx.set_result(&value.map(|n| self.facts.packed.span(n).start as i64)),
+                    2 => ctx.set_result(&value.map(|n| self.facts.packed.span(n).end as i64)),
+                    3 => ctx.set_result(&value.map(|n| self.facts.packed.kind(n).to_owned())),
                     _ => {
                         let text = value.map(|n| doc.transducer_text_str(n));
                         if let Some(text) = text {
@@ -873,72 +860,63 @@ pub(super) fn load(
     Ok(names)
 }
 
-pub(super) fn closure(
+pub(super) fn prepare_trees(syntax: &Spec, files: &Files) -> Result<Vec<super::producer::Tree>> {
+    files
+        .iter()
+        .map(|(_, facts)| {
+            Ok(super::producer::Tree {
+                facts: Arc::clone(facts),
+                visible: facts.visible(&syntax.exclude_kinds)?,
+            })
+        })
+        .collect()
+}
+pub(super) fn demand(
     db: &Connection,
-    stage: &super::Stage,
     spec: &super::Reachability,
-    syntax: &Spec,
+    prepared: &[super::producer::Tree],
     files: &Files,
-    work: &Arc<AtomicUsize>,
-) -> Result<()> {
-    #[cfg(feature = "code-rule-profile")]
-    let mut span = crate::code_rule_dsl::profile::trace::Span::start("sql-reach-walk", &stage.name);
-    db.execute_batch(&format!(
-        "CREATE TEMP TABLE {} (__path TEXT,root,node)",
-        super::quote(&stage.name)
-    ))
-    .map_err(sql_error)?;
-    let mut roots = db
+    work: Arc<AtomicUsize>,
+) -> Result<super::producer::Demand> {
+    let paths = files.iter().map(|(p, _)| p.clone()).collect::<Vec<_>>();
+    let by_path = paths
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (p.as_str(), i as u32))
+        .collect::<HashMap<_, _>>();
+    let trees = prepared.to_vec();
+    let mut statement = db
         .prepare(&format!(
             "SELECT DISTINCT __path,id FROM ({}) WHERE __path IS NOT NULL AND id IS NOT NULL",
             spec.roots
         ))
         .map_err(sql_error)?;
-    let mut roots = roots.query([]).map_err(sql_error)?;
-    let mut output = Vec::new();
-    let mut requested = 0;
-    let by_path = files
-        .iter()
-        .map(|(path, facts)| {
-            Ok((
-                path.as_str(),
-                (facts, facts.select(&syntax.exclude_kinds, false)?),
-            ))
-        })
-        .collect::<Result<HashMap<_, _>>>()?;
-    while let Some(row) = roots.next().map_err(sql_error)? {
+    let mut query = statement.query([]).map_err(sql_error)?;
+    let mut roots = Vec::new();
+    while let Some(row) = query.next().map_err(sql_error)? {
         let path: String = row.get(0).map_err(sql_error)?;
-        let root: i64 = row.get(1).map_err(sql_error)?;
-        let (facts, selection) = by_path
+        let node: i64 = row.get(1).map_err(sql_error)?;
+        let file = *by_path
             .get(path.as_str())
             .ok_or_else(|| invalid("syntax root is outside the eligible files"))?;
-        let nodes = facts.descendants(root)?;
-        requested += 1;
-        source::charge(work, nodes.len().div_ceil(64))?;
-        for &node in nodes {
-            if facts.positions[node as usize].is_none_or(|r| selection.reverse[r].is_none()) {
-                continue;
-            }
-            output.push([
-                Value::Text(path.clone()),
-                Value::Integer(root),
-                Value::Integer(i64::from(node)),
-            ]);
-            if output.len() == 256 {
-                super::insert::stage_rows(db, &stage.name, 3, output.drain(..), work)?;
-            }
+        let node = u32::try_from(node).map_err(|_| invalid("invalid syntax root"))?;
+        if files[file as usize]
+            .1
+            .positions
+            .get(node as usize)
+            .is_none_or(Option::is_none)
+        {
+            return Err(invalid("syntax root is not an eligible node"));
         }
+        if roots.len() >= 64 * 1024 * 1024 / std::mem::size_of::<super::producer::Root>() {
+            return Err(invalid("producer request capacity"));
+        }
+        roots.push(super::producer::Root { file, node });
     }
-    super::insert::stage_rows(db, &stage.name, 3, output, work)?;
-    #[cfg(feature = "code-rule-profile")]
-    {
-        span.detail(|| serde_json::json!({"roots":requested,"directSyntax":true,"batchRows":256}));
-        drop(span);
-    }
-    #[cfg(not(feature = "code-rule-profile"))]
-    let _ = requested;
-    #[cfg(feature = "code-rule-profile")]
-    let _span = crate::code_rule_dsl::profile::trace::Span::start("sql-reach-index", &stage.name);
-    db.execute_batch(&format!("CREATE INDEX {} ON {} (__path,root,node);CREATE INDEX {} ON {} (__path,node,root);ANALYZE temp.{}",super::quote(&format!("__{}_forward",stage.name)),super::quote(&stage.name),super::quote(&format!("__{}_reverse",stage.name)),super::quote(&stage.name),super::quote(&stage.name))).map_err(sql_error)?;
-    Ok(())
+    Ok(super::producer::Demand {
+        roots,
+        trees,
+        paths,
+        work,
+    })
 }

@@ -4,7 +4,9 @@
 use super::crossfile::{ConsumerRefresh, CrossFileScheduler};
 use super::documents;
 use super::evaluate::{Job, JobContext, evaluate_file, run_jobs};
-use super::global::{compile_query_plan, compile_relation_producer, evaluate_global};
+use super::global::{
+    compile_query_plan, compile_relation_producer, evaluate_batched_relations, evaluate_global,
+};
 use super::index::{RepositoryIndexOptions, WorkspaceIndexTask, reusable_directories};
 use super::ingest::{
     Request, apply_request, decode_buffer_request, file_needs_update, inline_input, is_cheap,
@@ -1131,10 +1133,17 @@ impl WorkspaceApplyTask {
                 files: Vec::new(),
             };
             let dirty = std::mem::take(&mut state.dirty_globals);
+            let mut relational =
+                evaluate_batched_relations(&mut state, &dirty, &snapshot, &self.closed)?;
             for index in dirty {
                 check_closed(&self.closed)?;
                 let budget = MatchBudget::work(&self.closed, CLAUSE_WORK_BUDGET);
-                let mut evaluation = evaluate_global(&mut state, index, &snapshot, &self.closed)?;
+                let mut evaluation = evaluate_global(
+                    &mut state,
+                    index,
+                    &snapshot,
+                    relational.remove(&index).unwrap_or_default(),
+                )?;
                 #[cfg(test)]
                 super::pass_deadline_at_test_phase("global-done");
                 // Only exhaustion some step observed cut it short; a finished evaluation is kept.
