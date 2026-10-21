@@ -1960,12 +1960,17 @@ fn run_id(stage: Option<usize>, clause: usize) -> i64 {
 
 const CLEAR_RUNS: &str = "DELETE FROM runs";
 const INSERT_RUN: &str = "INSERT INTO runs(run, file) VALUES (?1, ?2)";
+/// A batch's transaction (`Session::transaction`).
+const BEGIN: &str = "BEGIN";
+const COMMIT: &str = "COMMIT";
+const ROLLBACK: &str = "ROLLBACK";
 /// Returns the temporary database's free pages to the allocator: a batch's B-tree rows, emptied
 /// when their clause ends, leave their pages free (`auto_vacuum = INCREMENTAL`), and an
 /// in-memory database keeps free pages allocated until a vacuum truncates them.
 const FREE_PAGES: &str = "PRAGMA temp.incremental_vacuum";
-/// The statements every batch runs besides its stages' and clauses'.
-const BATCH_STATEMENTS: usize = 3;
+/// The statements every batch runs besides its stages' and clauses' (a failed one's `ROLLBACK`
+/// aside).
+const BATCH_STATEMENTS: usize = 5;
 /// The most statements a session's cache holds; the least recently run is finalized when a new
 /// one is prepared past it. A statement holds 5 KiB on average. On workspace 01 with the Tempo and
 /// data-layer policies each of the four sessions runs about 19k distinct texts (395 MiB held
@@ -2234,12 +2239,13 @@ impl Session {
 
     /// Runs one batch of `docs`, each with what its scopes read beyond its tape (`FileContext`):
     /// each of `runs` over its files (a statement in one run at most). Returns, per run and per
-    /// file of it (in its order), the file's matches, ordered by root. A batch that fails leaves
-    /// every table empty, so the session runs the next one afresh; every batch ends with its
-    /// frames' and emptied recursion tables' buffers freed and its B-trees' free pages returned
-    /// (`FREE_PAGES`), so a session holds between batches only what it keeps for all of them. The
-    /// input-set terminals' file scopes live for the batch: built on a file's first key, kept
-    /// across the batch's statements, and dropped when it ends.
+    /// file of it (in its order), the file's matches, ordered by root. A batch runs in one
+    /// transaction: its B-trees' writes commit once, and a batch that fails rolls them back and
+    /// leaves its other tables empty, so the session runs the next one afresh; every batch ends
+    /// with its frames' and emptied recursion tables' buffers freed and its B-trees' free pages
+    /// returned (`FREE_PAGES`), so a session holds between batches only what it keeps for all of
+    /// them. The input-set terminals' file scopes live for the batch: built on a file's first
+    /// key, kept across the batch's statements, and dropped when it ends.
     pub(in crate::code_rule_dsl) fn run(
         &mut self,
         docs: Vec<(TapeDoc, FileContext)>,
@@ -2258,7 +2264,7 @@ impl Session {
         *self.slot.current.write() = Some(Arc::clone(&batch));
         let scopes = BatchScopes::begin();
         let facts = take_fact_time();
-        let result = self.run_batch(&batch, runs);
+        let result = self.transaction(|session| session.run_batch(&batch, runs));
         self.stats.facts.add(take_fact_time());
         debug_assert_eq!(
             facts,
@@ -2269,24 +2275,12 @@ impl Session {
         *self.slot.current.write() = None;
         *self.slot.roots.write() = Arc::default();
         if result.is_err() {
-            // The frames are emptied below, as after every batch.
+            // The B-trees rolled back; the frames are emptied below, as after every batch.
             for (table, made) in self.plan.tables.iter().zip(&self.made) {
-                if !made {
-                    continue;
-                }
-                match table.make {
-                    Make::Frame(_) => {}
-                    Make::Rec(_) => {
-                        self.recs.clear(&table.name);
-                    }
-                    Make::BTree(_) => {
-                        self.connection
-                            .prepare_cached(&format!("DELETE FROM {}", table.name))?
-                            .execute([])?;
-                    }
+                if *made && matches!(table.make, Make::Rec(_)) {
+                    self.recs.clear(&table.name);
                 }
             }
-            self.connection.execute(CLEAR_RUNS, [])?;
             self.counts.reset();
         }
         self.frames.release();
@@ -2295,6 +2289,23 @@ impl Session {
         let mut freed = free.query([])?;
         // Each step frees one page.
         while freed.next()?.is_some() {}
+        result
+    }
+
+    /// `body` in one transaction, committed where it succeeds and rolled back where it fails.
+    fn transaction<T>(
+        &mut self,
+        body: impl FnOnce(&mut Self) -> Result<T, SqlError>,
+    ) -> Result<T, SqlError> {
+        self.connection.prepare_cached(BEGIN)?.execute([])?;
+        let result = body(self).and_then(|value| {
+            self.connection.prepare_cached(COMMIT)?.execute([])?;
+            Ok(value)
+        });
+        // A failed statement may have rolled the transaction back already.
+        if result.is_err() && !self.connection.is_autocommit() {
+            self.connection.prepare_cached(ROLLBACK)?.execute([])?;
+        }
         result
     }
 
