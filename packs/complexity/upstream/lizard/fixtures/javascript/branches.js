@@ -145,6 +145,22 @@ export function switchDefaultOnly(command) {
   }
 }
 
+export function defaultOnlyBesideCasedSwitch(command, mode) {
+  switch (mode) {
+    default:
+      break;
+  }
+  switch (command) {
+    case "start":
+      return 1;
+    case "stop":
+      return 2;
+    case "pause":
+      return 3;
+  }
+  return 0;
+}
+
 export function logicalAtLimit(a, b, c, d, e, f) {
   return (a && b) || (c && d) || (e && f);
 }

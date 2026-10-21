@@ -56,6 +56,8 @@ function ccnOf(language: CorpusLanguage, text: string): number {
  *   the enclosing function and lists a one-line arrow, scored 1, on the line after.
  * - A Python def whose return annotation spans several lines, or whose parameter list breaks after a default holding
  *   brackets, is scored whole: lizard ends it inside its signature and scores it 1 (fixed in crapkit #72).
+ * - A default-only switch counts 0 beside a cased one. The recorded number is min(standard, -m) over the whole function,
+ *   which there gives the default-only switch the 1 that -m adds for any switch; the rule counts each switch on its own.
  */
 const DEVIATIONS: ReadonlyArray<{ path: string; line: number; lizard: number | null; rerail: number | null }> = [
   { path: "javascript/nullish.js", line: 4, lizard: 8, rerail: 4 },
@@ -64,6 +66,8 @@ const DEVIATIONS: ReadonlyArray<{ path: string; line: number; lizard: number | n
   { path: "typescript/nullish.ts", line: 16, lizard: 7, rerail: 5 },
   { path: "python/signatures.py", line: 1, lizard: 1, rerail: 7 },
   { path: "python/signatures.py", line: 35, lizard: 1, rerail: 8 },
+  { path: "javascript/branches.js", line: 148, lizard: 3, rerail: 2 },
+  { path: "typescript/branches.ts", line: 169, lizard: 3, rerail: 2 },
   ...(["javascript/tokens.js", "typescript/tokens.ts"] as const).flatMap(path => [
     { path, line: 1, lizard: 2, rerail: 1 },
     { path, line: 5, lizard: 2, rerail: 1 },
@@ -261,13 +265,16 @@ describe("complexity rule pack", () => {
     ["javascript", "src/names.js", NAMED_JS, ["declared", "method", "level", "field", "assigned", "onKey", undefined]],
     ["python", "src/names.py", NAMED_PY, ["declared", "method"]],
   ] as const)("%s: names the function in the steer, or says 'This function' when it has no name", (language, path, lines, names) => {
-    const source = lines.map(line => {
-      if (!line.includes("$")) return line;
+    // A function starts on its `def` line in Python, and on the line holding its decisions in the one-line sources.
+    const opens = (line: string) => (language === "python" ? /^\s*def /u.test(line) : line.includes("$"));
+    const starts: number[] = [];
+    const written: string[] = [];
+    for (const line of lines) {
+      if (opens(line)) starts.push(written.length + 1);
       const indent = /^ */u.exec(line)![0];
-      return line.replace("$", OVER[language].replaceAll("\n    ", `\n${indent}`));
-    }).join("\n") + "\n";
-    // A function starts on each line that opens one (a `def`, or a line holding the decisions in the one-line sources).
-    const starts = source.split("\n").flatMap((line, index) => (/^\s*def |\$|if \(a\)/u.test(line) && !/^\s+if /u.test(line) ? [index + 1] : []));
+      written.push(...line.replace("$", OVER[language].replaceAll("\n    ", `\n${indent}`)).split("\n"));
+    }
+    const source = written.join("\n") + "\n";
     expect(starts.length).toBe(names.length);
     const expected = Object.fromEntries(starts.map((line, index) => [key(path, line), message(language, names[index], 7)]));
     expect(messages(compile(ruleJson(language)), [{ path, source }])).toEqual(expected);

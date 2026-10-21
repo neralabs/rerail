@@ -2,8 +2,9 @@
 
 Cyclomatic complexity rules for Python, TypeScript and JavaScript, with the decision points of
 [lizard](https://github.com/terryyin/lizard) 1.24.0 and without its tokenizer defects. A `switch` or `match` counts once
-however many cases it has: the lower of lizard's standard count and its modified count (`-m`), as slapkit scores a
-function, so a flat dispatch table is not a reason to split a function. One document per language, rule id
+however many cases it has, as slapkit scores a function with the lower of lizard's standard count and its modified count
+(`-m`), so a flat dispatch table is not a reason to split a function. The rule decides per switch, so a default-only
+switch beside a cased one counts 0 where slapkit's whole-function minimum gives it 1 (see "Deviations"). One document per language, rule id
 `complexity-cyclomatic-<language>`. They form the `complexity` rule pack, which set-up offers for a repository with
 Python, TypeScript or JavaScript source outside tests and build output; once a repository adds it, its rules are on
 (see `docs/rule-packs.md`).
@@ -60,7 +61,8 @@ tree-sitter-javascript as vendored under `native/grammars/`):
 
 ## Deviations from lizard 1.24.0
 
-Each is a lizard defect found on real code (see "Checked on real code"), and each has a corpus case.
+Each but the last is a lizard defect found on real code (see "Checked on real code"); the last is a choice in how a
+switch counts. Each has a corpus case.
 
 - **`??` and `??=` count 0.** lizard's tokenizer reads each as two `?` and counts 2.
 - **A `?` inside a regex literal counts 0**, and so does **`?.` right after `)` or `]`** (`f()?.x`, `a[0]?.x`). lizard
@@ -73,6 +75,9 @@ Each is a lizard defect found on real code (see "Checked on real code"), and eac
 - **`?.` counts 0 in `.jsx` files too.** lizard's JSX reader counts each `?.` as a conditional; its `.js` and `.ts`
   readers do not, and neither does Rerail anywhere.
 - lizard does not read `.mts` or `.cts` files at all; the TypeScript rule covers them with the same grammar.
+- **A default-only switch counts 0 beside a cased one.** The recorded number is the lower of lizard's standard and `-m`
+  counts over the whole function, and there `-m`'s 1 for a switch with no case survives; the rule counts each switch on
+  its own (`defaultOnlyBesideCasedSwitch` in the TypeScript and JavaScript corpus).
 
 ## Checked on real code
 

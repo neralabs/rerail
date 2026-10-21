@@ -166,6 +166,22 @@ export function switchDefaultOnly(command: string): number {
   }
 }
 
+export function defaultOnlyBesideCasedSwitch(command: string, mode: string): number {
+  switch (mode) {
+    default:
+      break;
+  }
+  switch (command) {
+    case "start":
+      return 1;
+    case "stop":
+      return 2;
+    case "pause":
+      return 3;
+  }
+  return 0;
+}
+
 export function logicalAtLimit(a: boolean, b: boolean, c: boolean, d: boolean, e: boolean, f: boolean): boolean {
   return (a && b) || (c && d) || (e && f);
 }
