@@ -1,1 +1,0 @@
-var x = 1; var {z: [y = x]} = {}; foo(y);

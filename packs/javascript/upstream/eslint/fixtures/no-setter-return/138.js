@@ -1,1 +1,0 @@
-(class { set a(val) { var x = () => { return; }; return 2; } })

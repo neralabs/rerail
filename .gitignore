@@ -28,3 +28,14 @@ conformance/recorders/port-readiness/runtimes/*/composer.lock
 # JSON back in the history, where it stays forever.
 packs/*/upstream/*/recording.json
 packs/*/upstream/*/corpus.json
+
+# Pack test data (PACK_FIXTURE_PATTERNS, scripts/s3/pack-fixtures.mjs): each tool's test cases and its recorded answers
+# on them live in S3, fetched by `npm run fixtures:pull`. A pull request adds new or changed files with `git add -f`; a
+# maintainer moves them to S3 with `npm run fixtures:push` before merge (CONTRIBUTING.md, "Pack test data").
+packs/*/upstream/*/fixtures/
+packs/*/upstream/*/tests/
+packs/*/upstream/*/*.expected.json
+packs/*/upstream/*/cases.json
+packs/*/upstream/*/*.cases.json
+packs/*/upstream/*/fixtures.upstream-check.json
+packs/*/upstream/*/lizard-*.tsv

@@ -1,8 +1,0 @@
-
-function foo(cb) {
-  cb = (function (a) {
-    return cb(1 + a);
-  })();
-}
-foo();
-      

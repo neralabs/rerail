@@ -1,1 +1,0 @@
-var { TextDecoder } = process.getBuiltinModule('node:util'); var b = new TextDecoder(s)

@@ -1,6 +1,7 @@
 """Records clippy 0.1.99 (Rust 1.99.0) for the Rust pack's ported lints (packs/rust/conformance.json),
-each one checked only by an `EarlyLintPass` (AST, no types). Run offline, never in CI, with the pinned toolchain
-(upstream/common.py pins it and refuses any other; Python 3.9 standard library only):
+each one checked only by an `EarlyLintPass` (AST, no types). Run by `npm run fixtures:derive` (a maintainer, or the
+bump workflow for an upstream release; never pull request CI), with the pinned toolchain (upstream/common.py pins it
+and refuses any other; Python 3.9 standard library only):
 
     python3 generate.py fixtures <rust-clippy checkout at tag rust-1.99.0> <scratch directory>
     python3 generate.py corpus <cargo target root> <name>=<corpus checkout> [...]
@@ -673,6 +674,7 @@ def fixtures(checkout: pathlib.Path, scratch: pathlib.Path) -> None:
     (HERE / "fixtures.upstream-check.json").write_text(json.dumps(
         {"clippy": common.CLIPPY_VERSION, "origin": common.CLIPPY_ORIGIN,
          "differences": check}, indent=1, sort_keys=True) + "\n")
+    common.pack_fixtures.written(HERE / "fixtures.upstream-check.json")
     print(f"{len(tests)} tests ({len(probes)} ours), {len(copies)} files copied, {len(findings)} findings; per lint:")
     for lint, count in sorted(Counter(key[0] for key in findings).items()):
         print(f"  {lint}: {count}")

@@ -1,1 +1,0 @@
-new Print(<Foo>[5]);

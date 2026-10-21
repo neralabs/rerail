@@ -1,1 +1,0 @@
-(function(exe){ exe('foo') })(eval);

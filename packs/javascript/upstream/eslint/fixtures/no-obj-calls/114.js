@@ -1,1 +1,0 @@
-const foo = Temporal; new foo();

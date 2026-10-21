@@ -67,11 +67,44 @@ describe("#3 fixture data location", () => {
     const result = fixtureDataLocation(
       memoryRepo({
         "fixtures/php/scope/a.expected.json": "{}",
-        "packs/php/upstream/phpcs/fixtures.expected.json": "{}",
+        "packs/php/upstream/notes.expected.json": "{}",
         "test/data/b.expected.json": "{}",
       }),
     );
     expect(paths(result)).toEqual(["test/data/b.expected.json"]);
+  });
+
+  it("flags tracked pack test data, which lives in S3, and passes the rest of upstream/<tool>/", () => {
+    const result = fixtureDataLocation(
+      memoryRepo({
+        "packs/php/upstream/phpcs/fixtures/Generic/a.inc": "",
+        "packs/react/upstream/eslint-plugin-react/tests/lib/rules/a.js": "",
+        "packs/php/upstream/phpcs/fixtures.expected.json": "{}",
+        "packs/sql/upstream/sqlfluff/fixtures.cases.json": "{}",
+        "packs/vue/upstream/eslint-plugin-vue/cases.json": "{}",
+        "packs/rust/upstream/clippy/fixtures.upstream-check.json": "{}",
+        "packs/complexity/upstream/lizard/lizard-1.24.0.tsv": "",
+        "packs/php/upstream/phpcs/gates.yaml": "",
+        "packs/php/upstream/phpcs/generate.py": "",
+        "packs/php/upstream/phpcs/recording.lock": "{}",
+        "packs/php/upstream/phpcs/goldens.tsv": "",
+        "packs/php/upstream/phpcs/UPSTREAM.md": "",
+        "fixtures/packs/valid/upstream/tool/fixtures.expected.json": "{}",
+      }),
+    );
+    expect(result.actual).toBe("7");
+    expect(paths(result)).toEqual([
+      "packs/complexity/upstream/lizard/lizard-1.24.0.tsv",
+      "packs/php/upstream/phpcs/fixtures.expected.json",
+      "packs/php/upstream/phpcs/fixtures/Generic/a.inc",
+      "packs/react/upstream/eslint-plugin-react/tests/lib/rules/a.js",
+      "packs/rust/upstream/clippy/fixtures.upstream-check.json",
+      "packs/sql/upstream/sqlfluff/fixtures.cases.json",
+      "packs/vue/upstream/eslint-plugin-vue/cases.json",
+    ]);
+    expect(new Set(result.findings.map((item) => item.message))).toEqual(
+      new Set(["pack test data is in S3; a maintainer runs `npm run fixtures:push` before merge"]),
+    );
   });
 });
 

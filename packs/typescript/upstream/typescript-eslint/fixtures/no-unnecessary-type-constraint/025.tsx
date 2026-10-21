@@ -1,1 +1,0 @@
-const data = <T extends any, U extends any>() => {};

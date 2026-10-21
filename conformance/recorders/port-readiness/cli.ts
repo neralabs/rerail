@@ -4,9 +4,10 @@
  * and exits 1 when a fresh recording differs from what the committed lock names.
  */
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
+import { packFixturesWritten } from "../../../scripts/s3/pack-fixtures.mjs";
 import { PACKAGE_ROOT } from "../../../src/engine/index.js";
 import { DEFAULT_CACHE_ROOT } from "../../port-readiness/corpus.js";
 import { ProcessCommandRunner } from "../../port-readiness/process.js";
@@ -69,6 +70,8 @@ async function main(): Promise<number> {
   }
   const written = await writeRecording(root, values.pack, values.tool, recorded, { cacheRoot, ...(values.release === undefined ? {} : { release: values.release }) });
   process.stdout.write(`${label}: recorded ${summary}; copied ${written.missing.length} case sources\n`);
+  // New case sources are pack test data, which git ignores: a contributor adds them to the pull request by hand.
+  if (written.missing.length > 0) process.stdout.write(`${packFixturesWritten(written.missing.map((copy) => join(root, label, copy.file)))}\n`);
   for (const asset of written.assets) process.stdout.write(`  ${asset.name} (${(asset.bytes / 1024 / 1024).toFixed(1)} MB gzipped)\n`);
   process.stdout.write(`  ${RECORDING_LOCK} names them; the recordings are in ${cacheRoot}/recordings/ and the assets to upload in ${cacheRoot}/recordings/upload/\n`);
 

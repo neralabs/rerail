@@ -1,1 +1,0 @@
-function c(x = {} as Foo) {}

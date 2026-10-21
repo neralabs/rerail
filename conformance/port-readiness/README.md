@@ -90,6 +90,7 @@ request's cache to that pull request, so main reads only what main's pushes and 
 packs/<pack>/upstream/<tool>/gates.yaml         the tool-pack's manifest (manifest.ts)
 packs/<pack>/upstream/<tool>/recording.lock     which recording this commit is judged against (recording/store.ts)
 packs/<pack>/upstream/<tool>/goldens.tsv        goldens of matches-upstream-tests, by document id, and the real-code run that found them
+packs/<pack>/upstream/<tool>/fixtures/          the case sources the recording names: pack test data, in S3 (npm run fixtures:pull)
 
 .rerail/port-readiness/recordings/<sha256>.json          the recordings themselves, fetched or recorded, cached by digest
   recording.json                                upstream's recorded answers (recording/schema.ts, rerail.port-readiness-recording/v2)

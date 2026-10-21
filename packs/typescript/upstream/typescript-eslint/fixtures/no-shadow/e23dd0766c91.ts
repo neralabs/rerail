@@ -1,1 +1,0 @@
-function func(a = [].find(a => true)) {}

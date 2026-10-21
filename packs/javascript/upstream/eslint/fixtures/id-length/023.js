@@ -1,1 +1,0 @@
-var lalala = Foo(42)

@@ -120,7 +120,9 @@ that:
   which the test lists with lizard's number and Rerail's;
 - test files produce no finding, even though lizard scores them over the limit.
 
-lizard is never a runtime or CI dependency: the TSV is checked in.
+lizard is never a runtime or CI dependency: the TSV is recorded once. The corpus and the TSV are pack test data, kept in
+S3, not git: `npm run fixtures:pull` fetches them ([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)), and the
+test fails saying so without them.
 
 ## Regenerating the scores
 
@@ -132,7 +134,8 @@ node packs/complexity/upstream/lizard/generate.mjs
 
 It runs `uvx --from lizard==1.24.0 lizard --csv` with and without `-m` on `upstream/lizard/fixtures/`, keeps the lower
 of the two counts for each function, and rewrites
-`upstream/lizard/lizard-1.24.0.tsv`. A new case lizard mis-scores needs an entry in the test's `DEVIATIONS`
+`upstream/lizard/lizard-1.24.0.tsv`; it prints the `git add -f` that puts a changed corpus and TSV in your pull
+request. A new case lizard mis-scores needs an entry in the test's `DEVIATIONS`
 list and a line under "Deviations" above.
 
 ## Rule details

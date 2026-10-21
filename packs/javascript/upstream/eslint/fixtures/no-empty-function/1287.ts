@@ -1,1 +1,0 @@
-const A = class {private static foo() {}}; // allow: generatorMethods

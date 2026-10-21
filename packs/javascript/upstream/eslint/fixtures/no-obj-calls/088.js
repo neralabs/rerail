@@ -1,1 +1,0 @@
-/*globals Intl: true*/ Intl();

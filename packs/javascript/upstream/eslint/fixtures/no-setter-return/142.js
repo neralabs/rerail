@@ -1,1 +1,0 @@
-return; ({ set a(val) { return 1; } }); return 2;

@@ -1,1 +1,0 @@
-(function() { const x = 0; })();

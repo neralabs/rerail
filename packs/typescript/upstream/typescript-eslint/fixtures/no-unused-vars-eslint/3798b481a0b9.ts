@@ -1,7 +1,0 @@
-
-let _a, b;
-
-foo.forEach(item => {
-  [a, b] = item;
-});
-      

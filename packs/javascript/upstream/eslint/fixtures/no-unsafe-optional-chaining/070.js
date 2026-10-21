@@ -1,1 +1,0 @@
-typeof obj?.foo;

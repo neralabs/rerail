@@ -1,1 +1,0 @@
-(class { set foo(val = (v) => 1) {} })

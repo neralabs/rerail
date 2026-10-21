@@ -1,5 +1,0 @@
-
-(function z(foo) {
-  z();
-})();
-      

@@ -1,1 +1,0 @@
-type barUnion = (string | number | boolean)[];

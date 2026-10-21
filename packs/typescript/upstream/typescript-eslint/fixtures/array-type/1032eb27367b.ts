@@ -1,1 +1,0 @@
-function foo(a: Array<Bar>): Array<Bar> {}

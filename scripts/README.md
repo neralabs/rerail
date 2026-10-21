@@ -23,3 +23,5 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
 - `review/`: the guidance review (`just rerail-guidance-review`): every rule pack rule run on its examples and upstream
   fixtures, with the steer the coding agent reads, in a local page where each rule's guidance is approved or sent back
   with comments.
+- `s3/`: pack test data in S3 (`pack-fixtures.mjs`, `npm run fixtures:pull` and `fixtures:push`; CONTRIBUTING.md,
+  "Pack test data"), with the messages its consumers give in Python (`pack_fixtures.py`).

@@ -1,1 +1,0 @@
-if (a) { do if (b) foo(); while (cond); } else bar();

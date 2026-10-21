@@ -1,1 +1,0 @@
-/** @jsx Foo.bar */ var React, a = <img />;

@@ -1,1 +1,0 @@
-(foo ? obj?.foo : obj?.bar).bar
