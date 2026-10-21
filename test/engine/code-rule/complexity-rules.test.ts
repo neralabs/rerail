@@ -36,8 +36,7 @@ const COMMENT: Record<CorpusLanguage, string> = { python: "#", typescript: "//",
 /** The steer for a function scored `ccn`: named as `name` (in backticks), or "This function" when it has none. */
 function message(language: CorpusLanguage, name: string | undefined, ccn: number): string {
   const subject = name === undefined ? "This function" : `\`${name}\``;
-  return `${subject} has cyclomatic complexity ${ccn}, over the ceiling of ${LIMIT}. Decompose it into smaller functions. `
-    + `If the branching is inherent, put \`${COMMENT[language]} rerail-ignore ${RULES[language]} -- <reason>\` on the line above it.`;
+  return `${subject} has cyclomatic complexity ${ccn}, over the ceiling of ${LIMIT}. Decompose it, or put \`${COMMENT[language]} rerail-ignore <rule id> -- <why>\` above it.`;
 }
 
 /** The number a steer carries; every message must be one `message` would write. */
@@ -281,7 +280,8 @@ describe("complexity rule pack", () => {
     const compiled = compile(ruleJson(language));
     const [steer] = Object.values(messages(compiled, [{ path, source }]));
     expect(steer).toBe(message(language, "branchy", 7));
-    const suggested = /put `([^`]+)` on the line above it/u.exec(steer!)![1]!.replace("<reason>", "a protocol table, split by state already");
+    // The agent fills in the rule id the steer names in brackets after the message, and its reason.
+    const suggested = /put `([^`]+)` above it/u.exec(steer!)![1]!.replace("<rule id>", RULES[language]).replace("<why>", "a protocol table, split by state already");
     expect(messages(compiled, [{ path, source: `${suggested}\n${source}` }])).toEqual({});
   });
 

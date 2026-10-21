@@ -180,7 +180,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "CYCLOMATIC_COMPLEXITY",
-        "message": "`$NAME` has cyclomatic complexity $CCN, over the ceiling of 6. Decompose it into smaller functions. If the branching is inherent, put `// rerail-ignore complexity-cyclomatic-javascript -- <reason>` on the line above it."
+        "message": "`$NAME` has cyclomatic complexity $CCN, over the ceiling of 6. Decompose it, or put `// rerail-ignore <rule id> -- <why>` above it."
       }
     },
     {
@@ -205,7 +205,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "CYCLOMATIC_COMPLEXITY",
-        "message": "This function has cyclomatic complexity $CCN, over the ceiling of 6. Decompose it into smaller functions. If the branching is inherent, put `// rerail-ignore complexity-cyclomatic-javascript -- <reason>` on the line above it."
+        "message": "This function has cyclomatic complexity $CCN, over the ceiling of 6. Decompose it, or put `// rerail-ignore <rule id> -- <why>` above it."
       }
     }
   ]
