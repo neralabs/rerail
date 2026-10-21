@@ -40,6 +40,31 @@ A pack is data only: it never imports the core engine. Core runs its rules, and 
 every pack against the contract. A pack may hold rules for a language core lists as `planned`: they are stored
 inactive and reported as `not supported yet` until core reads the language.
 
+## Message wording
+
+[`pack-message-wording.draft.json`](pack-message-wording.draft.json) is a rule for working in this repository, not
+part of any pack. It steers the coding agent while it writes a rule's violation message:
+
+```sh
+rerail rules add packs/pack-message-wording.draft.json   # into your library, on, for this repository
+```
+
+It reads every message in `packs/*/rules/*.json` and `packs/*/candidates/rules/*.json`, each case of one an option
+chooses included, and steers when a message names an upstream tool (as a pasted rule id does when it starts with the
+tool's name), names Rerail, or writes NEVER, MUST or ALWAYS in capitals. A word in backticks or single quotes is code
+or a configured value, and passes. The rest of the [message criteria](../docs/pack-format.md#message) are left to
+review.
+
+What it does not check:
+
+- **A message holding its own rule id**, unless the id names a tool: 523 of the 595 ids do; the `n-`, `next-`,
+  `react-`, `vitest-` and `complexity-` ones don't. A rule reads JSON as text only, and a regex cannot compare the
+  document's `id` with its message.
+- **Text after an apostrophe that pairs with no quote**, such as a Rust lifetime (`'a`) or `print()'s`.
+
+Test a change with `rerail rules test packs/pack-message-wording.draft.json`, raise its `revision`, and add it again;
+`test/cli/pack-message-wording.test.ts` runs its cases.
+
 ## Third-party material
 
 Packs derived from upstream rule sets keep the upstream licence under `packs/<id>/licenses/<project>/`. The
