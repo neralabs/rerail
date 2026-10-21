@@ -169,9 +169,9 @@ pack's README, under "Rule details". For example: `Avoid dd() and dump() calls; 
 
 ### Message
 
-The message is advice to the agent. In the study of the Python pack's steers (NER-1910), the steers that worked said
-what is wrong, why it matters, what to change and when it is fine to leave it. The ones that did harm stated a fact or
-a ban with nothing to act on, or were obeyed without judgement and broke working code.
+The message is advice to the agent: what is wrong, why it matters, what to change and when it is fine to leave it. A
+message that states a fact or a ban gives the agent nothing to act on, and one the agent follows without judgement can
+break working code.
 
 1. It gives advice: it says what to change in this code and names the replacement. A fact or a ban alone ("Use of the
    insecure ECB cipher mode.", "Do not use bare except") is not advice.

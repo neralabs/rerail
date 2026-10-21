@@ -450,15 +450,20 @@ export function textFailures(file: string, text: string): string[] {
   } catch {
     return []; // Check 1 reports a document that does not parse.
   }
-  const description = (document as { description?: unknown }).description;
-  if (typeof description !== "string" || description.trim() === "") return [`${file}: has no description`];
   const failures: string[] = [];
-  const plain = description.replace(QUOTED, "''").replace(ABBREVIATION, "");
-  if (description.length > DESCRIPTION_CHARS) failures.push(`${file}: description is ${description.length} characters, over ${DESCRIPTION_CHARS}: ${description}`);
-  if (!description.endsWith(".")) failures.push(`${file}: description does not end with a period: ${description}`);
-  if (SENTENCE_BREAK.test(plain)) failures.push(`${file}: description is more than one sentence: ${description}`);
-  if (TOOL_NAMES.test(plain)) failures.push(`${file}: description names an upstream tool: ${description}`);
-  if (description.includes("`")) failures.push(`${file}: description holds code (backticks): ${description}`);
+  const sentence = (what: string, value: string, limit: number, form: boolean): void => {
+    const plain = value.replace(QUOTED, "''").replace(ABBREVIATION, "");
+    if (value.length > limit) failures.push(`${file}: ${what} is ${value.length} characters, over ${limit}: ${value}`);
+    if (form && !value.endsWith(".")) failures.push(`${file}: ${what} does not end with a period: ${value}`);
+    if (form && SENTENCE_BREAK.test(plain)) failures.push(`${file}: ${what} is more than one sentence: ${value}`);
+    if (TOOL_NAMES.test(plain)) failures.push(`${file}: ${what} names an upstream tool: ${value}`);
+  };
+  const description = (document as { description?: unknown }).description;
+  if (typeof description !== "string" || description.trim() === "") failures.push(`${file}: has no description`);
+  else {
+    sentence("description", description, DESCRIPTION_CHARS, true);
+    if (description.includes("`")) failures.push(`${file}: description holds code (backticks): ${description}`);
+  }
   return failures;
 }
 
