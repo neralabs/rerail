@@ -5,6 +5,111 @@ Each entry identifies its implementation and evidence. Historical results remain
 Experiments stay in isolated worktrees or standalone harnesses until a keep-or-reject decision.
 The engine retains one chosen execution path. Profiling adds observation and does not select another algorithm.
 
+## Full repository verification: 2026-10-21, execution `3285b48f`
+
+**The first 50 rules pass at repository scale. Batch six fails at repository scale.**
+The [complete evidence](../fixtures/host/data-layer-port/profiling/full-repository-20261021.json) preserves reports, failures, commands, source hashes, binary hashes, and corpus coverage.
+This entry changes no engine implementation or limits.
+
+### Repository results
+
+All sources use data-layer commit `2b1504adc4291daaf080b2e932962b134da1a69a`.
+The first 50 rules run together over 9,021 eligible files and 137,924,324 source bytes.
+Batch six runs separately over its original 9,010-file, 137,896,473-byte snapshot for the historical comparison.
+The additional 11 files are Rust grammar inputs.
+There is no combined 60-rule repository result.
+
+CPU values include process user and system time. Compilation is separate.
+
+| Repository workload | Cold CPU | Cold elapsed | Unchanged CPU | Edit CPU | Peak RSS | Result |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| First 50 rules, current | **212.619 s** | 233.738 s | 0.801 s | 40.182 s | 6.60 GiB | Pass: 24,820 findings |
+| Batch six, historical passing run | Not recorded | **951.004 s** | Not recorded | Not recorded | 11.14 GiB | Pass: 173 findings |
+| Batch six, current | **538.452 s** | 645.958 s | 0.087 s | 11.344 s | 21.33 GiB | **Fail: 890 engine failures** |
+
+The first 50 rules have zero extra findings, missing findings, or engine failures.
+Their unchanged-file and trailing-newline edit comparisons also pass.
+The edited file is `impl/common/l2200_sql_dialect/sql_connection.py`.
+
+Batch six produces the expected 173 findings, but its failures prevent a parity pass.
+Its unchanged and edited results also contain failures.
+All repository findings belong to the direct-execution check. Matching them does not certify the failing quality check.
+The shorter elapsed time therefore does not establish a passing speedup over 951 seconds.
+
+### What the session history establishes
+
+The remembered 1,400-second result is **1,456.276 seconds for batch six's ten rules**.
+It has 84 extra findings and 46 engine failures.
+The later passing run takes 951.004 seconds for those ten rules.
+Neither historical result records process CPU time. Neither covers all 50 rules together.
+No historical-to-current CPU speedup ratio is available.
+
+The evidence identifies the session history file and its relevant lines.
+It also preserves the historical reports, including the passing 40-rule and individual batch-five measurements.
+Adding those independent durations would not reconstruct a joint 50-rule baseline.
+
+### Full source-corpus coverage
+
+All 60 rules pass **3,210 native observations: 1,631 positive and 1,579 clean**.
+Each observation compares stateless and workspace execution.
+Three additional signed-allowlist host checks pass separately.
+Every rule has positive and clean coverage. There are zero diagnostic or execution-path differences and zero engine failures.
+The 40 sixth-batch positive/clean edit transitions also pass.
+The first-50 Vitest gate passes 25 tests, including deliberately incorrect detectors. Two signature tests also pass.
+
+The evidence combines the complete first-50 gate with the all-batch replay.
+It replaces 181 overlapping batch-five observations with that batch's full 312-observation result.
+The overlap matches as a multiset of observation identities and outcomes. Both executions use the same native binary and policies.
+Retained reporter contracts, synthetic graph cases, original I/O cases, and uncaptured-test metadata are not native passes.
+This measurement replays recorded upstream inputs. It does not rerun upstream pytest or regenerate oracle expectations.
+
+### Scale failures and the next frontier
+
+There are **889 `producer capacity exceeded` failures** in `quality-contracts-1`.
+The producer packs ready relations into a shared 64 MiB input arena.
+It rejects every pending relation when preparation exceeds capacity.
+The driver currently creates all dirty jobs and SQL sessions before the producer wave.
+Automatic memory partitioning remains unimplemented, as recorded in the [execution contract](gpu-producer-execution-contract.md).
+SQL session storage is outside the producer arena's limit.
+
+One additional failure affects `quality-conditional-1`: `repository input budget exceeded`.
+Global snapshot construction supplies all files in the rule's scope.
+`Session::new` checks their combined source bytes against the 32 MB limit before selecting syntax-gated files.
+The small profiling selections do not expose this full-snapshot failure.
+
+A one-second external sample during the failed run contains 796 active native samples.
+Of those, 789 are within SQLite stage construction, including B-tree work and memory copying.
+This window identifies active materialization work. It does not identify the exact SQL statement or assign whole-run CPU percentages.
+
+The next architectural work must partition execution by resident capacity and constrain preparation to demanded files and columns.
+It must preserve repository semantics, completion outcomes, work allowances, and broad producer passes within each capacity partition.
+Raising limits or suppressing failures would not establish parity.
+
+### Measurement boundaries and reproduction
+
+Timing runs use the preceding baseline's profiling reference addon: engine optimization level 1, thin LTO, and 256 codegen units.
+The historical commands use a release build with thin LTO and 256 codegen units.
+This comparison does not isolate optimization changes under identical compiler settings.
+The ordinary correctness addon has no profiling feature and disables LTO. It supplies the corpus results, not performance measurements.
+Both use the system-malloc shim. The evidence records all binary hashes.
+
+Timing processes run sequentially. Host load is high; one observation is about 64 on 18 logical CPUs.
+The failed batch-six timing includes the external one-second sample.
+Cold means the first workspace evaluation in a fresh process, with no OS-cache flush.
+Initial bounded attempts stop at about 112 seconds and do not enter the completed timings.
+The user then authorizes full runs beyond the earlier two-minute limit.
+
+Local complete reports are under `.rerail/profiles/full-repository-20261021/`.
+`first-50-complete/parity.json` and `batch-6-complete/parity.json` retain the native driver output.
+The first-50 oracle recording unions the pinned 40-rule and batch-five recordings.
+Duplicate file paths must contain identical source. Every source is also checked against its pinned Git blob.
+The union has no combined Python oracle timing. Its original recording hashes are in the evidence.
+
+Use `conformance/data-layer/suite.ts --recording RECORDING --output RESULT --allocator system-malloc-shim --progress` through `node --import tsx`.
+Select the recorded reference addon through `RERAIL_ENGINE_PATH` and preserve its allocator setup.
+For fresh oracle recordings, use `scripts/dsl/data_layer_suite_record.py --batches 1,2,3,4,5` or `--batches 6` at the same source pin.
+The evidence retains the actual invocation commands and ordered rule sets.
+
 ## Current baseline: 2026-10-21, execution `7da151b8`
 
 This entry establishes the comparison point after removal of the experimental execution paths.
