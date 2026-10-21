@@ -578,8 +578,11 @@ impl FilePass {
     /// The file's regex clauses, and its AST clauses' input limits. `partial`: the pass runs some
     /// of the file's clauses only (`FileState::unstored`).
     fn begin(file: &mut FileState, code_rules: &[Arc<CompiledCodeRule>], partial: bool) -> Self {
+        let evaluated_clauses = file.candidates.regex.len() + file.candidates.ast.len();
         let mut metrics = Metrics {
             files: 1,
+            evaluated_files: usize::from(evaluated_clauses > 0),
+            evaluated_clauses,
             avoided_tape_decompressions: usize::from(file.selector_skipped),
             tape_cache_hits: usize::from(file.tape_cache_hit),
             tape_decompressions: usize::from(file.tape_decompressed),

@@ -152,6 +152,8 @@ pub(super) fn profile_result(
             "tapeCacheHits": metrics.tape_cache_hits,
             "tapeDecompressions": metrics.tape_decompressions,
             "restoredLocalResults": metrics.restored_local_results,
+            "evaluatedFiles": metrics.evaluated_files,
+            "evaluatedClauses": metrics.evaluated_clauses,
         }),
     );
     serde_json::to_string(&value)

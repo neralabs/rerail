@@ -765,6 +765,10 @@ pub(super) struct Metrics {
     pub(super) tape_cache_hits: usize,
     pub(super) tape_decompressions: usize,
     pub(super) restored_local_results: usize,
+    /// Files and clauses a pass evaluated: a file's clauses restored from stored results are not
+    /// counted, and a file all of whose clauses were restored counts in `files` only.
+    pub(super) evaluated_files: usize,
+    pub(super) evaluated_clauses: usize,
 }
 
 impl Metrics {
@@ -805,6 +809,8 @@ impl Metrics {
         self.tape_cache_hits += other.tape_cache_hits;
         self.tape_decompressions += other.tape_decompressions;
         self.restored_local_results += other.restored_local_results;
+        self.evaluated_files += other.evaluated_files;
+        self.evaluated_clauses += other.evaluated_clauses;
     }
 }
 

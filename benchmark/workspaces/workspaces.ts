@@ -59,8 +59,8 @@ const SUBSET = [
 ] as const;
 
 /**
- * The production-path loop's workload (`prod-path`): workspace 01 walked as the enforcer walks it without a store (the
- * stored index refuses the data-layer policies' publications), on a fixed sample of its files, then a few edits.
+ * The production-path loop's workload (`prod-path`): workspace 01 walked as the enforcer walks it without a store, on a
+ * fixed sample of its files, then a few edits.
  */
 const PROD_PATH = { only: "01", sample: 40, edits: 8 } as const;
 
@@ -165,12 +165,28 @@ function loadRules(directories: readonly string[]): LoadedRules {
 // chunk, the final quiet apply, record the revision, read the result pages), then edits to the resident workspace as
 // the enforcer applies them, then `evictInactive` and an idle wait.
 
+const profileSchema = z.object({
+  files: z.number().int(),
+  evaluatedFiles: z.number().int(),
+  evaluatedClauses: z.number().int(),
+  restoredLocalResults: z.number().int(),
+  storageReadNanoseconds: z.number(),
+  storageManifestNanoseconds: z.number(),
+  storageWriteNanoseconds: z.number(),
+});
+const evaluationSchema = z.object({
+  metrics: z.object({ files: z.number().int() }).passthrough(),
+  profile: profileSchema.omit({ files: true }).passthrough().optional(),
+}).passthrough();
 const chunkSchema = z.object({
   revision: z.number().int(),
   done: z.boolean(),
   overBudget: z.boolean(),
   discoveredFiles: z.number().int(),
+  restoredFiles: z.number().int(),
   readFiles: z.number().int(),
+  reusableDirectories: z.number().int(),
+  evaluation: evaluationSchema.nullable(),
   failures: z.array(z.object({ code: z.string() })),
 }).passthrough();
 const pageSchema = z.object({
@@ -179,7 +195,31 @@ const pageSchema = z.object({
   violations: z.array(z.unknown()),
   failures: z.array(z.object({ code: z.string() }).passthrough()),
 }).passthrough();
-const applySchema = z.object({ revision: z.number().int() }).passthrough();
+const applySchema = z.object({ revision: z.number().int(), evaluation: evaluationSchema.optional() }).passthrough();
+
+/**
+ * What a scan evaluated and what it reused from stored results, summed over its applies (`RERAIL_CODE_RULE_PROFILE`'s
+ * counters): `files` went through an evaluation job, `evaluatedFiles` of them ran at least one clause (the rest were
+ * answered wholly by stored results), `restoredLocalResults` clause results were restored instead of evaluated.
+ */
+type Reuse = z.infer<typeof profileSchema>;
+
+function emptyReuse(): Reuse {
+  return { files: 0, evaluatedFiles: 0, evaluatedClauses: 0, restoredLocalResults: 0, storageReadNanoseconds: 0, storageManifestNanoseconds: 0, storageWriteNanoseconds: 0 };
+}
+
+function addReuse(into: Reuse, evaluation: z.infer<typeof evaluationSchema> | null | undefined): void {
+  if (evaluation === null || evaluation === undefined) return;
+  into.files += evaluation.metrics.files;
+  const profile = evaluation.profile;
+  if (profile === undefined) throw new Error("an apply reported no profile: RERAIL_CODE_RULE_PROFILE is not set");
+  into.evaluatedFiles += profile.evaluatedFiles;
+  into.evaluatedClauses += profile.evaluatedClauses;
+  into.restoredLocalResults += profile.restoredLocalResults;
+  into.storageReadNanoseconds += profile.storageReadNanoseconds;
+  into.storageManifestNanoseconds += profile.storageManifestNanoseconds;
+  into.storageWriteNanoseconds += profile.storageWriteNanoseconds;
+}
 
 interface SourceFile {
   path: string;
@@ -256,6 +296,14 @@ interface RunOptions {
   sqlBatch: number | undefined;
   /** Whether the scan is the stored repository index (`on`) or the enforcer's walk without a content store (`off`). */
   store: boolean;
+  /**
+   * The one content store every workspace of the run attaches (`--store-path`), created if missing and kept, so a
+   * later run, or a later workspace of this one, reuses what earlier ones stored; else each workspace has its own
+   * store in a temporary directory.
+   */
+  storePath: string | undefined;
+  /** After the scan, the unchanged re-apply (`--reapply`): every scanned file applied again as it is, then the final apply. */
+  reapply: boolean;
   /** The percentage of the workspace's files in scope the walk keeps (`inSample`); 100 keeps every file. */
   sample: number;
   edits: number;
@@ -291,6 +339,44 @@ async function readResults(workspace: NativeCodeRuleDslWorkspace) {
   return { pages, violations: violations.length, failureCodes, violationsSha256: digest(violations), failuresSha256: digest(failures) };
 }
 
+/**
+ * The enforcer's walk (`#walkAuditSources`): batches of 32 files, closed at 1 MiB, each applied with the
+ * workspace-wide pass deferred to the final apply. Returns the last revision applied and the batches.
+ */
+async function walkApply(workspace: NativeCodeRuleDslWorkspace, files: readonly SourceFile[], revision: number, reuse: Reuse) {
+  const binding = loadNativeBinding();
+  let batch: Array<{ path: string; language: string; source: string; module?: string | string[] }> = [];
+  let bytes = 0;
+  let chunks = 0;
+  for (const [index, file] of files.entries()) {
+    const source = await readFile(file.absolute, "utf8");
+    const module = binding.modulePath(file.language, file.absolute);
+    batch.push({ path: file.path, language: file.language, source, ...(module === null ? {} : { module }) });
+    bytes += Buffer.byteLength(source);
+    if (batch.length < AUDIT_BATCH_FILES && bytes < AUDIT_CHUNK_BYTES && index < files.length - 1) continue;
+    revision += 1;
+    const applied = applySchema.parse(JSON.parse(await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, files: batch, removed: [], deferGlobal: true }))));
+    addReuse(reuse, applied.evaluation);
+    chunks += 1;
+    batch = [];
+    bytes = 0;
+  }
+  return { revision, chunks };
+}
+
+/** The final quiet apply (the deferred workspace-wide pass), the stored revision's record, and every result page. */
+async function finishScan(workspace: NativeCodeRuleDslWorkspace, root: string, revision: number, store: boolean, reuse: Reuse) {
+  const final = await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, files: [], removed: [], quiet: true })).catch((error: unknown) => {
+    throw new Error(`${root}: the full scan's final apply failed`, { cause: error });
+  });
+  addReuse(reuse, applySchema.parse(JSON.parse(final)).evaluation);
+  if (store)
+    await workspace.completeStorageRevisionAsync().catch((error: unknown) => {
+      throw new Error(`${root}: recording the scanned revision failed`, { cause: error });
+    });
+  return readResults(workspace);
+}
+
 async function measureWorkspace(
   name: string,
   root: string,
@@ -299,7 +385,8 @@ async function measureWorkspace(
   sampler: RssSampler,
 ) {
   const binding = loadNativeBinding();
-  const stores = mkdtempSync(join(tmpdir(), "rerail-workspaces-store-"));
+  const stores = options.storePath === undefined ? mkdtempSync(join(tmpdir(), "rerail-workspaces-store-")) : undefined;
+  const storePath = options.storePath ?? join(stores!, "content.sqlite");
   const phases: Record<string, number> = {};
   sampler.phase();
   const workspaceStarted = performance.now();
@@ -321,11 +408,14 @@ async function measureWorkspace(
     let revision = 0;
     let discovered = 0;
     let read = 0;
+    let restoredFiles = 0;
+    let reusableDirectories = 0;
     let chunks = 0;
     let attachMs = 0;
+    const reuse = emptyReuse();
     const failureCodes: Record<string, number> = {};
     if (options.store) {
-      const attachment = await workspace.enableStorageAsync(root, join(stores, "content.sqlite"));
+      const attachment = await workspace.enableStorageAsync(root, storePath);
       if (!attachment.attached) throw new Error(`${root}: the content store did not attach: ${attachment.reason ?? "(no reason)"}`);
       attachMs = attachment.discoveryMilliseconds + attachment.publicationMilliseconds;
       while (true) {
@@ -335,42 +425,23 @@ async function measureWorkspace(
         const chunk = chunkSchema.parse(JSON.parse(response));
         chunks += 1;
         revision = chunk.revision;
+        // The index's counts are its totals so far.
         discovered = chunk.discoveredFiles;
-        read += chunk.readFiles;
+        read = chunk.readFiles;
+        restoredFiles = chunk.restoredFiles;
+        reusableDirectories = chunk.reusableDirectories;
+        addReuse(reuse, chunk.evaluation);
         countCodes(chunk.failures, failureCodes);
         if (chunk.overBudget) throw new Error(`${root}: the repository index went over budget`);
         if (chunk.done) break;
       }
     } else {
-      // The enforcer's walk (`#walkAuditSources`): batches of 32 files, closed at 1 MiB, each applied with the
-      // workspace-wide pass deferred to the final apply.
       discovered = files.length;
-      let batch: Array<{ path: string; language: string; source: string; module?: string | string[] }> = [];
-      let bytes = 0;
-      for (const [index, file] of files.entries()) {
-        const source = await readFile(file.absolute, "utf8");
-        const module = binding.modulePath(file.language, file.absolute);
-        batch.push({ path: file.path, language: file.language, source, ...(module === null ? {} : { module }) });
-        bytes += Buffer.byteLength(source);
-        if (batch.length < AUDIT_BATCH_FILES && bytes < AUDIT_CHUNK_BYTES && index < files.length - 1) continue;
-        revision += 1;
-        applySchema.parse(JSON.parse(await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, files: batch, removed: [], deferGlobal: true }))));
-        chunks += 1;
-        read += batch.length;
-        batch = [];
-        bytes = 0;
-      }
+      ({ revision, chunks } = await walkApply(workspace, files, revision, reuse));
+      read = files.length;
     }
     revision += 1;
-    const final = await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, files: [], removed: [], quiet: true })).catch((error: unknown) => {
-      throw new Error(`${root}: the full scan's final apply failed`, { cause: error });
-    });
-    applySchema.parse(JSON.parse(final));
-    if (options.store)
-      await workspace.completeStorageRevisionAsync().catch((error: unknown) => {
-        throw new Error(`${root}: recording the scanned revision failed`, { cause: error });
-      });
-    const results = await readResults(workspace);
+    const results = await finishScan(workspace, root, revision, options.store, reuse);
     for (const [code, n] of Object.entries(results.failureCodes)) failureCodes[code] = (failureCodes[code] ?? 0) + n;
     const fullScan = {
       wallMs: performance.now() - scanStarted,
@@ -379,6 +450,9 @@ async function measureWorkspace(
       chunks,
       discoveredFiles: discovered,
       readFiles: read,
+      restoredFiles,
+      reusableDirectories,
+      reuse,
       pages: results.pages,
       violations: results.violations,
       failureCodes,
@@ -388,6 +462,27 @@ async function measureWorkspace(
     phases.scan = sampler.phase();
     const afterScan = memorySnapshot(workspace);
     const engineReport = JSON.parse(workspace.engineReport()) as unknown;
+
+    // The unchanged re-apply: every scanned file again, as it is, to the workspace that holds them.
+    let reapply: { wallMs: number; cpuMs: number; chunks: number; reuse: Reuse; violations: number; violationsSha256: string; failuresSha256: string } | undefined;
+    if (options.reapply) {
+      const reapplyCpu = process.cpuUsage();
+      const reapplyStarted = performance.now();
+      const reapplied = emptyReuse();
+      const walked = await walkApply(workspace, files, revision, reapplied);
+      revision = walked.revision + 1;
+      const again = await finishScan(workspace, root, revision, options.store, reapplied);
+      reapply = {
+        wallMs: performance.now() - reapplyStarted,
+        cpuMs: cpuMs(reapplyCpu),
+        chunks: walked.chunks,
+        reuse: reapplied,
+        violations: again.violations,
+        violationsSha256: again.violationsSha256,
+        failuresSha256: again.failuresSha256,
+      };
+      phases.reapply = sampler.phase();
+    }
 
     const targets = editTargets(files);
     const edits: Array<{ bucket: string; path: string; sourceBytes: number; inline: boolean; wallMs: number; cpuMs: number }> = [];
@@ -424,6 +519,7 @@ async function measureWorkspace(
       commit: git(root, "rev-parse", "HEAD"),
       registerMs,
       fullScan,
+      ...(reapply === undefined ? {} : { reapply }),
       edits: {
         count: edits.length,
         wallP50Ms: percentile(wall, 0.5),
@@ -447,7 +543,7 @@ async function measureWorkspace(
     };
   } finally {
     workspace.close();
-    rmSync(stores, { recursive: true, force: true });
+    if (stores !== undefined) rmSync(stores, { recursive: true, force: true });
   }
 }
 
@@ -498,7 +594,7 @@ function workspaceRoots(directory: string, only: readonly string[]): Array<{ nam
 }
 
 async function run(argv: readonly string[]): Promise<void> {
-  const { values } = parseArguments(argv, ["--engine", "--rules", "--workspaces", "--output", "--addon", "--sql-batch", "--store", "--sample", "--edits", "--idle-ms", "--only"]);
+  const { values } = parseArguments(argv, ["--engine", "--rules", "--workspaces", "--output", "--addon", "--sql-batch", "--store", "--store-path", "--passes", "--reapply", "--sample", "--edits", "--idle-ms", "--only"]);
   const engine = option(values, "--engine");
   if (engine !== "native" && engine !== "sql") throw new UsageError("--engine takes native or sql");
   const ruleDirectories = (values.get("--rules") ?? []).map(directory => resolve(directory));
@@ -514,14 +610,23 @@ async function run(argv: readonly string[]): Promise<void> {
   const sample = count("--sample", option(values, "--sample"), 100, 1);
   // The stored index reads the whole checkout; only the walk without a store can keep a sample of it.
   if (sample < 100 && store === "on") throw new UsageError("--sample needs --store off");
+  const storePath = option(values, "--store-path");
+  if (storePath !== undefined && store !== "on") throw new UsageError("--store-path needs --store on");
+  const reapply = option(values, "--reapply") ?? "off";
+  if (reapply !== "on" && reapply !== "off") throw new UsageError("--reapply takes on or off");
+  const passes = count("--passes", option(values, "--passes"), 1, 1);
   const options: RunOptions = {
     engine,
     sqlBatch: sqlBatch === undefined ? undefined : count("--sql-batch", sqlBatch, 0, 1),
     store: store === "on",
+    storePath: storePath === undefined ? undefined : resolve(storePath),
+    reapply: reapply === "on",
     sample,
     edits: count("--edits", option(values, "--edits"), 20, 0),
     idleMs: count("--idle-ms", option(values, "--idle-ms"), 5_000, 0),
   };
+  // The reuse counters (files evaluated, clause results restored) are the profile's.
+  process.env.RERAIL_CODE_RULE_PROFILE = "1";
   const addon = option(values, "--addon");
   if (addon !== undefined) process.env.RERAIL_ENGINE_PATH = resolve(addon);
   const addonPath = realpathSync(resolveNativeBindingPath());
@@ -541,20 +646,28 @@ async function run(argv: readonly string[]): Promise<void> {
   const nativeAfterCompile = JSON.parse(binding.nativeMemoryProfile()) as unknown;
   process.stderr.write(`rerail-workspaces: ${engine}, ${rules.compiled.length} rules (${rules.rejected.length} rejected), compiled in ${Math.round(compileMs)} ms, RSS ${(rssAfterCompile / MIB).toFixed(0)} MiB\n`);
   const workspaces = [];
-  for (const { name, root } of roots) {
-    const measured = await measureWorkspace(name, root, rules, options, sampler);
-    workspaces.push(measured);
-    process.stderr.write(
-      `rerail-workspaces: ${name}: scan ${Math.round(measured.fullScan.wallMs)} ms, edits p50 ${measured.edits.wallP50Ms.toFixed(1)} / p95 ${measured.edits.wallP95Ms.toFixed(1)} ms, ` +
-        `peak ${(measured.rss.peak / MIB).toFixed(0)} MiB, final ${(measured.rss.final / MIB).toFixed(0)} MiB, after evict+idle ${(measured.rss.afterEvictIdle / MIB).toFixed(0)} MiB, ` +
-        `${measured.fullScan.violations} violations, ${JSON.stringify(measured.fullScan.failureCodes)}\n`,
-    );
-  }
+  for (let pass = 1; pass <= passes; pass += 1)
+    for (const { name, root } of roots) {
+      const measured = { pass, ...(await measureWorkspace(name, root, rules, options, sampler)) };
+      workspaces.push(measured);
+      const { reuse } = measured.fullScan;
+      process.stderr.write(
+        `rerail-workspaces: ${name} (pass ${pass}): scan ${Math.round(measured.fullScan.wallMs)} ms, ${measured.fullScan.discoveredFiles} files: ` +
+          `${measured.fullScan.restoredFiles} restored by the index, ${reuse.files} applied, ${reuse.evaluatedFiles} evaluated (${reuse.evaluatedClauses} clauses, ${reuse.restoredLocalResults} results restored); ` +
+          (measured.reapply === undefined ? "" : `re-apply ${Math.round(measured.reapply.wallMs)} ms, ${measured.reapply.reuse.evaluatedFiles} evaluated; `) +
+          `edits p50 ${measured.edits.wallP50Ms.toFixed(1)} / p95 ${measured.edits.wallP95Ms.toFixed(1)} ms, ` +
+          `peak ${(measured.rss.peak / MIB).toFixed(0)} MiB, final ${(measured.rss.final / MIB).toFixed(0)} MiB, after evict+idle ${(measured.rss.afterEvictIdle / MIB).toFixed(0)} MiB, ` +
+          `${measured.fullScan.violations} violations, ${JSON.stringify(measured.fullScan.failureCodes)}\n`,
+      );
+    }
   const result = {
     benchmark: "rerail-workspaces/v1",
     engine,
     sqlBatch: options.sqlBatch,
     store,
+    storePath: options.storePath,
+    passes,
+    reapply: options.reapply,
     sample: options.sample,
     addon: { path: addonPath, sha256: `sha256:${createHash("sha256").update(readFileSync(addonPath)).digest("hex")}`, kernelVersion },
     rules: { directories: ruleDirectories, count: rules.compiled.length, sha256: rules.sha256, rejected: rules.rejected },
