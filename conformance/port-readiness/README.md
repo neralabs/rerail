@@ -12,7 +12,8 @@ Each gate has a section (`GATES` in types.ts). The conformance gates hold for ev
 tool-pack's run judges its own rules on them, and `conformance-gates.ts` (`npm run port-readiness -- conformance`, its
 own CI job) judges every rule no gated tool-pack does, with no recording and no cache. The port gates judge a port
 against its upstream, so only a gated tool-pack's rules meet them. The summary and the pull request comment report the
-two sections apart (summary.ts, comment.ts).
+two sections apart (summary.ts, comment.ts); `loads`'s `in-scope` check compares a rule with the files upstream lints, so they report it
+under port readiness.
 
 | V1 gate | Gate id | Section | Blocking |
 | --- | --- | --- | --- |

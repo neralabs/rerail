@@ -11,7 +11,7 @@ import { sparseDirectoryPattern } from "../../../conformance/port-readiness/reco
 import type { CommandOptions, CommandResult, CommandRunner } from "../../../conformance/port-readiness/process.js";
 import { renderMarkdown } from "../../../conformance/port-readiness/report.js";
 import { blockingFailures, isCachedPack, isCachedRule, packDocuments, type CachedRule, type GatesReport, type RuleReport } from "../../../conformance/port-readiness/run.js";
-import { CONFORMANCE_COLUMN, parsePlanned, READY_COLUMN, renderSummary, summarize } from "../../../conformance/port-readiness/summary.js";
+import { CONFORMANCE_COLUMN, IN_SCOPE_TITLE, parsePlanned, READY_COLUMN, renderSummary, summarize } from "../../../conformance/port-readiness/summary.js";
 import { ungatedChecks } from "../../../conformance/port-readiness/ungated.js";
 import { CONFORMANCE_REPORT_FORMAT, type ConformanceReport, type ConformanceRuleReport } from "../../../conformance/port-readiness/conformance-gates.js";
 import { BLOCKING_GATES, type BlockingGateId } from "../../../conformance/port-readiness/types.js";
@@ -217,6 +217,17 @@ describe("conformance and port readiness sections", () => {
     assert.deepEqual(summary.blocking.map((row) => [row.pack, row.rule, row.stoppedAt]), [["python/bandit", "a", "Not overfit to upstream's tests"]]);
     assert.deepEqual(summary.conformance.blocking, []);
     assert.deepEqual(summary.conformance.shipped, { rules: 1, pass: 1 });
+    assert.equal(summary.pass, false);
+  });
+
+  it("a port whose only failing loads check is in-scope stops in port readiness: the check compares it with upstream's files", () => {
+    const outOfScope = rule("a", "shipped");
+    outOfScope.gates.loads = { pass: false, checks: [{ id: "schema", ok: true, detail: "" }, { id: "in-scope", ok: false, detail: "does not apply to src/example.pyi" }] };
+    Object.assign(outOfScope, { pass: false, stoppedAt: "loads" });
+    const summary = summarize([report([outOfScope, { ...structuredClone(outOfScope), id: "b", location: "candidate", on: null }])], noUngated, []);
+    assert.deepEqual(summary.blocking.map((row) => [row.rule, row.stoppedAt, row.check]), [["a", IN_SCOPE_TITLE, "in-scope"]]);
+    assert.deepEqual(summary.conformance.blocking, []);
+    assert.equal(summary.candidateFunnel["python/bandit"]![IN_SCOPE_TITLE], 1);
     assert.equal(summary.pass, false);
   });
 

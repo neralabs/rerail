@@ -10,7 +10,7 @@
  * first) until it fits. The job summary and the uploaded reports always have everything.
  */
 import { cell, gateTitle } from "./report.js";
-import { CONFORMANCE_COLUMN, type BlockingRow, type Summary } from "./summary.js";
+import { CONFORMANCE_COLUMN, IN_SCOPE_TITLE, type BlockingRow, type Summary } from "./summary.js";
 import { CONFORMANCE_GATES, GATES, PORT_GATES } from "./types.js";
 
 /** Starts every port readiness gates comment, so CI finds the earlier ones to minimize. */
@@ -58,9 +58,12 @@ export function notJudgedNote(summary: Summary): { scope: string; line: string }
   };
 }
 
-/** Where a group goes: in the order the gates run, then anything that is no gate (the tool-pack checks). */
+/**
+ * Where a group goes: in the order the gates run (`in-scope` with `loads`), then anything that is no gate (the
+ * tool-pack checks).
+ */
 const gateOrder = (title: string): number => {
-  const index = GATES.findIndex((gate) => gate.title === title);
+  const index = GATES.findIndex((gate) => gate.title === (title === IN_SCOPE_TITLE ? gateTitle("loads") : title));
   return index === -1 ? GATES.length : index;
 };
 
@@ -128,7 +131,7 @@ function portSection(summary: Summary, rowLimit: number, blockerLimit: number, p
   const ready = summary.promotable.length;
   const notJudged = notJudgedNote(summary);
   const head = `### Port readiness: ${verdictText(blocking)}${ready === 0 ? "" : ` · 🟢 ${ready} candidate${ready === 1 ? "" : "s"} ready to promote`}${notJudged === undefined ? "" : ` · in ${notJudged.scope}`}`;
-  const intro = `The rules a gated tool-pack ports, against the upstream linter's recorded answers: ${titles(PORT_GATES)}, and the tool-pack's checks; *${gateTitle("upstream-status")}* sets \`on\`. A rule that does not load is listed under Conformance only.`;
+  const intro = `The rules a gated tool-pack ports, against the upstream linter's recorded answers: *${IN_SCOPE_TITLE}* (\`loads\`'s \`in-scope\`), ${titles(PORT_GATES)}, and the tool-pack's checks; *${gateTitle("upstream-status")}* sets \`on\`. A rule that does not load is listed under Conformance only.`;
   if (summary.toolPacks.length === 0 && summary.missingReports.length === 0) {
     return [head, "", intro, "", ...(notJudged === undefined ? ["No gated tool-pack."] : [notJudged.line]), ""];
   }
@@ -186,7 +189,7 @@ function portSection(summary: Summary, rowLimit: number, blockerLimit: number, p
       Object.entries(summary.candidateFunnel).map(([toolPack, counts]) => [toolPack, ...Object.values(counts).map(String)]),
     ),
     "",
-    `Each candidate is counted once: at the first port gate it fails, then the tool-pack checks, then *${CONFORMANCE_COLUMN}* (listed under Conformance).`,
+    `Each candidate is counted once: at the first port check or gate it fails, then the tool-pack checks, then *${CONFORMANCE_COLUMN}* (listed under Conformance).`,
     "",
     ...(summary.unmappedCandidates.length === 0
       ? []

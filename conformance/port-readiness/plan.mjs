@@ -99,12 +99,14 @@ export function classify(path, toolPacks) {
 }
 
 /**
- * Whether a change to `path` can move a verdict of the conformance gates: anything a leg reads, the report-only files
- * included (conformance-gates.ts runs in the report's own job), except a file at the top of packs/. The conformance
- * job judges every rule no tool-pack does on every run, so this decides only whether the change is worth a comment.
+ * Whether a change to `path` can move a verdict of the conformance gates: anything a leg reads, and conformance-gates.ts
+ * itself, except a file at the top of packs/. The other report-only files move none, so a change to one alone posts no
+ * comment unless a check fails, as before. The conformance job judges every rule no tool-pack does on every run, so
+ * this decides only whether the change is worth a comment.
  */
 export function movesConformance(path) {
   if (!ROOTS.some((glob) => matches(path, glob))) return false;
+  if (REPORT_ONLY.includes(path)) return path === "conformance/port-readiness/conformance-gates.ts";
   const [top, , ...rest] = path.split("/");
   return top !== "packs" || rest.length > 0;
 }

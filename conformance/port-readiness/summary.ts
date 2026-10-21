@@ -93,20 +93,33 @@ export function readConformanceReport(directory: string): ConformanceReport | nu
   return report.format === CONFORMANCE_REPORT_FORMAT ? report : null;
 }
 
-/** The first conformance gate a rule fails, or undefined. */
+/**
+ * `loads`'s `in-scope` check compares the rule's scope with the files upstream lints, so it judges the port, not the
+ * document: the summary reports it under port readiness, as a stop of its own before the port gates, though the
+ * tool-pack's verdict still counts it in `loads`.
+ */
+export const IN_SCOPE_TITLE = "Applies to the files upstream lints";
+
+/** Whether a failing gate fails the conformance section: `loads` does not when `in-scope` is its only failing check. */
+const failsConformance = (id: ConformanceGateId, gate: GateReport): boolean =>
+  !gate.pass && !(id === "loads" && gate.checks.length > 0 && gate.checks.every((check) => check.ok || check.id === "in-scope"));
+
+/** The first conformance gate a rule fails, at its first failing check (never `in-scope`), or undefined. */
 function conformanceFailure(gates: Record<ConformanceGateId, GateReport>): { stoppedAt: string; check: string; why: string } | undefined {
-  const stopped = CONFORMANCE_GATES.find((gate) => !gates[gate.id].pass);
+  const stopped = CONFORMANCE_GATES.find((gate) => failsConformance(gate.id, gates[gate.id]));
   if (stopped === undefined) return undefined;
-  const failing = gates[stopped.id].checks.find((check: Check) => !check.ok);
+  const failing = gates[stopped.id].checks.find((check: Check) => !check.ok && check.id !== "in-scope");
   return { stoppedAt: stopped.title, check: failing?.id ?? "failed", why: failing?.detail ?? "failed" };
 }
 
 /**
- * What keeps a ported rule from passing the port readiness section, or null: the first port gate it fails, then its
- * tool-pack's checks. Undefined for a rule that does not load, which no port gate can judge.
+ * What keeps a ported rule from passing the port readiness section, or null: `in-scope`, the first port gate it fails,
+ * then its tool-pack's checks. Undefined for a rule that does not load, which no port gate can judge.
  */
 export function portFailure(rule: RuleReport): { stoppedAt: string; check: string; why: string } | null | undefined {
-  if (!rule.gates.loads.pass) return undefined;
+  if (failsConformance("loads", rule.gates.loads)) return undefined;
+  const inScope = rule.gates.loads.checks.find((check) => check.id === "in-scope" && !check.ok);
+  if (inScope !== undefined) return { stoppedAt: IN_SCOPE_TITLE, check: inScope.id, why: inScope.detail };
   const stopped = PORT_GATES.find((gate) => !rule.gates[gate.id].pass);
   if (stopped !== undefined) {
     const failing = rule.gates[stopped.id].checks.find((check: Check) => !check.ok);
@@ -236,7 +249,7 @@ export function summarize(reports: GatesReport[], ungated: UngatedResult, gated:
   const candidateRows: Summary["candidateRows"] = [];
   const promotable: Summary["promotable"] = [];
   for (const report of reports) {
-    const funnel: Record<string, number> = Object.fromEntries([...PORT_GATES.map((gate) => gate.title), "Tool-pack checks", CONFORMANCE_COLUMN, READY_COLUMN].map((column) => [column, 0]));
+    const funnel: Record<string, number> = Object.fromEntries([IN_SCOPE_TITLE, ...PORT_GATES.map((gate) => gate.title), "Tool-pack checks", CONFORMANCE_COLUMN, READY_COLUMN].map((column) => [column, 0]));
     candidateFunnel[report.toolPack] = funnel;
     for (const rule of report.rules.filter((item) => item.location === "candidate")) {
       const port = portFailure(rule);
