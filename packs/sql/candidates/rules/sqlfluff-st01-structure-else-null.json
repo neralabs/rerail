@@ -31,7 +31,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "ST01",
-        "message": "Remove ELSE NULL from this CASE; CASE already returns NULL when no branch matches.",
+        "message": "Do not specify ELSE NULL in a CASE WHEN statement.",
         "suppress": {
           "sqlfluff": {
             "rules": [

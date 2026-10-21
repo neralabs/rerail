@@ -82,7 +82,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "vue/valid-v-for",
-        "message": "Remove the argument from this v-for directive.",
+        "message": "'v-for' directives require no argument.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -168,7 +168,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "vue/valid-v-for",
-        "message": "Remove this modifier from the v-for directive.",
+        "message": "'v-for' directives require no modifier.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -248,7 +248,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "vue/valid-v-for",
-        "message": "Give this v-for a value such as `item in items`.",
+        "message": "'v-for' directives require that attribute value.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -528,7 +528,7 @@
       "violation": {
         "anchor": "capture.KEY",
         "code": "vue/valid-v-for",
-        "message": "Replace the '$KEY' alias in this v-for with a plain identifier.",
+        "message": "Invalid alias '$KEY'.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -598,7 +598,7 @@
       "violation": {
         "anchor": "capture.INDEX",
         "code": "vue/valid-v-for",
-        "message": "Replace the '$INDEX' alias in this v-for with a plain identifier.",
+        "message": "Invalid alias '$INDEX'.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1322,7 +1322,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "vue/valid-v-for",
-        "message": "Add a :key bound to a unique id of each item to this custom element rendered by v-for.",
+        "message": "Custom elements in iteration require 'v-bind:key' directives.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1737,7 +1737,7 @@
       "violation": {
         "anchor": "capture.K",
         "code": "vue/valid-v-for",
-        "message": "Bind this :key to a variable that the v-for defines, such as the item's id.",
+        "message": "Expected 'v-bind:key' directive to use the variables which are defined by the 'v-for' directive.",
         "suppress": {
           "eslint": {
             "rules": [

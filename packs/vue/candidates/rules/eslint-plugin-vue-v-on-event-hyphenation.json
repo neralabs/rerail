@@ -442,7 +442,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "vue/v-on-event-hyphenation",
-        "message": "Rename the '${KEY}' event listener to its hyphenated (kebab-case) form.",
+        "message": "v-on event '${KEY}' must be hyphenated.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -878,7 +878,7 @@
       "violation": {
         "anchor": "capture.KEY",
         "code": "vue/v-on-event-hyphenation",
-        "message": "Rename the '${KEY}' event listener to its hyphenated (kebab-case) form.",
+        "message": "v-on event '${KEY}' must be hyphenated.",
         "suppress": {
           "eslint": {
             "rules": [

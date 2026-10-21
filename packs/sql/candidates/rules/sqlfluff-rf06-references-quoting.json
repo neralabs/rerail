@@ -59,7 +59,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "RF06",
-        "message": "Remove the double quotes from this identifier; it means the same unquoted.",
+        "message": "Unnecessary quoted identifier; use the unquoted form.",
         "suppress": {
           "sqlfluff": {
             "rules": [

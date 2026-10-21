@@ -738,7 +738,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "vue/no-template-shadow",
-        "message": "Rename '$NAME' so it does not shadow a variable of the same name from an outer scope.",
+        "message": "Variable '$NAME' is already declared in the upper scope.",
         "suppress": {
           "eslint": {
             "rules": [

@@ -79,7 +79,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-extra-non-null-assertion",
-        "message": "Remove this redundant `!` non-null assertion.",
+        "message": "Forbidden extra non-null assertion.",
         "fix": "$E",
         "suppress": {
           "eslint": {

@@ -169,7 +169,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "vue/no-use-v-if-with-v-for",
-        "message": "Move this v-if to a wrapper element around the v-for, such as a `<template>`.",
+        "message": "This 'v-if' should be moved to the wrapper element.",
         "suppress": {
           "eslint": {
             "rules": [

@@ -20,7 +20,7 @@
           }
         }
       },
-      "violation": { "anchor": "witness.span", "code": "@typescript-eslint/prefer-enum-initializers", "message": "Give enum member '$NAME' an explicit value so it can't shift when members are added or reordered.", "suppress": { "eslint": { "rules": ["@typescript-eslint/prefer-enum-initializers"] }, "oxlint": { "rules": ["prefer-enum-initializers"] }, "biome": { "rules": ["lint/style/useEnumInitializers"] } } }
+      "violation": { "anchor": "witness.span", "code": "@typescript-eslint/prefer-enum-initializers", "message": "The value of the member '$NAME' should be explicitly defined.", "suppress": { "eslint": { "rules": ["@typescript-eslint/prefer-enum-initializers"] }, "oxlint": { "rules": ["prefer-enum-initializers"] }, "biome": { "rules": ["lint/style/useEnumInitializers"] } } }
     }
   ]
 }

@@ -1512,7 +1512,7 @@
       "violation": {
         "anchor": "capture.A",
         "code": "vue/return-in-computed-property",
-        "message": "Return a value on every path of the \"$NAME\" computed getter.",
+        "message": "Expected to return a value in \"$NAME\" computed property.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1574,7 +1574,7 @@
       "violation": {
         "anchor": "capture.A",
         "code": "vue/return-in-computed-property",
-        "message": "Return a value on every path of this computed getter.",
+        "message": "Expected to return a value in computed function.",
         "suppress": {
           "eslint": {
             "rules": [

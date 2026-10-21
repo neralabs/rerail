@@ -272,7 +272,7 @@
       "violation": {
         "anchor": "capture.ID",
         "code": "@typescript-eslint/no-this-alias",
-        "message": "Read these members through this directly instead of destructuring them into local variables.",
+        "message": "Unexpected aliasing of members of 'this' to local variables.",
         "suppress": {
           "eslint": {
             "rules": [
