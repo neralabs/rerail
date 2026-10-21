@@ -9,6 +9,7 @@ import { repositoryPath } from "../../../support/oracles.js";
 const capabilities = await readFile(repositoryPath("native", "src", "code_rule_dsl", "capabilities.json"), "utf8");
 const runtime = loadNativeBinding().CodeRuleDslRuntime;
 if (runtime === undefined) throw new Error("Missing native rule runtime");
+const dsl = runtime;
 const evaluationSchema = z.object({
   violations: z.array(z.object({ message: z.string() })).default([]),
   failures: z.array(z.unknown()).default([]),
@@ -16,7 +17,7 @@ const evaluationSchema = z.object({
 
 function findings(id: string, source: string): string[] {
   const document = readRuleDocument(repositoryPath("packs", "python", "rules", `${id}.json`));
-  const rule = runtime!.compile(JSON.stringify(document.rule), "json", capabilities);
+  const rule = dsl.compile(JSON.stringify(document.rule), "json", capabilities);
   const result = evaluationSchema.parse(JSON.parse(rule.evaluate(JSON.stringify({
     format: "rerail.repository-snapshot/v1", revision: 0, facts: [],
     files: [{ language: "python", path: "src/example.py", source }],
@@ -37,6 +38,7 @@ it("B905 offers intentional truncation as well as equal-length checking", () => 
   const id = "ruff-b905-zip-without-explicit-strict";
   const messages = findings(id, "pairs = zip(left, right)\n");
   expect(messages).toHaveLength(1);
+  expect(messages[0]).toMatch(/strict=` explicitly/);
   expect(messages[0]).toContain("strict=True");
   expect(messages[0]).toContain("strict=False");
   expect(messages[0]).toMatch(/truncat/i);
@@ -70,16 +72,20 @@ it("SIM112 preserves intentional externally defined lowercase environment keys",
 });
 
 describe("SIM300 operand swaps keep comparison meaning", () => {
+  const id = "ruff-sim300-yoda-conditions";
+  it("explains how to preserve ordered and equality comparisons", () => {
+    const messages = findings(id, "result = 5 < value\n");
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatch(/reverse/);
+    expect(messages[0]).toMatch(/equality operators unchanged/);
+  });
   it.each([
     ["5 < value", "value > 5"], ["5 > value", "value < 5"],
     ["5 <= value", "value >= 5"], ["5 >= value", "value <= 5"],
     ["5 == value", "value == 5"], ["5 != value", "value != 5"],
-  ])("explains the operator mapping for %s", (before, after) => {
-    const id = "ruff-sim300-yoda-conditions";
+  ])("flags %s but not its swapped form", (before, after) => {
     const messages = findings(id, `result = ${before}\n`);
     expect(messages).toHaveLength(1);
-    expect(messages[0]).toMatch(/reverse/);
-    expect(messages[0]).toMatch(/equality operators unchanged/);
     expect(findings(id, `result = ${after}\n`)).toEqual([]);
   });
 });

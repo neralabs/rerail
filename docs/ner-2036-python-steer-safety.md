@@ -38,15 +38,14 @@ The new regression suite initially failed 22 tests on the main-branch rule snaps
 
 The regressions cover reversed and parenthesized operands, mixed-polarity chains, F632 string annotations, unchanged suppression/non-findings, and the safety conditions in the emitted native guidance.
 
-## Final message smoke test
+## Initial PR message smoke test (a1eb112)
 
-The actual shortened messages were tested against main at `453844720` using Bedrock Runtime ConverseStream in `us-east-1`: Haiku 5.5 medium and GPT-6 Luna medium, four functional tasks, one run per model/condition. Each run received the native finding once after reading the affected code. Task prompts contained functional requirements only; hidden checks stayed outside the model workspace. This is controlled feedback exposure, not a measurement of production rerail delivery frequency.
+The initial shortened messages were tested against main at `453844720` using Bedrock Runtime ConverseStream in `us-east-1`: Haiku 5.5 medium and GPT-6 Luna medium, four functional tasks, one run per model/condition. Each run received the native finding once after reading the affected code. Task prompts contained functional requirements only; hidden checks stayed outside the model workspace. This is controlled feedback exposure, not a measurement of production rerail delivery frequency.
 
 Both conditions passed all 64 hidden checks on their eight saved implementations. All eight updated-message runs completed normally; seven baseline runs completed normally, while Luna's environment run encountered a Bedrock tool-input HTTP 400 after producing a correct implementation. That invalid execution is not counted as a completed success.
 
 | Task / rule | Model | Before hidden checks | After hidden checks | Before → after remaining findings | Did the update help? |
 |---|---|---|---|---|---|
-
 | CSV / B905 | Haiku 5.5 | 8/8 | 8/8 | 0 → 1 | No; both correct, updated run left the finding open |
 | CSV / B905 | GPT-6 Luna | 8/8 | 8/8 | 0 → 1 | No; both correct, updated run left the finding open |
 | Downloads / ASYNC210 | Haiku 5.5 | 8/8 | 8/8 | 0 → 0 | No functional difference observed |
@@ -61,3 +60,22 @@ Finding closure fell from 6/8 to 4/8: both updated B905 runs kept implicit zip t
 Only four of the nine rules received this final live-model smoke test. All nine have native regression coverage; the other five do not have new live-model efficacy evidence in this PR. One sample per cell cannot establish comparative superiority or a reliable regression rate. The final smoke supports compatibility, while the operator-specific messages address deterministic guidance errors.
 
 The local experiment is `pr-v7`, with manifest SHA-256 `9cbc91c54e35f20b4aceacd375a930a91fa1caec9be14bec4ad764a4a8d46dd3`. Its snapshot/exposure audit reported zero issues. Raw local experiment artifacts are not included in this source change.
+
+## Review follow-up: explicit B905 requirement
+
+F1 strengthened B905 to: “Pass `strict=` explicitly: `strict=True` when lengths must match, `strict=False` when truncation is intended.” The native regression first failed against the initial PR message, then passed after this change.
+
+A fresh before/after smoke used the same frozen CSV task, functional-only prompt, code-only native advice, hidden oracle and Bedrock profiles as above. Before runs used the initial PR message; after runs used the explicit requirement. Each model/condition ran once, without replacement attempts.
+
+| Model | Before hidden checks | After hidden checks | Before → after remaining findings | Did the update help? |
+|---|---|---|---|---|
+| Haiku 5.5 medium | 8/8 | 8/8 | 1 → 0 | Yes in this run: added `strict=False`, preserving truncation |
+| GPT-6 Luna medium | 8/8 | 8/8 | 1 → 0 | Yes in this run: added `strict=False`, preserving truncation |
+
+All four runs completed normally and saw their assigned advice. Before implementations kept implicit `zip()`; both after implementations added `strict=False` without suppressions. Requests were 18 before versus 16 after; one after-run public test invocation failed during development, but all final hidden checks passed. This is evidence for this wording on this task, not a reliable model-wide improvement estimate. The earlier 16-trial results above remain historical evidence for the initial PR wording.
+
+The local experiment is `pr-review-v8`, manifest SHA-256 `9901167d1ae6fa5a179faf73413557fbd2f23d45a493ac0a4167a788eb97cbc5`; the snapshot/exposure audit reported zero issues.
+
+The review also fixes the smoke-table formatting and test type narrowing, separates the SIM300 static-message assertion from its six finding/non-finding cases, and updates the pinned native catalog inventory from 360 to 362 for the two new operator clauses. The focused TypeScript/catalog suite now contains 94 passing tests.
+
+Review validation: `npm run test:native` passes (1,476 passed, 22 ignored), including native/restored-tape equivalence with the 362-query inventory. `npm run check`, `cargo fmt --all -- --check` and `git diff --check` pass.

@@ -415,7 +415,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B905",
-        "message": "Pass `strict=True` when lengths must match, or `strict=False` when truncation is intended.",
+        "message": "Pass `strict=` explicitly: `strict=True` when lengths must match, `strict=False` when truncation is intended.",
         "suppress": {
           "noqa": {
             "codes": [
