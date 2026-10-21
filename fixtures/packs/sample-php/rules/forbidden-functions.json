@@ -28,7 +28,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
-        "message": "The use of this function is forbidden"
+        "message": "Replace this call to a forbidden function."
       }
     }
   ]
