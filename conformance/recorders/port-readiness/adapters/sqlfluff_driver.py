@@ -4,8 +4,8 @@ One JSON request on stdin, one JSON response on stdout:
 - {"op": "facts", "codes": [...]}: what SQLFluff's own rule registry says about each rule, the regexes its rule
   modules compile, the PostgreSQL and ANSI keyword sets, and which rules the default configuration selects.
 - {"op": "cases", "checkout": dir, "codes": [...]}: every case of every rule's YAML test file
-  (test/fixtures/rules/std_rule_cases/<CODE>.yml) at the pinned checkout: the SQL texts and configuration words of all
-  of them, and for each requested rule its own cases with SQLFluff's findings on them.
+  (test/fixtures/rules/std_rule_cases/<CODE>.yml) at the pinned checkout: the SQL texts (each with the test file it is
+  in) and configuration words of all of them, and for each requested rule its own cases with SQLFluff's findings on them.
 - {"op": "lint", "texts": [...], "codes": [...]}: SQLFluff's findings of the named rules on each text, or why it does
   not read the text whole.
 - {"op": "verdicts", "texts": [...]}: libpg_query's (pglast) verdict on each text, the independent PostgreSQL parser,
@@ -237,7 +237,7 @@ def cases(checkout, codes):
             words += config_words(case.get("configs"))
             for key in ("fail_str", "pass_str"):
                 if isinstance(case.get(key), str):
-                    texts.append(case[key])
+                    texts.append({"text": case[key], "test": f"{CASES}/{path.name}"})
     rules = {code: case_entries(code, load_yaml(directory / f"{code}.yml")) for code in codes if (directory / f"{code}.yml").exists()}
     # One run over every runnable case of every rule, configured as the ports are.
     runnable = [entry for entries in rules.values() for entry in entries if entry["skipped"] is None]

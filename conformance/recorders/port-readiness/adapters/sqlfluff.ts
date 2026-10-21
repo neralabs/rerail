@@ -2,7 +2,7 @@ import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
-import { upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js";
+import { upstreamLicenseText } from "../../../port-readiness/upstream-files.js";
 import { sqlfluffSpan, SQLFLUFF_SPAN_PARTS, violationSpan } from "../../../port-readiness/span-units/sqlfluff.js";
 import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../port-readiness/types.js";
 import { createPythonToolkit, pythonRegex } from "../languages/python.js";
@@ -52,7 +52,8 @@ interface CaseEntry {
   findings?: Finding[];
 }
 interface Cases {
-  texts: string[];
+  /** Every case's SQL with the YAML test file it is in, in the driver's order (test files sorted). */
+  texts: { text: string; test: string }[];
   configWords: string[];
   rules: Record<string, CaseEntry[]>;
   defaultOff: Record<string, boolean>;
@@ -116,9 +117,12 @@ export async function createSqlfluffAdapter(pack: PackManifest, names: string[],
   /** The members of each dialect set that code names by its label: the names that code checks against. */
   const setMembers = (names: string[]) => names.flatMap((label) => (Object.hasOwn(facts.dialectSets, label) ? facts.dialectSets[label]! : []));
 
-  // Each case's SQL is upstream test text that is no file of its own: recorded inline, like a RuleTester case's code.
-  const fixtureTexts = [...new Set(cases.texts)];
-  const fixtureTextSources: FixtureTextSource[] = fixtureTexts.map((text) => ({ inline: text }));
+  // Each case's SQL is upstream test text that is no file of its own: recorded inline, like a RuleTester case's code. A
+  // text several test files share is kept once, under the first of them (the driver reads them in sorted order).
+  const testOfText = new Map<string, string>();
+  for (const { text, test } of cases.texts) if (!testOfText.has(text)) testOfText.set(text, test);
+  const fixtureTexts = [...testOfText.keys()];
+  const fixtureTextSources: FixtureTextSource[] = fixtureTexts.map((text) => ({ inline: text, test: testOfText.get(text)! }));
   const fixtureWords = new Set([...fixtureTexts, ...cases.configWords].flatMap((text) => text.match(SQL_WORD) ?? []));
   // SQL keywords are case-insensitive: SQLFluff's sets are upper case, and a rule spells them in either case.
   const keywords = new Set(facts.keywords.flatMap((keyword) => [keyword, keyword.toLowerCase()]));

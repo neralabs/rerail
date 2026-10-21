@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { extname, join, posix, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { extname, join, posix } from "node:path";
 
 import { checkoutPinned, type CorpusFile } from "./corpus.js";
 import { fileTypeOf } from "./engine.js";
-import { readGatesManifest, recordedRuntimes, toolPackDirectory, type GatesManifest } from "./manifest.js";
+import { readGatesManifest, recordedRuntimes, toolPackDirectory } from "./manifest.js";
 import type { CommandRunner } from "./process.js";
-import { cleanVerdicts, CORPUS_FILE, RECORDING_FILE, gatesCorpusSchema, gatesRecordingSchema, spanOf, type GatesCorpusRecording, type GatesRecording } from "./recording/schema.js";
-import { caseSourcesDigest, LIFTED_CASE_SOURCES, LIFTED_RUNTIMES, readCachedRecording, readRecordingLock, RECORDING_LOCK, type RecordingLock } from "./recording/store.js";
+import { EXPECTED_DIRECTORY, readExpected, UPSTREAM_FILE } from "./recording/expected.js";
+import { cleanVerdicts, spanOf, type GatesCorpusRecording, type GatesRecording } from "./recording/schema.js";
 import { banditSpan } from "./span-units/bandit.js";
 import { bladeParserSpan } from "./span-units/blade-parser.js";
 import { bladestanSpan } from "./span-units/bladestan.js";
@@ -20,18 +20,20 @@ import { ruffSpan } from "./span-units/ruff.js";
 import { sqlfluffSpan } from "./span-units/sqlfluff.js";
 import { tlintSpan } from "./span-units/tlint.js";
 import type { Check, PackAdapter, PackManifest, ParserVerdict, Span, SpanParts, UpstreamCase, UpstreamFile } from "./types.js";
+import { decodeSource, keptLicenseDirectory, licenseBytes, licenseFiles, rebuildFixtureTexts, RUNTIMES_DIRECTORY, upstreamCheckoutDirectory, type RecordedFixtureTexts } from "./upstream-files.js";
 
 const sha256 = (bytes: string | Buffer): string => createHash("sha256").update(bytes).digest("hex");
 
 /** Two values compared as data, for a check that reports a disagreement rather than relying on reference equality. */
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, inner: unknown) => (inner !== null && typeof inner === "object" && !Array.isArray(inner) ? Object.fromEntries(Object.entries(inner as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : 1))) : inner));
 
-/** Where the recorder's runtimes and their pins are committed, relative to the repository root. */
-export const RUNTIMES_DIRECTORY = "conformance/recorders/port-readiness/runtimes";
-
-/** What a failing tool-pack check tells the reader to do. */
+/**
+ * What a failing tool-pack check tells the reader to do. The answers are keyed by everything the generator reads
+ * (recording/generator-key.ts), so answers that disagree with the tree were made from an input the key misses, or by a generator
+ * that is not deterministic: generating them again for this key is the fix, and the miss is worth finding.
+ */
 export function staleMessage(pack: string, tool: string): string {
-  return `the recording is stale: run npm run port-readiness:record -- --pack ${pack} --tool ${tool}`;
+  return `the generated answers are stale: run npm run generate -- --pack ${pack} --tool ${tool} --force`;
 }
 
 const SPAN_UNITS: Record<GatesRecording["adapter"], (source: string, startByte: number, endByte: number, parts: SpanParts) => Span> = {
@@ -47,103 +49,6 @@ const SPAN_UNITS: Record<GatesRecording["adapter"], (source: string, startByte: 
   sqlfluff: sqlfluffSpan,
   clippy: clippySpan,
 };
-
-/**
- * A licence file's name: LICENSE or LICENCE in any letter case, bare or with any extension or suffix (`licence.txt`,
- * `license.md`, `LICENSE-MIT`). Every such file at the root of upstream's repository is part of its licence, and the
- * pack keeps each under the same name in licenses/<project>/.
- */
-const LICENSE_FILE = /^licen[cs]e(?:[.-].*)?$/iu;
-
-/** The licence files' names (LICENSE_FILE) as non-cone sparse-checkout patterns, for a checkout of upstream's root. */
-export const LICENSE_SPARSE_PATTERNS = ["/[Ll][Ii][Cc][Ee][Nn][CcSs][Ee]", "/[Ll][Ii][Cc][Ee][Nn][CcSs][Ee][.-]*"];
-
-/** The licence files directly in `directory`, in name order (code units: `LICENSE-APACHE` before `LICENSE-MIT`). */
-export function licenseFiles(directory: string): string[] {
-  if (!existsSync(directory)) return [];
-  return readdirSync(directory, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && LICENSE_FILE.test(entry.name))
-    .map((entry) => entry.name)
-    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-}
-
-/** A licence as the gates compare it: `directory`'s licence files, their bytes one after another; null when it has none. */
-export function licenseBytes(directory: string): Buffer | null {
-  const names = licenseFiles(directory);
-  return names.length === 0 ? null : Buffer.concat(names.map((name) => readFileSync(join(directory, name))));
-}
-
-/** Where the pack keeps upstream's licence and UPSTREAM.md, relative to the repository root. */
-export function keptLicenseDirectory(manifest: Pick<GatesManifest, "rerail">): string {
-  return `packs/${manifest.rerail.pack}/licenses/${manifest.rerail.project}`;
-}
-
-/** Upstream's licence text at the root of its checkout at the pinned commit (licenseBytes), as a live adapter records it. */
-export function upstreamLicenseText(checkout: string): string {
-  const bytes = licenseBytes(checkout);
-  if (bytes === null) throw new Error(`upstream's checkout at ${checkout} has no LICENSE or LICENCE file at its root`);
-  return bytes.toString("utf8");
-}
-
-function parseText<T>(schema: { safeParse(value: unknown): { success: true; data: T } | { success: false; error: { issues: { path: PropertyKey[]; message: string }[] } } }, label: string, text: string): T {
-  const parsed = schema.safeParse(JSON.parse(text));
-  if (!parsed.success) throw new Error(`${label}: ${parsed.error.issues.slice(0, 5).map((issue) => `/${issue.path.map(String).join("/")}: ${issue.message}`).join("; ")}`);
-  return parsed.data;
-}
-
-/**
- * A committed case source as upstream's adapter decoded it: UTF-8, or, for bytes that are not UTF-8, the Latin-1 a PEP 263
- * coding line declares (Bandit's trojansource_latin1.py); recorded parser verdicts are keyed by the decoded text.
- */
-export function decodeSource(bytes: Buffer): string {
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch {
-    const head = bytes.subarray(0, 400).toString("latin1").split(/\r?\n/u).slice(0, 2).join("\n");
-    const coding = /coding[:=][ \t]*([-\w.]+)/u.exec(head)?.[1]?.toLowerCase();
-    if (coding !== undefined && /^(latin-?1|iso-?8859-1|l1|cp819)$/u.test(coding.replaceAll("_", "-"))) return bytes.toString("latin1");
-    return bytes.toString("utf8");
-  }
-}
-
-/**
- * The code cells of a notebook joined, as the words of upstream's notebook test files; a text that is not a notebook is
- * returned unchanged. The Ruff adapter's `notebook-code-cells` transform, shared so the gates rebuild its texts exactly.
- */
-export function notebookCodeCells(text: string): string {
-  try {
-    const notebook = JSON.parse(text) as { cells?: { cell_type?: string; source?: string | string[] }[] };
-    return (notebook.cells ?? []).filter((cell) => cell.cell_type === "code")
-      .map((cell) => (Array.isArray(cell.source) ? cell.source.join("") : cell.source ?? "")).join("\n");
-  } catch {
-    return text;
-  }
-}
-
-export type RecordedFixtureTexts = NonNullable<GatesRecording["fixtureTexts"]>;
-
-/** Where the gates and the recorder keep upstream's checkout at the pinned commit: `<cache>/upstream/<repository name>/<commit>`. */
-export function upstreamCheckoutDirectory(cacheRoot: string, pins: { repository: string; commit: string }): string {
-  return resolve(cacheRoot, "upstream", pins.repository.slice(pins.repository.lastIndexOf("/") + 1), pins.commit);
-}
-
-/**
- * fixtureTexts rebuilt from a checkout of upstream at the pinned commit: each recorded file read (UTF-8, as the live
- * adapters read it), its transform applied and its sha256 checked, then the inline texts. A missing file or another
- * digest throws: the recording is stale, and a silent narrowing would let not-overfit pass what it should not.
- */
-export function rebuildFixtureTexts(checkout: string, recorded: RecordedFixtureTexts): string[] {
-  const texts = recorded.files.map(({ path, sha256: digest, transform }) => {
-    const file = join(checkout, path);
-    if (!existsSync(file)) throw new Error(`upstream's ${path} is missing from the checkout at ${checkout}`);
-    const raw = readFileSync(file, "utf8");
-    const text = transform === "notebook-code-cells" ? notebookCodeCells(raw) : raw;
-    const actual = sha256(text);
-    if (actual !== digest) throw new Error(`upstream's ${path}${transform === undefined ? "" : ` (${transform})`} has sha256 ${actual.slice(0, 12)}, recorded ${digest.slice(0, 12)}: the recording is stale`);
-    return text;
-  });
-  return [...texts, ...recorded.inline.map(({ text }) => text)];
-}
 
 /**
  * A directory as a non-cone sparse-checkout pattern. Those are gitignore patterns, so glob characters in a name
@@ -165,8 +70,8 @@ export async function fetchFixtureTexts(cacheRoot: string, pins: { repository: s
 export interface RecordedInputs {
   root: string;
   manifest: PackManifest;
-  /** The tool-pack's committed manifest, or null for a test that builds the recordings itself. */
-  lock: RecordingLock | null;
+  /** expectedDigest of the tool-pack's answers, which the result cache keys on; tests that build the recordings themselves give any. */
+  digest: string;
   recording: GatesRecording;
   corpus: GatesCorpusRecording | null;
   /** conformance.json `tools[]` of the pack. */
@@ -175,36 +80,16 @@ export interface RecordedInputs {
   names: string[];
 }
 
-/** What to do when a recording the lock names is not in the cache; it is a fetch away, not a re-recording. */
-function missingMessage(pack: string, tool: string, file: string): string {
-  return `the recording packs/${pack}/upstream/${tool}/${RECORDING_LOCK} names for ${file} is not in the cache:`
-    + ` run npm run port-readiness -- fetch --pack ${pack} --tool ${tool}, or record it with npm run port-readiness:record -- --pack ${pack} --tool ${tool}`;
-}
-
 /**
- * Read a gated tool-pack's `gates.yaml` and `recording.lock` from the working tree at `root`, and the two recordings
- * the lock names from the cache. The recordings are not in the tree: `gates fetch` puts them in the cache from the
- * release, `port-readiness:record` puts them there directly, and either way they are checked against the lock's digests, so a
- * rule is never judged against bytes this commit did not name.
+ * Read a gated tool-pack's `gates.yaml` from the working tree at `root`, and its expected answers from the local cache
+ * under `key`, the generator key of that tree (recording/generator-key.ts), joined into the recording and corpus answers
+ * recording/expected.ts splits them from. Nothing is downloaded: `npm run generate` puts the answers in the cache.
  */
-export function readRecordedInputs(root: string, cacheRoot: string, pack: string, tool: string, names: string[]): RecordedInputs {
+export function readRecordedInputs(root: string, pack: string, tool: string, names: string[], answers: { cacheRoot: string; key: string }): RecordedInputs {
   const manifest = readGatesManifest(root, pack, tool);
-  const lock = readRecordingLock(root, pack, tool);
-  const read = <T>(schema: Parameters<typeof parseText<T>>[0], file: typeof RECORDING_FILE | typeof CORPUS_FILE): T => {
-    const text = readCachedRecording(cacheRoot, lock.files[file].sha256);
-    if (text === undefined) throw new Error(missingMessage(pack, tool, file));
-    return parseText(schema, `packs/${pack}/upstream/${tool}/${file}`, text);
-  };
+  const { recording, corpus, digest } = readExpected(answers.cacheRoot, pack, tool, answers.key);
   const conformance = JSON.parse(readFileSync(join(root, "packs", pack, "conformance.json"), "utf8")) as { tools?: { name: string; version: string }[] };
-  return {
-    root,
-    manifest,
-    lock,
-    recording: read(gatesRecordingSchema, RECORDING_FILE),
-    corpus: read(gatesCorpusSchema, CORPUS_FILE),
-    tools: conformance.tools ?? [],
-    names,
-  };
+  return { root, manifest, digest, recording, corpus, tools: conformance.tools ?? [], names };
 }
 
 /**
@@ -216,60 +101,44 @@ export function inScopeSamples(samples: readonly string[], inScope: readonly str
 }
 
 /**
- * The tool-pack checks the gates make on a recording: pins agree (gates.yaml, recording.lock, recording.json,
- * conformance.json), the lock pins every runtime gates.yaml installs and no other (recordedRuntimes, or with
- * `liftedRuntimes` for a recording uploaded by hand before the recorder pinned them all), the runtimes' pins
- * (package.json, pyproject.toml, .python-version, composer.json, .php-version, PHP's extensions.txt) are the committed ones, the kept licence (licenseBytes of keptLicenseDirectory) is the recorded one, every committed case source has its recorded sha256 (or, in a recording uploaded by
- * hand before cases carried one, the digest `liftedCaseSources` pins them all by), and the recording covers every
- * upstream rule the pack names. Any failure means the recording is stale.
- *
- * The pins and the runtime digests are read from `recording.lock`, which is committed, and the downloaded recording
- * must agree with it: a pull request whose pins moved is stale on its own commit, before any byte is fetched, and a
- * lock that disagrees with the recording it names means the two were written by different runs.
+ * The tool-pack checks the gates make on its expected answers: pins agree (gates.yaml, expected/upstream.json,
+ * conformance.json), upstream.json pins every runtime gates.yaml installs and no other (recordedRuntimes), the runtimes'
+ * pins (package.json, pyproject.toml, .python-version, composer.json, .php-version, PHP's extensions.txt) are the
+ * committed ones, the kept licence (licenseBytes of keptLicenseDirectory) is the recorded one, every committed case
+ * source has its recorded sha256, and the answers cover every upstream rule the pack names. Any failure means the
+ * answers are stale (staleMessage): a pull request whose pins moved and whose answers did not fails on its own commit.
  */
-export function toolPackChecks(
-  inputs: RecordedInputs,
-  liftedCaseSources: ReadonlyMap<string, string> = LIFTED_CASE_SOURCES,
-  liftedRuntimes: ReadonlyMap<string, RecordingLock["runtimes"]> = LIFTED_RUNTIMES,
-): Check[] {
-  const { root, manifest, lock, recording, corpus, tools, names } = inputs;
+export function toolPackChecks(inputs: RecordedInputs): Check[] {
+  const { root, manifest, recording, corpus, tools, names } = inputs;
   const pack = manifest.rerail.pack;
   const tool = recording.tool;
   const stale = staleMessage(pack, tool);
   const checks: Check[] = [];
-  const pins = lock?.pins ?? recording.pins;
-  const liftedAsset = lock?.files[RECORDING_FILE].asset;
-  // A recording uploaded by hand before the recorder pinned every runtime it installs: the ones its lock doesn't name
-  // are pinned in recording/store.ts (liftedRuntimes, by the lock's asset name) and checked as if the lock named them.
-  const lifted = liftedAsset === undefined ? undefined : liftedRuntimes.get(liftedAsset);
-  const runtimes = { ...lifted, ...(lock?.runtimes ?? recording.runtimes) };
+  const pins = recording.pins;
+  const upstreamFile = `${EXPECTED_DIRECTORY}/${UPSTREAM_FILE}`;
   const wantedRuntimes = recordedRuntimes(manifest);
-  const pinnedRuntimes = Object.keys(runtimes).sort((a, b) => (a < b ? -1 : 1));
+  const pinnedRuntimes = Object.keys(recording.runtimes).sort((a, b) => (a < b ? -1 : 1));
   const conformanceVersion = tools.find((entry) => entry.name === tool)?.version ?? null;
   const pinMismatches = [
-    ...(manifest.upstream.version === pins.version ? [] : [`gates.yaml upstream.version ${manifest.upstream.version} but ${RECORDING_LOCK} pins.version ${pins.version}`]),
+    ...(manifest.upstream.version === pins.version ? [] : [`gates.yaml upstream.version ${manifest.upstream.version} but ${upstreamFile} pins.version ${pins.version}`]),
     ...(conformanceVersion === manifest.upstream.version ? [] : [`conformance.json tools[${tool}].version ${conformanceVersion ?? "missing"} but gates.yaml upstream.version ${manifest.upstream.version}`]),
-    ...(manifest.upstream.commit === pins.commit ? [] : [`gates.yaml upstream.commit ${manifest.upstream.commit} but ${RECORDING_LOCK} pins.commit ${pins.commit}`]),
-    ...(manifest.upstream.repository === pins.repository ? [] : [`gates.yaml upstream.repository ${manifest.upstream.repository} but ${RECORDING_LOCK} pins.repository ${pins.repository}`]),
-    ...(manifest.upstream.runtime === pins.runtime ? [] : [`gates.yaml upstream.runtime ${manifest.upstream.runtime} but ${RECORDING_LOCK} pins.runtime ${pins.runtime}`]),
-    ...(manifest.adapter === recording.adapter ? [] : [`gates.yaml adapter ${manifest.adapter} but recording.json adapter ${recording.adapter}`]),
-    ...(lock === null || lock.tool === tool ? [] : [`${RECORDING_LOCK} tool ${lock.tool} but recording.json tool ${tool}`]),
-    ...(canonical(pins) === canonical(recording.pins) ? [] : [`${RECORDING_LOCK} and recording.json were written by different runs: pins ${canonical(pins)} and ${canonical(recording.pins)}`]),
-    ...(canonical(lock?.runtimes ?? recording.runtimes) === canonical(recording.runtimes) ? [] : [`${RECORDING_LOCK} and recording.json disagree about the recorder's runtimes`]),
-    ...(canonical(pinnedRuntimes) === canonical(wantedRuntimes) ? [] : [`gates.yaml's adapter and environment install the runtimes ${wantedRuntimes.join(", ")} but ${RECORDING_LOCK}${lifted === undefined ? "" : " with recording/store.ts's LIFTED_RUNTIMES"} pins ${pinnedRuntimes.join(", ") || "none"}`]),
+    ...(manifest.upstream.commit === pins.commit ? [] : [`gates.yaml upstream.commit ${manifest.upstream.commit} but ${upstreamFile} pins.commit ${pins.commit}`]),
+    ...(manifest.upstream.repository === pins.repository ? [] : [`gates.yaml upstream.repository ${manifest.upstream.repository} but ${upstreamFile} pins.repository ${pins.repository}`]),
+    ...(manifest.upstream.runtime === pins.runtime ? [] : [`gates.yaml upstream.runtime ${manifest.upstream.runtime} but ${upstreamFile} pins.runtime ${pins.runtime}`]),
+    ...(manifest.adapter === recording.adapter ? [] : [`gates.yaml adapter ${manifest.adapter} but ${upstreamFile} adapter ${recording.adapter}`]),
+    ...(canonical(pinnedRuntimes) === canonical(wantedRuntimes) ? [] : [`gates.yaml's adapter and environment install the runtimes ${wantedRuntimes.join(", ")} but ${upstreamFile} pins ${pinnedRuntimes.join(", ") || "none"}`]),
   ];
-  checks.push({ id: "pins-agree", ok: pinMismatches.length === 0, detail: pinMismatches.length === 0 ? `${tool} ${pins.version} at ${pins.commit} in gates.yaml, ${RECORDING_LOCK}, recording.json and conformance.json` : `${pinMismatches.join("; ")}: ${stale}` });
+  checks.push({ id: "pins-agree", ok: pinMismatches.length === 0, detail: pinMismatches.length === 0 ? `${tool} ${pins.version} at ${pins.commit} in gates.yaml, ${upstreamFile} and conformance.json` : `${pinMismatches.join("; ")}: ${stale}` });
 
   const pinFileMismatches: string[] = [];
-  for (const [runtime, files] of Object.entries(runtimes).sort(([a], [b]) => (a < b ? -1 : 1))) {
+  for (const [runtime, files] of Object.entries(recording.runtimes).sort(([a], [b]) => (a < b ? -1 : 1))) {
     for (const [file, digest] of Object.entries(files).sort(([a], [b]) => (a < b ? -1 : 1))) {
       const path = join(root, RUNTIMES_DIRECTORY, runtime, file);
       const actual = existsSync(path) ? sha256(readFileSync(path)) : null;
       if (actual !== digest) pinFileMismatches.push(`${runtime}/${file} ${actual === null ? "is not committed" : `is ${actual.slice(0, 12)}, recorded ${digest.slice(0, 12)}`}`);
     }
   }
-  const liftedRuntimesNote = lifted === undefined ? "" : ` (${Object.keys(lifted).sort().join(", ")} pinned in recording/store.ts's LIFTED_RUNTIMES: ${RECORDING_FILE} was uploaded by hand before its lock named every runtime)`;
-  checks.push({ id: "runtime-pins", ok: pinFileMismatches.length === 0, detail: pinFileMismatches.length === 0 ? `${pinnedRuntimes.length} runtime(s) match their committed pins${liftedRuntimesNote}` : `${pinFileMismatches.slice(0, 3).join("; ")}: ${stale}` });
+  checks.push({ id: "runtime-pins", ok: pinFileMismatches.length === 0, detail: pinFileMismatches.length === 0 ? `${pinnedRuntimes.length} runtime(s) match their committed pins` : `${pinFileMismatches.slice(0, 3).join("; ")}: ${stale}` });
 
   const keptDirectory = keptLicenseDirectory(manifest);
   const kept = licenseFiles(join(root, keptDirectory));
@@ -284,34 +153,24 @@ export function toolPackChecks(
       : `${keptLabel} ${licenseSha === null ? "" : `has sha256 ${licenseSha.slice(0, 12)}, `}upstream's recorded licence ${recording.licenseSha256.slice(0, 12)}: ${stale}`,
   });
 
-  // Upstream's answers are pinned by the lock, so the sources they were recorded on must be too: an edited case source
-  // would be judged against answers upstream gave on other bytes.
+  // Upstream's answers are committed beside the sources they were made on, so those must be the same bytes: an edited
+  // case source would be judged against answers upstream gave on other bytes.
   const directory = toolPackDirectory(root, pack, tool);
   const recordedDigests = new Map<string, Set<string | undefined>>();
   for (const rule of Object.values(recording.rules)) {
     for (const testCase of rule.cases) if (testCase.file !== null) recordedDigests.set(testCase.file, (recordedDigests.get(testCase.file) ?? new Set()).add(testCase.sha256));
   }
   const sourceMismatches: string[] = [];
-  // A recording uploaded by hand before cases carried a sha256 pins its case sources as one digest instead
-  // (liftedCaseSources, by the lock's asset name); any other recording without a case's sha256 is stale.
-  const undigested: [file: string, actual: string][] = [];
   for (const [file, digests] of [...recordedDigests].sort(([a], [b]) => (a < b ? -1 : 1))) {
     const recorded = digests.size === 1 ? [...digests][0] : undefined;
     const path = join(directory, file);
     const actual = existsSync(path) ? sha256(readFileSync(path)) : null;
     if (digests.size > 1) sourceMismatches.push(`${file} has cases that disagree about its sha256`);
     else if (actual === null) sourceMismatches.push(`${file} is not committed`);
-    else if (recorded === undefined) undigested.push([file, actual]);
+    else if (recorded === undefined) sourceMismatches.push(`${file} has no recorded sha256`);
     else if (actual !== recorded) sourceMismatches.push(`${file} is ${actual.slice(0, 12)}, recorded ${recorded.slice(0, 12)}`);
   }
-  const pinned = liftedAsset === undefined ? undefined : liftedCaseSources.get(liftedAsset);
-  if (undigested.length > 0 && pinned === undefined) {
-    sourceMismatches.push(...undigested.map(([file]) => `${file} has no recorded sha256`));
-  } else if (undigested.length > 0 && caseSourcesDigest(undigested) !== pinned) {
-    sourceMismatches.push(`the ${undigested.length} case source(s) ${liftedAsset} records no sha256 for are ${caseSourcesDigest(undigested).slice(0, 12)} together, pinned ${pinned!.slice(0, 12)} in recording/store.ts's LIFTED_CASE_SOURCES (git log -p -- packs/${pack}/upstream/${tool}/fixtures shows what changed)`);
-  }
-  const liftedNote = undigested.length === 0 ? "" : ` (${undigested.length} of them pinned together: ${RECORDING_FILE} was uploaded by hand before cases carried a sha256)`;
-  checks.push({ id: "case-sources", ok: sourceMismatches.length === 0, detail: sourceMismatches.length === 0 ? `${recordedDigests.size} committed case source(s) are the bytes upstream's answers were recorded on${liftedNote}` : `${sourceMismatches.length} case source(s) differ: ${sourceMismatches.slice(0, 3).join("; ")}: ${stale}` });
+  checks.push({ id: "case-sources", ok: sourceMismatches.length === 0, detail: sourceMismatches.length === 0 ? `${recordedDigests.size} committed case source(s) are the bytes upstream's answers were recorded on` : `${sourceMismatches.length} case source(s) differ: ${sourceMismatches.slice(0, 3).join("; ")}: ${stale}` });
 
   // A narrowing may only leave types out: a type upstream does not lint would hold the ports to nothing upstream checks.
   const inScope = manifest.rerail.in_scope;
@@ -333,15 +192,15 @@ export function toolPackChecks(
 
   if (corpus !== null) {
     const missing = names.filter((name) => name in recording.rules && !corpus.rules.includes(name));
-    checks.push({ id: "corpus-covers-rules", ok: missing.length === 0, detail: missing.length === 0 ? `${CORPUS_FILE} has upstream's answers for every recorded rule` : `${CORPUS_FILE} lacks ${missing.slice(0, 5).join(", ")}: ${stale}` });
+    checks.push({ id: "corpus-covers-rules", ok: missing.length === 0, detail: missing.length === 0 ? `${EXPECTED_DIRECTORY}/corpus/ has upstream's answers for every recorded rule` : `${EXPECTED_DIRECTORY}/corpus/ lacks ${missing.slice(0, 5).join(", ")}: ${stale}` });
   } else {
-    checks.push({ id: "corpus-covers-rules", ok: false, detail: `${CORPUS_FILE} is missing: ${stale}` });
+    checks.push({ id: "corpus-covers-rules", ok: false, detail: `upstream's corpus answers are missing: ${stale}` });
   }
   return checks;
 }
 
 /**
- * A PackAdapter answering from a tool-pack's recordings and committed case sources; it never runs upstream. Its
+ * A PackAdapter answering from a tool-pack's expected answers and committed case sources; it never runs upstream. Its
  * fixtureTexts are upstream's test files fetched at the pinned commit (`upstream` says where to cache them):
  * `loadFixtureTexts` fetches them, once, and must be awaited before fixtureTexts is read.
  */
@@ -399,7 +258,7 @@ export function createRecordedAdapter(
     fixtureWords: () => new Set(recording.fixtureWords),
     async loadFixtureTexts() {
       if (recording.fixtureTexts === undefined || fetchedTexts !== undefined) return;
-      if (upstream === undefined) throw new Error(`${RECORDING_FILE} records upstream's fixture texts by origin, and this recorded adapter has no cache to fetch them into`);
+      if (upstream === undefined) throw new Error(`${EXPECTED_DIRECTORY}/${UPSTREAM_FILE} records upstream's fixture texts by origin, and this recorded adapter has no cache to fetch them into`);
       fetchedTexts = await fetchFixtureTexts(upstream.cacheRoot, recording.pins, recording.fixtureTexts, upstream.runner);
     },
     fixtureTexts() {
@@ -442,7 +301,7 @@ export function createRecordedAdapter(
         const recorded = corpusByPlace.get(`${file.task}\0${file.path}`);
         if (recorded === undefined || recorded.sha256 !== file.sha256) {
           // Without upstream's recorded answer the file has no ground truth; treating it as silent would invent agreement.
-          return { file, excluded: `${CORPUS_FILE} has no answer for it with this sha256: re-record the tool-pack (docs/port-readiness.md, "Goldens")`, findings: new Map() };
+          return { file, excluded: `${EXPECTED_DIRECTORY}/corpus/ has no answer for it with this sha256: regenerate the tool-pack (docs/port-readiness.md, "Goldens")`, findings: new Map() };
         }
         const findings = new Map<string, Span[]>(Object.entries(recorded.findings).filter(([rule]) => asked.has(rule)).map(([rule, spans]) => [rule, spans.map(spanOf)]));
         return { file, excluded: recorded.excluded, findings };

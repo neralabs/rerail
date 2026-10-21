@@ -9,10 +9,9 @@ the `fixtures.expected.json` recording it writes by running the plugin are Rerai
 
 Each copied file is the `code` of one of the rule's own `valid` or `invalid` test cases, verbatim, written by the
 recorder: cases for another parser or file type are left out, and identical cases are written once. The port readiness gates'
-recorder (`npm run port-readiness:record`) reuses those files and writes every other case the gates read, the same verbatim
-`code`, as `upstream/eslint-plugin-unicorn/fixtures/<rule>/<sha256 prefix>.<ext>`. Its recording (`recording.json`,
-which `upstream/eslint-plugin-unicorn/recording.lock` names and a GitHub release holds) also holds the `code` of every
-test case of the plugin's rule tests, verbatim, as the words `not-overfit` reads.
+generator (`npm run generate`) reuses those files and writes every other case the gates read, the same verbatim
+`code`, as `upstream/eslint-plugin-unicorn/fixtures/<rule>/<sha256 prefix>.<ext>`. Its answers (the note below the
+table) also hold the `code` of every test case of the plugin's rule tests, verbatim, as the words `not-overfit` reads.
 
 Paths are relative to the pack directory, `packs/javascript/`.
 
@@ -326,9 +325,9 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint-plugin-unicorn/fixtures/prefer-node-protocol/064.ts` | `test/prefer-node-protocol.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/prefer-node-protocol/065.ts` | `test/prefer-node-protocol.js` | derived |
 
-> `recording.json` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
-> table above: the tool-pack's `recording.lock` names it and a GitHub release holds the bytes (docs/port-readiness.md).
-> It carries excerpts of this upstream's tests (`test/*.js`: the `code` of each RuleTester case), redistributed under
-> the licence above, together with Rerail's Apache-2.0; `LICENSE` beside this file is this upstream's own, at the pinned
-> commit.
+> The port readiness generator's answers for this tool-pack are no file of this pack, so they are recorded here rather
+> than in the table above: `npm run generate` writes them, and Rerail's private Azure blob store holds them, keyed by
+> the upstream version, not this repository (docs/generate-and-review.md). They carry excerpts of this upstream's tests
+> (`test/*.js`: the `code` of each RuleTester case), under the licence above, together with Rerail's Apache-2.0;
+> `LICENSE` beside this file is this upstream's own, at the pinned commit.
 

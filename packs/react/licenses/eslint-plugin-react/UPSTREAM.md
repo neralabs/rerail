@@ -4,7 +4,7 @@ Upstream: [jsx-eslint/eslint-plugin-react](https://github.com/jsx-eslint/eslint-
 
 The files listed below are the upstream tests of the rules the React pack records (`conformance.json`, `upstream/common.mjs` `RULES`), and the test cases extracted from them, one case per file, and remain under eslint-plugin-react's license. Every other file under `upstream/eslint-plugin-react/` is Rerail's, under the Apache License 2.0 (the pack's `LICENSE`): `generate.mjs` (with its stub RuleTester), `../common.mjs` and the recordings they write by running the pinned plugin. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of eslint-plugin-react's and eslint-plugin-react-hooks' rules, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them.
 
-Paths are relative to the pack directory, `packs/react/`. `<file> valid[i]` / `invalid[i]` is the i-th case of the `valid` / `invalid` list the test file passes to `RuleTester.run`. A `derived` row is a case's `code` that the port readiness gates' recorder (`npm run port-readiness:record`) copied from that upstream test file (at upstream's repository path), as upstream's own test helpers build the case: `tests/helpers/parsers.js` copies each case once per parser and appends a `// features: [...], parser: ...` comment to its code.
+Paths are relative to the pack directory, `packs/react/`. `<file> valid[i]` / `invalid[i]` is the i-th case of the `valid` / `invalid` list the test file passes to `RuleTester.run`. A `derived` row is a case's `code` that the port readiness gates' generator (`npm run generate`) copied from that upstream test file (at upstream's repository path), as upstream's own test helpers build the case: `tests/helpers/parsers.js` copies each case once per parser and appends a `// features: [...], parser: ...` comment to its code.
 
 | File | Upstream path | Copy |
 |---|---|---|
@@ -2533,9 +2533,9 @@ Paths are relative to the pack directory, `packs/react/`. `<file> valid[i]` / `i
 | `upstream/eslint-plugin-react/fixtures/void-dom-elements-no-children/f76bbef45753.tsx` | `tests/lib/rules/void-dom-elements-no-children.js` | derived |
 | `upstream/eslint-plugin-react/fixtures/void-dom-elements-no-children/f87a7db315a4.tsx` | `tests/lib/rules/void-dom-elements-no-children.js` | derived |
 
-> `recording.json` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
-> table above: the tool-pack's `recording.lock` names it and a GitHub release holds the bytes (docs/port-readiness.md).
-> It carries excerpts of this upstream's tests (`tests/lib/rules/*.js`: the `code` of each RuleTester case),
-> redistributed under the licence above, together with Rerail's Apache-2.0; `LICENSE` beside this file is this
-> upstream's own, at the pinned commit.
+> The port readiness generator's answers for this tool-pack are no file of this pack, so they are recorded here rather
+> than in the table above: `npm run generate` writes them, and Rerail's private Azure blob store holds them, keyed by
+> the upstream version, not this repository (docs/generate-and-review.md). They carry excerpts of this upstream's tests
+> (`tests/lib/rules/*.js`: the `code` of each RuleTester case), under the licence above, together with Rerail's
+> Apache-2.0; `LICENSE` beside this file is this upstream's own, at the pinned commit.
 

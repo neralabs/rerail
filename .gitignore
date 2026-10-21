@@ -17,9 +17,10 @@ conformance/recorders/port-readiness/runtimes/*/package-lock.json
 conformance/recorders/port-readiness/runtimes/*/uv.lock
 conformance/recorders/port-readiness/runtimes/*/composer.lock
 
-# The port readiness gates' recordings are not in the tree: each tool-pack commits a recording.lock naming the one its rules
-# are judged against, and the bytes live in a GitHub release (conformance/port-readiness/recording/store.ts). The recorder and
-# `npm run port-readiness -- fetch` put them in .rerail/port-readiness/recordings/; committing one again would put 71 MB of generated
-# JSON back in the history, where it stays forever.
+# Nothing the port readiness generator produces is in the tree: `npm run generate` uploads each tool-pack's answers to Rerail's
+# private Azure blob store, keyed by the upstream release and a digest of the generator's inputs, and caches them under
+# .rerail/port-readiness/expected/ (docs/generate-and-review.md). These rules keep a stray copy left by an older checkout out of
+# the history, where it would stay forever.
+packs/*/upstream/*/expected/
 packs/*/upstream/*/recording.json
 packs/*/upstream/*/corpus.json

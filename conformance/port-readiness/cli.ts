@@ -1,7 +1,7 @@
 /**
- * `npm run port-readiness`: the port readiness gates over every gated tool-pack, from its recordings, and the summary CI posts.
- * Exit 1 when a shipped rule fails a blocking check (or the summary has a blocking failure), 2 on an exception, and
- * `fetch` 3 when a lock names a recording the release does not hold (MissingRecordingError), and nothing else failed.
+ * `npm run port-readiness`: the port readiness gates over every gated tool-pack, from the generated answers in the local
+ * cache (`npm run generate` puts them there), and the summary CI posts. Exit 1 when a shipped rule fails a blocking
+ * check (or the summary has a blocking failure), 2 on an exception.
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -9,9 +9,9 @@ import { join, resolve } from "node:path";
 import { PACKAGE_ROOT } from "../../src/engine/index.js";
 import { DEFAULT_CACHE_ROOT } from "./corpus.js";
 import { staleNativeBinary } from "./engine.js";
+import { generatorKey } from "./recording/generator-key.js";
 import { mergeDirectory } from "./merge.js";
 import { ProcessCommandRunner } from "./process.js";
-import { fetchToolPackRecordings, MissingRecordingError } from "./recording/fetch.js";
 import { renderMarkdown } from "./report.js";
 import { blockingFailures, gatedToolPacks, runToolPack } from "./run.js";
 import { parseShard, shardName } from "./shard.js";
@@ -19,7 +19,6 @@ import { parsePlanned, writeSummary } from "./summary.js";
 
 const USAGE = `usage:
   npm run port-readiness -- [--pack <id>] [--tool <tool>] [--shard <i>/<n>] [--cache dir] [--no-cache | --refresh-cache] [--out dir]
-  npm run port-readiness -- fetch [--pack <id>] [--tool <tool>] [--cache dir]
   npm run port-readiness -- merge <dir>
   npm run port-readiness -- summary <dir> [--base <sha>] [--planned <JSON array of "<pack>/<tool>">]
 `;
@@ -65,7 +64,10 @@ async function gates(args: string[]): Promise<number> {
   const runner = new ProcessCommandRunner();
   let failing = 0;
   for (const { pack, tool } of selected) {
-    const report = await runToolPack({ root, pack, tool, cacheRoot, readCache, writeCache, runner, ...(shard === undefined ? {} : { shard }) });
+    // The answers the generator made for this tree: the key covers everything it reads, so answers for another tree
+    // (an edited gates.yaml, recorder or case source) are never judged against.
+    const { key } = await generatorKey(root, pack, tool);
+    const report = await runToolPack({ root, pack, tool, cacheRoot, readCache, writeCache, runner, expectedKey: key, ...(shard === undefined ? {} : { shard }) });
     const name = `${pack}--${tool}`;
     await writeFile(join(out, `${name}.json`), `${JSON.stringify(report, null, 2)}\n`);
     await writeFile(join(out, `${name}.md`), renderMarkdown(report));
@@ -75,40 +77,6 @@ async function gates(args: string[]): Promise<number> {
   }
   console.log(`wrote ${selected.length} report(s) to ${out}`);
   return failing > 0 ? 1 : 0;
-}
-
-/**
- * `gates fetch`: download the recordings the selected tool-packs' locks name into the cache. Each gate shard fetches
- * only its own tool-pack, so a shard downloads what it judges and nothing else, and a job that runs no gate fetches
- * nothing at all. A recording already in the cache is not downloaded again. A recording the release does not hold
- * exits 3, apart from every other failure, since a gate leg records that tool-pack itself (port-readiness.yml).
- */
-async function fetch(args: string[]): Promise<number> {
-  const flags = parse(args, ["--pack", "--tool", "--cache", "--repository"], []);
-  const root = PACKAGE_ROOT;
-  const cacheRoot = resolve(typeof flags["--cache"] === "string" ? flags["--cache"] : DEFAULT_CACHE_ROOT);
-  const selected = gatedToolPacks(root).filter(({ pack, tool }) => (flags["--pack"] === undefined || flags["--pack"] === pack) && (flags["--tool"] === undefined || flags["--tool"] === tool));
-  if (selected.length === 0) throw new Error(`no gated tool-pack matches${flags["--pack"] === undefined ? "" : ` --pack ${String(flags["--pack"])}`}${flags["--tool"] === undefined ? "" : ` --tool ${String(flags["--tool"])}`}`);
-  // The repository and the token come from the job's environment. Locally the attestation check needs a signed-in
-  // GitHub CLI or GITHUB_TOKEN (or GH_TOKEN), even for a public release; no recording skips it (LIFTED_ASSETS is empty).
-  const options = {
-    ...(typeof flags["--repository"] === "string" ? { repository: flags["--repository"] } : process.env.GITHUB_REPOSITORY === undefined ? {} : { repository: process.env.GITHUB_REPOSITORY }),
-    ...((process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN) === undefined ? {} : { token: (process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN)! }),
-  };
-  let missing = 0;
-  for (const { pack, tool } of selected) {
-    try {
-      for (const entry of await fetchToolPackRecordings(root, cacheRoot, pack, tool, options)) {
-        console.log(`${pack}/${tool} ${entry.file}: ${entry.cached ? "cached" : `downloaded ${entry.asset}`} (${(entry.size / 1024 / 1024).toFixed(1)} MB)`);
-      }
-    } catch (error) {
-      if (!(error instanceof MissingRecordingError)) throw error;
-      process.stderr.write(`${pack}/${tool}: ${error.message}\n`);
-      missing += 1;
-    }
-  }
-  console.log(`fetched ${selected.length - missing} tool-pack recording(s) into ${join(cacheRoot, "recordings")}${missing === 0 ? "" : `; the release holds none for ${missing}`}`);
-  return missing === 0 ? 0 : 3;
 }
 
 async function merge(args: string[]): Promise<number> {
@@ -136,7 +104,6 @@ async function summary(args: string[]): Promise<number> {
 
 async function main(): Promise<number> {
   const args = process.argv.slice(2);
-  if (args[0] === "fetch") return await fetch(args.slice(1));
   if (args[0] === "summary") return await summary(args.slice(1));
   if (args[0] === "merge") return await merge(args.slice(1));
   if (args[0] === "--help" || args[0] === "-h") {

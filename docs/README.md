@@ -15,6 +15,8 @@
 - [rule-packs.md](rule-packs.md): rule packs, matching and recommendation, and the shipped packs
 - [pack-format.md](pack-format.md): the pack layout and its validation contract
 - [port-readiness.md](port-readiness.md): the port readiness gates every shipped ported rule must pass, and how to read their report
+- [generate-and-review.md](generate-and-review.md): generating the port readiness answers, where they are stored, and
+  how CI uploads, reviews and promotes them
 - [language-packs.md](language-packs.md): the language registry, statuses, and how to start a pack
 
 ## Release

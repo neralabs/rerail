@@ -3,10 +3,9 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { dirname, join, posix, relative, resolve, sep } from "node:path";
 
-import { PACKAGE_ROOT } from "../../../../src/engine/index.js";
 import type { CorpusFile } from "../../../port-readiness/corpus.js";
 import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
-import { notebookCodeCells, upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js";
+import { notebookCodeCells, REPOSITORY_ROOT, upstreamLicenseText } from "../../../port-readiness/upstream-files.js";
 import { diagnosticSpan, RUFF_SPAN_PARTS, ruffSpan } from "../../../port-readiness/span-units/ruff.js";
 import type { Check, FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamFile, UpstreamRule } from "../../../port-readiness/types.js";
 import { createPythonToolkit } from "../languages/python.js";
@@ -120,22 +119,19 @@ export function ruffVersionMatches(output: string, version: string, commit: stri
   return { ok: false, form: "other" };
 }
 
-const VERSION_FORMS = {
-  bare: "the version alone, no build commit printed",
-  "with-commit": "the version and the pinned commit",
-  other: "neither the pinned version alone nor with the pinned commit",
-} as const;
-
 /**
  * The runtime-version pack check: `ruff version` printed the pinned release (see ruffVersionMatches) and the
- * interpreter is the one .python-version pins. The detail names which form of the release the wheel printed.
+ * interpreter is the one .python-version pins. A wheel that passes is named by the release alone, whichever form it
+ * printed, so the answers the generator writes are the same on every platform's wheel; one that fails is named by what
+ * it printed.
  */
 export function runtimeVersionCheck(output: string, python: Pick<PythonRuntime, "version" | "pinned">, upstream: Pick<PackManifest["upstream"], "version" | "commit">): Check {
   const printed = ruffVersionMatches(output, upstream.version, upstream.commit);
+  const reported = printed.ok ? `the pinned release, ruff ${upstream.version} (alone or with the pinned commit, as the platform's wheel prints it)` : `\`${output}\`, neither the pinned version alone nor with the pinned commit`;
   return {
     id: "runtime-version",
     ok: printed.ok && python.version === `Python ${python.pinned}`,
-    detail: `the installed wheel reports \`${output}\` (${VERSION_FORMS[printed.form]}) on ${python.version}; the pack pins ${upstream.version} at ${upstream.commit.slice(0, 9)} on Python ${python.pinned}`,
+    detail: `the installed wheel reports ${reported} on ${python.version}; the pack pins ${upstream.version} at ${upstream.commit.slice(0, 9)} on Python ${python.pinned}`,
   };
 }
 
@@ -279,7 +275,7 @@ export async function createRuffAdapter(pack: PackManifest, names: string[], cac
     const lintTarget = unresolvedTarget === "none" ? settings.get("formatter.unresolved_target_version") ?? "?" : unresolvedTarget;
     const pythonVersionSource = readFileSync(join(upstream.directory, "crates/ruff_python_ast/src/python_version.rs"), "utf8");
     const parseTarget = /pub const fn latest\(\) -> Self \{\s*Self::PY3(\d+)/u.exec(pythonVersionSource)?.[1];
-    const engineOptions = join(PACKAGE_ROOT, "native/src/code_rule_dsl/scope/options.rs");
+    const engineOptions = join(REPOSITORY_ROOT, "native/src/code_rule_dsl/scope/options.rs");
     const engineMinor = /DEFAULT_PYTHON_MINOR: u8 = (\d+);/u.exec(readFileSync(engineOptions, "utf8"))?.[1];
     if (engineMinor === undefined) throw new Error(`${engineOptions} declares no DEFAULT_PYTHON_MINOR`);
 
@@ -373,9 +369,10 @@ export async function createRuffAdapter(pack: PackManifest, names: string[], cac
       fixtureTextSources.push({ path: upstreamRelative, sha256: createHash("sha256").update(text).digest("hex"), ...(text === raw ? {} : { transform: "notebook-code-cells" as const }) });
     }
     for (const { file } of testModules) {
+      const test = relative(upstream.directory, file).split(sep).join("/");
       for (const text of testModuleStrings(readFileSync(file, "utf8"))) {
         fixtureTexts.push(text);
-        fixtureTextSources.push({ inline: text });
+        fixtureTextSources.push({ inline: text, test });
       }
     }
     const fixtureWords = new Set((await python.words(fixtureTexts)).flat());
@@ -459,7 +456,8 @@ export async function createRuffAdapter(pack: PackManifest, names: string[], cac
         repository: pack.upstream.repository,
         commit: pack.upstream.commit,
         version: pack.upstream.version,
-        runtime: `${version}, PyPI wheel on CPython ${runtime.version.replace(/^Python /u, "")}`,
+        // The release the runtime-version check holds the wheel to, not what this platform's wheel prints around it.
+        runtime: `${ruffVersionMatches(version, pack.upstream.version, pack.upstream.commit).ok ? `ruff ${pack.upstream.version}` : version}, PyPI wheel on CPython ${runtime.version.replace(/^Python /u, "")}`,
         invocation: "ruff check --isolated --no-cache --exit-zero --output-format json --select <codes> <files>, every RUFF_* variable unset",
         // Five ported documents gate on pythonVersion; they agree with Ruff only where both evaluate at one version.
         "target version": `Ruff lints at Python ${lintTarget} under --isolated (linter.unresolved_target_version = ${unresolvedTarget}, read from --show-settings) and parses at Python 3.${parseTarget ?? "?"} (PythonVersion::latest()); the engine evaluates a Python document without languageOptions.pythonVersion at 3.${engineMinor} (DEFAULT_PYTHON_MINOR, native/src/code_rule_dsl/scope/options.rs)`,

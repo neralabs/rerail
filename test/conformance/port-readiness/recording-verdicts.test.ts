@@ -90,7 +90,7 @@ function adapterOver(parserVerdicts: unknown[], files: unknown[]) {
   const adapter = createRecordedAdapter({
     root,
     manifest,
-    lock: null,
+    digest: "",
     recording: gatesRecordingSchema.parse(recording(parserVerdicts)),
     corpus: gatesCorpusSchema.parse(corpus(files)),
     tools: [{ name: "bandit", version: "1.9.4" }],

@@ -19,7 +19,7 @@ It follows the [pack structure and validation contract](../../docs/pack-format.m
 | `candidates/rules/` | The 3 candidate code-rule documents: AL05, AM02 and RF01 |
 | `conformance.json` | Every port (shipped and candidate): its upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tool and the pinned corpora |
 | `divergences.json` | Declared disagreements with SQLFluff |
-| `upstream/sqlfluff/` | SQLFluff's copied tests (`fixtures/`, and Rerail's own PostgreSQL cases beside them in `fixtures/rerail/`, listed as `RERAIL_CASES` in `generate.py`), its recordings (`fixtures.expected.json`, `fixtures.cases.json`, `corpus-<name>.expected.json`) and the recorder (`generate.py`, sharing `fixtures/sql/common.py`); the port readiness gates' `gates.yaml`, `recording.lock` and `goldens.tsv` |
+| `upstream/sqlfluff/` | SQLFluff's copied tests (`fixtures/`, and Rerail's own PostgreSQL cases beside them in `fixtures/rerail/`, listed as `RERAIL_CASES` in `generate.py`), its recordings (`fixtures.expected.json`, `fixtures.cases.json`, `corpus-<name>.expected.json`) and the recorder (`generate.py`, sharing `fixtures/sql/common.py`); the port readiness gates' `gates.yaml` and `goldens.tsv` |
 | `licenses/sqlfluff/` | SQLFluff's licence and `UPSTREAM.md`, listing every copied file |
 
 ## Rules that start off
@@ -129,11 +129,11 @@ Scoring one rule with every false positive and false negative printed:
 node --import tsx conformance/languages/cli.ts --pack sql --rule sqlfluff-al04-aliasing-unique-table --fixtures
 ```
 
-The port readiness recording (`upstream/sqlfluff/recording.lock`) comes from the recorder's own runtime
-(`conformance/recorders/port-readiness/runtimes/sqlfluff-4.4.0`):
+The port readiness gates' answers come from the generator's own runtime
+(`conformance/recorders/port-readiness/runtimes/sqlfluff-4.4.0`; [docs/generate-and-review.md](../../docs/generate-and-review.md)):
 
 ```sh
-npm run port-readiness:record -- --pack sql --tool sqlfluff
+npm run generate -- --pack sql --tool sqlfluff
 npm run port-readiness -- --pack sql --tool sqlfluff
 ```
 

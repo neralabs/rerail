@@ -12,8 +12,9 @@ import { shardName, type Shard } from "./shard.js";
  * graph reads by path (corpus-tasks.json), and cli.ts, which chooses the run's options. Left out is what no cached
  * verdict depends on: what only the report job runs or reads (the summary, the pull request comment, the shard merge,
  * the not-gated and pending lists), report rendering (a leg renders report.md from a finished report), what only the
- * recorder runs (recording/diff.ts), the leg plan (plan.mjs, which picks the legs, not what they find) and the README,
- * so changing them re-judges nothing;
+ * generator runs (recording/diff.ts, the answer store), the generator key (recording/generator-key.ts: it picks the answers a
+ * run reads, and their digest is part of every key), the leg plan (plan.mjs, which picks the legs, not what they find)
+ * and the README, so changing them re-judges nothing;
  * cache.test.ts checks that run.ts's import graph reaches none of them. An excluded module must stay free of top-level
  * side effects, because cli.ts imports it in every leg.
  */
@@ -28,6 +29,8 @@ export const GATE_CODE = [
   ":(exclude)conformance/port-readiness/report.ts",
   ":(exclude)conformance/port-readiness/merge.ts",
   ":(exclude)conformance/port-readiness/recording/diff.ts",
+  ":(exclude)conformance/port-readiness/recording/expected-store.ts",
+  ":(exclude)conformance/port-readiness/recording/generator-key.ts",
   ":(exclude)conformance/port-readiness/plan.mjs",
   ":(exclude)conformance/port-readiness/plan.d.mts",
 ] as const;
@@ -146,8 +149,8 @@ export interface SharedKeyInputs {
   gateCode: string;
   dependencies: string;
   gatesYaml: string;
-  recordingJson: string;
-  corpusJson: string;
+  /** The tool-pack's expected answers (recording/expected.ts's expectedDigest over every file of them). */
+  expected: string;
   corpusTasks: string;
   corpora: string;
 }
@@ -163,14 +166,14 @@ export interface RuleKeyInputs {
 }
 
 /**
- * A rule's result key: sha256 over the gate code and its dependencies, the tool-pack's manifest and recordings, the
- * corpus pins, and the rule's own engine key, document, conformance entry, goldens and case sources, each digested in
+ * A rule's result key: sha256 over the gate code and its dependencies, the tool-pack's manifest and expected answers,
+ * the corpus pins, and the rule's own engine key, document, conformance entry, goldens and case sources, each digested in
  * that order. The engine is the rule's own input rather than the tool-pack's because it is only the part of the
  * engine the rule's language family reads.
  */
 export function ruleKey(shared: SharedKeyInputs, rule: RuleKeyInputs): string {
   const parts = [
-    shared.gateCode, shared.dependencies, shared.gatesYaml, shared.recordingJson, shared.corpusJson, shared.corpusTasks, shared.corpora,
+    shared.gateCode, shared.dependencies, shared.gatesYaml, shared.expected, shared.corpusTasks, shared.corpora,
     rule.engine, rule.document, rule.conformanceEntry, rule.goldens, ...rule.caseSources,
   ];
   return sha256(parts.map((part) => sha256(part)).join("\n"));
@@ -197,7 +200,7 @@ export interface ToolPackKeyInputs {
 export function toolPackKey(shared: SharedKeyInputs, pack: ToolPackKeyInputs, judgedKeys: readonly string[]): string {
   const sorted = (values: readonly string[]) => [...values].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).join("\n");
   const parts = [
-    shared.gateCode, shared.dependencies, shared.gatesYaml, shared.recordingJson, shared.corpusJson, shared.corpusTasks, shared.corpora,
+    shared.gateCode, shared.dependencies, shared.gatesYaml, shared.expected, shared.corpusTasks, shared.corpora,
     pack.engine, sorted(pack.names), sorted(pack.goldens), sorted(pack.caseSources), sorted(judgedKeys),
   ];
   return sha256(parts.map((part) => sha256(part)).join("\n"));

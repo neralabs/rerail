@@ -11,7 +11,7 @@ This pack follows the [pack structure and validation contract](../../docs/pack-f
 | `candidates/rules/` | The code-rule documents of the other ports, scored and judged but never shipped |
 | `conformance.json` | Each ported lint's upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned Clippy tool and corpora |
 | `divergences.json` | Declared disagreements with Clippy |
-| `upstream/clippy/` | Clippy's copied UI tests, the probes Rerail wrote (`fixtures/rerail/`, listed in `UPSTREAM.md`), recordings and recorder (`generate.py`, sharing `upstream/common.py`); the port readiness gates' `gates.yaml`, `recording.lock` and `goldens.tsv` |
+| `upstream/clippy/` | Clippy's copied UI tests, the probes Rerail wrote (`fixtures/rerail/`, listed in `UPSTREAM.md`), recordings and recorder (`generate.py`, sharing `upstream/common.py`); the port readiness gates' `gates.yaml` and `goldens.tsv` |
 | `licenses/clippy/` | Clippy's licence and `UPSTREAM.md`, listing every copied file |
 
 ## Scores
@@ -88,12 +88,12 @@ Scoring one rule with every false positive and false negative printed:
 node --import tsx conformance/languages/cli.ts --pack rust --rule clippy-precedence --fixtures
 ```
 
-The port readiness gates judge every port against their own recording of Clippy (`upstream/clippy/recording.lock`;
-the recorder runs the rustup toolchain `conformance/recorders/port-readiness/runtimes/clippy-1.99.0/` pins, on the
-same UI tests and corpora, as `generate.py` does):
+The port readiness gates judge every port against the answers their generator records from Clippy (the
+generator runs the rustup toolchain `conformance/recorders/port-readiness/runtimes/clippy-1.99.0/` pins, on the
+same UI tests and corpora, as `generate.py` does; [docs/generate-and-review.md](../../docs/generate-and-review.md)):
 
 ```sh
-npm run port-readiness:record -- --pack rust --tool clippy   # needs rustup, git and the network
+npm run generate -- --pack rust --tool clippy   # needs rustup, git and the network
 npm run port-readiness -- --pack rust --tool clippy
 ```
 

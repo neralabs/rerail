@@ -7,10 +7,9 @@ import { test } from "vitest";
 
 import type { CorpusFile } from "../../../conformance/port-readiness/corpus.js";
 import { readGatesManifest, recordedRuntimes } from "../../../conformance/port-readiness/manifest.js";
-import { gatesCorpusSchema, gatesRecordingSchema, recordingText, spanOf } from "../../../conformance/port-readiness/recording/schema.js";
-import { readCachedRecording, recordingLockSchema, recordingLockText, writeCachedRecording } from "../../../conformance/port-readiness/recording/store.js";
+import { gatesRecordingSchema, spanOf } from "../../../conformance/port-readiness/recording/schema.js";
 import type { PackAdapter, UpstreamFile } from "../../../conformance/port-readiness/types.js";
-import { CASE_LAYOUTS, committedSources, CONTEXT_FILES, diffRecording, notCopiedPrefixes, recordToolPack, withUpstreamRows, writeRecording, type AdapterFactory } from "../../../conformance/recorders/port-readiness/record.js";
+import { CASE_LAYOUTS, caseSourceDiff, committedSources, CONTEXT_FILES, notCopiedPrefixes, recordToolPack, withUpstreamRows, writeCaseSources, type AdapterFactory } from "../../../conformance/recorders/port-readiness/record.js";
 import { extensionList, RUNTIMES_DIRECTORY, runtimePinDigests, unpinnedComposerDependencies, unpinnedNpmDependencies, unpinnedPythonDependencies, withoutMachinePaths } from "../../../conformance/recorders/port-readiness/runtimes.js";
 import { PACKAGE_ROOT } from "../../../src/engine/index.js";
 
@@ -37,8 +36,8 @@ known_gaps: []
 const SOURCE = "import pickle\npickle.loads(b'')\n";
 const span = { startLine: 1, startCol: 0, endLine: null, endCol: 17 };
 
-// Options in the order Bandit's shell_injection gen_config builds them, not sorted: a re-record that reads the locked
-// recording back from its key-sorted text must still find nothing moved.
+// Options in the order Bandit's shell_injection gen_config builds them, not sorted: a regeneration that reads stored
+// answers back from their key-sorted text must still find nothing moved.
 const OPTIONS = [{ subprocess: ["subprocess.Popen"], shell: ["os.system"], no_shell: ["os.execl"] }];
 
 const fakeAdapter: AdapterFactory = async () => ({
@@ -61,7 +60,7 @@ const fakeAdapter: AdapterFactory = async () => ({
   parserVerdicts: async (files) => files.map(() => [{ parser: "cpython 3.14.0", syntax: [], grammar: [] }]),
 }) satisfies PackAdapter;
 
-test("a fake adapter's answers are recorded in the form recording/schema.ts reads, and a second recording finds no drift", async () => {
+test("a fake adapter's answers are recorded in the form recording/schema.ts reads, and the case sources the tool-pack lacks are copied once", async () => {
   const root = mkdtempSync(join(tmpdir(), "port-readiness-record-"));
   try {
     mkdirSync(join(root, "packs/demo/upstream/bandit"), { recursive: true });
@@ -83,19 +82,14 @@ test("a fake adapter's answers are recorded in the form recording/schema.ts read
       runtimeDigests: () => ({ "pyproject.toml": "d".repeat(64) }),
     };
     const recorded = await recordToolPack(options);
-    const written = await writeRecording(root, "demo", "bandit", recorded, { cacheRoot: join(root, "cache") });
-    assert.equal(written.changes.first, true);
+    assert.equal(existsSync(join(root, "packs/demo/upstream/bandit/fixtures/pickle_deserialize.py")), false);
+    const copied = await writeCaseSources(root, "demo", "bandit", recorded);
+    assert.deepEqual(copied.map((copy) => copy.file), ["fixtures/pickle_deserialize.py"]);
 
-    // The lock names the recording; the recording itself is not in the tree but in the cache, by its own digest.
-    const lock = recordingLockSchema.parse(JSON.parse(readFileSync(join(root, "packs/demo/upstream/bandit/recording.lock"), "utf8")));
-    assert.deepEqual(lock.pins, recorded.recording.pins);
-    assert.match(lock.files["recording.json"].asset, /^demo-bandit-recording-[0-9a-f]{64}\.json\.gz$/u);
-    assert.deepEqual(written.assets.map((asset) => asset.name).sort(), [lock.files["corpus.json"].asset, lock.files["recording.json"].asset].sort());
-    assert.equal(existsSync(join(root, "packs/demo/upstream/bandit/recording.json")), false);
-    const recording = gatesRecordingSchema.parse(JSON.parse(readCachedRecording(join(root, "cache"), lock.files["recording.json"].sha256)!));
+    const recording = recorded.recording;
     assert.deepEqual(Object.keys(recording.rules), ["B301"]);
     assert.deepEqual(recording.absent, ["B999"]);
-    // Upstream's licence travels with the excerpts the asset holds, and must be the text its digest names.
+    // Upstream's licence travels with the excerpts the answers hold, and must be the text its digest names.
     assert.equal(recording.licenseText, "LICENSE TEXT\n");
     assert.equal(recording.licenseSha256, createHash("sha256").update("LICENSE TEXT\n").digest("hex"));
     assert.throws(() => gatesRecordingSchema.parse({ ...recording, licenseText: "ANOTHER LICENSE\n" }), /its sha256 is not licenseSha256/u);
@@ -114,46 +108,17 @@ test("a fake adapter's answers are recorded in the form recording/schema.ts read
     assert.equal(recording.parserVerdicts.length, 1);
     assert.equal(recording.corpus.extensions.includes(".py"), true);
 
-    const corpus = gatesCorpusSchema.parse(JSON.parse(readCachedRecording(join(root, "cache"), lock.files["corpus.json"].sha256)!));
-    assert.deepEqual(corpus.files.map((file) => [file.task, file.path, Object.keys(file.findings)]), [["demo-task", "app.py", ["B301"]]]);
+    assert.deepEqual(recorded.corpus.files.map((file) => [file.task, file.path, Object.keys(file.findings)]), [["demo-task", "app.py", ["B301"]]]);
     assert.equal(readFileSync(join(root, "packs/demo/upstream/bandit/fixtures/pickle_deserialize.py"), "utf8"), SOURCE);
     assert.match(readFileSync(join(root, "packs/demo/licenses/bandit/UPSTREAM.md"), "utf8"), /\| `upstream\/bandit\/fixtures\/pickle_deserialize\.py` \| `examples\/pickle_deserialize\.py` \| verbatim \|/u);
 
+    // A second generation finds every case source committed and copies nothing.
     const again = await recordToolPack(options);
-    assert.deepEqual(diffRecording(root, "demo", "bandit", again, join(root, "cache")), { changed: [], corpusNote: null, missing: [], conflicting: [] });
-    // The lock is what a commit pins, so a lock naming other bytes is what the stale check sees.
-    writeFileSync(join(root, "packs/demo/upstream/bandit/recording.lock"), recordingLockText({ ...lock, files: { ...lock.files, "recording.json": { ...lock.files["recording.json"], sha256: "e".repeat(64) } } }));
-    assert.deepEqual(diffRecording(root, "demo", "bandit", again, join(root, "cache")).changed, ["recording.json"]);
-    // A lock whose recording is not in the cache was recorded before: the summary says it could not compare, never
-    // that this is a first recording.
-    const uncompared = await writeRecording(root, "demo", "bandit", again, { cacheRoot: join(root, "cache") });
-    assert.equal(uncompared.changes.first, false);
-    assert.equal(uncompared.changes.unavailable, `${lock.files["recording.json"].asset} is not in the cache`);
-    const compared = await writeRecording(root, "demo", "bandit", again, { cacheRoot: join(root, "cache") });
-    assert.equal(compared.changes.unavailable, null);
-    assert.deepEqual(compared.changes.rules, []);
-
-    // A locked corpus.json recorded over more files than the goldens name (before the recorder narrowed to them) still
-    // holds while it answers the goldens' files as a fresh recording does; --check reads it from the cache.
-    const current = recordingLockSchema.parse(JSON.parse(readFileSync(join(root, "packs/demo/upstream/bandit/recording.lock"), "utf8")));
-    const lockCorpus = async (value: typeof corpus) => {
-      const digest = await writeCachedRecording(join(root, "cache"), recordingText(value));
-      writeFileSync(join(root, "packs/demo/upstream/bandit/recording.lock"), recordingLockText({ ...current, files: { ...current.files, "corpus.json": { ...current.files["corpus.json"], sha256: digest } } }));
-    };
-    const extra = { ...corpus.files[0]!, task: "other-task", findings: {} };
-    await lockCorpus({ ...corpus, files: [...corpus.files, extra] });
-    const superset = diffRecording(root, "demo", "bandit", again, join(root, "cache"));
-    assert.deepEqual(superset.changed, []);
-    assert.match(superset.corpusNote!, /answers all 1 file\(s\) the goldens name, as a fresh recording does, and 1 more/u);
-    await lockCorpus({ ...corpus, files: [{ ...corpus.files[0]!, findings: {} }, extra] });
-    const differs = diffRecording(root, "demo", "bandit", again, join(root, "cache"));
-    assert.deepEqual(differs.changed, ["corpus.json"]);
-    assert.match(differs.corpusNote!, /no longer holds: 1 of the 1 file\(s\) the goldens name are answered differently or not at all, e\.g\. demo-task\/app\.py/u);
-    // Without the locked recording in the cache nothing is compared, and the check never calls it current.
-    writeFileSync(join(root, "packs/demo/upstream/bandit/recording.lock"), recordingLockText({ ...current, files: { ...current.files, "corpus.json": { ...current.files["corpus.json"], sha256: "f".repeat(64) } } }));
-    const unread = diffRecording(root, "demo", "bandit", again, join(root, "cache"));
-    assert.deepEqual(unread.changed, ["corpus.json"]);
-    assert.match(unread.corpusNote!, /could not be compared: .* not in the cache/u);
+    assert.deepEqual(caseSourceDiff(join(root, "packs/demo/upstream/bandit"), again), { missing: [], conflicting: [] });
+    assert.deepEqual(await writeCaseSources(root, "demo", "bandit", again), []);
+    // A committed case source with other bytes than upstream's stops the copy before anything is written.
+    writeFileSync(join(root, "packs/demo/upstream/bandit/fixtures/pickle_deserialize.py"), "edited\n");
+    await assert.rejects(writeCaseSources(root, "demo", "bandit", again), /committed case sources differ from upstream's: fixtures\/pickle_deserialize\.py/u);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

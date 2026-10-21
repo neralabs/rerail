@@ -522,7 +522,11 @@ async function tests(globs, names, caseTesters) {
       const invalid = Array.isArray(entry.tests?.invalid) ? entry.tests.invalid : [];
       for (const item of [...valid, ...invalid]) {
         const words = caseWords(item);
-        for (const code of [words.code, ...words.outputs]) texts.set(`${words.jsx}\0${code}`, { code, jsx: words.jsx });
+        // Test files run in code-unit order, so a text several of them hold keeps the first as its test file.
+        for (const code of [words.code, ...words.outputs]) {
+          const key = `${words.jsx}\0${code}`;
+          if (!texts.has(key)) texts.set(key, { code, jsx: words.jsx, test: testFile });
+        }
         configurations.add(words.configuration);
       }
       if (entry.tested === null) return;

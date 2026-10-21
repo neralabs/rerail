@@ -1,0 +1,53 @@
+name: Generator runtimes
+description: >-
+  What `npm run generate` needs to run a tool-pack's pinned upstream (docs/port-readiness.md): uv for the Python
+  runtimes, the pinned PHP and Composer for the php and blade packs, and the exact rustup toolchain Clippy's runtime
+  pins. The runtimes themselves are installed afresh by the generator, never restored from a cache: a Bladestan runtime
+  restored from an earlier run's cache answered differently from the same runtime installed fresh.
+
+inputs:
+  pack:
+    description: The tool-pack's pack, packs/<pack>.
+    required: true
+  tool:
+    description: The tool-pack's upstream tool, packs/<pack>/upstream/<tool>.
+    required: true
+  save-cache:
+    description: >-
+      Save uv's download cache after the job. The generator runs upstream's code and the Composer packages it resolves,
+      unlocked, before the post-job save, so only a job whose cache scope no other ref reads (a pull request's) sets it
+      to true. The PHP build is saved straight after it is built, before any upstream code runs, whatever this says.
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up uv
+      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+      with:
+        save-cache: ${{ inputs.save-cache }}
+
+    - name: Set up the pinned PHP and Composer
+      if: inputs.pack == 'php' || inputs.pack == 'blade'
+      uses: ./.github/actions/php
+
+    # Clippy's recorder runs the rustup toolchain its runtime pins (runtimes/<runtime>/rust-toolchain.toml: an exact
+    # release with clippy), and refuses any other build; no other tool-pack needs Rust.
+    - id: clippy-toolchain
+      name: Read the Rust toolchain Clippy's runtime pins
+      if: inputs.tool == 'clippy'
+      shell: bash
+      env:
+        PACK: ${{ inputs.pack }}
+        TOOL: ${{ inputs.tool }}
+      run: |
+        set -euo pipefail
+        runtime="$(sed -n 's/^  runtime: *\([a-z0-9._-]*\) *$/\1/p' "packs/$PACK/upstream/$TOOL/gates.yaml")"
+        echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' "conformance/recorders/port-readiness/runtimes/$runtime/rust-toolchain.toml")" >> "$GITHUB_OUTPUT"
+
+    - name: Install the pinned Rust toolchain with clippy
+      if: inputs.tool == 'clippy'
+      uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+      with:
+        toolchain: ${{ steps.clippy-toolchain.outputs.channel }}
+        components: clippy

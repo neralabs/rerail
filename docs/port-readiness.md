@@ -7,17 +7,17 @@ but its results are only reported, so CI shows how far each candidate got and wh
 The gates sit on top of the [pack validation contract](pack-format.md#the-validation-contract) (checks 1 to 8) and the
 conformance check (`npm run test:conformance`), which stay as they are. They are the V1 validation gates that
 nera-rule-validation ran by hand (its ADR 0006), brought into rerail so that nobody needs a second repository to
-validate a rule. The gates' code and the recorder's adapters are adapted from NRV's, not copied: they read rerail's
-layout, and the gates answer from recordings instead of running upstream. The NRV commits they come from, and what
-changed, are in [`conformance/port-readiness/README.md`](../conformance/port-readiness/README.md#where-the-code-comes-from).
+validate a rule. The gates' code and the generator's adapters are adapted from NRV's, not copied: they read rerail's
+layout, and the gates answer from the generator's answers instead of running upstream. The NRV commits they come from,
+and what changed, are in [`conformance/port-readiness/README.md`](../conformance/port-readiness/README.md#where-the-code-comes-from).
+How the answers are generated, stored, reviewed and promoted, and who approves them, is in
+[generate-and-review.md](generate-and-review.md).
 
 **Names.** The system is *port readiness*, its steps are *gates*, and GitHub shows its workflows and checks as "Port
-readiness". It was called the rule gates while this was built. What it publishes outside the repository is named for
-port readiness too: the recordings (`recording.json`, `rerail.port-readiness-recording/v2`, and `corpus.json`,
-`rerail.port-readiness-corpus/v2`) and the lock that names them (`rerail.port-readiness-recording-lock/v1`), the
-`port-readiness-recordings` release and its assets, the branches the record workflow pushes, the marker on its comments
-and the `record-port-readiness` label. The files that configure the gates themselves (`gates.yaml`, `goldens.tsv`) are
-named for the gates, as they should be.
+readiness". It was called the rule gates while this was built. What it keeps outside the repository is named for port
+readiness too: the generated answers (`rerail.port-readiness-expected/v1`), the `port-readiness-expected` and
+`port-readiness-expected-pr` blob containers that hold them, and the marker on its pull request comments. The files
+that configure the gates themselves (`gates.yaml`, `goldens.tsv`) are named for the gates, as they should be.
 
 ## The gates
 
@@ -34,7 +34,7 @@ report shows every failure, not only the first.
 | `upstream-status` | The rule exists upstream with an implementation and tests, is not deprecated, and one of upstream's recommended configurations turns it on. It decides only whether a shipped rule starts on; the report flags a pack.json `on` that disagrees. | no |
 
 Tool-pack checks come before any gate. When one fails, every rule of the tool-pack fails with it: a shipped rule blocks
-and a candidate is not ready to promote. They fail when the recording is stale (`corpus-pins` and the recording checks),
+and a candidate is not ready to promote. They fail when the answers are stale (`corpus-pins` and the answers' checks),
 when a committed case source is not the bytes upstream's answers were recorded on (`case-sources`), when a task or
 corpus a golden names could not be fetched (`corpus-complete`, usually a failed download: run again), or when the pack's shipped rules do not load together through rerail's bundled-rule
 loader (`bundled-load`, for example two documents with one id).
@@ -54,7 +54,7 @@ Gate 6, real code, does not run in rerail's CI; rerail judges the goldens a real
 
 A golden is a real-code file a rule must agree with upstream on. `packs/<id>/upstream/<tool>/goldens.tsv` lists each
 by rule, task or corpus, path and the file's sha256; its expected answer is upstream's findings on that file in
-`corpus.json`. Rerail's CI does not run the rules over the corpus to find goldens, and the gates never write
+the answers' `corpus/`. Rerail's CI does not run the rules over the corpus to find goldens, and the gates never write
 `goldens.tsv`. Finding them is V1's Gate 6, and each `goldens.tsv` names the run that found its goldens on its second
 line (`# Source: ...`, which the gates require):
 
@@ -89,17 +89,13 @@ failure, or its work budget ran out), the difference is an engine gap, not the r
 `engine-reads-goldens`, and the report lists it under "Blocked by engine gaps" so the fix goes to the engine
 (NER-1764), not the rule.
 
-**Upstream's answers cover the goldens' files only.** The recorder fetches the files `goldens.tsv` names and asks
+**Upstream's answers cover the goldens' files only.** The generator fetches the files `goldens.tsv` names and asks
 upstream about those alone, and the gates fetch the same files; nothing in rerail reads the rest of the corpus. Where
-upstream's answer on a file depends on files around it, the recorder hands upstream those too and records nothing for
+upstream's answer on a file depends on files around it, the generator hands upstream those too and writes nothing for
 them: Ruff takes a file's package, and so its module name (N999), from the `__init__.py` files above it
 (`CONTEXT_FILES` in the recorder), and without them it flags 19 of django's locale packages it does not flag in the
-whole corpus. So an
-imported golden whose file `corpus.json` does not answer fails its rule ("corpus.json has no answer for it") until the
-tool-pack is recorded again, as a new port needs a recording before its upstream tests can be judged.
-`port-readiness:record --check`, which the nightly runs, accepts a locked `corpus.json` recorded over more files (the
-whole corpus, before the recorder narrowed) as long as it answers every golden's file as a fresh recording does; the
-next re-record drops the rest.
+whole corpus. So an imported golden whose file the answers' `corpus/` does not answer fails its rule until the
+tool-pack is generated again, as a new port needs its answers before its upstream tests can be judged.
 
 ## Which packs are gated
 
@@ -113,7 +109,7 @@ A **tool-pack** is one upstream tool in one pack, such as `python/ruff`. It is g
   The slowest run in shards: `SHARDS` in `conformance/port-readiness/plan.mjs` says which and how many (see
   "Sharding" below).
 - **Pending:** none. A tool-pack listed in `conformance/port-readiness/pending.json` is still validated in
-  nera-rule-validation until its recording lands, and the gates report it as pending without blocking.
+  nera-rule-validation until its answers land, and the gates report it as pending without blocking.
 - **Not gated:** packs with no upstream adapter (complexity ships rules; node ships only
   candidates, which run nowhere yet). Their current shipped rules are frozen in
   `conformance/port-readiness/ungated-rules.json`. A new shipped rule in such a pack fails: keep it in `candidates/` until the
@@ -131,14 +127,16 @@ npm run port-readiness -- --pack python                 # every gated tool-pack 
 npm run port-readiness -- summary .rerail/reports/port-readiness # the merged summary CI writes
 ```
 
-The engine is this checkout's (`npm run build:native` first). The first run fetches the real-code files the goldens
+The engine is this checkout's (`npm run build:native` first). The gates read upstream's answers from the local cache
+by their key (below), and fail when it does not hold them: `npm run generate -- --pack <id> --tool <tool>` puts them
+there ([generate-and-review.md](generate-and-review.md)). The first run fetches the real-code files the goldens
 name into `.rerail/port-readiness/` (pinned); later runs reuse them and the results of every rule whose inputs did not change.
 `--no-cache` judges every rule again. The command exits 1 when a shipped rule fails, as CI does.
 
 ### What a cached result is keyed by
 
 A rule's result key covers everything its verdict can depend on: the gate code a cached verdict can read, the npm
-packages the gate process loads, the tool-pack's manifest, recordings and corpus pins, the rule's own document,
+packages the gate process loads, the tool-pack's manifest, upstream's answers (the digest of every answer file) and corpus pins, the rule's own document,
 conformance entry, goldens and upstream case sources, and the engine, though only the part of the engine the rule can be
 judged by.
 
@@ -150,8 +148,8 @@ golden or case source therefore moves every shard's key. Otherwise one shard wou
 would compute new ones, and the merge would refuse them.
 
 The gate code is `conformance/port-readiness/` without what no cached verdict depends on: what only the report job or
-the recorder runs (the summary, the pull request comment, the shard merge, the not-gated and pending lists, the
-recording diff), report rendering (a leg renders `report.md` from a finished report), the leg plan and the README:
+the generator runs (the summary, the pull request comment, the shard merge, the not-gated and pending lists, the
+answers' before/after), report rendering (a leg renders `report.md` from a finished report), the leg plan and the README:
 `GATE_CODE` in `cache.ts`, and `cache.test.ts` fails if `run.ts`'s imports reach an excluded file.
 The npm packages are the locked closure (`package-lock.json`) of `GATE_PACKAGES` (apache-arrow, better-sqlite3, diff,
 drizzle-orm, tsx, yaml, zod), plus `package.json`'s `type`, the `port-readiness` script with its pre and post
@@ -188,11 +186,12 @@ reproducibly. That holds only while the binary is their build, so a binary older
 The test-only sources are every file a `#[cfg(test)] mod` declaration reaches, which is how the engine keeps its oracle
 tests beside the code they check.
 
-In CI every run saves its results, pull requests included, except a gate leg that recorded its tool-pack itself: the
-recorder ran upstream's code and unlocked Composer packages, which could have rewritten anything under `.rerail/`, so
-that leg saves neither its results nor the corpus. The PHP build and the LFS objects are saved by an explicit step
-straight after they are made, before any recorder runs, and the nightly's recording check restores the recorder's
-cache without saving it. GitHub scopes a pull request's cache to that pull request,
+In CI every gate leg saves its results and the corpus, pull requests included: no gate leg runs upstream's code, since
+the tool-pack's `answers` job hands it the answers ([generate-and-review.md](generate-and-review.md#what-ci-does)).
+That job saves the answers to the Actions cache only when it downloaded and verified them; one that generated them ran
+upstream's code and the Composer packages it resolved, which could have rewritten anything under `.rerail/`, so it
+saves nothing. The PHP build and the LFS objects are saved by an explicit step straight after they are made, before
+the generator runs. GitHub scopes a pull request's cache to that pull request,
 so main never reads one: a push to main reads only what main's own pushes and the nightly saved. A pull request can
 hand itself verdicts its own code computed, which it could already do by editing the gate code that decides them.
 
@@ -218,203 +217,139 @@ bottom:
 6. **On or off:** shipped rules whose `on` in pack.json disagrees with `upstream-status`.
 7. Per tool-pack details: each gate on its own, run integrity notes.
 
-A rule that fails: fix the rule (the check's detail names the first difference), or move it to `candidates/` (out of
-`pack.json`, its `conformance.json` path updated).
+A rule that fails: fix the rule (the check's detail names the first difference), or the engine. A shipped rule is never
+moved back to `candidates/` to make CI pass ([generate-and-review.md](generate-and-review.md#what-ci-does)).
 
 ## What the gates read
 
-The gates read what a recorder wrote, and fetch only the pinned real-code files the goldens name and upstream's
-pinned test files:
+The gates read upstream's answers, which the tool-pack's generator writes, and fetch only the pinned real-code files
+the goldens name and upstream's pinned test files. In the tree:
 
 ```text
 packs/<id>/upstream/<tool>/
 ├── gates.yaml          upstream pins, recommended configurations, known parser gaps, real-code gaps, and the team's decisions for the tool
-├── recording.lock      the manifest: which recording this commit's rules are judged against (conformance/port-readiness/recording/store.ts)
-├── goldens.tsv         the rules' goldens, and on its second line the real-code run that found them
-└── fixtures/           upstream's test files, copied (listed in licenses/<project>/UPSTREAM.md)
+├── fixtures/           upstream's test files, copied (listed in licenses/<project>/UPSTREAM.md)
+└── goldens.tsv         the rules' goldens, and on its second line the real-code run that found them
 ```
 
-### The recordings are not in the tree
+The answers are not in the tree. They are one blob per key, cached under `.rerail/port-readiness/expected/<key>/`,
+holding these files:
 
-A recording — `recording.json`, upstream's facts and expected findings per rule, and `corpus.json`, its findings on
-the real-code files the goldens name — is generated, large, and rewritten whole every time a tool-pack is recorded. The sixteen of
-them were 71 MB, and git keeps every version of each forever, so a pack re-recorded after an upstream bump cost
-another few megabytes of history nobody can read. They live in a GitHub release instead, and each tool-pack commits a
-`recording.lock` of a few hundred bytes naming exactly the one its rules are judged against: its sha256, its size, its
-format, the pins it was made at and the release that holds it.
-
-Release assets rather than Git LFS, because every public clone and every fork would draw on the repository's LFS
-bandwidth quota and going over it blocks LFS for the whole repository; rather than Actions artifacts, because those
-expire after 90 days and a commit must stay judgeable. An asset is named `<pack>-<tool>-recording-<sha256>.json.gz` or
-`<pack>-<tool>-corpus-<sha256>.json.gz`, so it is write-once: the same recording is the same asset, and nothing a
-commit already names is ever replaced. A lock naming its asset any other way is refused, so it cannot point at another
-tool-pack's recording.
-
-```sh
-npm run port-readiness -- fetch --pack python --tool ruff   # download what this commit's lock names, into .rerail/port-readiness/recordings/
+```text
+upstream.json              tool facts: pins, runtimes' pin digests, licence sha256, keywords, comment vocabulary, test words
+rules/<rule>.json          per rule: facts (implementation, tests, deprecation, recommended), names, span parts
+cases/<test file>.json     per upstream test file: its sha256, parser verdicts, each rule's expected findings and markup
+texts/<test file>.txt      inline upstream test text that is no file upstream (ESLint RuleTester code, Psalm providers)
+corpus/<task>.json         upstream's answers on the files goldens.tsv names
 ```
 
-Each gate leg fetches its own tool-pack and nothing else, and a job that runs no gate fetches nothing. A recording is
-cached by its own digest, so a re-run on the same commit downloads nothing, and a download whose sha256 is not the
-one the lock names is not taken. A cached recording is read without checking its attestation again, so CI's
-recordings cache is saved only after a fetch that found both recordings, and never by a leg that recorded them itself:
-a later push with the same lock asks the release again rather than reading what an earlier push's recorder made.
+### The answers
 
-**A leg records what the release does not hold.** When the lock names a recording the release does not have (the
-release exists and has no asset of that name; the fetch exits 3), the leg records the tool-pack itself: it installs the
-pinned runtimes, runs `port-readiness:record` with this commit's recorder and the release the lock names, and fails
-unless the recorder wrote exactly the lock, case sources and `UPSTREAM.md` the commit has. The lock names no recorder
-version, so a release of rerail leaves it as it was. Any other fetch failure (a release the lookup cannot find, which
-GitHub answers alike for a missing tag, a repository the token cannot read and a wrong repository; any other releases
-API error, a download, a digest, an attestation) fails the leg: only a recording that was never uploaded is recorded
-instead. The recorder runs upstream's code and the Composer packages it resolves, so it runs without the job's token. A
-new tool-pack, a new port or a pin bump therefore goes green on its own pull request, with nobody to start a recording:
-the commit's lock is checked against upstream run in CI, and what records the answers (the recorder, its adapters and
-runtimes) is in the pull request's diff, as the gate code that judges them is. A lock pointed at a recording of the pull
-request's own making fails the same way, since CI's recording does not match it. The attested release stays the fast
-path: a leg that fetches records nothing.
+`npm run generate -- --pack <id> --tool <tool>` runs the tool-pack's live adapter on the pinned upstream and splits
+what it answers into those files (`conformance/port-readiness/recording/expected.ts`; each file's schema is in
+`recording/schema.ts`). It splits upstream's answers by upstream test file: a case's findings are stored once, in
+its test file's `cases/` file, keyed by every rule that reads the case, instead of once per rule (every Bandit rule
+reads every example). A name set two or more rules share stays in `upstream.json`; one only a rule names is in that
+rule's file. Every file is written with sorted keys and lists, so a generation makes the same bytes on every machine,
+and the before/after a pull request gets names only the rules and test files whose answers moved. Before it keeps
+anything, the generator joins the files back together (`joinExpected`, what the gates read) and refuses them unless
+they are exactly the recording it split.
 
-A fork's pull request records against the upstream its base pins, as `port-readiness-record.yml` does: the leg
-refuses a fork's change to `gates.yaml`'s repository, commit, runtime or tests (only `popularity`, `known_gaps`,
-`real_code_gaps` and comments may differ), since CI would otherwise run the upstream the fork chose and match the lock
-the fork committed. It refuses a fork's change to the code the recorder runs for the same reason:
-`conformance/recorders/port-readiness`, `conformance/port-readiness`, `src/engine` (which the recorder imports for
-`PACKAGE_ROOT`), `package.json` and `package-lock.json` (the script that starts it, and the npm packages it imports)
-and `.github/actions/php`. `cache.test.ts` checks that list against what a bundle of the recorder loads. A maintainer
-records such a pull request with `port-readiness-record.yml`, which runs the base branch's recorder; a fork that touches
-only `packs/` still records itself. The guard is no defence against a pull request that edits the workflow, since a
-`pull_request` run takes the workflow from the pull request: reviewing a change to `.github/` is. And because the
-recordings are not in the diff, the leg writes the per-rule summary the record
-workflow posts (`--changes`, below), against the recording the base's lock names (a first recording when the base has
-none), into its job summary and its report artifact.
+A texts/ file holds each text as a header line and the text: `### text <n>`, `<n>` its length in UTF-16 code units,
+then the text verbatim; or, for a text a UTF-8 text file cannot hold as it is (a lone surrogate, a NUL, a CR),
+`### json` and the text as one JSON string.
 
-A matching digest only says the asset is the one the lock names. Anyone who can write to the repository, and any
-workflow with a write token, can upload to the release, so the fetch also requires the GitHub artifact attestation
-that `port-readiness-record.yml` makes when it records from `main` (`gh attestation verify`, so fetching needs the GitHub
-CLI, signed in or given `GH_TOKEN`/`GITHUB_TOKEN`, even once the repository is public), and takes no asset without it.
-The 18 assets (each tool-pack's `recording.json` and `corpus.json`) recorded on a maintainer's machine and uploaded by
-hand before that workflow could run from `main` were taken without an attestation (`LIFTED_ASSETS` in
-`recording/store.ts`) until run 39319650531 recorded every tool-pack from `main`; the list is empty now and nothing
-joins it. The two lists that went with it are empty too. `LIFTED_CASE_SOURCES`, which held a hand-uploaded recording's
-case sources to one digest over all of them, was already empty before that run: the hand-uploaded recordings had gained
-a sha256 per case. `LIFTED_RUNTIMES`, which pinned `eslint-config-next-16.3.8` for next/eslint-plugin-next,
-react/eslint-plugin-react and react/eslint-plugin-react-hooks before their locks named it, emptied with that run.
+`rust/clippy` is the one tool-pack whose answers depend on the host: Clippy lints only the code rustc compiles, and a
+`#[cfg(target_os = "linux")]` item is compiled on Linux alone, so generated on macOS `corpus/rerail/tokio.json` lacks
+the findings in tokio's Linux-only `examples/prewarm-fd-table.rs`. CI on Linux is the only uploader, so the stored
+answers are the Linux ones. Every other file, of every tool-pack, is the same on both.
 
-### Recording
+### Where the answers live
 
-`port-readiness:record` writes the recording into the local cache, the `recording.lock` beside it, the gzipped assets to
-upload under `.rerail/port-readiness/recordings/upload/`, and any case source the recording names that the tool-pack's
-`fixtures/` lacks, with its row in `UPSTREAM.md`. The lock, the case sources and `UPSTREAM.md` are committed; the
-recordings are not. Record again after adding a port,
-changing a tool's pins, adding a corpus or importing a golden whose file `corpus.json` does not answer; it needs `uv`, the network, and the pinned upstream runtimes
-(`conformance/recorders/port-readiness/runtimes/`):
+The answers are large, rewritten whenever upstream or the generator moves, and hold excerpts of upstream's tests, so
+they live in Rerail's private Azure blob store rather than the tree, keyed by `<pack>/<tool>/<upstream version>/<inputs
+digest>`. The digest covers every tracked file the generator reads, so an edit to anything the answers depend on is a
+new key, and nothing else is. A pull request's CI generates a new key's answers and uploads them for review, the push
+to main promotes the reviewed blob, and the nightly generates every tool-pack again and fails on drift.
+[generate-and-review.md](generate-and-review.md) has the key's inputs, the containers, the commands, what reviewers
+approve and the admin setup.
+
+### Generating
+
+`npm run generate` puts a tool-pack's answers into the local cache, and writes any case source the answers name that
+the tool-pack's `fixtures/` lacks, with its row in `UPSTREAM.md`; the case sources and `UPSTREAM.md` are committed,
+the answers are not. A key the cache does not hold is downloaded from main's answers when the store has it, and
+generated otherwise. Generate again after adding a port, changing a tool's pins, adding a corpus or importing a golden
+whose file the answers' `corpus/` does not answer (each is a new key); generating needs `uv`, the network, and the
+pinned upstream runtimes (`conformance/recorders/port-readiness/runtimes/`):
 
 ```sh
-npm run port-readiness:record -- --pack python --tool ruff
+npm run generate -- --pack python --tool ruff
 ```
 
 The `php` and `blade` tool-packs also need the pinned PHP first on `PATH`, and Composer. That PHP is built by
-`conformance/recorders/port-readiness/runtimes/php/build.sh`, the script CI's record and nightly legs build it with
-(`.github/actions/php`), into the prefix it is given, on Linux (with the development packages the action installs) or
-on macOS (with Xcode's command line tools and the Homebrew formulae the script names when one is missing):
+`conformance/recorders/port-readiness/runtimes/php/build.sh`, the script CI's generating jobs build it with, into the
+prefix it is given, on Linux (with the development packages CI installs) or on macOS (with Xcode's command line tools
+and the Homebrew formulae the script names when one is missing):
 
 ```sh
 conformance/recorders/port-readiness/runtimes/php/build.sh "$PWD/.rerail/php/8.5.11"
-PATH="$PWD/.rerail/php/8.5.11/bin:$PATH" npm run port-readiness:record -- --pack php --tool phpcs
+PATH="$PWD/.rerail/php/8.5.11/bin:$PATH" npm run generate -- --pack php --tool phpcs
 ```
 
-`rust/clippy`'s corpus answers depend on the host: Clippy lints only the code rustc compiles, and a `#[cfg(target_os =
-"linux")]` item is compiled on Linux alone. Its recordings are CI's, recorded on `x86_64-unknown-linux-gnu`; recorded on
-macOS, `corpus.json` lacks the findings in Linux-only code (tokio's `examples/prewarm-fd-table.rs`), so record it on
-Linux or take the lock CI's leg writes (its report artifact holds the recording).
+Locally that is all: the gates read the answers out of the cache, so iterating on a port needs no upload. CI
+generates, uploads, reviews and promotes them ([generate-and-review.md](generate-and-review.md#what-ci-does)), but
+never writes into the tree: a generation in CI that would add a case source fails, so generate locally and commit the
+case sources (and their `UPSTREAM.md` rows) first. They are inputs of the key, so the key moves with them.
 
-Locally that is all: the lock names what was just recorded and the gates read it out of the cache, so iterating on a
-port needs no release and no network. In CI, a gate leg records a tool-pack whose recording the release does not hold
-(above), and `port-readiness-record.yml` is the only workflow that uploads, so later runs fetch instead of recording.
-A maintainer uploads one with the `record-port-readiness` label, or by hand with a pull request and the head `sha` they reviewed, and
-the run records **only that commit**: if the pull request has moved on since, it fails rather than record the newer
-push. The recorder and the runtimes come **from the base branch**, and only the pull request's `packs/` and rule list
-from its head (so the goldens it records answers for are the head's); a fork may not change the upstream its
-`gates.yaml` pins (repository, commit, runtime, tests), only `popularity`, `known_gaps` and `real_code_gaps`. Only a run from `main`, for `main` or a pull request into `main`, is attested, and the
-gates fetch no other recording (an asset without that attestation fails the leg; only one the release lacks is
-recorded in the leg instead), so `authorize` refuses any other before a leg records: one started by hand from another
-branch, and a stacked pull request, which is recorded once it targets `main`.
+Because the answers are not in the diff, `npm run generate -- --changes <file>` writes a per-rule summary of what
+moved against main's current answers — expected findings gained and lost on upstream's own tests, corpus files
+answered differently, facts changed (`conformance/port-readiness/recording/diff.ts`) — and CI posts it on the pull
+request, one comment per tool-pack, collapsing that tool-pack's earlier ones. When main's answers cannot be read, the
+summary warns that it was not compared rather than calling them a first generation.
 
-The run has three jobs, so nothing a pull request chose runs where a write token is. `authorize` checks who started
-it and fixes the commits, the tool-packs and the release. One read-only `record` leg per tool-pack runs the recorder
-and uploads what it wrote as an artifact. `publish`, the only job with a write token, runs no recorder, node or npm: it
-checks every path and digest in those artifacts, attests the recordings it checked, uploads them, and commits every
-leg's lock, case sources and `UPSTREAM.md` rows as one commit on the recorded head, pushed once:
-
-- a pull request from a branch here gets the commit on its branch, as a fast-forward;
-- a fork's goes to `port-readiness-recordings/pr-<n>` here, since the default token cannot write to a fork, and a
-  comment says to merge it;
-- a run started by hand from `main` with no pull request records `main`, pushes `port-readiness-recordings/run-<id>`,
-  and opens a pull request into `main`: a recording never reaches a protected branch without review. (GitHub must let
-  Actions create pull requests, under Settings → Actions → General.)
-
-A push or pull request made with the workflow token starts no workflow, so CI runs on the recording commit once
-someone pushes to the branch or closes and reopens the pull request.
-
-GitHub holds at most 1,000 assets in a release. `authorize` uses the newest of `port-readiness-recordings`,
-`port-readiness-recordings-2`, `-3` and so on, and starts the next once the newest holds 900; `publish` refuses an
-upload that would pass 1,000. A lock names the release that holds its recordings, so an older commit keeps fetching
-from the older one.
-
-`port-readiness-nightly.yml` runs the same recorder with `--check` in a read-only job of its own, so it reports when a
-committed recording no longer matches the pinned upstream and uploads nothing, then judges every rule again
-(`--refresh-cache`) and saves the fresh results.
-
-Because the recordings are no longer in the diff, `port-readiness:record` writes a per-rule summary of what moved instead —
-expected findings gained and lost on upstream's own tests, corpus files answered differently, facts changed
-(`--changes <file>`, `conformance/port-readiness/recording/diff.ts`) — and the publish job posts it on the pull request,
-one comment per tool-pack, collapsing that tool-pack's earlier ones.
-When the committed lock names a recording that cannot be read (its fetch failed, or the lock or the cached recording
-fails its schema), the summary warns that it was not compared rather than calling it a first recording.
-
-The lock pins every runtime the recorder installs for the tool-pack: upstream's own (`upstream.runtime`), the adapter's
+The answers pin every runtime the generator installs for the tool-pack: upstream's own (`upstream.runtime`), the adapter's
 (`parsers` for ESLint, `python` for Ruff and Bandit, `php` for PHP_CodeSniffer, PHPStan and Psalm, `blade` and `php` for tlint, `php` for stillat/blade-parser, whose own runtime is the Blade toolkit's `blade`) and the environment the pack is linted in
 (`eslint.environment.runtime`).
-`pins-agree` fails when the lock's runtimes are not exactly those (`recordedRuntimes` in `manifest.ts`), so a
-`gates.yaml` that names a new runtime, or moves to another runtime directory, needs the tool-pack recorded again.
+`pins-agree` fails when `upstream.json`'s runtimes are not exactly those (`recordedRuntimes` in `manifest.ts`). Every
+one of those runtimes is an input of the key, so a `gates.yaml` that names a new runtime, or moves to another runtime
+directory, is a new key, and its answers are generated again.
 
 Each runtime is pinned by its `package.json`, `pyproject.toml` or `composer.json` alone: every direct dependency at an
-exact version and in `overrides` (the recorder refuses a range), and no lockfile is committed (they are git-ignored).
+exact version and in `overrides` (the generator refuses a range), and no lockfile is committed (they are git-ignored).
 A Python runtime also pins its exact interpreter in `.python-version`, which uv installs; a PHP runtime pins its exact
-interpreter in `.php-version`, which Composer cannot install, so the recorder refuses to run on any other `php`
-(`pinnedPhp` in `runtimes.ts`) and the record and nightly workflows build that release. Every PHP process runs with no
+interpreter in `.php-version`, which Composer cannot install, so the generator refuses to run on any other `php`
+(`pinnedPhp` in `runtimes.ts`) and CI's generating jobs build that release. Every PHP process runs with no
 php.ini (`php -n`, `PHP_INI` in `runtimes.ts`, which sets the few settings the gates depend on, UTF-8 as the default
 charset among them), so the machine's settings never reach an answer, and the extensions a PHP loads do:
 PHP_CodeSniffer's `Generic.PHP.DeprecatedFunctions` lists the deprecated functions `get_defined_functions()` finds.
 So the build is pinned too: `runtimes/php/extensions.txt` lists the extensions `build.sh` compiles in (`php -n -m`,
-sorted), the recorder refuses a `php` that loads any other set and names what is missing or extra, and the file is a
-pin of the `php` runtime, which every PHP tool-pack's lock records. Only the manifests' direct
+sorted), the generator refuses a `php` that loads any other set and names what is missing or extra, and the file is a
+pin of the `php` runtime, which every PHP tool-pack's answers record. Only the manifests' direct
 pins are in GitHub's dependency graph: Dependabot's version updates cover the root package alone, and a security update
-against a runtime's pin changes it and fails `runtime-pins` until the tool-pack is recorded again. Transitive packages
+against a runtime's pin changes it, which is a new key. Transitive packages
 resolve when a runtime is installed. When one of them changes what upstream
-answers, the nightly `--check` fails and names the difference: pin that package too (an `overrides` entry in
-`package.json`, a direct `==` dependency in `pyproject.toml`, or a direct requirement in `composer.json`) and record
-again. A recording's per-rule summary (`--changes`, which both the record workflow's legs and a gate leg that records
-upload in their artifact) lists every package each Composer runtime resolved (`name@version`, from `vendor/composer/installed.json`),
-so a transitive release shows between two recordings; the list is in neither `recording.json` nor the lock, so a
-release that moves no answer fails nothing. Composer audits what it resolved with blocking off (`--no-blocking`): an
-advisory is written to the recorder's log and does not stop the install.
+answers, the nightly's drift check fails and names the difference: pin that package too (an `overrides` entry in
+`package.json`, a direct `==` dependency in `pyproject.toml`, or a direct requirement in `composer.json`) and generate
+again. The per-rule summary (`--changes`) lists every package each Composer runtime resolved (`name@version`, from
+`vendor/composer/installed.json`), so a transitive release shows between two generations; the list is not in the
+answers, so a release that moves no answer fails nothing. Composer audits what it resolved with blocking off
+(`--no-blocking`): an advisory is written to the generator's log and does not stop the install.
 
 `not-overfit` runs a rule's regexes over every upstream test text, as V1 did. Upstream's test files are not copied into
-the pack: the recording lists each one with its sha256, and the gates fetch them from upstream at the pinned commit
-(sparse, cached like the corpus), so Ruff's GPL-derived fixtures are read in place and never committed. Test text that
-is not a file of its own (Ruff's test-module strings, the `code` of each ESLint RuleTester case) is kept verbatim in
-`recording.json` (`fixtureTexts.inline`). That makes the recording partly upstream's material, so it carries
-upstream's licence text (`licenseText`, whose sha256 is `licenseSha256`) wherever the release asset is downloaded. The
-licence is every file at upstream's root named `LICENSE` or `LICENCE`, in any letter case and with any extension or
-suffix (`licence.txt`, `license.md`, `LICENSE-MIT`), their bytes one after another in name order; the pack keeps the
-same files under `licenses/<project>/`, and `license-sha256` holds them to the recorded digest. The
-upstream's `UPSTREAM.md` records the recording as excerpts under upstream's licence and Apache-2.0 — in the note under the
-file table, not in the table itself, which pack check 6 reads as the files the pack carries and the recording is no
-longer one of them. `REUSE.toml` cannot annotate a file that is not here and says so where the annotations were. No
-case source or text comes from an upstream path a pack's `licenses/<project>/UPSTREAM.md` lists as "Not copied"
-(`- Not copied: \`<prefix>\``): the recorder reads those lines, skips such a case as `not-copied` and refuses a
-recording that would hold such a file's text inline.
+the pack: `upstream.json` lists each one with its sha256, and the gates fetch them from upstream at the pinned
+commit (sparse, cached like the corpus), so Ruff's GPL-derived fixtures are read in place and never committed. Test
+text that is not a file of its own (Ruff's test-module strings, the `code` of each ESLint RuleTester case) is kept
+verbatim in the answers' `texts/`, one file per upstream test file. Those texts are upstream's material, kept under
+upstream's licence together with Rerail's Apache-2.0 in the private store, never in the tree: each upstream's
+`licenses/<project>/UPSTREAM.md` records them in the note under its file table, and the kept licence sits beside it.
+The licence is every file at upstream's
+root named `LICENSE` or `LICENCE`, in any letter case and with any extension or suffix (`licence.txt`, `license.md`,
+`LICENSE-MIT`), their bytes one after another in name order; the pack keeps the same files under
+`licenses/<project>/`, and `license-sha256` holds them to the digest `upstream.json` records. No case source or text
+comes from an upstream path a pack's `licenses/<project>/UPSTREAM.md` lists as "Not copied" (`- Not copied:
+\`<prefix>\``): the generator reads those lines, skips such a case as `not-copied` and refuses to keep such a file's
+text inline.
 
 Independent parsers (two TypeScript versions and Babel for the ESLint family; CPython and libcst for Python; `php -l` on
 the pinned PHP and nikic/php-parser for PHP; libpg_query for SQL; the pinned rustc for Rust) read every case source and
@@ -424,16 +359,18 @@ and the rows of `COPY ... FROM STDIN` become whitespace, a meta-command that sen
 variable psql has defined becomes a stand-in of the same length (`sqlfluff_driver.py`'s `psql_sent_sql`), so the error
 positions are the file's.
 Nine of ten corpus files are source every parser accepts, and writing the same silent verdict list on each of them was
-most of both recordings, so a recording names its parsers once in `parsers` and leaves `verdicts` off an entry no
+most of the answers, so the answers name their parsers once in `parsers` and leave `verdicts` off an entry no
 parser objected to. The entry itself stays, with its path and its sha256: an entry with no `verdicts` means every
-parser was silent, and no entry at all means the source was never recorded — a golden whose text changed, say — on
+parser was silent, and no entry at all means the source was never generated — a golden whose text changed, say — on
 which the gates have no verdict and draw no conclusion.
 
 ## CI
 
 `ci.yml` calls `port-readiness.yml` after its build job when a pull request or a push to main touches `packs/`,
-`conformance/`, the engine, the root package files or the workflows: a plan job, one job per leg it plans, then a
-report job that writes the summary and fails when anything blocking failed. A push to main is compared with the
+`conformance/`, the engine, the root package files or the workflows: a plan job, one `answers` job per planned
+tool-pack (which downloads or generates its answers, [generate-and-review.md](generate-and-review.md#what-ci-does)),
+one job per leg it plans, then a report job that writes the summary and fails when anything blocking failed. On a push
+to main, the promote jobs put the merged pull request's answers into main's store first. A push to main is compared with the
 previous head only when CI finished green there; after a red, cancelled or missing run it runs port readiness
 whatever it touches, so a failing shipped rule, or a change whose queued run was replaced, is never skipped past.
 
@@ -459,7 +396,7 @@ npm run port-readiness -- --pack javascript --tool eslint --shard 2/4   # rules 
 ```
 
 A rule's shard depends only on its document id and the shard count, so adding or removing rules moves no other rule.
-Every shard still checks the whole tool-pack (pins, recordings, the bundled-rule load), writes its report under
+Every shard still checks the whole tool-pack (pins, answers, the bundled-rule load), writes its report under
 `shard-<i>of<n>/` and caches its results under `.rerail/port-readiness/results/<pack>/<tool>/shard-<i>of<n>/`. The report job
 then merges each tool-pack's shards into one report before the summary:
 

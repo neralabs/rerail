@@ -4,7 +4,7 @@ import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
-import { upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js";
+import { upstreamLicenseText } from "../../../port-readiness/upstream-files.js";
 import { bladeParserSpan, BLADE_PARSER_SPAN_PARTS, validationSpan } from "../../../port-readiness/span-units/blade-parser.js";
 import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../port-readiness/types.js";
 import { createBladeToolkit } from "../languages/blade.js";
@@ -140,7 +140,7 @@ export async function createBladeParserAdapter(pack: PackManifest, names: string
   const fixtureTexts = [...testText.values(), ...templates.map((template) => template.source)];
   const fixtureTextSources: FixtureTextSource[] = [
     ...[...testText].map(([path, text]) => ({ path: fromCheckout(path), sha256: createHash("sha256").update(text).digest("hex") })),
-    ...templates.map((template) => ({ inline: template.source })),
+    ...templates.map((template) => ({ inline: template.source, test: template.test })),
   ];
   const fixtureWords = new Set((await blade.words(fixtureTexts)).flat());
 

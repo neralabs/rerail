@@ -3,11 +3,11 @@
 # Builds the PHP the port readiness recorder runs into the prefix given (its `bin/php`): the release `.php-version`
 # pins, from php.net's source checked against the sha256 php.net publishes, with every extension compiled in, so it
 # runs with no php.ini (`php -n`, as the recorder runs every PHP process) and loads exactly the extensions
-# `extensions.txt` lists. The record and nightly workflows build it with this script (.github/actions/php), and a
-# maintainer records locally on the same build:
+# `extensions.txt` lists. The generating and nightly workflows build it with this script (.github/actions/php), and a
+# maintainer generates locally on the same build:
 #
 #   conformance/recorders/port-readiness/runtimes/php/build.sh "$PWD/.rerail/php/8.5.11"
-#   PATH="$PWD/.rerail/php/8.5.11/bin:$PATH" npm run port-readiness:record -- --pack php --tool phpcs
+#   PATH="$PWD/.rerail/php/8.5.11/bin:$PATH" npm run generate -- --pack php --tool phpcs
 #
 # Linux needs the development packages the action installs (pkg-config, libxml2, sqlite3, oniguruma, OpenSSL, zlib,
 # curl, libzip, ICU); macOS needs Xcode's command line tools and those libraries from Homebrew (FORMULAE below). The

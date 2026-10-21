@@ -11,6 +11,7 @@ import { parse } from "yaml";
 import { changedPaths, gatedToolPacks, legsOf, plan, REPORT_ONLY, ROOT, ROOTS, SHARDS, writeOutputs, type Leg } from "../../../conformance/port-readiness/plan.mjs";
 import { GATE_CODE } from "../../../conformance/port-readiness/cache.js";
 import { gatedToolPacks as runGatedToolPacks } from "../../../conformance/port-readiness/run.js";
+import { generatorKey } from "../../../conformance/port-readiness/recording/generator-key.js";
 
 const temporary: string[] = [];
 afterAll(() => {
@@ -87,12 +88,19 @@ describe("every leg", () => {
     }
   });
 
-  it("is what the recorder and the nightly's drift check list by hand", () => {
-    const steps = Object.values(workflow("port-readiness-record.yml").jobs).flatMap((job: any) => job.steps ?? []);
-    const recorded = steps.find((step: any) => step.env?.TOOL_PACKS !== undefined).env.TOOL_PACKS;
-    assert.deepEqual(names(JSON.parse(recorded)), names(TOOL_PACKS));
-    assert.deepEqual(names(workflow("port-readiness-nightly.yml").jobs["record-check"].strategy.matrix.include), names(TOOL_PACKS));
-  });
+  // A change to anything the generator reads moves the tool-pack's generator key, and the answers under the new key
+  // exist only once a pull request's answers job generates and uploads them: the plan must select that tool-pack. An
+  // `npm:` input is read from package-lock.json, and `package.json#type` from package.json.
+  it("selects a tool-pack whenever a file its generator key hashes changes", async () => {
+    const fileOf = (input: string): string => (input.startsWith("npm:") ? "package-lock.json" : input.split("#")[0]!);
+    for (const { pack, tool } of TOOL_PACKS) {
+      const { inputs } = await generatorKey(ROOT, pack, tool);
+      assert.ok(inputs.length > 0, `${pack}/${tool}'s generator key hashes no file`);
+      for (const path of new Set(inputs.map(fileOf))) {
+        assert.ok(plan(TOOL_PACKS, [path]).toolPacks.includes(`${pack}/${tool}`), `${pack}/${tool}'s generator reads ${path}, and a change to it plans no answers job for it`);
+      }
+    }
+  }, 120_000);
 });
 
 describe("the legs a changed path selects", () => {
@@ -113,6 +121,9 @@ describe("the legs a changed path selects", () => {
     // Out of the key, but the report job's merge and summary should run on real reports.
     ["conformance/port-readiness/summary.ts", EVERY_LEG],
     ["conformance/port-readiness/merge.ts", EVERY_LEG],
+    // Out of the results key, but the generator renders its before/after with it, so it moves every generator key.
+    ["conformance/port-readiness/recording/diff.ts", EVERY_LEG],
+    ["conformance/recorders/port-readiness/expected-cli.ts", EVERY_LEG],
     ["docs/port-readiness.md", []],
   ];
   for (const [path, legs] of cases) {

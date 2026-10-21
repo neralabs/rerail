@@ -108,7 +108,7 @@
     "conformance:languages": "node --import tsx conformance/languages/cli.ts",
     "conformance:languages:check": "node --import tsx conformance/languages/cli.ts --check",
     "port-readiness": "node --import tsx conformance/port-readiness/cli.ts",
-    "port-readiness:record": "node --import tsx conformance/recorders/port-readiness/cli.ts",
+    "generate": "node --import tsx conformance/recorders/port-readiness/expected-cli.ts",
     "generate:schema": "node --import tsx scripts/generate/schema/schema-sql.ts",
     "generate:languages": "node --import tsx scripts/generate/languages/registry.ts",
     "generate:packs": "node --import tsx scripts/generate/packs/pack-list.ts",

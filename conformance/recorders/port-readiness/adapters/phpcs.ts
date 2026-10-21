@@ -5,7 +5,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
-import { upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js";
+import { upstreamLicenseText } from "../../../port-readiness/upstream-files.js";
 import { messageSpan, phpcsSpan, PHPCS_SPAN_PARTS } from "../../../port-readiness/span-units/phpcs.js";
 import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../port-readiness/types.js";
 import { createPhpToolkit, phpRegex, type PhpLiterals } from "../languages/php.js";

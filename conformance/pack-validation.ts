@@ -730,9 +730,9 @@ export async function validatePack(directory: string, options: ValidatePackOptio
 
   // Check 6: licences. Every copied file is listed in an UPSTREAM.md, every listed file exists, no listed file is
   // copied from an upstream path its UPSTREAM.md lists as "Not copied" (readLicences), and every recorded licence is
-  // on the repository allowlist. Under upstream/<tool>/, the recordings and the recorder (files directly in
-  // it) are Rerail's; everything in its subdirectories (fixtures/, tests/) is copied from the tool, unless the tool's
-  // own upstream/<tool>/UPSTREAM.md lists it as Rerail's.
+  // on the repository allowlist. Under upstream/<tool>/, the files directly in it (gates.yaml, goldens.tsv, the
+  // fixture generator) are Rerail's; everything in its subdirectories (fixtures/, tests/) is copied from the tool,
+  // unless the tool's own upstream/<tool>/UPSTREAM.md lists it as Rerail's.
   for (const failure of licences.failures) fail("licences", failure);
   if (!existsSync(join(directory, "LICENSE"))) fail("licences", "LICENSE is missing");
   for (const [project, licence] of licences.recorded) {

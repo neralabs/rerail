@@ -214,7 +214,7 @@ test("a known gap holds only when its probe is in every file it names and indepe
     "known gap elsewhere: the probe does not occur in test/rules/q/b.ts.lint",
     "known gap not-source: independent parsers do not read the probe as valid source (invalid-source), so the parse failure is not the engine's",
     "known gap disputed: independent parsers do not read the probe as valid source (parsers-disagree), so the parse failure is not the engine's",
-    "known gap unrecorded: no independent parser verdict on the probe is recorded; record the tool-pack again",
+    "known gap unrecorded: no independent parser verdict on the probe is recorded; generate the tool-pack again",
   ]);
   assert.deepEqual(Object.fromEntries(proven.kinds), { "paren-target": "valid-source", "not-source": "invalid-source", disputed: "parsers-disagree", unrecorded: "not-recorded" });
   // The probe is read as the gates recorder read it: under the fixtures' file type, as a script when they all are.

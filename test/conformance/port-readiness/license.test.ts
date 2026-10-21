@@ -11,7 +11,7 @@ import { test } from "vitest";
 
 import { PACKAGE_ROOT } from "../../../src/engine/index.js";
 import { readGatesManifest } from "../../../conformance/port-readiness/manifest.js";
-import { keptLicenseDirectory, licenseBytes, licenseFiles, upstreamLicenseText } from "../../../conformance/port-readiness/recorded-adapter.js";
+import { keptLicenseDirectory, licenseBytes, licenseFiles, upstreamLicenseText } from "../../../conformance/port-readiness/upstream-files.js";
 import { gatedToolPacks } from "../../../conformance/port-readiness/run.js";
 
 function directoryWith(files: Record<string, string>): { directory: string; cleanup: () => void } {
