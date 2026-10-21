@@ -168,8 +168,9 @@ pack's README, under "Rule details". For example: `Avoid dd() and dump() calls; 
 
 ### Message
 
-1. An imperative action: it starts with a verb saying what to change ("Pass a timeout…", "Split this function…"), not
-   what was detected.
+1. Says what to change. It usually starts with a verb ("Pass a timeout…"); it may instead state the finding first and
+   then the action, when the finding carries the specifics the agent acts on ("`$NAME` has cyclomatic complexity $CCN,
+   over the ceiling of 6. Decompose it into smaller functions.").
 2. Specific to the finding: it uses the values the clause captures where they help (`$CCN`, `$NAME`, thresholds), and
    never a binding the clause doesn't define.
 3. A concrete fix direction: it names the replacement, so the agent can act without reading the rule's docs.
@@ -182,7 +183,8 @@ pack's README, under "Rule details". For example: `Avoid dd() and dump() calls; 
 9. A calibrated tone: no hedging ("Consider maybe…"), no shouting (NEVER, MUST, ALWAYS).
 10. One action.
 11. It stands alone as one line in a list of findings.
-12. One sentence, ending with a period, at most 140 characters, counting placeholders as written.
+12. Short: at most 140 characters, counting placeholders as written, ending with a period. One sentence by default; a
+    second is fine when the first states the finding (rule 1).
 13. The description's voice without copying it: the description is the intent, for a person; the message is the
     action for this instance.
 
