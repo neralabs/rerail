@@ -1,4 +1,5 @@
-use super::super::matcher::{Collation, CompareOp, CompareText};
+use super::super::matcher::{Collation, CompareOp, CompareText, SemanticText};
+use super::super::value::structure::Equality;
 use num_traits::FromPrimitive as _;
 use std::collections::BTreeSet;
 
@@ -1565,18 +1566,11 @@ impl SqlRenderer {
             ),
             CompareText::Tokens | CompareText::Index | CompareText::Semantic(_) => String::new(),
         };
-        if matches!(
-            spec.text,
-            CompareText::Tokens | CompareText::Index | CompareText::Semantic(_)
-        ) {
-            return Err("comparison text mode is not lowered in phase two".to_owned());
-        }
         if spec.collation != Collation::Ordinal {
             return Err(
                 "non-ordinal comparison collation requires a bounded collation fact".to_owned(),
             );
         }
-        let fold = |value: String| value;
         let operator = match spec.op {
             CompareOp::Lt => "<",
             CompareOp::Le => "<=",
@@ -1588,11 +1582,25 @@ impl SqlRenderer {
         if spec.text == CompareText::Node && !matches!(spec.op, CompareOp::Eq | CompareOp::Ne) {
             return Err("node identity supports equality comparisons only".to_owned());
         }
-        let test = format!(
-            "{} {operator} {}",
-            fold(operand("left_value")),
-            fold(operand("right_value"))
-        );
+        let test = match (spec.text, spec.op) {
+            (CompareText::Semantic(SemanticText::Structure(Equality::Plain)), CompareOp::Eq) => {
+                Self::json_capture_equality("left_value", "right_value")
+            }
+            (CompareText::Semantic(SemanticText::Structure(Equality::Plain)), CompareOp::Ne) => {
+                format!(
+                    "NOT {}",
+                    Self::json_capture_equality("left_value", "right_value")
+                )
+            }
+            (CompareText::Tokens | CompareText::Index | CompareText::Semantic(_), _) => {
+                return Err("comparison text mode is not lowered in phase two".to_owned());
+            }
+            _ => format!(
+                "{} {operator} {}",
+                operand("left_value"),
+                operand("right_value")
+            ),
+        };
         let verdict = format!(
             "CASE WHEN source.verdict = 0 THEN 0 WHEN source.verdict IS NULL OR left_value.value IS NULL OR right_value.value IS NULL THEN NULL WHEN {test} THEN 1 ELSE 0 END"
         );

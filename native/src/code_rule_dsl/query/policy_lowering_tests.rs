@@ -941,6 +941,24 @@ fn phase_two_comparison_value_and_truth_sql_equal_the_oracle() {
             }),
             "x + x\nx + y\n",
         ),
+        (
+            json!({
+                "all": [
+                    { "pattern": "$A + $B" },
+                    { "compare": { "left": "A", "op": "eq", "right": "B", "text": "structure" } }
+                ]
+            }),
+            "x + x\nx + y\n",
+        ),
+        (
+            json!({
+                "all": [
+                    { "pattern": "$A + $B" },
+                    { "compare": { "left": "A", "op": "ne", "right": "B", "text": "structure" } }
+                ]
+            }),
+            "x + x\nx + y\n",
+        ),
         (json!({ "kind": "integer", "value": { "eq": 1 } }), "1\n2\n"),
         (json!({ "value": { "eq": 1 } }), "1 + 0\nTrue\n1.0\n2\n"),
         (

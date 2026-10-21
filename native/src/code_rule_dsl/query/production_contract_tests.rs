@@ -3526,6 +3526,40 @@ fn production_contract_phase_three_sql_rows_equal_committed_utility_oracles() {
 }
 
 #[test]
+fn production_contract_cross_term_structure_comparisons_equal_oracles() {
+    for case in cases().into_iter().filter(|case| {
+        matches!(
+            case.name.as_str(),
+            "capture-cross-term-equality" | "capture-cross-term-inequality"
+        )
+    }) {
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+        let outcome =
+            super::policy_lowering_tests::sql_outcome(&compiled, &case.workspace.files[0].source);
+        let mut expected_ranges = case
+            .expected
+            .oracle
+            .violations
+            .iter()
+            .map(|violation| {
+                (
+                    violation["span"]["startByte"].as_u64().expect("start byte") as usize,
+                    violation["span"]["endByte"].as_u64().expect("end byte") as usize,
+                )
+            })
+            .collect::<Vec<_>>();
+        expected_ranges.sort_unstable();
+        assert_eq!(outcome.ranges, expected_ranges, "{}", case.name);
+        assert!(outcome.errors.is_empty(), "{}", case.name);
+    }
+}
+
+#[test]
 fn all_108_contracts_are_real_production_inputs_and_lower_to_sql() {
     let cases = cases();
     let mut failures = Vec::new();
