@@ -1,4 +1,4 @@
-// Statement and expression decisions: if/else if, loops, catch, switch cases, &&, ||, ?: and ||= / &&=.
+// Statement and expression decisions: if/else if, loops, catch, switch (once, however many cases), &&, ||, ?: and ||= / &&=.
 
 export function ifElseAtLimit(x: number): string {
   if (x === 1) {
@@ -103,24 +103,7 @@ export function catchOverLimit(texts: string[]): number {
   return total;
 }
 
-export function switchAtLimit(command: string): number {
-  switch (command) {
-    case "start":
-      return 1;
-    case "stop":
-      return 2;
-    case "pause":
-      return 3;
-    case "resume":
-      return 4;
-    case "reset":
-      return 5;
-    default:
-      return 0;
-  }
-}
-
-export function switchOverLimit(command: string): number {
+export function switchCountsOnce(command: string): number {
   switch (command) {
     case "start":
     case "begin":
@@ -133,9 +116,70 @@ export function switchOverLimit(command: string): number {
       return 4;
     case "reset":
       return 5;
+    case "skip":
+      return 6;
     default:
       return 0;
   }
+}
+
+export function switchOverLimit(command: string, retries: number): number {
+  if (retries > 3) {
+    return -1;
+  }
+  switch (command) {
+    case "start":
+      return retries > 0 ? 2 : 1;
+    case "stop":
+      return 3;
+    default:
+      if (retries === 0) {
+        return 0;
+      }
+  }
+  while (retries > 0) {
+    retries -= 1;
+  }
+  return retries < 0 || command === "" ? -2 : 4;
+}
+
+export function nestedSwitches(kind: string, mode: string): number {
+  switch (kind) {
+    case "file":
+      switch (mode) {
+        case "read":
+          return 1;
+        case "write":
+          return 2;
+      }
+      return 3;
+    case "directory":
+      return 4;
+  }
+  return 0;
+}
+
+export function switchDefaultOnly(command: string): number {
+  switch (command) {
+    default:
+      return command.length;
+  }
+}
+
+export function defaultOnlyBesideCasedSwitch(command: string, mode: string): number {
+  switch (mode) {
+    default:
+      break;
+  }
+  switch (command) {
+    case "start":
+      return 1;
+    case "stop":
+      return 2;
+    case "pause":
+      return 3;
+  }
+  return 0;
 }
 
 export function logicalAtLimit(a: boolean, b: boolean, c: boolean, d: boolean, e: boolean, f: boolean): boolean {

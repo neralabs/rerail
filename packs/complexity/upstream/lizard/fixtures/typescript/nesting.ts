@@ -70,25 +70,18 @@ export class Dispatcher {
   }
 
   set level(value: string) {
-    switch (value) {
-      case "one":
-        this.state = 1;
-        break;
-      case "two":
-        this.state = 2;
-        break;
-      case "three":
-        this.state = 3;
-        break;
-      case "four":
-        this.state = 4;
-        break;
-      case "five":
-        this.state = 5;
-        break;
-      case "six":
-        this.state = 6;
-        break;
+    if (value === "one") {
+      this.state = 1;
+    } else if (value === "two") {
+      this.state = 2;
+    } else if (value === "three") {
+      this.state = 3;
+    } else if (value === "four") {
+      this.state = 4;
+    } else if (value === "five") {
+      this.state = 5;
+    } else if (value === "six") {
+      this.state = 6;
     }
   }
 

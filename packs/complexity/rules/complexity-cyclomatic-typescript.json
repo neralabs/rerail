@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "complexity-cyclomatic-typescript",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "Keep TypeScript functions at cyclomatic complexity 6 or below, counting each if, loop, catch, case, ternary and && or ||; branch-heavy functions are hard to follow and test.",
+  "description": "Keep TypeScript functions at cyclomatic complexity 6 or below, counting each if, loop, catch, switch, ternary and && or ||; branch-heavy functions are hard to follow and test.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -30,11 +30,79 @@
   },
   "clauses": [
     {
-      "id": "too-complex",
-      "forbid": {
-        "ast": {
-          "language": "typescript",
-          "rule": {
+      "id": "complexity",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "boundary": {
+            "any": [
+              {
+                "kind": "function_declaration"
+              },
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "method_definition"
+              },
+              {
+                "kind": "generator_function"
+              },
+              {
+                "kind": "generator_function_declaration"
+              }
+            ]
+          },
+          "decision": {
+            "any": [
+              {
+                "kind": "if_statement"
+              },
+              {
+                "kind": "for_statement"
+              },
+              {
+                "kind": "for_in_statement"
+              },
+              {
+                "kind": "while_statement"
+              },
+              {
+                "kind": "do_statement"
+              },
+              {
+                "kind": "catch_clause"
+              },
+              {
+                "kind": "switch_statement",
+                "has": {
+                  "kind": "switch_body",
+                  "has": {
+                    "kind": "switch_case"
+                  }
+                }
+              },
+              {
+                "kind": "ternary_expression"
+              },
+              {
+                "kind": "binary_expression",
+                "has": {
+                  "regex": "^(?:&&|\\|\\|)$"
+                }
+              },
+              {
+                "kind": "augmented_assignment_expression",
+                "has": {
+                  "regex": "^(?:&&=|\\|\\|=)$"
+                }
+              }
+            ]
+          },
+          "too-complex": {
             "matches": "boundary",
             "count": {
               "has": {
@@ -48,76 +116,92 @@
               "offset": 1
             }
           },
-          "utils": {
-            "boundary": {
-              "any": [
-                {
-                  "kind": "function_declaration"
-                },
-                {
-                  "kind": "function_expression"
-                },
-                {
-                  "kind": "arrow_function"
-                },
-                {
-                  "kind": "method_definition"
-                },
-                {
-                  "kind": "generator_function"
-                },
-                {
-                  "kind": "generator_function_declaration"
+          "named": {
+            "any": [
+              {
+                "has": {
+                  "field": "name",
+                  "pattern": "$NAME"
                 }
-              ]
-            },
-            "decision": {
-              "any": [
-                {
-                  "kind": "if_statement"
-                },
-                {
-                  "kind": "for_statement"
-                },
-                {
-                  "kind": "for_in_statement"
-                },
-                {
-                  "kind": "while_statement"
-                },
-                {
-                  "kind": "do_statement"
-                },
-                {
-                  "kind": "catch_clause"
-                },
-                {
-                  "kind": "switch_case"
-                },
-                {
-                  "kind": "ternary_expression"
-                },
-                {
-                  "kind": "binary_expression",
+              },
+              {
+                "inside": {
+                  "any": [
+                    {
+                      "kind": "variable_declarator"
+                    },
+                    {
+                      "kind": "public_field_definition"
+                    }
+                  ],
+                  "stopBy": "neighbor",
                   "has": {
-                    "regex": "^(?:&&|\\|\\|)$"
-                  }
-                },
-                {
-                  "kind": "augmented_assignment_expression",
-                  "has": {
-                    "regex": "^(?:&&=|\\|\\|=)$"
+                    "field": "name",
+                    "pattern": "$NAME"
                   }
                 }
-              ]
-            }
+              },
+              {
+                "inside": {
+                  "kind": "pair",
+                  "stopBy": "neighbor",
+                  "has": {
+                    "field": "key",
+                    "pattern": "$NAME"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "too-complex",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "matches": "too-complex"
+              },
+              {
+                "matches": "named"
+              }
+            ]
           }
         }
       },
       "violation": {
         "anchor": "witness.span",
         "code": "CYCLOMATIC_COMPLEXITY",
-        "message": "Cyclomatic complexity $CCN (limit 6). Split this function into smaller ones or simplify its branching."
+        "message": "`$NAME` has cyclomatic complexity $CCN, over the ceiling of 6. Decompose it into smaller functions."
+      }
+    },
+    {
+      "id": "too-complex-anonymous",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "matches": "too-complex"
+              },
+              {
+                "not": {
+                  "matches": "named"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "CYCLOMATIC_COMPLEXITY",
+        "message": "This function has cyclomatic complexity $CCN, over the ceiling of 6. Decompose it into smaller functions."
       }
     }
   ]
