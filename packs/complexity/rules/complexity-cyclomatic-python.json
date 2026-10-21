@@ -3,7 +3,7 @@
   "id": "complexity-cyclomatic-python",
   "revision": 2,
   "mode": "steer",
-  "description": "Keep Python functions at cyclomatic complexity 6 or below, counting each if, elif, loop, except, case, and/or and comprehension clause; branch-heavy functions are hard to follow and test.",
+  "description": "Keep Python functions at cyclomatic complexity 6 or below, counting each if, elif, loop, except, match, and/or and comprehension clause; branch-heavy functions are hard to follow and test.",
   "scope": {
     "include": [
       "**/*.py"

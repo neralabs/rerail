@@ -110,8 +110,8 @@ lizard (`upstream/lizard/UPSTREAM.md`). `upstream/lizard/lizard-1.24.0.tsv` reco
 `test/engine/code-rule/complexity-rules.test.ts` evaluates the three rules over the corpus through the native runtime and checks
 that:
 
-- each rule reports exactly the in-scope functions lizard scores above 6, with lizard's number in the message;
-- the same counting without the threshold gives every in-scope function lizard's number, apart from the deviations,
+- each rule reports exactly the in-scope functions lizard scores above 6, with the recorded number in the message;
+- the same counting without the threshold gives every in-scope function the recorded number, apart from the deviations,
   which the test lists with lizard's number and Rerail's;
 - test files produce no finding, even though lizard scores them over the limit.
 
@@ -125,7 +125,8 @@ After changing the corpus, rerun lizard (needs [uv](https://docs.astral.sh/uv/) 
 node packs/complexity/upstream/lizard/generate.mjs
 ```
 
-It runs `uvx --from lizard==1.24.0 lizard --csv` on `upstream/lizard/fixtures/` and rewrites
+It runs `uvx --from lizard==1.24.0 lizard --csv` with and without `-m` on `upstream/lizard/fixtures/`, keeps the lower
+of the two counts for each function, and rewrites
 `upstream/lizard/lizard-1.24.0.tsv`. A new case lizard mis-scores needs an entry in the test's `DEVIATIONS`
 list and a line under "Deviations" above.
 

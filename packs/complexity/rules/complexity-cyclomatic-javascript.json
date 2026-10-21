@@ -3,7 +3,7 @@
   "id": "complexity-cyclomatic-javascript",
   "revision": 2,
   "mode": "steer",
-  "description": "Keep JavaScript functions at cyclomatic complexity 6 or below, counting each if, loop, catch, case, ternary and && or ||; branch-heavy functions are hard to follow and test.",
+  "description": "Keep JavaScript functions at cyclomatic complexity 6 or below, counting each if, loop, catch, switch, ternary and && or ||; branch-heavy functions are hard to follow and test.",
   "scope": {
     "include": [
       "**/*.js",
