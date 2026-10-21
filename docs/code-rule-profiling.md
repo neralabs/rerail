@@ -1,5 +1,8 @@
 # Code-rule profiling
 
+The [performance journal](data-layer-performance-journal.md) records the current baseline and the experiment decisions.
+The measured-results section in this document preserves the original profiling investigation.
+
 Rerail's data-layer workload spends most evaluation time constructing SQL relations and indexes.
 The same relations recur across clauses. File partitions also execute serially in the global evaluator.
 
@@ -114,12 +117,9 @@ A larger individual row uses its own statement.
 Prepared statements and conversion buffers serve multiple batches within the existing transaction.
 Each row retains its budget and cancellation checks.
 
-In profiling builds, use `--insert-batch 1` for the single-row control.
-The controller defaults to 32 rows and records the selected cap in `profile.json`.
+The batch cap is fixed at 32 rows in ordinary and profiling builds.
 The `sql-input` spans record actual statement counts and maximum buffered payload bytes.
-Use `--shared-input-index` for optional document-scoped kind postings between selectors.
-That experiment requires `code-rule-profile` and defaults to disabled.
-The controller clears inherited flags.
+The earlier execution switches and shared-input-index experiment no longer form part of the engine.
 
 The native spans separate AST input extraction, SQLite input insertion, statement validation,
 table materialization, index construction, statistics collection, and result evaluation.
