@@ -31,7 +31,8 @@ Every trial is a live provider session; it spends model budget. Each one copies
 `RERAIL_HOME`, starts an in-process daemon that the harness reaches through `RERAIL_ENGINE_SOCKET`
 (`RERAIL_AUTOSTART=0`), and starts the repository with one steer-mode code rule: an f-string SQL `.execute`
 (`SQL_EXECUTE_FSTRING`, as in `scripts/host/host-lifecycle.ts`), scoped to `api/**/*.py`. It stores the strategy in
-the checkout's audit settings before the harness starts. The harness then runs `prompt.md` in print mode. Its first
+the checkout's audit settings before the harness starts, and turns the experimental switch on
+(`RERAIL_EXPERIMENTAL_STEER_STRATEGIES=1`) for the daemon and the harness, without which every steer is a `message`. The harness then runs `prompt.md` in print mode. Its first
 step writes the forbidden call into `api/lookup.py`. The rest asks the agent to implement `api/inventory.py` per
 `SPEC.md`, make `python3 -m unittest discover -s tests` pass, and write the README's usage section. So the steer
 arrives with work left to do.

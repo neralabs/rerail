@@ -24,7 +24,7 @@ import {
   type RepositoryAuditHooks, type SteerMetadata, type SteerSourceOf,
 } from "../engine/code-rule/code-rule.js";
 import type { AuditSettings as CheckoutAuditSettings } from "../engine/audit/audit-control-schema.js";
-import { missedSteerDigestEnabled } from "../engine/experimental-features.js";
+import { missedSteerDigestEnabled, steerStrategiesEnabled } from "../engine/experimental-features.js";
 import type { AuditRecorder, AuditRecord } from "../engine/audit/audit.js";
 import { SqliteAuditStore } from "../engine/audit/audit-store.js";
 import { SqliteAuditControlStore, type PolicyOwnerClaim } from "../engine/audit/audit-control.js";
@@ -98,6 +98,11 @@ async function settledWithin(work: Promise<void>, ms: number): Promise<boolean> 
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** The strategy a session steers with: the saved one only while the experimental switch is on, else `message`. */
+function effectiveSteerStrategy(settings: Pick<CheckoutAuditSettings, "steerStrategy">): SteerStrategy {
+  return steerStrategiesEnabled() ? settings.steerStrategy : "message";
 }
 
 /** The tool a sample came from (`tool:<name>`); undefined for the conversation's own text. */
@@ -1108,7 +1113,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       turn,
       eventDeliveries: new Map(),
       pendingSteers: [],
-      steerStrategy: (auditSettings ?? this.#auditSettings).steerStrategy,
+      steerStrategy: effectiveSteerStrategy(auditSettings ?? this.#auditSettings),
       rewindWindow: undefined,
       codeRuleRevision: 0,
       codeRuleSourceVersions: new Map(),
@@ -1542,7 +1547,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const state = this.#sessions.get(sessionId);
     if (state === undefined || state.closed || state.ownerClaim === undefined) return;
     const settings = this.#controls.hasUserSettings(sessionId) ? this.#controls.getSettings(sessionId).settings : this.#auditSettings;
-    state.steerStrategy = settings.steerStrategy;
+    state.steerStrategy = effectiveSteerStrategy(settings);
     state.codeRuleBridge?.updateSettings(settings);
     if (state.auditRequestWork !== undefined) return;
     const work = this.#runAuditRequests(sessionId);

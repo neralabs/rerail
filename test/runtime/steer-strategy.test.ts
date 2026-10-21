@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   codeRuleSchema,
   NativeCodeRuleEnforcer,
@@ -16,6 +16,10 @@ import { temporaryDirectories, testEmbedder } from "../support/hook-events.js";
 import { testCodeRuleCatalog } from "../support/repository-rules.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-steer-strategy-");
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 /** One steer rule flagging `NEEDLE` in any Python source. */
 function needleCatalog() {
@@ -32,14 +36,17 @@ function needleCatalog() {
 
 /**
  * A session in a fresh checkout whose saved steer strategy is `strategy` (none saved when undefined), with `files`
- * there before it starts. `edit` writes a file through a tool call and answers with the result's deliveries.
+ * there before it starts, and the experimental switch on unless `experimental` is false. `edit` writes a file through
+ * a tool call and answers with the result's deliveries.
  */
 async function strategySession(options: {
   strategy?: SteerStrategy;
   host: RerailHost;
   files?: Readonly<Record<string, string>>;
   createAuditor?: RerailRuntimeOptions["createAuditor"];
+  experimental?: boolean;
 }) {
+  vi.stubEnv("RERAIL_EXPERIMENTAL_STEER_STRATEGIES", options.experimental === false ? "" : "1");
   const root = await realpath(await temporaryDirectory());
   for (const [path, text] of Object.entries(options.files ?? {})) await writeFile(join(root, path), text);
   const databasePath = join(root, "rerail.sqlite");
@@ -220,6 +227,18 @@ describe("The message steer strategy", () => {
         rules: [{ id: "test:needle", state: "steered", origin: "From your rule library." }],
         content: expect.stringMatching(/^Rerail found 1 problem in your last edit:\n- created\.py:1:1 — No needle \[test:needle\]\nFix it, or tell the user in one line why you won't\.$/u),
       }]);
+      expect(await readFile(join(session.root, "created.py"), "utf8")).toBe("NEEDLE = 1\n");
+    } finally {
+      await session.runtime.dispose();
+    }
+  });
+
+  it("is what every steer uses while the experimental switch is off, whatever the checkout saved", async () => {
+    const session = await strategySession({ strategy: "rewind", host: "omp", experimental: false });
+    try {
+      const deliveries = await session.edit("w1", "created.py", "NEEDLE = 1\n");
+      expect(deliveries).toEqual([expect.objectContaining({ strategy: "message", content: expect.stringMatching(/^Rerail found 1 problem/u) })]);
+      expect(deliveries[0]).not.toHaveProperty("toolCallId");
       expect(await readFile(join(session.root, "created.py"), "utf8")).toBe("NEEDLE = 1\n");
     } finally {
       await session.runtime.dispose();

@@ -12,3 +12,11 @@
 export function missedSteerDigestEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.RERAIL_EXPERIMENTAL_MISSED_STEER_DIGEST === "1";
 }
+
+/**
+ * Experimental (NER-1703): a checkout's saved `steerStrategy` other than `message` (`rewind`, `subagent`) takes effect.
+ * Off, every code-rule steer goes out as `message`, whatever the checkout saved.
+ */
+export function steerStrategiesEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.RERAIL_EXPERIMENTAL_STEER_STRATEGIES === "1";
+}

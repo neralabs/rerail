@@ -625,6 +625,10 @@ async function runTrial(host: RerailHost, strategy: SteerStrategy, trial: number
     const project = join(sandbox, "workspace");
     await cp(join(FIXTURE, "project"), project, { recursive: true });
     const env = await sandboxEnvironment(sandbox, project, rerailHome);
+    // Steer strategies are experimental: the daemon (this process) and Pi's in-process runtime only honour the seeded
+    // strategy with the switch on.
+    process.env.RERAIL_EXPERIMENTAL_STEER_STRATEGIES = "1";
+    env.RERAIL_EXPERIMENTAL_STEER_STRATEGIES = "1";
     const profile = await sandboxProfile(sandbox);
     if (await sandboxLeaks(sandbox, profile, project, env)) throw new Error("Sandbox did not enforce write isolation");
     await configureHostAuth(host, sandbox, profile, env, options.timeoutMs);

@@ -4,6 +4,7 @@ import { basename } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { z } from "zod/v4";
+import { internalTesting } from "../../engine/internal-testing.js";
 
 /** The tool a `subagent` steer names on Pi; Rerail registers it with the first such steer. */
 export const PI_FIX_TOOL = "rerail_fix";
@@ -173,14 +174,15 @@ function runChild(
 }
 
 /**
- * Registers `rerail_fix`, which hands one Rerail rule violation to a child `pi` on the parent's model and thinking
- * level, in the session's checkout, and returns the child's one-sentence account of its change.
+ * Internal testing: the experimental `subagent` steer strategy's `rerail_fix`, which hands one Rerail rule violation to
+ * a child `pi` on the parent's model and thinking level, in the session's checkout, and returns the child's
+ * one-sentence account of its change.
  */
 export function registerPiFixTool(pi: Pick<ExtensionAPI, "registerTool">): void {
   pi.registerTool({
     name: PI_FIX_TOOL,
     label: "Rerail Fix",
-    description: `Delegate the fix of one Rerail rule violation to a subagent, which makes the smallest change that satisfies the rule and replies with one sentence. Call ${PI_FIX_TOOL} when a Rerail steer asks you to delegate its fix, then carry on with your own task.`,
+    description: internalTesting(`Delegate the fix of one Rerail rule violation to a subagent, which makes the smallest change that satisfies the rule and replies with one sentence. Call ${PI_FIX_TOOL} when a Rerail steer asks you to delegate its fix, then carry on with your own task.`),
     promptSnippet: `${PI_FIX_TOOL}: delegate the fix of a Rerail rule violation to a subagent`,
     promptGuidelines: [
       `When a Rerail steer asks you to delegate its fix, call ${PI_FIX_TOOL} with the steer text, the file, and the location, then continue your own task.`,
