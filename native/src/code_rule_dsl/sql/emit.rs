@@ -1032,7 +1032,10 @@ impl<'s> Emitter<'s> {
             Some(kinds) => format!(" AND n.kind IN ({})", list(kinds)),
         };
         // A two-valued rule's capture-free necessary condition at the root (`guards`).
-        let kinds = match (!self.three).then(|| guards::root_guard(op, self.units)).flatten() {
+        let kinds = match (!self.three)
+            .then(|| guards::root_guard(op, self.units))
+            .flatten()
+        {
             Some(guard) => format!("{kinds} AND {guard}"),
             None => kinds,
         };

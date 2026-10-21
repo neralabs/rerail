@@ -80,7 +80,8 @@ unsafe impl<'vtab> VTab<'vtab> for RootTable {
         _args: &[&[u8]],
     ) -> Result<(Cow<'static, CStr>, Self)> {
         db.config(VTabConfig::DirectOnly)?;
-        let slot = Arc::clone(aux.ok_or_else(|| Error::ModuleError("roots: no batch slot".into()))?);
+        let slot =
+            Arc::clone(aux.ok_or_else(|| Error::ModuleError("roots: no batch slot".into()))?);
         Ok((
             Cow::Borrowed(SCHEMA),
             Self {

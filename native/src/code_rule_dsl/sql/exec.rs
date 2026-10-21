@@ -2343,15 +2343,12 @@ impl Session {
         let inputs = Started::now();
         connection.prepare_cached(CLEAR_RUNS)?.execute([])?;
         // The selected roots, read in place (`roots`).
-        *slot.roots.write() = Arc::new(Roots::of(
-            runs.iter()
-                .flat_map(|run| {
-                    let id = run_id(None, run.statement);
-                    run.files
-                        .iter()
-                        .filter_map(move |(file, roots)| Some((id, *file, Arc::clone(roots.as_ref()?))))
-                }),
-        ));
+        *slot.roots.write() = Arc::new(Roots::of(runs.iter().flat_map(|run| {
+            let id = run_id(None, run.statement);
+            run.files
+                .iter()
+                .filter_map(move |(file, roots)| Some((id, *file, Arc::clone(roots.as_ref()?))))
+        })));
         // Each stage runs over the whole files of the clauses that read it, directly or not.
         let mut stage_files: Vec<Vec<usize>> = stages.iter().map(|_| Vec::new()).collect();
         {
