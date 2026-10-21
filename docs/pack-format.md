@@ -310,9 +310,12 @@ Precisely:
    (quoted or not; a code that is a plain word, such as `precedence`, is not looked for), names an upstream tool, Rerail
    or steering outside quoted text, hedges ("consider", "may be", "may permit", "possibly", or a review or audit as the
    action) or is emphatic (NEVER, MUST, ALWAYS, "strongly", "extremely") is listed in the result's `advisories`, which
-   fail neither the pack nor the rule. `packs.test.ts` reports each as a warning annotation, which CI shows on the pull
-   request (locally, `--reporter=verbose` prints them). Whether a message gives advice at all is left to review: a
-   check for it flagged 240 of 595 rules, among them 35 of the 65 Python steers the study rated good.
+   fail neither the pack nor the rule. On a pull request, CI's Message advisories job lists them for the rule documents
+   the pull request adds or changes, in one comment that collapses the earlier ones as outdated (a pull request from a
+   fork gets them in the job summary). `node --import tsx scripts/review/message-advisories.ts` lists them for the
+   documents changed since `--base <commit>`, or for every document with `--all`. Whether a message gives advice at
+   all is left to review: a check for it flagged 240 of 595 rules, among them 35 of the 65 Python steers the study
+   rated good.
 
 **Languages not supported yet.** A pack may hold code rules for a language core's
 [language registry](language-packs.md) lists as `planned`, or rules that read a capability their language has

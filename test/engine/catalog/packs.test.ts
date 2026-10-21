@@ -1,7 +1,7 @@
 /**
  * The pack validation contract (docs/pack-format.md): every packs/<id>/ directory passes checks 1 to 8, one test per
- * check, and reports each rule's status and check 8's message advisories, as warnings that fail nothing; a rule core
- * cannot read yet is skipped as not supported yet. Check 4 scores
+ * check, and reports each rule's status; a rule core cannot read yet is skipped as not supported yet. Check 8's message
+ * advisories fail nothing; CI's Message advisories job posts them on a pull request. Check 4 scores
  * ported rules on the tools' fixtures, and on the pinned corpora that are checked out (RERAIL_PACK_CORPORA=1: every
  * corpus, a missing checkout failing; 0: none).
  *
@@ -55,14 +55,6 @@ describe.each(packs)("pack %s", id => {
 
   it.each(PACK_CHECKS)("check $number: $name", { timeout: TIMEOUT }, async ({ name }) => {
     expect((await validated()).checks[name]).toEqual([]);
-  });
-
-  // A warning annotation becomes a GitHub Actions ::warning in CI; locally, --reporter=verbose shows them on stderr.
-  it("check 8: message advisories, reported as warnings that fail nothing", { timeout: TIMEOUT }, async ({ annotate }) => {
-    for (const advisory of (await validated()).advisories) {
-      console.warn(`advisory: ${advisory}`);
-      await annotate(advisory, "warning");
-    }
   });
 
   test.for(listedRules(id))("rule %s", { timeout: TIMEOUT }, async (ruleId, { skip }) => {
