@@ -107,6 +107,7 @@
     "test:watch": "vitest --dir test",
     "conformance:languages": "node --import tsx conformance/languages/cli.ts",
     "conformance:languages:check": "node --import tsx conformance/languages/cli.ts --check",
+    "eslint-test-set": "node --import tsx conformance/eslint-test-set/cli.ts",
     "port-readiness": "node --import tsx conformance/port-readiness/cli.ts",
     "port-readiness:record": "node --import tsx conformance/recorders/port-readiness/cli.ts",
     "generate:schema": "node --import tsx scripts/generate/schema/schema-sql.ts",

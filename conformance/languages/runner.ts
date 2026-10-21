@@ -46,7 +46,7 @@ const AUDIT_BATCH_FILES = 32;
 const AUDIT_CHUNK_BYTES = 1024 * 1024;
 const RESULT_PAGE_BYTES = 8 * 1024 * 1024;
 
-interface SourceFile {
+export interface SourceFile {
   path: string;
   language: CodeRuleSourceLanguage;
   source: string;
@@ -77,7 +77,7 @@ interface Evaluation {
  * The repository audit's path through the production workspace: every code rule added to one workspace, sources applied
  * in 32-file / 1 MiB batches with global relations deferred, one closing apply, then results paged out.
  */
-async function evaluateWorkspace(codeRules: readonly NativeCompiledCodeRuleDsl[], files: readonly SourceFile[]): Promise<Evaluation> {
+export async function evaluateWorkspace(codeRules: readonly NativeCompiledCodeRuleDsl[], files: readonly SourceFile[]): Promise<Evaluation> {
   const workspace = new (loadNativeBinding().CodeRuleDslWorkspace)();
   const started = performance.now();
   try {
@@ -216,7 +216,7 @@ function compileRules(loaded: LoadedPack, rules: readonly PackRule[], errors: st
 }
 
 /** Byte offset → upstream coordinates: the engine's line (the family's linter's terminators), code points from line start. */
-function pointOf(violation: Page["violations"][number], sources: ReadonlyMap<string, Buffer>): Point {
+export function pointOf(violation: Page["violations"][number], sources: ReadonlyMap<string, Buffer>): Point {
   if (violation.path === undefined || violation.span === undefined) throw new Error(`${violation.ruleId}: a finding without a path or span cannot be scored`);
   const source = sources.get(violation.path);
   if (source === undefined) throw new Error(`${violation.ruleId}: finding in ${violation.path}, which was not evaluated`);

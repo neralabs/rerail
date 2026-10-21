@@ -10,6 +10,11 @@ Test support that scores rule packs against the tools they port. It is never pub
   `npm run conformance:languages`, with `-- --check` as CI's gate (`npm run test:conformance`).
   `identifier-rename.ts` is the overfitting guard: a port must score the same when the tests' own identifiers are
   renamed.
+- `eslint-test-set/`: checks the javascript and typescript packs catch every ESLint finding in the ESLint test set, 1,400
+  real files from open-source history, each at the commit that introduced a violation of one rule. It downloads the
+  pinned zip from `s3://nera-test-fixtures/eslint-test-set/` (AWS credentials needed; `--profile <name>` picks a profile)
+  and caches it in `.rerail/cache/`. The CLI is `npm run eslint-test-set`; `-- --rule <id>` checks one rule,
+  `-- --json <file>` writes the report. CI does not run it: it needs AWS credentials, and its misses are not yet triaged.
 - `recorders/`: the shared ESLint recorder the ECMA packs' upstream generators use.
 - `t1/`: the TypeScript grammar census (tier T1 of the language conformance standard).
 - `engine.ts`: what every harness shares about the engine it scores (the capabilities, and which engine failure codes
