@@ -3,7 +3,7 @@
   "id": "typescript-eslint-no-non-null-asserted-nullish-coalescing",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of typescript-eslint's `no-non-null-asserted-nullish-coalescing` rule (https://typescript-eslint.io/rules/no-non-null-asserted-nullish-coalescing). Reports a non-null assertion that is the left operand of `??`. As upstream, an assertion that belongs to an optional chain (`a?.b!`) is left alone, since ESTree folds it into the chain. A bare asserted name is also left alone when it resolves to a variable of the file, or to a builtin or declared global (ESLint's globals, the esnext lib, `/* global */` comments), that nothing writes before the assertion: no initializer, definite-assignment `!`, parameter default, assignment or update of it occurs earlier in the file. As in ESLint's scope analysis, a plain, compound or update target counts as a write through parentheses and at most one `!`, `as` or `<T>` around the name (never `satisfies`), while a destructuring or for-in/of target counts through any of them.",
+  "description": "Don't put a non-null assertion on the left side of ??; the operator already handles null and undefined.",
   "scope": {
     "include": [
       "**/*"
@@ -573,7 +573,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-non-null-asserted-nullish-coalescing",
-        "message": "The nullish coalescing operator is designed to handle undefined and null - using a non-null assertion is not needed.",
+        "message": "Remove this non-null assertion; `??` already handles the null and undefined it rules out.",
         "suppress": {
           "eslint": {
             "rules": [

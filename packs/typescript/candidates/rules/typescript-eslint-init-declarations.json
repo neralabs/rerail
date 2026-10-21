@@ -3,7 +3,7 @@
   "id": "typescript-eslint-init-declarations",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of typescript-eslint's `init-declarations` rule (https://typescript-eslint.io/rules/init-declarations) in `always` mode, the default the rule declares. typescript-eslint 8.70.1 does not hand that default on to ESLint's core rule, so configured without options it reports nothing; this document is the rule as `[\"error\", \"always\"]` runs it. It reports each variable declared by a plain name without an initial value, at the name. The head of a `for` loop counts as initialized; a declaration that is itself the body of a `for`, `for...in` or `for...of` loop counts as uninitialized even with a value, and is then reported over the whole declarator. Declarations marked `declare`, and everything inside a `declare namespace`, `declare module` or `declare global` block, are skipped. The ancestor walk (`outside-declared-module`) recognizes a declared module by its leading `declare` keyword using positive tests only, so the document is still evaluated in files with syntax errors. As in TypeScript, comments after `declare` are skipped, and a line break after it (bare or inside a block comment) makes `declare` an ordinary name rather than a modifier, so what follows is checked as a plain statement.",
+  "description": "Initialize each TypeScript variable where it is declared; ambient declarations are exempt.",
   "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [
     {

@@ -3,7 +3,7 @@
   "id": "typescript-eslint-consistent-type-assertions",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of typescript-eslint's `consistent-type-assertions` rule (https://typescript-eslint.io/rules/consistent-type-assertions) at its default options (assertion style `as`, object and array literal assertions allowed). Flags every angle-bracket type assertion `<T>value`, which should be written `value as T`.",
+  "description": "Write TypeScript type assertions with as instead of angle brackets; the angle-bracket form can't be used in TSX files.",
   "scope": {
     "include": ["**/*"],
     "exclude": []

@@ -1,0 +1,1 @@
+const x = new Generic<int>() as Foo;

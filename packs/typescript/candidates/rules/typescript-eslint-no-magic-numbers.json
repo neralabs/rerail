@@ -3,7 +3,7 @@
   "id": "typescript-eslint-no-magic-numbers",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of typescript-eslint's `no-magic-numbers` rule (https://typescript-eslint.io/rules/no-magic-numbers) at its default options (no `ignore` values, every `ignore*` switch, `detectObjects` and `enforceConst` off). Every numeric or BigInt literal is reported, a unary `-` or `+` in front counting as part of it, unless its parent node (parentheses and computed-key brackets looked through, as ESTree does) lets it pass: a variable initializer, an object literal or pattern property (key or value), the right side of an assignment to anything but a plain identifier, the second argument of `parseInt` or `Number.parseInt`, and a JSX expression container. Enum member values, numeric literal types, type indexes and readonly class fields are reported too; in an enum member value or a readonly field a leading `+` is left out of the reported span.",
+  "description": "Give number literals a named constant instead of using them inline in expressions, arguments and types; an unnamed number hides what it means.",
   "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [
     {
@@ -300,8 +300,8 @@
         "anchor": "capture.N",
         "each": "N",
         "code": "@typescript-eslint/no-magic-numbers",
-        "message": "Magic number `$N`: give it a named constant.",
-        "suppress": { "eslint": { "rules": ["@typescript-eslint/no-magic-numbers"] } }
+        "message": "Replace `$N` with a named constant that says what it means.",
+        "suppress": { "eslint": { "rules": ["@typescript-eslint/no-magic-numbers"] }, "biome": {"rules": ["lint/style/noMagicNumbers"]} }
       }
     }
   ]

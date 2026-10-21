@@ -3,7 +3,7 @@
   "id": "typescript-eslint-no-use-before-define",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of typescript-eslint's `no-use-before-define` rule (https://typescript-eslint.io/rules/no-use-before-define), at its default options. Flags a value reference that resolves to a binding of this file whose first declaration comes later in the source, or that sits in the initializer of the very binding it reads (within the same scope). Type positions and `typeof` queries are ignored, as are names read from the scope of a function type or type-member signature and a class named inside its own decorator, while a named export is checked even when it names a type or nothing at all.",
+  "description": "Declare TypeScript variables, functions and classes before using them; a use earlier in the file can read an undefined or uninitialized binding.",
   "scope": {"include": ["**/*"], "exclude": []},
   "clauses": [
     {
@@ -273,8 +273,8 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-use-before-define",
-        "message": "'$R' was used before it was defined.",
-        "suppress": {"eslint": {"rules": ["@typescript-eslint/no-use-before-define"]}}
+        "message": "Move the declaration of '$R' above this use.",
+        "suppress": {"eslint": {"rules": ["@typescript-eslint/no-use-before-define"]}, "biome": {"rules": ["lint/correctness/noInvalidUseBeforeDeclaration"]}}
       }
     }
   ]

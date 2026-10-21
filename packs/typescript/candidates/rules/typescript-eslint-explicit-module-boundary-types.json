@@ -3,7 +3,7 @@
   "id": "typescript-eslint-explicit-module-boundary-types",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of typescript-eslint's `explicit-module-boundary-types` rule (https://typescript-eslint.io/rules/explicit-module-boundary-types). Flags functions that cross the module boundary without explicit types: functions, classes' public members and object members reached from an export (named, default, `export =`, or a local binding an export names, followed to its declaration and its writes within the reference's own scope), plus functions they return directly, that lack a return type, and their parameters that are untyped or typed `any`. Typed contexts, returned-into-typed functions, `as const` arrow bodies, higher-order functions (unless an export before them reaches them, which ESLint checks before it has seen their returns), constructors and setters are exempt from the return type; reports sit on the function head and on each parameter. Default options; they are declared in the `options` define.",
+  "description": "Declare return and parameter types on exported TypeScript functions and public class methods; the module's API then doesn't depend on inference.",
   "scope": {
     "include": [
       "**/*"
@@ -1891,7 +1891,7 @@
       "violation": {
         "anchor": "capture.HEAD",
         "code": "@typescript-eslint/explicit-module-boundary-types",
-        "message": "Exported function is missing an explicit return type.",
+        "message": "Add an explicit return type to this exported function.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1934,7 +1934,7 @@
       "violation": {
         "anchor": "capture.HEAD",
         "code": "@typescript-eslint/explicit-module-boundary-types",
-        "message": "Exported function is missing an explicit return type.",
+        "message": "Add an explicit return type to this exported function.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1976,7 +1976,7 @@
       "violation": {
         "anchor": "capture.HEAD",
         "code": "@typescript-eslint/explicit-module-boundary-types",
-        "message": "Exported function is missing an explicit return type.",
+        "message": "Add an explicit return type to this exported function.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -2084,7 +2084,7 @@
       "violation": {
         "anchor": "capture.ARG",
         "code": "@typescript-eslint/explicit-module-boundary-types",
-        "message": "Exported function argument is untyped or typed as `any`.",
+        "message": "Give this exported function's parameter an explicit type other than `any`.",
         "suppress": {
           "eslint": {
             "rules": [

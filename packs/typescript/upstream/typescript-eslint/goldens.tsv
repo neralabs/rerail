@@ -15,6 +15,17 @@ typescript-eslint-adjacent-overload-signatures
 		src/vs/workbench/contrib/terminalContrib/voice/browser/terminalVoice.ts	231fa3f50e381c0bfd9e067a6dbbee49c89ca000e130646989a8f4ef7424db48
 		src/vscode-dts/vscode.proposed.chatParticipantAdditions.d.ts	aa740d28336d0d3c92ae874b7819b2fd47d1267afa38cfe671b4ef64d4a04b80
 		src/vscode-dts/vscode.proposed.inlineCompletionsAdditions.d.ts	717a723bd2fbe940801de8afff229f8c0753123e27ebd807c46a9db852d5d0e5
+typescript-eslint-array-type
+	rerail:vscode
+		src/vs/code/electron-browser/workbench/workbench.ts	8a8b2051928c91696b4f624d60030e25f3ddcf5cae2c2e103570b2368f91b944
+		src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts	d7e86cc48e95142413797eb0ee98b978522eeddc9ac2eb93ccbb8085baf69601
+		src/vs/platform/agentHost/test/node/codex/codexChatDiscovery.test.ts	e8c2b8a8e20c61e2a26727ce4d561261268e5e0a85d31cb03a7b6a03df050c9e
+		src/vs/platform/tunnel/test/node/tunnelProxy.test.ts	52f9ac5a6d78a913dd1d9e517608f489492e0424bf00aecd6398e34b9cc1e160
+		src/vs/sessions/electron-browser/sessions.ts	ca54aa5e88d786f08afedd00e229fd9a4c74741a1b77ffb5a7aac6992413b94b
+		src/vs/workbench/contrib/chat/test/common/promptSyntax/hookSchema.test.ts	611f9827b3a0ff5f4b7337bacbc777d56c3e17d73b29fc84fccab3817ef3ed69
+		src/vs/workbench/contrib/issue/browser/issueFormService.ts	24c462d75b27bf0fd340c676d65664e06a24b10828809e39ef3592fa612a4ffc
+		src/vs/workbench/contrib/terminal/test/browser/terminalProfileService.integrationTest.ts	24f3ba49bb0acfab32e44e62e05416f36fbe5ceba40a0e9ec18fc83713ff26c0
+		src/vs/workbench/contrib/terminalContrib/voice/browser/terminalVoice.ts	231fa3f50e381c0bfd9e067a6dbbee49c89ca000e130646989a8f4ef7424db48
 typescript-eslint-ban-ts-comment
 	rerail:vscode
 		src/vs/code/electron-browser/workbench/workbench.ts	8a8b2051928c91696b4f624d60030e25f3ddcf5cae2c2e103570b2368f91b944
@@ -176,7 +187,29 @@ typescript-eslint-consistent-generic-constructors
 		src/vs/workbench/services/search/node/ripgrepSearchProvider.ts	902933014dc49d6c1aae55a7a4a74d88b9007571807772e8f89d3c7f2de2e4f9
 		src/vs/workbench/services/search/worker/localFileSearch.ts	0d62fc4e3b8b4f1042cf1430b634745ebc631abe5a33caa6d2a2fe5b89bf7f6c
 		src/vs/workbench/test/browser/workbenchTestServices.ts	bd9155d33db8a41344399bfdbce35a1c5c60a9dbc4b92bf7d8b1beaa518afed9
+typescript-eslint-consistent-indexed-object-style
+	rerail:vscode
+		src/vs/code/electron-browser/workbench/workbench.ts	8a8b2051928c91696b4f624d60030e25f3ddcf5cae2c2e103570b2368f91b944
+		src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts	d7e86cc48e95142413797eb0ee98b978522eeddc9ac2eb93ccbb8085baf69601
+		src/vs/platform/agentHost/test/node/codex/codexChatDiscovery.test.ts	e8c2b8a8e20c61e2a26727ce4d561261268e5e0a85d31cb03a7b6a03df050c9e
+		src/vs/platform/tunnel/test/node/tunnelProxy.test.ts	52f9ac5a6d78a913dd1d9e517608f489492e0424bf00aecd6398e34b9cc1e160
+		src/vs/sessions/electron-browser/sessions.ts	ca54aa5e88d786f08afedd00e229fd9a4c74741a1b77ffb5a7aac6992413b94b
+		src/vs/workbench/contrib/chat/test/common/promptSyntax/hookSchema.test.ts	611f9827b3a0ff5f4b7337bacbc777d56c3e17d73b29fc84fccab3817ef3ed69
+		src/vs/workbench/contrib/issue/browser/issueFormService.ts	24c462d75b27bf0fd340c676d65664e06a24b10828809e39ef3592fa612a4ffc
+		src/vs/workbench/contrib/terminal/test/browser/terminalProfileService.integrationTest.ts	24f3ba49bb0acfab32e44e62e05416f36fbe5ceba40a0e9ec18fc83713ff26c0
+		src/vs/workbench/contrib/terminalContrib/voice/browser/terminalVoice.ts	231fa3f50e381c0bfd9e067a6dbbee49c89ca000e130646989a8f4ef7424db48
 typescript-eslint-default-param-last
+	rerail:vscode
+		src/vs/code/electron-browser/workbench/workbench.ts	8a8b2051928c91696b4f624d60030e25f3ddcf5cae2c2e103570b2368f91b944
+		src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts	d7e86cc48e95142413797eb0ee98b978522eeddc9ac2eb93ccbb8085baf69601
+		src/vs/platform/agentHost/test/node/codex/codexChatDiscovery.test.ts	e8c2b8a8e20c61e2a26727ce4d561261268e5e0a85d31cb03a7b6a03df050c9e
+		src/vs/platform/tunnel/test/node/tunnelProxy.test.ts	52f9ac5a6d78a913dd1d9e517608f489492e0424bf00aecd6398e34b9cc1e160
+		src/vs/sessions/electron-browser/sessions.ts	ca54aa5e88d786f08afedd00e229fd9a4c74741a1b77ffb5a7aac6992413b94b
+		src/vs/workbench/contrib/chat/test/common/promptSyntax/hookSchema.test.ts	611f9827b3a0ff5f4b7337bacbc777d56c3e17d73b29fc84fccab3817ef3ed69
+		src/vs/workbench/contrib/issue/browser/issueFormService.ts	24c462d75b27bf0fd340c676d65664e06a24b10828809e39ef3592fa612a4ffc
+		src/vs/workbench/contrib/terminal/test/browser/terminalProfileService.integrationTest.ts	24f3ba49bb0acfab32e44e62e05416f36fbe5ceba40a0e9ec18fc83713ff26c0
+		src/vs/workbench/contrib/terminalContrib/voice/browser/terminalVoice.ts	231fa3f50e381c0bfd9e067a6dbbee49c89ca000e130646989a8f4ef7424db48
+typescript-eslint-explicit-module-boundary-types
 	rerail:vscode
 		src/vs/code/electron-browser/workbench/workbench.ts	8a8b2051928c91696b4f624d60030e25f3ddcf5cae2c2e103570b2368f91b944
 		src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts	d7e86cc48e95142413797eb0ee98b978522eeddc9ac2eb93ccbb8085baf69601
@@ -293,6 +326,17 @@ typescript-eslint-no-namespace
 		src/vs/workbench/contrib/issue/browser/issueFormService.ts	24c462d75b27bf0fd340c676d65664e06a24b10828809e39ef3592fa612a4ffc
 		src/vs/workbench/contrib/terminal/test/browser/terminalProfileService.integrationTest.ts	24f3ba49bb0acfab32e44e62e05416f36fbe5ceba40a0e9ec18fc83713ff26c0
 		src/vs/workbench/contrib/terminalContrib/voice/browser/terminalVoice.ts	231fa3f50e381c0bfd9e067a6dbbee49c89ca000e130646989a8f4ef7424db48
+typescript-eslint-no-non-null-asserted-nullish-coalescing
+	rerail:vscode
+		src/vs/code/electron-browser/workbench/workbench.ts	8a8b2051928c91696b4f624d60030e25f3ddcf5cae2c2e103570b2368f91b944
+		src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts	d7e86cc48e95142413797eb0ee98b978522eeddc9ac2eb93ccbb8085baf69601
+		src/vs/platform/agentHost/test/node/codex/codexChatDiscovery.test.ts	e8c2b8a8e20c61e2a26727ce4d561261268e5e0a85d31cb03a7b6a03df050c9e
+		src/vs/platform/tunnel/test/node/tunnelProxy.test.ts	52f9ac5a6d78a913dd1d9e517608f489492e0424bf00aecd6398e34b9cc1e160
+		src/vs/sessions/electron-browser/sessions.ts	ca54aa5e88d786f08afedd00e229fd9a4c74741a1b77ffb5a7aac6992413b94b
+		src/vs/workbench/contrib/chat/test/common/promptSyntax/hookSchema.test.ts	611f9827b3a0ff5f4b7337bacbc777d56c3e17d73b29fc84fccab3817ef3ed69
+		src/vs/workbench/contrib/issue/browser/issueFormService.ts	24c462d75b27bf0fd340c676d65664e06a24b10828809e39ef3592fa612a4ffc
+		src/vs/workbench/contrib/terminal/test/browser/terminalProfileService.integrationTest.ts	24f3ba49bb0acfab32e44e62e05416f36fbe5ceba40a0e9ec18fc83713ff26c0
+		src/vs/workbench/contrib/terminalContrib/voice/browser/terminalVoice.ts	231fa3f50e381c0bfd9e067a6dbbee49c89ca000e130646989a8f4ef7424db48
 typescript-eslint-no-non-null-asserted-optional-chain
 	rerail:vscode
 		src/vs/code/electron-browser/workbench/workbench.ts	8a8b2051928c91696b4f624d60030e25f3ddcf5cae2c2e103570b2368f91b944
@@ -337,6 +381,17 @@ typescript-eslint-no-require-imports
 		src/vs/workbench/contrib/issue/browser/issueFormService.ts	24c462d75b27bf0fd340c676d65664e06a24b10828809e39ef3592fa612a4ffc
 		src/vs/workbench/contrib/terminal/test/browser/terminalProfileService.integrationTest.ts	24f3ba49bb0acfab32e44e62e05416f36fbe5ceba40a0e9ec18fc83713ff26c0
 		src/vs/workbench/contrib/terminalContrib/voice/browser/terminalVoice.ts	231fa3f50e381c0bfd9e067a6dbbee49c89ca000e130646989a8f4ef7424db48
+typescript-eslint-no-shadow
+	rerail:vscode
+		src/vs/code/electron-browser/workbench/workbench.ts	8a8b2051928c91696b4f624d60030e25f3ddcf5cae2c2e103570b2368f91b944
+		src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts	d7e86cc48e95142413797eb0ee98b978522eeddc9ac2eb93ccbb8085baf69601
+		src/vs/platform/agentHost/test/node/codex/codexChatDiscovery.test.ts	e8c2b8a8e20c61e2a26727ce4d561261268e5e0a85d31cb03a7b6a03df050c9e
+		src/vs/platform/tunnel/test/node/tunnelProxy.test.ts	52f9ac5a6d78a913dd1d9e517608f489492e0424bf00aecd6398e34b9cc1e160
+		src/vs/sessions/electron-browser/sessions.ts	ca54aa5e88d786f08afedd00e229fd9a4c74741a1b77ffb5a7aac6992413b94b
+		src/vs/workbench/contrib/chat/test/common/promptSyntax/hookSchema.test.ts	611f9827b3a0ff5f4b7337bacbc777d56c3e17d73b29fc84fccab3817ef3ed69
+		src/vs/workbench/contrib/issue/browser/issueFormService.ts	24c462d75b27bf0fd340c676d65664e06a24b10828809e39ef3592fa612a4ffc
+		src/vs/workbench/contrib/terminal/test/browser/terminalProfileService.integrationTest.ts	24f3ba49bb0acfab32e44e62e05416f36fbe5ceba40a0e9ec18fc83713ff26c0
+		src/vs/workbench/contrib/terminalContrib/voice/browser/terminalVoice.ts	231fa3f50e381c0bfd9e067a6dbbee49c89ca000e130646989a8f4ef7424db48
 typescript-eslint-no-this-alias
 	rerail:vscode
 		src/vs/base/test/common/virtualScheduling/trace.ts	7081b1240fcbc96efce7ee26994f355297b280f6f1de9993ff598c2c97916230
@@ -347,6 +402,17 @@ typescript-eslint-no-this-alias
 		src/vs/workbench/contrib/debug/browser/loadedScriptsView.ts	6fb26fdf269a93423e5f673f7c48af47e5846bd6c0d0b3d36ae53038127053c4
 		src/vs/workbench/contrib/search/browser/searchTreeModel/folderMatch.ts	ee06fac3fd8618b113c0c4c6c461fc201db9ec0108b5fa37de979606be4b1899
 		src/vs/workbench/contrib/tasks/browser/abstractTaskService.ts	ef364faa0bed1ec508f780d25828bdda712946486b768b4f5685f3e277fa869a
+typescript-eslint-no-unnecessary-parameter-property-assignment
+	rerail:vscode
+		src/vs/code/electron-browser/workbench/workbench.ts	8a8b2051928c91696b4f624d60030e25f3ddcf5cae2c2e103570b2368f91b944
+		src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts	d7e86cc48e95142413797eb0ee98b978522eeddc9ac2eb93ccbb8085baf69601
+		src/vs/platform/agentHost/test/node/codex/codexChatDiscovery.test.ts	e8c2b8a8e20c61e2a26727ce4d561261268e5e0a85d31cb03a7b6a03df050c9e
+		src/vs/platform/tunnel/test/node/tunnelProxy.test.ts	52f9ac5a6d78a913dd1d9e517608f489492e0424bf00aecd6398e34b9cc1e160
+		src/vs/sessions/electron-browser/sessions.ts	ca54aa5e88d786f08afedd00e229fd9a4c74741a1b77ffb5a7aac6992413b94b
+		src/vs/workbench/contrib/chat/test/common/promptSyntax/hookSchema.test.ts	611f9827b3a0ff5f4b7337bacbc777d56c3e17d73b29fc84fccab3817ef3ed69
+		src/vs/workbench/contrib/issue/browser/issueFormService.ts	24c462d75b27bf0fd340c676d65664e06a24b10828809e39ef3592fa612a4ffc
+		src/vs/workbench/contrib/terminal/test/browser/terminalProfileService.integrationTest.ts	24f3ba49bb0acfab32e44e62e05416f36fbe5ceba40a0e9ec18fc83713ff26c0
+		src/vs/workbench/contrib/terminalContrib/voice/browser/terminalVoice.ts	231fa3f50e381c0bfd9e067a6dbbee49c89ca000e130646989a8f4ef7424db48
 typescript-eslint-no-unsafe-function-type
 	rerail:vscode
 		src/vs/code/electron-browser/workbench/workbench.ts	8a8b2051928c91696b4f624d60030e25f3ddcf5cae2c2e103570b2368f91b944
@@ -359,6 +425,17 @@ typescript-eslint-no-unsafe-function-type
 		src/vs/workbench/contrib/terminal/test/browser/terminalProfileService.integrationTest.ts	24f3ba49bb0acfab32e44e62e05416f36fbe5ceba40a0e9ec18fc83713ff26c0
 		src/vs/workbench/contrib/terminalContrib/voice/browser/terminalVoice.ts	231fa3f50e381c0bfd9e067a6dbbee49c89ca000e130646989a8f4ef7424db48
 typescript-eslint-no-unused-expressions
+	rerail:vscode
+		src/vs/code/electron-browser/workbench/workbench.ts	8a8b2051928c91696b4f624d60030e25f3ddcf5cae2c2e103570b2368f91b944
+		src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts	d7e86cc48e95142413797eb0ee98b978522eeddc9ac2eb93ccbb8085baf69601
+		src/vs/platform/agentHost/test/node/codex/codexChatDiscovery.test.ts	e8c2b8a8e20c61e2a26727ce4d561261268e5e0a85d31cb03a7b6a03df050c9e
+		src/vs/platform/tunnel/test/node/tunnelProxy.test.ts	52f9ac5a6d78a913dd1d9e517608f489492e0424bf00aecd6398e34b9cc1e160
+		src/vs/sessions/electron-browser/sessions.ts	ca54aa5e88d786f08afedd00e229fd9a4c74741a1b77ffb5a7aac6992413b94b
+		src/vs/workbench/contrib/chat/test/common/promptSyntax/hookSchema.test.ts	611f9827b3a0ff5f4b7337bacbc777d56c3e17d73b29fc84fccab3817ef3ed69
+		src/vs/workbench/contrib/issue/browser/issueFormService.ts	24c462d75b27bf0fd340c676d65664e06a24b10828809e39ef3592fa612a4ffc
+		src/vs/workbench/contrib/terminal/test/browser/terminalProfileService.integrationTest.ts	24f3ba49bb0acfab32e44e62e05416f36fbe5ceba40a0e9ec18fc83713ff26c0
+		src/vs/workbench/contrib/terminalContrib/voice/browser/terminalVoice.ts	231fa3f50e381c0bfd9e067a6dbbee49c89ca000e130646989a8f4ef7424db48
+typescript-eslint-no-unused-private-class-members
 	rerail:vscode
 		src/vs/code/electron-browser/workbench/workbench.ts	8a8b2051928c91696b4f624d60030e25f3ddcf5cae2c2e103570b2368f91b944
 		src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts	d7e86cc48e95142413797eb0ee98b978522eeddc9ac2eb93ccbb8085baf69601
@@ -444,6 +521,17 @@ typescript-eslint-no-unused-vars
 		src/vs/workbench/services/dialogs/browser/simpleFileDialog.ts	c77bf47dc42295d3e3904ed0418a448fbbf97bb644df42e963f1799fe4c97e3a
 		src/vs/workbench/services/search/test/node/fixtures/examples/company.js	8ad56113646f2cd0399fbe6b547ec5048c16356d28be9309439acd6821c31d57
 		src/vs/workbench/services/userDataProfile/browser/userDataProfileImportExportService.ts	2141667119efe198ea9da0b1245eb5fb474c8d5f73cf56d7d6c1dee104f21bd6
+typescript-eslint-no-use-before-define
+	rerail:vscode
+		src/vs/code/electron-browser/workbench/workbench.ts	8a8b2051928c91696b4f624d60030e25f3ddcf5cae2c2e103570b2368f91b944
+		src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts	d7e86cc48e95142413797eb0ee98b978522eeddc9ac2eb93ccbb8085baf69601
+		src/vs/platform/agentHost/test/node/codex/codexChatDiscovery.test.ts	e8c2b8a8e20c61e2a26727ce4d561261268e5e0a85d31cb03a7b6a03df050c9e
+		src/vs/platform/tunnel/test/node/tunnelProxy.test.ts	52f9ac5a6d78a913dd1d9e517608f489492e0424bf00aecd6398e34b9cc1e160
+		src/vs/sessions/electron-browser/sessions.ts	ca54aa5e88d786f08afedd00e229fd9a4c74741a1b77ffb5a7aac6992413b94b
+		src/vs/workbench/contrib/chat/test/common/promptSyntax/hookSchema.test.ts	611f9827b3a0ff5f4b7337bacbc777d56c3e17d73b29fc84fccab3817ef3ed69
+		src/vs/workbench/contrib/issue/browser/issueFormService.ts	24c462d75b27bf0fd340c676d65664e06a24b10828809e39ef3592fa612a4ffc
+		src/vs/workbench/contrib/terminal/test/browser/terminalProfileService.integrationTest.ts	24f3ba49bb0acfab32e44e62e05416f36fbe5ceba40a0e9ec18fc83713ff26c0
+		src/vs/workbench/contrib/terminalContrib/voice/browser/terminalVoice.ts	231fa3f50e381c0bfd9e067a6dbbee49c89ca000e130646989a8f4ef7424db48
 typescript-eslint-no-useless-constructor
 	rerail:vscode
 		src/vs/code/electron-browser/workbench/workbench.ts	8a8b2051928c91696b4f624d60030e25f3ddcf5cae2c2e103570b2368f91b944
@@ -521,6 +609,17 @@ typescript-eslint-parameter-properties
 		src/vs/workbench/contrib/chat/test/browser/agentSessions/agentHostCopilotCliSettingsContribution.test.ts	ae83237dba674a22868e36bf9881940b1f194319f35ba0701b429619e502f83c
 		src/vs/workbench/services/filesConfiguration/common/filesConfigurationService.ts	9b65cbedde210a7a95d6453115b35d1f57f13af6d1ca6ed292d33b867f12d3fc
 		src/vs/workbench/test/common/workbenchTestServices.ts	5fb03ceeb2c5df367d0cc628511b4ca3a7f189cb04340f13d907da253fe707ec
+typescript-eslint-prefer-for-of
+	rerail:vscode
+		src/vs/code/electron-browser/workbench/workbench.ts	8a8b2051928c91696b4f624d60030e25f3ddcf5cae2c2e103570b2368f91b944
+		src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts	d7e86cc48e95142413797eb0ee98b978522eeddc9ac2eb93ccbb8085baf69601
+		src/vs/platform/agentHost/test/node/codex/codexChatDiscovery.test.ts	e8c2b8a8e20c61e2a26727ce4d561261268e5e0a85d31cb03a7b6a03df050c9e
+		src/vs/platform/tunnel/test/node/tunnelProxy.test.ts	52f9ac5a6d78a913dd1d9e517608f489492e0424bf00aecd6398e34b9cc1e160
+		src/vs/sessions/electron-browser/sessions.ts	ca54aa5e88d786f08afedd00e229fd9a4c74741a1b77ffb5a7aac6992413b94b
+		src/vs/workbench/contrib/chat/test/common/promptSyntax/hookSchema.test.ts	611f9827b3a0ff5f4b7337bacbc777d56c3e17d73b29fc84fccab3817ef3ed69
+		src/vs/workbench/contrib/issue/browser/issueFormService.ts	24c462d75b27bf0fd340c676d65664e06a24b10828809e39ef3592fa612a4ffc
+		src/vs/workbench/contrib/terminal/test/browser/terminalProfileService.integrationTest.ts	24f3ba49bb0acfab32e44e62e05416f36fbe5ceba40a0e9ec18fc83713ff26c0
+		src/vs/workbench/contrib/terminalContrib/voice/browser/terminalVoice.ts	231fa3f50e381c0bfd9e067a6dbbee49c89ca000e130646989a8f4ef7424db48
 typescript-eslint-prefer-function-type
 	rerail:vscode
 		src/vs/base/browser/dom.ts	c5c3be7d7bb7b80f60b364a93b59dd6265d2e985aa8f6291a4913bdbf2336311

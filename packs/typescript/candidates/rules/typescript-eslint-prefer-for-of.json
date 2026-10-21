@@ -3,7 +3,7 @@
   "id": "typescript-eslint-prefer-for-of",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of typescript-eslint's `prefer-for-of` rule (https://typescript-eslint.io/rules/prefer-for-of). Flags a `for` loop that declares one non-const index starting at 0, runs while the index is below an array's `length`, steps it by one, and uses the index in its body only to read elements of that same array.",
+  "description": "Use a for-of loop instead of an indexed for loop that only reads each element of one array.",
   "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [
     {
@@ -217,8 +217,8 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/prefer-for-of",
-        "message": "Expected a `for-of` loop instead of a `for` loop with this simple iteration.",
-        "suppress": { "eslint": {"rules": ["@typescript-eslint/prefer-for-of"]} }
+        "message": "Rewrite this loop as a `for-of` loop over the array; its index is only used to read the elements.",
+        "suppress": { "eslint": {"rules": ["@typescript-eslint/prefer-for-of"]}, "biome": {"rules": ["lint/style/useForOf"]} }
       }
     }
   ]

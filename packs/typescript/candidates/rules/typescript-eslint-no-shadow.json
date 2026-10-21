@@ -3,7 +3,7 @@
   "id": "typescript-eslint-no-shadow",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of typescript-eslint's `no-shadow` rule (https://typescript-eslint.io/rules/no-shadow) at its default options. Flags a declaration whose name is already declared in an enclosing scope: the nearest enclosing scope declaring the name is found structurally (eslint-scope's scope boundaries, `var` hoisting to the function), and upstream's default exemptions apply: a type shadowing a value or a value shadowing a type (or a type-only import), parameters of signatures without a body, a later declaration that is not a function or type (hoist: functions-and-types), a function or class expression named after the variable it initializes, a static method's type parameter shadowing its class's, a module augmentation merging a type-only import, and `declare global` blocks.",
+  "description": "Don't declare a TypeScript variable, function or type with a name already declared in an enclosing scope; the inner one hides the outer.",
   "scope": {
     "include": [
       "**/*"
@@ -2321,11 +2321,16 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-shadow",
-        "message": "'$N' shadows a declaration of the same name in an enclosing scope.",
+        "message": "Rename '$N'; it shadows a declaration of the same name in an enclosing scope.",
         "suppress": {
           "eslint": {
             "rules": [
               "@typescript-eslint/no-shadow"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noShadow"
             ]
           }
         }
@@ -2421,11 +2426,16 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-shadow",
-        "message": "'$N' shadows a declaration of the same name in an enclosing scope.",
+        "message": "Rename '$N'; it shadows a declaration of the same name in an enclosing scope.",
         "suppress": {
           "eslint": {
             "rules": [
               "@typescript-eslint/no-shadow"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noShadow"
             ]
           }
         }
@@ -2471,11 +2481,16 @@
       "violation": {
         "anchor": "capture.S",
         "code": "@typescript-eslint/no-shadow",
-        "message": "'$N' shadows a declaration of the same name in an enclosing scope.",
+        "message": "Rename '$N'; it shadows a declaration of the same name in an enclosing scope.",
         "suppress": {
           "eslint": {
             "rules": [
               "@typescript-eslint/no-shadow"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noShadow"
             ]
           }
         }
@@ -2526,11 +2541,16 @@
       "violation": {
         "anchor": "capture.S",
         "code": "@typescript-eslint/no-shadow",
-        "message": "'$N' shadows a declaration of the same name in an enclosing scope.",
+        "message": "Rename '$N'; it shadows a declaration of the same name in an enclosing scope.",
         "suppress": {
           "eslint": {
             "rules": [
               "@typescript-eslint/no-shadow"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noShadow"
             ]
           }
         }
@@ -2574,11 +2594,16 @@
       "violation": {
         "anchor": "capture.S",
         "code": "@typescript-eslint/no-shadow",
-        "message": "'$N' shadows a declaration of the same name in an enclosing scope.",
+        "message": "Rename '$N'; it shadows a declaration of the same name in an enclosing scope.",
         "suppress": {
           "eslint": {
             "rules": [
               "@typescript-eslint/no-shadow"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noShadow"
             ]
           }
         }
@@ -2617,11 +2642,16 @@
       "violation": {
         "anchor": "capture.S",
         "code": "@typescript-eslint/no-shadow",
-        "message": "'$N' shadows a declaration of the same name in an enclosing scope.",
+        "message": "Rename '$N'; it shadows a declaration of the same name in an enclosing scope.",
         "suppress": {
           "eslint": {
             "rules": [
               "@typescript-eslint/no-shadow"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noShadow"
             ]
           }
         }

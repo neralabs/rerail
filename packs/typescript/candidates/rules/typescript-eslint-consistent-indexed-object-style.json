@@ -3,7 +3,7 @@
   "id": "typescript-eslint-consistent-indexed-object-style",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of typescript-eslint's `consistent-indexed-object-style` rule (https://typescript-eslint.io/rules/consistent-indexed-object-style) at its default option `record`. Flags an interface or object type literal whose only member is an index signature, and a mapped type that does not use its key and whose constraint is not a bare `keyof`, unless the type refers back to the type alias or interface that declares it (directly or through other local type declarations). Fixes to a `Record` type where upstream does; no fix when a comment would be lost, for `-readonly`, for an interface with `extends` or under `export default`, when an interface's type parameter holds a comma and the parameters are not already joined by `, ` on one line (upstream re-joins them), or when the key or value type continues on a line indented with spaces or holds a multi-line string (the engine re-indents multi-line text, upstream copies it as is).",
+  "description": "Use a Record type instead of an interface or object type whose only member is an index signature, or a mapped type that ignores its keys.",
   "scope": {
     "include": [
       "**/*"

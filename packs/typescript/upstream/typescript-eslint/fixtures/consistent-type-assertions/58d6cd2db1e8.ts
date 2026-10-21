@@ -1,0 +1,1 @@
+const x = <readonly number[]>[1];

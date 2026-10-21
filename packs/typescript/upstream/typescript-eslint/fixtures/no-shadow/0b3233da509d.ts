@@ -1,0 +1,1 @@
+var y = bar && foo(y => y);

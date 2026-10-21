@@ -3,7 +3,7 @@
   "id": "typescript-eslint-no-unsafe-declaration-merging",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of typescript-eslint's `no-unsafe-declaration-merging` rule (https://typescript-eslint.io/rules/no-unsafe-declaration-merging). Reports the name of a class declaration when an interface of the same name is declared in the same scope, and the name of an interface without type parameters (an interface with them is read in a scope of its own) when a class of the same name is declared in the same scope: TypeScript merges the two without checking that the class implements the interface's members. The scope is matched structurally: the nearest program, block (a function, namespace, module, `declare global` or static block body), switch body, `with` statement, or loop whose head declares a let or const binding above the declaration, reached through `export`, `declare` and `case` wrappers and through statement bodies that open no scope (if, else, while, do, labels, and loops whose head declares no let or const binding).",
+  "description": "Don't give a TypeScript class and an interface the same name in one scope; the merge adds the interface's members to the class without checking them.",
   "scope": {
     "include": [
       "**/*"
@@ -231,11 +231,16 @@
       "violation": {
         "anchor": "capture.NAME",
         "code": "@typescript-eslint/no-unsafe-declaration-merging",
-        "message": "Unsafe declaration merging between classes and interfaces.",
+        "message": "Rename the class or the interface so they don't merge; merged, the class claims the interface's members without implementing them.",
         "suppress": {
           "eslint": {
             "rules": [
               "@typescript-eslint/no-unsafe-declaration-merging"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noUnsafeDeclarationMerging"
             ]
           }
         }

@@ -66,7 +66,7 @@ to its `validation/goldens/<pack>.tsv`, and a tool-pack's `goldens.tsv` is a rev
   restate that, at the cost of judging thousands of files. It is listed once under `real_code_gaps` in the tool-pack's
   `gates.yaml`, with how many of its goldens it differs on, in their place. A listed rule fails `no-real-code-gap`, so
   it is never ready to promote, and a shipped rule cannot be listed. Once it agrees with upstream there, import its
-  goldens and remove the entry. Eight typescript-eslint candidates are listed today; the next largest difference
+  goldens and remove the entry. Nine typescript-eslint candidates are listed today; the next largest difference
   anywhere is 335 files.
 - **A negative where the tests have none.** `stays-silent` needs a case where upstream reports nothing and the rule
   agrees. Ruff's upstream test files all have findings, so each shipped Ruff rule without another such case has one

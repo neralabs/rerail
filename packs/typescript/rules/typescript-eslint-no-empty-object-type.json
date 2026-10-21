@@ -3,7 +3,7 @@
   "id": "typescript-eslint-no-empty-object-type",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of typescript-eslint's `no-empty-object-type` rule (https://typescript-eslint.io/rules/no-empty-object-type) at its default options (allowInterfaces: never, allowObjectTypes: never, no allowWithName). Reports the name of an interface that declares no members and extends at most one type, and every `{}` type literal with no members that is not an operand of an intersection type. Upstream only suggests replacements, so there is no fix.",
+  "description": "Avoid empty TypeScript interfaces and the empty object type; both accept any non-nullish value, so use object, unknown or the extended type instead.",
   "scope": {
     "include": [
       "**/*"

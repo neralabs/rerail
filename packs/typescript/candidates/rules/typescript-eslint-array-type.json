@@ -3,7 +3,7 @@
   "id": "typescript-eslint-array-type",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of typescript-eslint's `array-type` rule (https://typescript-eslint.io/rules/array-type) at its default option `array` (for mutable and readonly arrays alike). Flags a type reference named `Array` or `ReadonlyArray` with exactly one type argument, and `Readonly<T[]>`, which should be written `T[]` or `readonly T[]`. As upstream walks the scope chain from the reference, any declaration of that name, value or type, in a scope on the chain other than the global one leaves the reference alone. The chain is built in the order upstream's scope manager opens scopes: a class member's computed key lies outside the member's own scope, and a scope opened inside a class decorator, a class method's parameter decorator, a switch discriminant, an interface method's computed key or a conditional type's false branch skips the scope that holds that position. No fix is offered.",
+  "description": "Use the array shorthand type syntax instead of the generic Array and ReadonlyArray types in TypeScript; one style reads consistently.",
   "scope": {
     "include": [
       "**/*"
@@ -761,6 +761,11 @@
           "eslint": {
             "rules": [
               "@typescript-eslint/array-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/useConsistentArrayType"
             ]
           }
         }

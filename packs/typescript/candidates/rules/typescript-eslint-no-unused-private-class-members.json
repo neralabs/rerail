@@ -3,7 +3,7 @@
   "id": "typescript-eslint-no-unused-private-class-members",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of typescript-eslint's `no-unused-private-class-members` rule (https://typescript-eslint.io/rules/no-unused-private-class-members). Flags a `#name` member, or a member or constructor parameter property declared `private`, that nothing in its class reads (for a getter, setter or `accessor` field a write counts too), at the last declaration of its key. Keys compare as upstream's do: names, literal values (`0x10` is `16`, escapes decoded) and a template's raw text; a class whose names are all written plainly is checked by text alone, which is faster. As upstream's class scope analysis, which covers the class's decorators and heritage as well as its body, a `#name` is used by any reference that resolves to it, and a `private` member through `this` in the matching static or instance context (functions rebind it, arrow functions do not, a field initializer is the instance), through a variable declared from `this`, through the class name (static), through a parameter typed as the class (`typeof` for static), or by destructuring `this`.",
+  "description": "Remove private and #private class members that nothing in their class reads; they are dead code.",
   "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [
     {
@@ -844,7 +844,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-unused-private-class-members",
-        "message": "Private member $K is declared but nothing in its class reads it.",
+        "message": "Remove private member $K; nothing in its class reads it.",
         "suppress": { "eslint": { "rules": ["@typescript-eslint/no-unused-private-class-members"] } }
       }
     },
@@ -970,7 +970,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-unused-private-class-members",
-        "message": "Private member $K is declared but nothing in its class reads it.",
+        "message": "Remove private member $K; nothing in its class reads it.",
         "suppress": { "eslint": { "rules": ["@typescript-eslint/no-unused-private-class-members"] } }
       }
     },
@@ -1091,7 +1091,7 @@
       "violation": {
         "anchor": "capture.P",
         "code": "@typescript-eslint/no-unused-private-class-members",
-        "message": "Private member $K is declared but nothing in its class reads it.",
+        "message": "Remove private member $K; nothing in its class reads it.",
         "suppress": { "eslint": { "rules": ["@typescript-eslint/no-unused-private-class-members"] } }
       }
     },
@@ -1190,7 +1190,7 @@
       "violation": {
         "anchor": "capture.P",
         "code": "@typescript-eslint/no-unused-private-class-members",
-        "message": "Private member $K is declared but nothing in its class reads it.",
+        "message": "Remove private member $K; nothing in its class reads it.",
         "suppress": { "eslint": { "rules": ["@typescript-eslint/no-unused-private-class-members"] } }
       }
     }

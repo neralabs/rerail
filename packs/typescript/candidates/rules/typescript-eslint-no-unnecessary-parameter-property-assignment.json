@@ -3,7 +3,7 @@
   "id": "typescript-eslint-no-unnecessary-parameter-property-assignment",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of typescript-eslint's `no-unnecessary-parameter-property-assignment` rule (https://typescript-eslint.io/rules/no-unnecessary-parameter-property-assignment). Inside a constructor (or an arrow function called directly there), flags `this.x = x`, `this.x ||= x`, `this.x &&= x` or `this.x ??= x` when `x` is a parameter and the constructor declares `x` as a parameter property, so TypeScript already makes that assignment. It is not flagged when, earlier in the constructor and within the same class body, the parameter was written or the member was compound-assigned (`+=` and the like), or when a class field initializer of the same class assigns the member. As upstream decides whether a name is the parameter by the first reference to that name in the enclosing scope, a parameter or write is ignored when that first reference is a type reference, as in `constructor(private config: config.Settings)`.",
+  "description": "Don't assign a TypeScript parameter property to this in its constructor; the parameter property already makes that assignment.",
   "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [
     {
@@ -487,7 +487,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/no-unnecessary-parameter-property-assignment",
-        "message": "This member is already assigned by the constructor's parameter property; the assignment is redundant.",
+        "message": "Remove this assignment; the constructor's parameter property already sets this member.",
         "suppress": {
           "eslint": { "rules": ["@typescript-eslint/no-unnecessary-parameter-property-assignment"] }
         }
