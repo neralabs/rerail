@@ -11,7 +11,7 @@ crate-type = ["cdylib"]
 code-rule-profile = []
 bench-backends = ["dep:metal"]
 [dependencies]
-ast-grep-core = "=0.50.0"
+ast-grep-core = "=0.51.0"
 # Python, TypeScript, TSX and JavaScript are not ast-grep's: Rerail builds them from its patched
 # vendored grammars (grammars/tree-sitter-{python,typescript,javascript}/PATCHES.md), and no second
 # parser is linked.
