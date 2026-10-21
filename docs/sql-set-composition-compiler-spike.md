@@ -942,3 +942,107 @@ Raw artifacts are under `/tmp/rerail-root-input-spike-20261021`.
 `baseline-build.json` and `final-build.json` record binary hashes and native source hashes.
 `final-source/` preserves the changed native files, including the new input module.
 `profile-32/summary.md` and `profile-32/profile.html` contain the updated actionable profile.
+
+## Remaining SQL costs after root-input adoption
+
+The root-input implementation is part of the production SQL path in `b16d698f`.
+The main design document now describes this input contract.
+There is no alternative root loader or runtime switch.
+
+A fresh profile uses the same 32 files, 135 policies, four workers, and two files per batch.
+It preserves complete output parity with the native engine and the stored digest of 33 findings.
+The artifacts are in `/tmp/rerail-next-sql-bottleneck-20261021`.
+The addon and native source hashes are in `build.json`.
+These measurements use the diagnostic allocator described in the preceding section.
+
+### Index construction is a small cost
+
+The profiler now times frame lookup construction separately, including required scan-order preparation on cache misses.
+All **2,530 builds took 5.6 ms**, approximately **0.1% of 5,100.7 ms recorded CPU**.
+An earlier summary grouped expensive queries under an index-build warning without measuring construction time.
+The warning described repeated builds, but did not establish that builds caused the query cost.
+
+The summary now includes construction times and timed-build coverage.
+Cheap measured indexes no longer classify entire query families as index-construction priorities.
+Old captures retain an explicit indication that construction time is unavailable.
+The timer runs only during a profiled cache miss, with no clocks in row callbacks.
+Construction time is already part of SQL CPU and does not increase the reported budget.
+
+### Join order causes avoidable frame expansion
+
+The default capture records **251,656,437 SQLite VM instructions** and **12,623,013 frame advances**.
+Root publication takes 0.702 ms and performs no individual root INSERT calls.
+The remaining problem includes excessive intermediate work after input publication.
+
+One sibling query, `Q3772`, belongs to `ruff-b039-mutable-contextvar-default`.
+Its relevant SQL is:
+
+```sql
+FROM f145_0 f
+JOIN node fn ON fn.file = f.file AND fn.id = f.node
+JOIN node c ON c.file = f.file
+  AND c.parent = fn.wpar AND c.id <= fn.aprev AND c.kind IN (215)
+```
+
+SQLite starts with the global kind postings for `c`.
+It joins each candidate to the frames for that file, then probes `fn` and tests the sibling relationship.
+This order advances frame cursors **1,178,918 times** for **1,875 output rows** across seven executions.
+The query takes **146.1 ms** and **15,426,221 VM instructions**.
+Its index construction takes only **0.012 ms**.
+
+The compiler emits reorderable joins in `Emitter::tree_candidates`.
+The frame planner advertises a fixed scan estimate of **1,048,576 rows**.
+The node planner also uses fixed estimates, rather than the actual candidate cardinalities.
+These estimates permit an expensive order for a dependent tree walk.
+
+A diagnostic run sets the existing benchmark-only `RERAIL_SQL_FRAME_SCAN_COST=1000` override.
+The production default stays unchanged.
+This run starts the query from its input frame and then probes the anchor before candidates.
+The same seven executions produce the same 1,875 rows:
+
+| Query work | Default estimate | Diagnostic estimate |
+|---|---:|---:|
+| Frame advances | 1,178,918 | 1,055 |
+| VM instructions | 15,426,221 | 4,791,721 |
+| Profiled query CPU | 146.1 ms | 47.2 ms |
+
+The whole workload also retains complete native output parity.
+Its VM count decreases from **251.7 million to 239.1 million**.
+Its frame advances decrease from **12.62 million to 11.24 million**.
+Some other query shapes require more instructions with the lower estimate.
+These single profiled captures establish a plan problem, not an accepted global tuning change or an unprofiled speedup.
+
+The next targeted compiler change is anchor-driven scheduling for dependent relation walks.
+It must keep parent, sibling, subtree, and kind restrictions available before candidate expansion.
+An explicit join order or a native bounded candidate source can enforce this contract.
+A global scan-cost decrease changes unrelated queries and does not solve the cardinality model.
+Cached statements also need estimates that remain useful across batches.
+
+### Terminal and demand work remain substantial
+
+The default capture has these disjoint SQL families, classified by SQL text:
+
+| Family | Whole-query CPU | Executions |
+|---|---:|---:|
+| Node joins and navigation | 1266.9 ms | 8,172 |
+| Fact terminal materialization and rejoin | 628.9 ms | 1,158 |
+| Pattern terminal materialization and rejoin | 485.1 ms | 1,022 |
+| Demand insertion and deduplication | 330.0 ms | 1,566 |
+| Demand expansion keys | 216.9 ms | 761 |
+
+Terminal query CPU includes native matching and semantic evaluation.
+It does not isolate SQLite materialization overhead.
+The terminal SQL gathers keys, materializes a batched terminal result, and joins that result back to its input frame.
+The next measurement must separate terminal evaluation from those scans, key sets, and rejoining costs.
+Removing `MATERIALIZED` without another batching contract can restore per-row terminal calls, as the original design investigation established.
+
+Capture-bearing demands also repeat canonical-key expressions in projection and anti-join predicates.
+For example, `Q3611` repeats a `COALESCE((SELECT atom FROM node ...), f.s1)` expression.
+Its plan contains correlated node lookups and a temporary B-tree for `DISTINCT`.
+It takes **106.5 ms** and **6,698,391 VM instructions** across 20 executions.
+Projecting the canonical integer key once is a separate compiler improvement after dependent-walk scheduling.
+
+`profile-32/` contains the default capture and updated summary.
+`profile-frame-cost-1000/` contains the diagnostic capture and its recorded environment.
+`join-order-probe.json` compares identical SQL text with equal execution counts across both captures.
+`sql-families.json` records the family classification and counters.

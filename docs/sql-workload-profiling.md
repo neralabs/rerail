@@ -98,6 +98,10 @@ Session queries cover setup, input loading, transactions, and cleanup.
 Each SQL execution records wall time, thread CPU time, returned rows, changed rows, and four SQLite counters.
 These counters measure VM instructions, full-scan steps, sorts, and automatic-index rows.
 Frame counters measure scans, lookups, cursor advances, column reads, inserts, index builds, and rows indexed.
+Lookup cache misses also record index construction CPU and wall time, including required scan-order preparation.
+These times are part of SQL time and do not increase the CPU budget.
+The summary shows timed-build coverage because older captures contain counts without construction times.
+Cheap measured indexes no longer assign an entire query family to the index-construction recommendation.
 The counters are differences for each execution, including cached statements.
 The profiler does not reset counters that other diagnostics use.
 

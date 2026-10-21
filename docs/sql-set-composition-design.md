@@ -83,6 +83,16 @@ A clause's root frame is the set of candidate roots:
 - ids below `visits_for(len)`;
 - one row each, with every capture unbound.
 
+The selected-root input uses a read-only `roots(run, file, node)` virtual table.
+Each batch publishes immutable `Arc<[u32]>` slices through `RootInputs`.
+SQLite reads those slices directly, without individual root INSERT calls or a temporary B-tree.
+The loader normalizes unordered or duplicate roots to preserve set semantics.
+The small `runs` table represents all-root selections, while an empty selected slice remains empty.
+Session cleanup releases the published snapshot after both successful and failed batches.
+This implementation is unconditional and has no input-path switch.
+
+The implementation and measurements are in [the compiler investigation](sql-set-composition-compiler-spike.md#shared-root-input-slices-21-october-2026).
+
 ## Operator lowering
 
 `R(F)` means "rule R evaluated on frame F". Lowering starts from the compiled `AstMatcher` tree, so term order, `order_by_captures`, `Never` folding and grammar gaps stay with the existing front end.

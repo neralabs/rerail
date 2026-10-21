@@ -43,7 +43,7 @@ function recommendation(query) {
       && query.frameNext / Math.max(1, query.rows + query.changes) >= 100) return {
     key: "candidate-navigation", title: "Restrict candidates before relation joins", certainty: "observed work; proposed cause",
     reason: "Relation queries advance frame cursors at least 100 times per returned or changed row.",
-    change: "Inspect the representative plan. Push kind, ancestry, and sibling bounds into the candidate source before frame expansion.",
+    change: "Inspect anchor-first join order and planner cardinality estimates. Apply kind, ancestry, and sibling bounds before frame expansion.",
     source: "native/src/code_rule_dsl/sql/emit.rs; native/src/code_rule_dsl/sql/emit/guards.rs; native/src/code_rule_dsl/sql/nodes.rs",
     verify: "Reduce cursor advances and VM instructions on these queries, then compare unprofiled CPU with output parity.",
   };
@@ -54,10 +54,20 @@ function recommendation(query) {
     source: "native/src/code_rule_dsl/sql/skip.rs; native/src/code_rule_dsl/sql/emit.rs",
     verify: "Identify a proof for each skipped operation and compare native findings, unknown outcomes, and recursive reads.",
   };
-  if (query.kind === "sql" && flags.has("frame-index-rebuilds")) return {
+  if (query.kind === "sql" && /\bAS\s+MATERIALIZED\b/i.test(query.sql)
+      && /\bFROM\s+(?:pattern|fact)\s+WHERE\b/i.test(query.sql)) return {
+    key: "terminal-materialization", title: "Inspect terminal evaluation and materialization", certainty: "observed query shape; subcosts not isolated",
+    reason: "Batched terminal queries gather demand keys, materialize matches, and join results back to frames. Query CPU includes terminal evaluation.",
+    change: "Separate terminal evaluation from SQLite bookkeeping. Inspect repeated input scans, temporary key sets, and result rejoining before changing the batched terminal contract.",
+    source: "native/src/code_rule_dsl/sql/emit.rs: Emitter::pattern; native/src/code_rule_dsl/sql/emit/three.rs; native/src/code_rule_dsl/sql/emit/leaves.rs",
+    verify: "Compare VM instructions, frame visits, and unprofiled CPU. Preserve capture-dependent matching and complete native output parity.",
+  };
+  if (query.kind === "sql" && flags.has("frame-index-rebuilds")
+      && (number(query.frameIndexTimedBuilds) < number(query.frameIndexBuilds)
+        || number(query.frameIndexCpuNs) >= 0.1 * number(query.selfCpuNs))) return {
     key: "frame-index-rebuilds", title: "Investigate repeated frame index construction", certainty: "observed work; cost not isolated",
     reason: "Frame lookup indexes are built repeatedly. The recorded query time also includes matching and other work.",
-    change: "Inspect writes between probes and whether consumers can share an immutable indexed input. Measure index-build time before changing ownership.",
+    change: "Compare the measured index subcost with total query CPU before changing ownership. Older captures need a new run to measure this subcost.",
     source: "native/src/code_rule_dsl/sql/frames.rs: Frame::lookup",
     verify: "Compare index builds, indexed rows, memory, and unprofiled CPU. Do not equate the entire query cost with index construction.",
   };
@@ -95,6 +105,8 @@ function metrics(queries, measuredCpuNs) {
     returnedRows: total(queries, "rows"), changedRows: total(queries, "changes"),
     frameAdvances: total(queries, "frameNext"), frameColumnReads: total(queries, "frameColumns"),
     frameIndexBuilds: total(queries, "frameIndexBuilds"), frameIndexedRows: total(queries, "frameIndexedRows"),
+    frameIndexCpuMs: total(queries, "frameIndexTimedBuilds") ? ms(total(queries, "frameIndexCpuNs")) : null,
+    frameIndexTimedBuilds: total(queries, "frameIndexTimedBuilds"),
     queryIds: queries.map(query => query.id),
     representativeQueryIds: [...queries].sort((a, b) => b.selfCpuNs - a.selfCpuNs).slice(0, 3).map(query => query.id),
     contexts: [...new Set(queries.flatMap(query => query.contexts ?? []))],
@@ -142,6 +154,8 @@ export function actionableSummary(report) {
       operatorExclusiveCpuMs: ms(total(queries.filter(query => query.kind === "operator"), "selfCpuNs")),
       profiledApplyCpuMs: report.workload?.results?.sql?.apply?.cpuMs ?? null,
       nativeApplyCpuMs: report.workload?.results?.native?.apply?.cpuMs ?? null,
+      frameIndexCpuMs: total(sqlQueries, "frameIndexTimedBuilds") ? ms(total(sqlQueries, "frameIndexCpuNs")) : null,
+      frameIndexBuilds: total(sqlQueries, "frameIndexBuilds"), frameIndexTimedBuilds: total(sqlQueries, "frameIndexTimedBuilds"),
       interpretation: "Recorded spans do not partition apply CPU. Profiling, parsing, preparation outside operators, and report work contribute to the difference. Some setup spans precede apply. These costs are not an unprofiled speedup estimate.",
     },
     rootInput: { ...rootMetrics, publication, mode: publication.executions && !rootMetrics.executions ? "virtual-slices" : rootMetrics.executions ? "per-row-inserts" : "not-observed", prioritized: rootMetrics.cpuMs >= minimumCpuMs && rootMetrics.measuredCpuPercent >= minimumShare, sqlExecutionPercent: percent(rootMetrics.executions, sqlExecutions),
@@ -175,6 +189,9 @@ export function summaryMarkdown(report) {
     "", summary.budget.interpretation, "", "## Where recorded CPU goes", "",
     "| Work | CPU ms | Recorded CPU | Executions |", "|---|---:|---:|---:|"];
   for (const cost of summary.costBreakdown) lines.push(`| ${cost.label} | ${fmt(cost.cpuMs)} | ${fmt(cost.measuredCpuPercent)}% | ${fmt(cost.executions)} |`);
+  lines.push("", summary.budget.frameIndexCpuMs === null
+    ? "Frame index construction was not timed in this capture. Re-run with the current profiler to isolate this cost."
+    : `Frame index construction: **${fmt(summary.budget.frameIndexCpuMs)} ms** across ${fmt(summary.budget.frameIndexTimedBuilds)} timed builds (${fmt(summary.budget.frameIndexBuilds)} total). This subcost includes scan-order preparation on lookup cache misses and is already included in SQL CPU.`);
   lines.push("", "## Priority actions", "", summary.interpretation);
   if (!summary.actions.length) lines.push("", "No action group reaches both 10 ms and 1% of recorded CPU. Use a larger representative capture before drawing a conclusion.");
   for (const action of summary.actions) {
@@ -182,6 +199,7 @@ export function summaryMarkdown(report) {
       `**${fmt(action.cpuMs)} ms (${fmt(action.measuredCpuPercent)}% of recorded CPU)** across ${fmt(action.executions)} executions.`, "",
       `Evidence: ${action.certainty}. ${action.reason}`, "",
       `Counters: ${fmt(action.vmSteps)} VM instructions, ${fmt(action.frameAdvances)} frame advances, ${fmt(action.frameIndexBuilds)} frame index builds.`, "",
+      ...(action.frameIndexCpuMs === null ? [] : [`Measured index construction: ${fmt(action.frameIndexCpuMs)} ms across ${fmt(action.frameIndexTimedBuilds)} timed builds. This is included in the query cost above.`, ""]),
       `Next change: ${action.change}`, "", `Code: ${action.source}`, "",
       `Check: ${action.verify}`, "", `Queries: ${action.representativeQueryIds.map(id => `Q${id}`).join(", ")}.`, "",
       `Contexts: ${action.contexts.slice(0, 6).join(", ") || "session"}${action.contexts.length > 6 ? ` (+${action.contexts.length - 6} more)` : ""}.`);

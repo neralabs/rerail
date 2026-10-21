@@ -46,6 +46,7 @@ test("report preserves execution trace, counter order, plans, and exclusive CPU"
     assert.equal(report.contexts[0].selfCpuNs, 200);
     const q = report.queries.find(q => q.kind === "sql");
     assert.equal(q.frameScans, 1); assert.equal(q.frameIndexedRows, 7);
+    assert.equal(report.actionableSummary.budget.frameIndexCpuMs, null);
     assert.equal(q.vmSteps, 1000); assert.equal(q.autoIndexRows, 4);
     assert.ok(report.queries.find(q => q.kind === "operator").flags.some(f => f.code === "row-expansion"));
     const trace = JSON.parse(readFileSync(join(directory, "trace.json")));
@@ -59,7 +60,21 @@ test("report preserves execution trace, counter order, plans, and exclusive CPU"
     const stdout = execFileSync(process.execPath, [fileURLToPath(new URL("../../benchmark/sql-profile/summarize.mjs", import.meta.url)), directory], { encoding: "utf8" });
     assert.ok(stdout.includes("Recorded CPU"));
     assert.deepEqual(readFileSync(join(directory, "trace.json")), originalTrace);
+    // Mixed captures retain coverage instead of treating untimed legacy builds as free.
+    const events = readFileSync(join(raw, "profile-9-0.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+    events.push({ ...events[0], frame: [1,2,3,4,5,6,7,11,13] });
+    writeFileSync(join(raw, "profile-9-0.jsonl"), events.map(JSON.stringify).join("\n") + "\n");
     writeFileSync(join(raw, "profile-9-0.json"), JSON.stringify({ ...catalogue, events: 3 }));
+    const timed = await buildReport(raw, directory);
+    const timedQuery = timed.queries.find(q => q.kind === "sql");
+    assert.equal(timedQuery.frameIndexBuilds, 12);
+    assert.equal(timedQuery.frameIndexTimedBuilds, 6);
+    assert.equal(timedQuery.frameIndexCpuNs, 11);
+    assert.equal(timedQuery.frameIndexWallNs, 13);
+    assert.equal(timed.summary.selfCpuNs, 280); // Index CPU is a subcost, not additional CPU.
+    assert.equal(timed.actionableSummary.budget.frameIndexCpuMs, 11 / 1e6);
+    assert.equal(timed.actionableSummary.budget.frameIndexTimedBuilds, 6);
+    writeFileSync(join(raw, "profile-9-0.json"), JSON.stringify({ ...catalogue, events: 4 }));
     await assert.rejects(buildReport(raw, directory), /Incomplete trace/);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
@@ -96,6 +111,22 @@ test("shape grouping preserves literals and table relationships", () => {
   assert.notEqual(shape("SELECT a.k FROM f7_0 a JOIN f8_1 b ON a.k=b.k"), shape("SELECT a.k FROM f7_0 a JOIN f7_0 b ON a.k=b.k"));
   assert.notEqual(shape("SELECT 'f7_0,123'"), shape("SELECT 'f8_0,456'"));
   assert.ok(shape("SELECT 'FROM f7_0 WHERE n = 8', \"f7_0\" FROM f7_0").includes("'FROM f7_0 WHERE n = 8'"));
+});
+
+test("cheap measured indexes do not assign whole-query CPU to index construction", () => {
+  const summary = actionableSummary({ workload: {}, queries: [
+    query({ id: 1, sql: "WITH p AS MATERIALIZED (SELECT file, node FROM pattern WHERE term=1) SELECT * FROM p", selfCpuNs: 500_000_000,
+      frameIndexBuilds: 16, frameIndexTimedBuilds: 16, frameIndexCpuNs: 300_000, flags: [{ code: "frame-index-rebuilds" }] }),
+    query({ id: 2, sql: "SELECT * FROM f1_0 WHERE x=1", selfCpuNs: 100_000_000,
+      frameIndexBuilds: 16, frameIndexTimedBuilds: 16, frameIndexCpuNs: 200_000, flags: [{ code: "frame-index-rebuilds" }] }),
+    query({ id: 3, sql: "SELECT * FROM f2_0 WHERE y=1", selfCpuNs: 100_000_000,
+      frameIndexBuilds: 16, frameIndexTimedBuilds: 16, frameIndexCpuNs: 50_000_000, flags: [{ code: "frame-index-rebuilds" }] }),
+  ] });
+  assert.equal(summary.actions[0].key, "terminal-materialization");
+  assert.equal(summary.actions[0].frameIndexCpuMs, 0.3);
+  assert.deepEqual(summary.actions.find(a => a.key === "frame-index-rebuilds").queryIds, [3]);
+  assert.equal(summary.budget.measuredCpuMs, 700);
+  assert.equal(summary.budget.frameIndexCpuMs, 50.5);
 });
 
 test("unexpected explanation failures stay visible and native descriptors require no plan", () => {

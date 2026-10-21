@@ -8,8 +8,8 @@ export const thresholds = Object.freeze({ highVmPerRow: 1000, minimumVm: 100_000
   repeatedRuns: 100, smallCpuNs: 1_000_000, expansion: 10, expandedRows: 1000, indexBuilds: 10,
   frameAdvances: 100_000, repeatedScans: 100 });
 const fields = ["runs", "cpuNs", "wallNs", "selfCpuNs", "selfWallNs", "rows", "changes", "vmSteps", "fullscanSteps", "sorts", "autoIndexRows",
-  "frameScans", "frameLookups", "frameNext", "frameColumns", "frameInserts", "frameIndexBuilds", "frameIndexedRows"];
-const frameFields = fields.slice(11);
+  "frameScans", "frameLookups", "frameNext", "frameColumns", "frameInserts", "frameIndexBuilds", "frameIndexedRows", "frameIndexCpuNs", "frameIndexWallNs", "frameIndexTimedBuilds"];
+const frameFields = fields.slice(11, -1);
 const counterFields = ["vmSteps", "fullscanSteps", "sorts", "autoIndexRows"];
 const ms = ns => (ns / 1e6).toFixed(3);
 
@@ -78,6 +78,7 @@ export async function buildReport(rawDirectory, outputDirectory, workload = {}) 
         for (const key of fields.slice(1, 8)) query[key] += event[key] ?? 0;
         counterFields.forEach((key, i) => { query[key] += event.counters?.[i] ?? 0; });
         frameFields.forEach((key, i) => { query[key] += event.frame?.[i] ?? 0; });
+        if (event.frame?.length >= 9) query.frameIndexTimedBuilds += event.frame[5];
         if (event.kind === "operator" && !event.completed) query.incomplete++;
         const context = { ...(event.context ?? {}) };
         if (context.operator !== undefined) context.operator = local.get(context.operator)?.id ?? context.operator;
@@ -150,7 +151,7 @@ function detail(q){const d=el('detail');d.replaceChildren(text('h2','Q'+q.id+' �
 function render(){const filter=el('filter').value.toLowerCase();el('rows').replaceChildren();for(const q of [...report.queries].filter(q=>(!flagged||q.flags.length)&&JSON.stringify([q.sql,q.contexts,q.flags]).toLowerCase().includes(filter)).sort((a,b)=>direction*(a[sort]-b[sort]))){const r=document.createElement('tr');for(const value of ['Q'+q.id+' '+q.kind,ms(q.selfCpuNs),q.runs,q.rows+q.changes,q.vmSteps,q.flags.map(f=>f.code).join(', ')])r.append(text('td',value));r.onclick=()=>detail(q);el('rows').append(r);}}
 const a=report.actionableSummary,p=el('priorities'),fmt=n=>n.toLocaleString('en-US',{maximumFractionDigits:n>0&&n<1?3:1});
 p.append(text('p',a.nextStep),text('p',a.budget.interpretation),text('h2','Where recorded CPU goes'));
-const costs=document.createElement('table');for(const c of a.costBreakdown){const row=document.createElement('tr');for(const v of [c.label,fmt(c.cpuMs)+' ms',fmt(c.measuredCpuPercent)+'%',fmt(c.executions)+' executions'])row.append(text('td',v));costs.append(row);}p.append(costs,text('h2','Priority actions'),text('p',a.interpretation));
+const costs=document.createElement('table');for(const c of a.costBreakdown){const row=document.createElement('tr');for(const v of [c.label,fmt(c.cpuMs)+' ms',fmt(c.measuredCpuPercent)+'%',fmt(c.executions)+' executions'])row.append(text('td',v));costs.append(row);}p.append(costs,text('p',a.budget.frameIndexCpuMs===null?'Frame index construction was not timed in this capture. Re-run with the current profiler.':'Frame index construction: '+fmt(a.budget.frameIndexCpuMs)+' ms across '+fmt(a.budget.frameIndexTimedBuilds)+' timed builds ('+fmt(a.budget.frameIndexBuilds)+' total), including scan-order preparation on cache misses. Already included in SQL CPU.'),text('h2','Priority actions'),text('p',a.interpretation));
 if(!a.actions.length)p.append(text('p','No action group reaches both 10 ms and 1% of recorded CPU. Use a larger representative capture.'));
 for(const action of a.actions){const card=text('article','');card.className='action';card.append(text('h3',action.rank+'. '+action.title),text('p',fmt(action.cpuMs)+' ms · '+fmt(action.measuredCpuPercent)+'% of recorded CPU · '+fmt(action.executions)+' executions'),text('p','Evidence: '+action.certainty+'. '+action.reason),text('p','Next change: '+action.change),text('p','Code: '+action.source),text('p','Check: '+action.verify));for(const id of action.representativeQueryIds){const button=text('button','Q'+id);button.onclick=()=>detail(report.queries.find(q=>q.id===id));card.append(button);}p.append(card);}
 p.append(text('h2','Root-input calls'),text('p','Published '+fmt(a.rootInput.publication.returnedRows)+' candidate memberships in '+fmt(a.rootInput.publication.executions)+' batch operations ('+fmt(a.rootInput.publication.cpuMs)+' ms).'),text('p',fmt(a.rootInput.executions)+' calls · '+fmt(a.rootInput.sqlExecutionPercent)+'% of SQL executions · '+fmt(a.rootInput.measuredCpuPercent)+'% of recorded CPU'),text('p',a.rootInput.explanation),text('p','Next change: '+a.rootInput.nextChange));

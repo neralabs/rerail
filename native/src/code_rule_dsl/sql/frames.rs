@@ -908,10 +908,7 @@ impl Frame {
             return Ok(Rc::clone(rows));
         }
         #[cfg(any(test, feature = "unbounded-work"))]
-        {
-            super::profiling::frame(super::profiling::FrameEvent::IndexBuild, 1);
-            super::profiling::frame(super::profiling::FrameEvent::IndexedRows, self.len);
-        }
+        let _index_build = super::profiling::index_build(self.len);
         let mut rows: Vec<u32> = match self.scan_order()? {
             Some(order) => order.to_vec(),
             None => (0..self.len as u32).collect(),

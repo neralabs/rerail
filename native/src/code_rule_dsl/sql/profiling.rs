@@ -26,7 +26,7 @@ const STATUSES: [c_int; 4] = [
 ];
 
 thread_local! {
-    static FRAME: Cell<[u64; 7]> = const { Cell::new([0; 7]) };
+    static FRAME: Cell<[u64; 9]> = const { Cell::new([0; 9]) };
     static ACTIVE: Cell<usize> = const { Cell::new(0) };
 }
 
@@ -53,11 +53,36 @@ pub(super) fn frame(event: FrameEvent, count: usize) {
     }
 }
 
+/// Time only cache misses, including any scan-order preparation needed by the lookup.
+/// These spans are contained in SQL time; they must not be added to the CPU budget.
+pub(super) fn index_build(rows: usize) -> IndexBuild {
+    let started = (ACTIVE.get() != 0).then(Started::now);
+    frame(FrameEvent::IndexBuild, 1);
+    frame(FrameEvent::IndexedRows, rows);
+    IndexBuild(started)
+}
+
+pub(super) struct IndexBuild(Option<Started>);
+
+impl Drop for IndexBuild {
+    fn drop(&mut self) {
+        if let Some(started) = self.0 {
+            let elapsed = started.elapsed();
+            FRAME.with(|counter| {
+                let mut values = counter.get();
+                values[7] += elapsed.cpu;
+                values[8] += elapsed.wall;
+                counter.set(values);
+            });
+        }
+    }
+}
+
 struct Running {
     started: Started,
     start_ns: u64,
     counters: [i64; 4],
-    frame: [u64; 7],
+    frame: [u64; 9],
     changes: i64,
     rows: u64,
     query: usize,
@@ -582,6 +607,11 @@ mod tests {
         assert_eq!(selects[0]["frame"][FrameEvent::IndexBuild as usize], 1);
         assert_eq!(selects[0]["frame"][FrameEvent::IndexedRows as usize], 3);
         assert_eq!(selects[1]["frame"][FrameEvent::IndexBuild as usize], 0);
+        assert!(selects[0]["frame"][8].as_u64().unwrap() > 0);
+        assert_eq!(selects[1]["frame"][7], 0);
+        assert_eq!(selects[1]["frame"][8], 0);
+        assert!(selects[0]["frame"][7].as_u64().unwrap() <= selects[0]["cpuNs"].as_u64().unwrap());
+        assert!(selects[0]["frame"][8].as_u64().unwrap() <= selects[0]["wallNs"].as_u64().unwrap());
         assert!(
             selects[0]["frame"][FrameEvent::Column as usize]
                 .as_u64()
