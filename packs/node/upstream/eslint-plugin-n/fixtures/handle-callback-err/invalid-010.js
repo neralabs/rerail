@@ -1,1 +1,0 @@
-function test(err) {doSomethingHere(function(err){console.log(err);})}

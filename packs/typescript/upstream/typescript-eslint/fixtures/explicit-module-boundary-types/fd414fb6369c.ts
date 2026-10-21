@@ -1,1 +1,0 @@
-export const baz = arg => arg as const;

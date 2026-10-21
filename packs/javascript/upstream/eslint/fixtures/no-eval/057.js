@@ -1,1 +1,0 @@
-(window?.eval)('foo')

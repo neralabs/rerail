@@ -4,7 +4,9 @@ Every test input and oracle the repository's tests read, in one place: language 
 reports and values upstream tools record for them, `*.expected.json`, and the `generate_*` scripts that record each),
 the host tests' data and the pack validator's inputs. Nothing here is published as a package or shipped to users: no
 package's `files` includes this directory. A rule pack's own tool recordings live with the pack, in
-`packs/<id>/upstream/<tool>/` ([pack format](../docs/pack-format.md)); everything else is here.
+`packs/<id>/upstream/<tool>/` ([pack format](../docs/pack-format.md)), and are not in git: that pack test data is in
+S3, fetched by `npm run fixtures:pull` ([CONTRIBUTING.md](../CONTRIBUTING.md#pack-test-data)). Everything else is
+here, in git.
 
 Tests resolve this directory in one place per language: Rust through `native/build.rs` (the `fixtures_dir!` and
 `oracle!` macros of `native/src/code_rule_dsl/mod.rs` read what it found), TypeScript through `fixturesPath()` in

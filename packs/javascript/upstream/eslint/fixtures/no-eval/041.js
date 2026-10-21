@@ -1,1 +1,0 @@
-var EVAL = eval; EVAL('foo')

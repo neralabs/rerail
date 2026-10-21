@@ -1,1 +1,0 @@
-foo instanceof obj?.prop

@@ -11,7 +11,7 @@ structure review on PR #1 plus #25, the generated-file manifest.
 |---|---|
 | `src/engine/`, `src/hosts/<harness>/`, `src/<layer>/` | The TypeScript package, one directory per layer, each with an `index.ts` entry point |
 | `native/` | The Rust engine; it compiles only from here (#4) |
-| `packs/<id>/` | A rule pack: `pack.json`, `package.json`, `README.md`, `LICENSE`, `NOTICE`, `rules/` (shipped), `candidates/` (scored, never shipped), `upstream/<tool>/` (recordings), `licenses/` |
+| `packs/<id>/` | A rule pack: `pack.json`, `package.json`, `README.md`, `LICENSE`, `NOTICE`, `rules/` (shipped), `candidates/` (scored, never shipped), `upstream/<tool>/` (recordings; their test data is in S3, #3), `licenses/` |
 | `fixtures/<family>/<feature>/` | Engine and host test data; `<feature>` names an engine module (#10) |
 | `fixtures/packs/` | Pack-validator inputs |
 | `test/`, `integration/` | Unit and integration tests; helpers in `support/` |
@@ -59,7 +59,7 @@ Exemption `engine-test-inputs`: a rule document may be an engine or host test in
 belong in a pack. A benchmark or test that needs a pack's rule references the pack's document.
 Exemption `validator-inputs`: `fixtures/packs/**`, whose pack format puts rule documents in `rules/`.
 
-### 3. Fixture data outside `fixtures/` and `packs/*/upstream` — target 0
+### 3. Fixture data outside `fixtures/` and `packs/*/upstream`, or pack test data in git — target 0
 
 A file is fixture data when a directory in its path is `fixtures`/`__fixtures__`; it is a
 `*.expected.json` recording or `*.cases.json` case list; it is a code-rule document; it sits in a test
@@ -68,6 +68,12 @@ in `test/`/`integration/` with a fixture name. It may live only under `fixtures/
 Exemptions: `packs/<id>/candidates/**` (pack data), `gate-pins` (the port readiness gates' pinned inputs and workers:
 `conformance/port-readiness/*.json`, `conformance/recorders/port-readiness/runtimes/**` and the recorder's Python and PHP workers) and, for
 code-rule documents, `packs/<id>/rules/**`.
+
+No tracked file is pack test data either: a path `PACK_FIXTURE_PATTERNS` in `scripts/s3/pack-fixtures.mjs` matches
+(`packs/*/upstream/*/` `fixtures/**`, `tests/**`, `*.expected.json`, `cases.json`, `*.cases.json`,
+`fixtures.upstream-check.json`, `lizard-*.tsv`). That data lives in S3 (CONTRIBUTING.md, "Pack test data"). A pull
+request that adds or changes it tracks it with `git add -f` for review, and fails this metric until a maintainer runs
+`npm run fixtures:push`, which uploads it and untracks it.
 
 ### 4. Engine source roots — target 1 (`native/`)
 

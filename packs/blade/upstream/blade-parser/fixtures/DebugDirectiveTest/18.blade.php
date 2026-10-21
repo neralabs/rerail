@@ -1,1 +1,0 @@
-Lead @endComponentClass($arg) Trail

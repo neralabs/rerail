@@ -1,1 +1,0 @@
-/* globals parseInt:off */ parseInt(foo);

@@ -1,1 +1,0 @@
-const B = class { private constructor() {} } // allow: constructors

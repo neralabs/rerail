@@ -1,1 +1,0 @@
-var a, foo /* comment */ = object.foo;

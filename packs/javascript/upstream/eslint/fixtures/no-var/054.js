@@ -1,1 +1,0 @@
-function b() { if (something) { console.log(o); var o; return o; } }

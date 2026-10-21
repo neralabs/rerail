@@ -22,6 +22,8 @@ import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
 PACK = HERE.parent / "conformance.json"
+sys.path.insert(0, str(HERE.parents[2] / "scripts" / "s3"))
+import pack_fixtures  # noqa: E402
 
 TOOLCHAIN = "1.99.0"
 RUSTC_VERSION = "rustc 1.99.0 (b940084d7 2026-09-28)"
@@ -348,3 +350,4 @@ def write(path: pathlib.Path, source: dict, findings: list[dict]) -> None:
                       key=lambda f: (f["rule"], f["path"], f["line"], f["column"]))
     path.write_text(json.dumps({"tool": TOOL, "version": tool_version(), "source": source, "findings": findings},
                                indent=1, ensure_ascii=False) + "\n")
+    pack_fixtures.recording_written(path, source)

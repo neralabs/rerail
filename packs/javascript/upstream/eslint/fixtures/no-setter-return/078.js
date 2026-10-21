@@ -1,1 +1,0 @@
-Object.defineProperty(foo, { set: (val) => 1 })

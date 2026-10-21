@@ -40,7 +40,8 @@ packs/<id>/
 ├── divergences.json    declared disagreements with the tools, as today
 ├── upstream/
 │   └── <tool>/         the tool's copied tests (fixtures/), its recordings (*.expected.json), the recorder, and
-│                       UPSTREAM.md when Rerail wrote files for the tool to score (an authored corpus)
+│                       UPSTREAM.md when Rerail wrote files for the tool to score (an authored corpus); the copied
+│                       tests and recordings are pack test data, kept in S3, not git (below)
 └── candidates/         ports still being evaluated: scored and reported, never gated, never shipped
 ```
 
@@ -123,6 +124,13 @@ recordings from `upstream/` unless `conformance.json` sets `oracles`:
   pinned tool versions; tools and corpus checkouts live under `.rerail/{tools,corpora}/<id>/` (gitignored). Where a
   tool's tests state their expected findings (as markup in the test files), the recorder reads them instead of running the
   tool: the tool's own test suite requires it to report exactly those.
+- Pack test data: the tool's test cases (`fixtures/`, `tests/`, case lists such as `cases.json` and `*.cases.json`,
+  `fixtures.upstream-check.json`, `lizard-*.tsv`) and its recordings (`*.expected.json`) are not in git. They live in
+  S3, under `PACK_FIXTURE_PATTERNS` (`scripts/s3/pack-fixtures.mjs`); `npm run fixtures:pull` fetches them, and every
+  consumer (checks 4 and 6, the conformance runner, the recorders, the Rust tests) says to run it when they are absent.
+  A pull request that adds or changes them checks them in with `git add -f`; a maintainer moves them to S3 with
+  `npm run fixtures:push` before merge ([CONTRIBUTING.md](../CONTRIBUTING.md#pack-test-data)). `gates.yaml`,
+  `goldens.tsv`, `recording.lock`, `UPSTREAM.md` and the recorders stay in git.
 - `upstream/<tool>/protected-identifiers.json` (optional, ECMA family): opts the pack into the identifier-rename gate,
   `test/conformance/identifier-rename.test.ts`, which scores every shipped port again on the fixtures with each
   user-chosen identifier renamed and fails when a score moves. It maps fixture paths or directories to the names and
@@ -292,7 +300,8 @@ Precisely:
    are Rerail's. A file Rerail wrote for the tool to score (an authored corpus, such as `packs/complexity/`'s lizard
    corpus) is listed instead in the tool's own `upstream/<tool>/UPSTREAM.md`, with the same table rows: it is Rerail's,
    so it adds no licence to `licenses/` or to the package's `license`. That record may list only files under its own
-   `upstream/<tool>/`. Every listed file must exist, every recorded licence must be on the repository allowlist
+   `upstream/<tool>/`. Every listed file must exist (a checkout without the pack's test data fails once per record,
+   saying to run `npm run fixtures:pull`), every recorded licence must be on the repository allowlist
    (`scripts/check/licence-allowlist.json`), and the pack needs a `LICENSE`. An `UPSTREAM.md` may declare upstream
    paths nothing is copied from, one per line as ``- Not copied: `<upstream path prefix>` — <project>, <SPDX id>``
    (an upstream's material derived from a copyleft project, such as Ruff's fixtures for its pylint ports); a row whose

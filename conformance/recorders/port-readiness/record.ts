@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
+import { missingPackFixture } from "../../../scripts/s3/pack-fixtures.mjs";
 
 import { buildCorpus, buildRerailCorpora, conformancePaths, CORPUS_TASKS, failedTasksMessage, readRerailCorpora, wantedKey, wantedPlaces, type CorpusFile, type RerailCorpus, type Wanted } from "../../port-readiness/corpus.js";
 import { readGoldens } from "../../port-readiness/goldens.js";
@@ -364,6 +365,11 @@ async function goldenCorpus(directory: string, cacheRoot: string, inCorpus: (pat
 export async function recordToolPack(options: RecordOptions): Promise<Recorded> {
   const { root, pack: packId, tool, cacheRoot, runner } = options;
   const manifest = readGatesManifest(root, packId, tool);
+  // A tool-pack recorded before (it has a lock) keeps its case sources in S3, not git: over a checkout that lacks them
+  // the recorder would take every source for new and copy them all again.
+  const directory = toolPackDirectory(root, packId, tool);
+  const caseSources = join(root, "packs", packId, "upstream", tool, "fixtures");
+  if (existsSync(join(directory, RECORDING_LOCK)) && !existsSync(caseSources)) throw new Error(missingPackFixture(caseSources));
   const layout = CASE_LAYOUTS[manifest.adapter];
   const names = await conformanceRuleNames(root, packId, tool);
   const factory = options.adapters?.[manifest.adapter] ?? LIVE_ADAPTERS[manifest.adapter];
@@ -379,7 +385,7 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
     if (!fixtureBytes.has(fixture)) fixtureBytes.set(fixture, upstreamBytes(fixture));
     return fixtureBytes.get(fixture);
   };
-  const committed = committedSources(toolPackDirectory(root, packId, tool));
+  const committed = committedSources(directory);
   const notCopied = notCopiedPrefixes(root, packId);
 
   const nameSets: GatesRecording["nameSets"] = {};
@@ -731,7 +737,8 @@ export interface WrittenRecording extends RecordingDiff {
  * Write the recording into the local cache, the `recording.lock` that names it, the gzipped assets a trusted job
  * uploads, and the missing case sources; list the copies in UPSTREAM.md.
  *
- * The lock, the copied case sources and UPSTREAM.md are committed; the recordings are not. They go to the cache the
+ * The lock and UPSTREAM.md are committed; the copied case sources are pack test data, which live in S3 and reach a pull
+ * request with `git add -f` (CONTRIBUTING.md, "Pack test data"); the recordings are neither. They go to the cache the
  * gates read, so iterating locally needs no release and no network: record, then run the gates, and they read what was
  * just recorded because the lock names it.
  */

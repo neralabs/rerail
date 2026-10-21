@@ -27,6 +27,7 @@ import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { assertCommit, assertPortableCase, corpusFiles, lint, pinnedRequire, writeRecording } from "../../../../conformance/recorders/eslint-record.mjs";
+import { packFixturesWritten, requirePackFixture } from "../../../../scripts/s3/pack-fixtures.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /** The pack directory, packs/next/. */
@@ -258,6 +259,7 @@ async function recordFixtures() {
     if (own !== entry.errors) mismatches.push({ path: entry.path, expected: entry.errors, recorded: own });
   }
   writeFileSync(join(HERE, "fixtures.cases.json"), `${JSON.stringify({ cases: written.map(({ rule, kind, index, path, errors }) => ({ rule, kind, index, path, errors, dropped: dropped.has(path) })), mismatches }, null, 1)}\n`);
+  console.log(packFixturesWritten([join(HERE, "fixtures.cases.json")]));
   console.log(`fixtures: ${written.length} cases extracted, ${dropped.size} dropped, ${findings.length} findings, ${mismatches.length} mismatches vs the tests`);
   for (const mismatch of mismatches) console.log(`  mismatch ${mismatch.path}: test expects ${mismatch.expected}, plugin reports ${mismatch.recorded}`);
 }
@@ -286,7 +288,7 @@ function writeLicenses() {
   const directory = join(PACK, "licenses", "next.js");
   mkdirSync(directory, { recursive: true });
   copyFileSync(join(upstream, "license.md"), join(directory, "LICENSE"));
-  const { cases } = JSON.parse(readFileSync(join(HERE, "fixtures.cases.json"), "utf8"));
+  const { cases } = JSON.parse(readFileSync(requirePackFixture(join(HERE, "fixtures.cases.json")), "utf8"));
   const rows = [
     ...RULES.map(rule => `| \`upstream/${TOOL}/tests/${rule}.test.ts\` | \`${UPSTREAM_TESTS}/${rule}.test.ts\` | verbatim |`),
     ...cases

@@ -1,1 +1,0 @@
-class A extends B {static override set foo(value: string) {}} // allow: generatorMethods

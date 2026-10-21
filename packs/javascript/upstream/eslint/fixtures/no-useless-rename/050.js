@@ -1,1 +1,0 @@
-var foo = 0;export {foo as foo};

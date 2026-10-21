@@ -1,1 +1,0 @@
-var console = process.getBuiltinModule('console'); console.log(10)

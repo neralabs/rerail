@@ -1,1 +1,0 @@
-declare class A { constructor(options: any); }

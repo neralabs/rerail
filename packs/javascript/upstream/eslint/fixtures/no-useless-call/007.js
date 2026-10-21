@@ -1,1 +1,0 @@
-obj.foo.apply(otherObj, [1, 2]);

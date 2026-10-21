@@ -1,1 +1,0 @@
-@endcan($some, $args)

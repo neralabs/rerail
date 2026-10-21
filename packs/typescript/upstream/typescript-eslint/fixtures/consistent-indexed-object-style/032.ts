@@ -1,5 +1,0 @@
-
-type Foo = {
-  bar: string;
-};
-    

@@ -1,1 +1,0 @@
-type T /* comment */={ x: number; };

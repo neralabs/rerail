@@ -1,1 +1,0 @@
-<template><section v-html/></template>

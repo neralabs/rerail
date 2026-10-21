@@ -35,6 +35,7 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { packFixturesWritten, recordingWritten } from "../../../../scripts/s3/pack-fixtures.mjs";
 import { corporaDirectory, load, toolsDirectory, TOOLS } from "../../../../fixtures/vue/tools.mjs";
 import { AUTHORED } from "./authored.mjs";
 
@@ -115,6 +116,7 @@ function write(file, source, findings) {
   };
   writeFileSync(join(HERE, file), `${JSON.stringify(out, null, 1)}\n`);
   console.log(`wrote ${file}: ${out.findings.length} findings`);
+  console.log(recordingWritten(join(HERE, file), source.kind));
 }
 
 // --- fixtures ----------------------------------------------------------------------------------------------------
@@ -230,6 +232,7 @@ function fixtures(checkout) {
   const findings = files.flatMap(path => lint(readFileSync(join(root, path), "utf8"), path).findings);
   writeAuthoredRecord(authored);
   writeFileSync(join(HERE, "cases.json"), `${JSON.stringify({ origin: ORIGIN, cases }, null, 1)}\n`);
+  console.log(packFixturesWritten([join(HERE, "cases.json")]));
   writeLicense(checkout, cases.filter(c => c.kept));
   write("fixtures.expected.json", { kind: "fixtures", origin: ORIGIN, rules: ruleIds, files }, findings);
   const kept = cases.filter(c => c.kept).length;

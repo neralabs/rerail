@@ -1,1 +1,0 @@
-type AllowedVoid = Allowed<void>;

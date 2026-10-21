@@ -30,7 +30,7 @@ npx vitest run test/engine/catalog/packs.test.ts -t "pack vue"
 | `candidates/rules/` | The 24 candidate code-rule documents (`rerail.policy/v1`), scored but never shipped |
 | `conformance.json` | Each port's upstream rule, how findings compare, and the capabilities it exercises; the pinned parser stack and the pinned corpora |
 | `divergences.json` | Declared disagreements with eslint-plugin-vue (none) |
-| `upstream/eslint-plugin-vue/` | The copied RuleTester cases (`fixtures/`), the cases Rerail wrote (`authored.mjs`, written as `fixtures/<rule>/rerail-*.vue` and listed in `UPSTREAM.md`), each case's fate (`cases.json`) and the recordings (`fixtures.expected.json`, `corpus-<name>.expected.json`) |
+| `upstream/eslint-plugin-vue/` | The copied RuleTester cases (`fixtures/`), the cases Rerail wrote (`authored.mjs`, written as `fixtures/<rule>/rerail-*.vue` and listed in `UPSTREAM.md`), each case's fate (`cases.json`) and the recordings (`fixtures.expected.json`, `corpus-<name>.expected.json`). The cases, `cases.json` and the recordings are pack test data, in S3: `npm run fixtures:pull` |
 | `licenses/eslint-plugin-vue/` | eslint-plugin-vue's licence and `UPSTREAM.md`, listing every copied file |
 
 ## Rule details

@@ -8,6 +8,7 @@ import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, matchesGlob, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { recordingWritten } from "../../scripts/s3/pack-fixtures.mjs";
 
 export const REPOSITORY = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
@@ -165,6 +166,7 @@ export function writeRecording(path, tool, version, source, findings) {
   );
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify({ tool, version, source, findings: sorted }, null, 1)}\n`);
+  console.log(recordingWritten(path, source.kind));
 }
 
 /**

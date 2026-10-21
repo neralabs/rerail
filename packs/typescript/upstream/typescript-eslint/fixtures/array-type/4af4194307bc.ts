@@ -1,1 +1,0 @@
-type fooUnion = Array<string | number | boolean>;

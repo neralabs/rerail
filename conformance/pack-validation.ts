@@ -26,6 +26,7 @@ import {
 import { PACK_LIST_MODULE_PATH, PACKS_DIRECTORY, renderPackListModule } from "../scripts/generate/packs/pack-list.js";
 import { CONFORMANCE_FILE, defaultCorpusRoot, documentPath, loadPack, packSchema, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
 import { reportFailures, runPack } from "./languages/runner.js";
+import { packFixtureAbsence } from "../scripts/s3/pack-fixtures.mjs";
 import { capabilitiesJson } from "./engine.js";
 import { BIOME_SAME_SOURCES } from "./biome-same-sources.generated.js";
 
@@ -403,12 +404,33 @@ function readLicences(directory: string): Licences {
 }
 
 /**
+ * The failures for listed files (file, the UPSTREAM.md listing it) the pack directory lacks. Pack test data lives in S3,
+ * not git, so a checkout without it lacks every listed copy: one failure per record says to pull it.
+ */
+function missingListed(directory: string, listed: Iterable<readonly [file: string, record: string]>): string[] {
+  const failures: string[] = [];
+  const absent = new Map<string, string[]>();
+  for (const [file, record] of listed) {
+    const path = join(directory, file);
+    if (existsSync(path)) continue;
+    if (packFixtureAbsence(path) !== undefined) absent.set(record, [...(absent.get(record) ?? []), file]);
+    else failures.push(`${record} lists ${file}, which does not exist`);
+  }
+  for (const [record, files] of absent) {
+    const more = files.length === 1 ? "" : ` (and ${files.length - 1} more listed file(s))`;
+    failures.push(`${record} lists ${files[0]}${more}: ${packFixtureAbsence(join(directory, files[0]!))}`);
+  }
+  return failures;
+}
+
+/**
  * Files Rerail wrote under `upstream/<tool>/` subdirectories (a corpus authored for the tool to score), as the tool's own
  * `upstream/<tool>/UPSTREAM.md` lists them, pack-relative. A record may list only its tool's files.
  */
 function readAuthored(directory: string): { authored: Set<string>; failures: string[] } {
   const authored = new Set<string>();
   const failures: string[] = [];
+  const missing: [file: string, record: string][] = [];
   const upstream = join(directory, "upstream");
   if (!existsSync(upstream)) return { authored, failures };
   for (const tool of readdirSync(upstream, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name).sort(compareDeterministicStrings)) {
@@ -418,10 +440,11 @@ function readAuthored(directory: string): { authored: Set<string>; failures: str
       const file = UPSTREAM_ROW.exec(line)?.[1];
       if (file === undefined) continue;
       if (!file.startsWith(`upstream/${tool}/`)) failures.push(`${record} lists ${file}, which is not under upstream/${tool}/`);
-      else if (!existsSync(join(directory, file))) failures.push(`${record} lists ${file}, which does not exist`);
+      else if (!existsSync(join(directory, file))) missing.push([file, record]);
       else authored.add(file);
     }
   }
+  failures.push(...missingListed(directory, missing));
   return { authored, failures };
 }
 
@@ -718,9 +741,7 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     if (file.split("/").length > 3 && !licences.listed.has(file) && !authored.has(file))
       fail("licences", `${file} is under upstream/<tool>/ but neither licenses/*/UPSTREAM.md (copied) nor its tool's UPSTREAM.md (Rerail's) lists it`);
   }
-  for (const [file, record] of licences.listed) {
-    if (!existsSync(join(directory, file))) fail("licences", `${record} lists ${file}, which does not exist`);
-  }
+  for (const failure of missingListed(directory, licences.listed)) fail("licences", failure);
 
   // Check 7: manifest. Set-up can recommend the pack: its match is there, and core's pack list names it.
   for (const failure of manifestFailures(directory, packJson, options.listed ?? resolve(dirname(directory)) === PACKS_DIRECTORY)) fail("manifest", failure);

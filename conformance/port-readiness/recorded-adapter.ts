@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { extname, join, posix, resolve } from "node:path";
+import { isPackFixture, packFixtureAbsence, requirePackFixture } from "../../scripts/s3/pack-fixtures.mjs";
 
 import { checkoutPinned, type CorpusFile } from "./corpus.js";
 import { fileTypeOf } from "./engine.js";
@@ -288,6 +289,8 @@ export function toolPackChecks(
     for (const testCase of rule.cases) if (testCase.file !== null) recordedDigests.set(testCase.file, (recordedDigests.get(testCase.file) ?? new Set()).add(testCase.sha256));
   }
   const sourceMismatches: string[] = [];
+  // Case sources are pack test data, in S3: a checkout without them is told to pull them, not to re-record.
+  const unpulled: string[] = [];
   // A recording uploaded by hand before cases carried a sha256 pins its case sources as one digest instead
   // (liftedCaseSources, by the lock's asset name); any other recording without a case's sha256 is stale.
   const undigested: [file: string, actual: string][] = [];
@@ -296,6 +299,7 @@ export function toolPackChecks(
     const path = join(directory, file);
     const actual = existsSync(path) ? sha256(readFileSync(path)) : null;
     if (digests.size > 1) sourceMismatches.push(`${file} has cases that disagree about its sha256`);
+    else if (actual === null && packFixtureAbsence(path) !== undefined) unpulled.push(path);
     else if (actual === null) sourceMismatches.push(`${file} is not committed`);
     else if (recorded === undefined) undigested.push([file, actual]);
     else if (actual !== recorded) sourceMismatches.push(`${file} is ${actual.slice(0, 12)}, recorded ${recorded.slice(0, 12)}`);
@@ -307,7 +311,8 @@ export function toolPackChecks(
     sourceMismatches.push(`the ${undigested.length} case source(s) ${liftedAsset} records no sha256 for are ${caseSourcesDigest(undigested).slice(0, 12)} together, pinned ${pinned!.slice(0, 12)} in recording/store.ts's LIFTED_CASE_SOURCES (git log -p -- packs/${pack}/upstream/${tool}/fixtures shows what changed)`);
   }
   const liftedNote = undigested.length === 0 ? "" : ` (${undigested.length} of them pinned together: ${RECORDING_FILE} was uploaded by hand before cases carried a sha256)`;
-  checks.push({ id: "case-sources", ok: sourceMismatches.length === 0, detail: sourceMismatches.length === 0 ? `${recordedDigests.size} committed case source(s) are the bytes upstream's answers were recorded on${liftedNote}` : `${sourceMismatches.length} case source(s) differ: ${sourceMismatches.slice(0, 3).join("; ")}: ${stale}` });
+  if (unpulled.length > 0) sourceMismatches.unshift(`${unpulled.length} case source(s) are missing, such as ${packFixtureAbsence(unpulled[0]!)}`);
+  checks.push({ id: "case-sources", ok: sourceMismatches.length === 0, detail: unpulled.length > 0 ? sourceMismatches[0]! : sourceMismatches.length === 0 ? `${recordedDigests.size} committed case source(s) are the bytes upstream's answers were recorded on${liftedNote}` : `${sourceMismatches.length} case source(s) differ: ${sourceMismatches.slice(0, 3).join("; ")}: ${stale}` });
 
   // A narrowing may only leave types out: a type upstream does not lint would hold the ports to nothing upstream checks.
   const inScope = manifest.rerail.in_scope;
@@ -352,7 +357,8 @@ export function createRecordedAdapter(
   const source = (file: string): string => {
     let text = sources.get(file);
     if (text === undefined) {
-      text = decodeSource(readFileSync(join(directory, file)));
+      const path = join(directory, file);
+      text = decodeSource(readFileSync(isPackFixture(path) ? requirePackFixture(path) : path));
       sources.set(file, text);
     }
     return text;

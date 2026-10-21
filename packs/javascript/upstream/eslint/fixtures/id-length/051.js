@@ -1,1 +1,0 @@
-var obj = {}; obj.a = 1; obj.bc = 2;

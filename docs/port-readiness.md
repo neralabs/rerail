@@ -220,8 +220,12 @@ packs/<id>/upstream/<tool>/
 ├── gates.yaml          upstream pins, recommended configurations, known parser gaps, real-code gaps, and the team's decisions for the tool
 ├── recording.lock      the manifest: which recording this commit's rules are judged against (conformance/port-readiness/recording/store.ts)
 ├── goldens.tsv         the rules' goldens, imported from NRV
-└── fixtures/           upstream's test files, copied (listed in licenses/<project>/UPSTREAM.md)
+└── fixtures/           upstream's test files, copied (listed in licenses/<project>/UPSTREAM.md): pack test data, in S3
 ```
+
+`fixtures/` is pack test data: it is not in git but in S3, fetched by `npm run fixtures:pull`
+([CONTRIBUTING.md](../CONTRIBUTING.md#pack-test-data)). Without it the `case-sources` check fails, and the recorder
+refuses to record a tool-pack that has a lock, both saying to pull it.
 
 ### The recordings are not in the tree
 
@@ -293,8 +297,9 @@ react/eslint-plugin-react and react/eslint-plugin-react-hooks before their locks
 
 `port-readiness:record` writes the recording into the local cache, the `recording.lock` beside it, the gzipped assets to
 upload under `.rerail/port-readiness/recordings/upload/`, and any case source the recording names that the tool-pack's
-`fixtures/` lacks, with its row in `UPSTREAM.md`. The lock, the case sources and `UPSTREAM.md` are committed; the
-recordings are not. Record again after adding a port,
+`fixtures/` lacks, with its row in `UPSTREAM.md`. The lock and `UPSTREAM.md` are committed; the new case sources are
+pack test data, which a pull request adds with `git add -f` (the recorder prints the command) and a maintainer moves to
+S3 before merge; the recordings are neither. Record again after adding a port,
 changing a tool's pins, adding a corpus or importing a golden whose file `corpus.json` does not answer; it needs `uv`, the network, and the pinned upstream runtimes
 (`conformance/recorders/port-readiness/runtimes/`):
 

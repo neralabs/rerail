@@ -1,6 +1,0 @@
-
-function g(bar, baz) {
-  return 2;
-}
-g();
-      

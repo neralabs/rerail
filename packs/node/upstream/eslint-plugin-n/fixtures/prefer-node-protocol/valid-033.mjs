@@ -1,1 +1,0 @@
-const fs = globalThis.process.getBuiltinModule("node:fs");

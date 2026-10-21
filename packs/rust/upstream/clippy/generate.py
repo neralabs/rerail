@@ -672,6 +672,7 @@ def fixtures(checkout: pathlib.Path, scratch: pathlib.Path) -> None:
     (HERE / "fixtures.upstream-check.json").write_text(json.dumps(
         {"clippy": common.CLIPPY_VERSION, "origin": common.CLIPPY_ORIGIN,
          "differences": check}, indent=1, sort_keys=True) + "\n")
+    common.pack_fixtures.written(HERE / "fixtures.upstream-check.json")
     print(f"{len(tests)} tests ({len(probes)} ours), {len(copies)} files copied, {len(findings)} findings; per lint:")
     for lint, count in sorted(Counter(key[0] for key in findings).items()):
         print(f"  {lint}: {count}")

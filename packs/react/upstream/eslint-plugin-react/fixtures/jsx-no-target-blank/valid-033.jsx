@@ -1,1 +1,0 @@
-<a {...someObject} rel="noreferrer"></a>

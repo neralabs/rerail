@@ -1,1 +1,0 @@
-({}.isPrototypeOf.apply(foo, ['bar']))

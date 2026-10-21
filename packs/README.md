@@ -16,12 +16,15 @@ the core package at the repository root.
   planned one, or one that ports another tool's rules.
 
 ```sh
+npm run fixtures:pull                                               # the packs' test data, from S3 (CONTRIBUTING.md)
 npx vitest run test/engine/catalog/packs.test.ts                    # every pack: checks 1 to 6 and each rule's status
 npx vitest run test/engine/catalog/packs.test.ts -t "pack python"   # one pack
 ```
 
 A pull request that changes a pack adds a changeset (`npx changeset`); see
 [versioning](../docs/pack-format.md#versioning-and-release). Pack versions and changelogs are never edited by hand.
+It also checks in the pack test data it adds or changes, with `git add -f`; a maintainer moves that to S3 before
+merge ([CONTRIBUTING.md](../CONTRIBUTING.md#adding-or-changing-a-pack)).
 
 ## Pack layout
 
@@ -34,7 +37,7 @@ Each pack lives in `packs/<id>/`:
 | `rules/<id>.json` | Code-rule documents (`rerail.policy/v1`), each named for its rule id ([rule ids](../docs/pack-format.md#packjson)) | yes |
 | `LICENSE`, `NOTICE`, `README.md` | The pack's licence, notice and description | yes |
 | `licenses/<project>/` | Upstream licence, verbatim, and `UPSTREAM.md` listing every copied or adapted file | yes |
-| `conformance.json`, `divergences.json`, `upstream/`, `candidates/` | For ported rules: the tools' recorded findings, their copied tests, declared divergences, ports under evaluation (scored and reported, never gated) | no |
+| `conformance.json`, `divergences.json`, `upstream/`, `candidates/` | For ported rules: the tools' recorded findings, their copied tests, declared divergences, ports under evaluation (scored and reported, never gated). The recorded findings and copied tests under `upstream/<tool>/` are pack test data, kept in S3, not git: `npm run fixtures:pull` fetches them ([CONTRIBUTING.md](../CONTRIBUTING.md#pack-test-data)) | no |
 
 A pack is data only: it never imports the core engine. Core runs its rules, and the repository's tests validate
 every pack against the contract. A pack may hold rules for a language core lists as `planned`: they are stored

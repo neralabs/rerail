@@ -19,6 +19,8 @@ import { shardName, type Shard } from "./shard.js";
  */
 export const GATE_CODE = [
   "conformance/port-readiness",
+  // The pack test data helper the adapters read case sources through (and name absent ones by).
+  "scripts/s3/pack-fixtures.mjs",
   ":(exclude)conformance/port-readiness/summary.ts",
   ":(exclude)conformance/port-readiness/comment.ts",
   ":(exclude)conformance/port-readiness/README.md",

@@ -1,1 +1,0 @@
-(obj?.aaa).foo = function bar() {};

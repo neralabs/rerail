@@ -1,1 +1,0 @@
-const module = (function(): { [key: string]: any } { return {}; }());

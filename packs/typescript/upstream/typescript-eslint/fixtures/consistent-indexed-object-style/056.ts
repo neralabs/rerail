@@ -1,1 +1,0 @@
-type Foo = Generic<{ readonly [key: string]: any }>;
