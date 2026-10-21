@@ -3,7 +3,8 @@
 use super::rows::{hash_params, intern_hash};
 use super::{
     CODEC_ZSTD, CandidateCatalogIdentity, CandidateClause, ContentStore, DirectoryReuse, HashKey,
-    SourceId, StoreError, StoreResult, StoredLocalResult, WorkspaceCompletion, WorkspaceId,
+    SourceId, StoreError, StoreResult, StoredCompletion, StoredLocalResult, StoredLocalResults,
+    WorkspaceCompletion, WorkspaceId,
 };
 use rusqlite::{OptionalExtension, params};
 use std::collections::{HashMap, HashSet};
@@ -13,7 +14,7 @@ use std::sync::Arc;
 pub(super) struct LocalResultCache {
     byte_limit: usize,
     used_bytes: usize,
-    entries: HashMap<(HashKey, HashKey, HashKey), Arc<Vec<StoredLocalResult>>>,
+    entries: HashMap<(HashKey, HashKey, HashKey), Arc<StoredLocalResults>>,
 }
 
 impl LocalResultCache {
@@ -35,7 +36,7 @@ impl LocalResultCache {
         catalog: HashKey,
         source: HashKey,
         context: HashKey,
-    ) -> Option<Arc<Vec<StoredLocalResult>>> {
+    ) -> Option<Arc<StoredLocalResults>> {
         self.entries.get(&(catalog, source, context)).cloned()
     }
 
@@ -44,12 +45,14 @@ impl LocalResultCache {
         catalog: HashKey,
         source: HashKey,
         context: HashKey,
-        results: Vec<StoredLocalResult>,
-    ) -> Arc<Vec<StoredLocalResult>> {
+        results: StoredLocalResults,
+    ) -> Arc<StoredLocalResults> {
         let bytes = results
+            .results
             .iter()
             .map(|result| result.bytes.len() + result.candidate.clause.len())
-            .sum::<usize>();
+            .sum::<usize>()
+            + results.completions.len() * std::mem::size_of::<StoredCompletion>();
         if self.used_bytes.saturating_add(bytes) > self.byte_limit {
             self.entries.clear();
             self.used_bytes = 0;
@@ -70,14 +73,15 @@ impl LocalResultCache {
 }
 
 impl ContentStore {
-    #[allow(clippy::type_complexity)]
+    /// What the store holds for each `(source, context)` key under `catalog`: its result rows and
+    /// its completion words. A key the store holds nothing for is absent.
     pub fn local_check_results_by_key(
         &self,
         keys: &[(HashKey, HashKey)],
         catalog: CandidateCatalogIdentity,
-    ) -> StoreResult<HashMap<(HashKey, HashKey), Arc<Vec<StoredLocalResult>>>> {
+    ) -> StoreResult<HashMap<(HashKey, HashKey), Arc<StoredLocalResults>>> {
         let catalog_key = catalog.key();
-        let mut results = HashMap::<(HashKey, HashKey), Arc<Vec<StoredLocalResult>>>::new();
+        let mut results = HashMap::<(HashKey, HashKey), Arc<StoredLocalResults>>::new();
         let mut missing = Vec::new();
         {
             let cache = self
@@ -98,59 +102,64 @@ impl ContentStore {
         if missing.is_empty() {
             return Ok(results);
         }
-        let mut loaded = HashMap::<(HashKey, HashKey), Vec<StoredLocalResult>>::new();
+        let mut loaded = HashMap::<(HashKey, HashKey), StoredLocalResults>::new();
         let connection = self
             .connection
             .lock()
             .expect("content store mutex poisoned");
+        let key = |row: &rusqlite::Row<'_>| -> rusqlite::Result<(HashKey, HashKey)> {
+            Ok((
+                HashKey {
+                    algorithm: row.get(0)?,
+                    lanes: [row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?],
+                },
+                HashKey {
+                    algorithm: row.get(5)?,
+                    lanes: [row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?],
+                },
+            ))
+        };
         for chunk in missing.chunks(500) {
-            let mut sql = String::from(
+            let mut requested = String::from(
                 "WITH requested(source_algorithm,source_lane0,source_lane1,source_lane2,source_lane3,\
                  context_algorithm,context_lane0,context_lane1,context_lane2,context_lane3) AS (VALUES ",
             );
             let mut values = Vec::with_capacity(chunk.len() * 10 + 5);
             for (index, (source, context)) in chunk.iter().enumerate() {
                 if index != 0 {
-                    sql.push(',');
+                    requested.push(',');
                 }
-                sql.push_str("(?,?,?,?,?,?,?,?,?,?)");
+                requested.push_str("(?,?,?,?,?,?,?,?,?,?)");
                 values.extend(hash_params(*source).map(rusqlite::types::Value::Integer));
                 values.extend(hash_params(*context).map(rusqlite::types::Value::Integer));
             }
-            sql.push_str(
-                ") SELECT q.source_algorithm,q.source_lane0,q.source_lane1,q.source_lane2,q.source_lane3,\
-                 q.context_algorithm,q.context_lane0,q.context_lane1,q.context_lane2,q.context_lane3,\
-                 ph.algorithm_id,ph.lane0,ph.lane1,ph.lane2,ph.lane3,cs.value,\
-                 r.codec_id,r.raw_length,r.frame \
-                 FROM requested q CROSS JOIN hashes sh ON sh.algorithm_id=q.source_algorithm \
+            values.extend(hash_params(catalog_key).map(rusqlite::types::Value::Integer));
+            // Each requested key's source and context ids, joined once by both reads below.
+            let keyed = "FROM requested q CROSS JOIN hashes sh ON sh.algorithm_id=q.source_algorithm \
                  AND sh.lane0=q.source_lane0 AND sh.lane1=q.source_lane1 AND sh.lane2=q.source_lane2 \
                  AND sh.lane3=q.source_lane3 CROSS JOIN source_objects so ON so.canonical_hash_id=sh.hash_id \
                  CROSS JOIN hashes ch ON ch.algorithm_id=q.context_algorithm AND ch.lane0=q.context_lane0 \
-                 AND ch.lane1=q.context_lane1 AND ch.lane2=q.context_lane2 AND ch.lane3=q.context_lane3 \
-                 CROSS JOIN context_check_results r ON r.source_id=so.source_id AND r.context_hash_id=ch.hash_id \
-                 JOIN candidate_checks c ON c.check_id=r.check_id \
+                 AND ch.lane1=q.context_lane1 AND ch.lane2=q.context_lane2 AND ch.lane3=q.context_lane3";
+            let checked = "JOIN candidate_checks c ON c.check_id=r.check_id \
                  JOIN candidate_catalogs a ON a.catalog_id=c.catalog_id \
                  JOIN hashes ah ON ah.hash_id=a.identity_hash_id \
-                 JOIN hashes ph ON ph.hash_id=c.policy_hash_id \
+                 JOIN hashes ph ON ph.hash_id=c.policy_hash_id";
+            let catalog_matches = "ah.algorithm_id=? AND ah.lane0=? AND ah.lane1=? AND ah.lane2=? \
+                 AND ah.lane3=?";
+            let selected = "q.source_algorithm,q.source_lane0,q.source_lane1,q.source_lane2,\
+                 q.source_lane3,q.context_algorithm,q.context_lane0,q.context_lane1,q.context_lane2,\
+                 q.context_lane3,ph.algorithm_id,ph.lane0,ph.lane1,ph.lane2,ph.lane3";
+            let mut statement = connection.prepare(&format!(
+                "{requested}) SELECT {selected},cs.value,r.codec_id,r.raw_length,r.frame {keyed} \
+                 CROSS JOIN context_check_results r ON r.source_id=so.source_id \
+                 AND r.context_hash_id=ch.hash_id {checked} \
                  JOIN strings cs ON cs.string_id=c.check_string_id \
-                 WHERE ah.algorithm_id=? AND ah.lane0=? AND ah.lane1=? AND ah.lane2=? AND ah.lane3=? \
-                 ORDER BY so.source_id,r.context_hash_id,c.check_id",
-            );
-            values.extend(hash_params(catalog_key).map(rusqlite::types::Value::Integer));
-            let mut statement = connection.prepare(&sql)?;
+                 WHERE {catalog_matches} ORDER BY so.source_id,r.context_hash_id,c.check_id"
+            ))?;
             let rows = statement
-                .query_map(rusqlite::params_from_iter(values), |row| {
+                .query_map(rusqlite::params_from_iter(&values), |row| {
                     Ok((
-                        (
-                            HashKey {
-                                algorithm: row.get(0)?,
-                                lanes: [row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?],
-                            },
-                            HashKey {
-                                algorithm: row.get(5)?,
-                                lanes: [row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?],
-                            },
-                        ),
+                        key(row)?,
                         CandidateClause {
                             rule: HashKey {
                                 algorithm: row.get(10)?,
@@ -169,7 +178,42 @@ impl ContentStore {
                 loaded
                     .entry(key)
                     .or_default()
+                    .results
                     .push(StoredLocalResult { candidate, bytes });
+            }
+            let mut statement = connection.prepare(&format!(
+                "{requested}) SELECT {selected},r.word,r.evaluated {keyed} \
+                 CROSS JOIN context_check_completions r ON r.source_id=so.source_id \
+                 AND r.context_hash_id=ch.hash_id {checked} \
+                 WHERE {catalog_matches} ORDER BY so.source_id,r.context_hash_id,c.check_id,r.word"
+            ))?;
+            let completions = statement
+                .query_map(rusqlite::params_from_iter(&values), |row| {
+                    Ok((
+                        key(row)?,
+                        HashKey {
+                            algorithm: row.get(10)?,
+                            lanes: [row.get(11)?, row.get(12)?, row.get(13)?, row.get(14)?],
+                        },
+                        row.get::<_, i64>(15)?,
+                        row.get::<_, i64>(16)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            for (key, rule, word, evaluated) in completions {
+                let word = u32::try_from(word).map_err(|_| {
+                    StoreError::Corrupt("a completion word index is out of range".to_owned())
+                })?;
+                loaded
+                    .entry(key)
+                    .or_default()
+                    .completions
+                    .push(StoredCompletion {
+                        rule,
+                        word,
+                        // The word's 64 bits, stored as their two's complement.
+                        evaluated: evaluated as u64,
+                    });
             }
         }
         drop(connection);

@@ -455,6 +455,44 @@ pub struct StoredLocalResult {
     pub bytes: Vec<u8>,
 }
 
+/// Clauses of one code rule a file's evaluation found nothing in, under one context: bit `i` of
+/// `evaluated` is the rule's clause `64 * word + i`, evaluated with no witness, no failure and no
+/// syntax report. A clause whose bit is clear is unknown, never absent: it may have a result row
+/// (`LocalResultPublication`), or none. Publishing a word adds its bits to the stored word's.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LocalCompletionPublication {
+    pub rule: HashKey,
+    pub context: HashKey,
+    pub word: u32,
+    pub evaluated: u64,
+}
+
+/// A stored `LocalCompletionPublication`, under the context it was read for.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StoredCompletion {
+    pub rule: HashKey,
+    pub word: u32,
+    pub evaluated: u64,
+}
+
+/// What the store holds for one (source, context): its result rows and its completion words.
+#[derive(Clone, Debug, Default)]
+pub struct StoredLocalResults {
+    pub results: Vec<StoredLocalResult>,
+    pub completions: Vec<StoredCompletion>,
+}
+
+/// The check a code rule's completion words are stored under, beside its clauses' checks: no
+/// clause id starts with NUL.
+const COMPLETION_CHECK: &str = "\0evaluated";
+
+fn completion_candidate(rule: HashKey) -> CandidateClause {
+    CandidateClause {
+        rule,
+        clause: COMPLETION_CHECK.to_owned(),
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct WorkspaceCompletion {
     pub workspace_id: WorkspaceId,
@@ -488,10 +526,11 @@ pub struct OverlayFilePublication<'a> {
     pub source: &'a [u8],
     pub aliases: &'a [HashKey],
     pub tape: Option<TapePayload<'a>>,
+    /// What the file's results are stored under besides their checks. A publication interns the
+    /// checks its results and completion words name, and no other.
     pub catalog: CandidateCatalogIdentity,
-    pub candidates: &'a [CandidateClause],
     pub local_results: &'a [LocalResultPublication],
-    pub candidates_current: bool,
+    pub local_completions: &'a [LocalCompletionPublication],
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

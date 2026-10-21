@@ -545,7 +545,7 @@ fn snapshot_publication_is_atomic() {
 }
 
 #[test]
-fn overlay_publication_replaces_payload_and_candidates_atomically() {
+fn overlay_publication_replaces_payload_and_results_atomically() {
     let (_path, store) = store("atomic-overlay");
     let snapshot = store
         .put_snapshot(
@@ -562,9 +562,11 @@ fn overlay_publication_replaces_payload_and_candidates_atomically() {
     let workspace = store
         .open_workspace("/atomic", "repo", "owner", snapshot, 1, 100)
         .unwrap();
-    let candidate = CandidateClause {
+    let completion = LocalCompletionPublication {
         rule: HashKey::sha256(b"policy"),
-        clause: "changed".to_owned(),
+        context: HashKey::sha256(b"src/a.py"),
+        word: 0,
+        evaluated: 1,
     };
     let tape_bytes = b"compressed tape payload";
     let publications = [
@@ -581,9 +583,8 @@ fn overlay_publication_replaces_payload_and_candidates_atomically() {
                 documents: &[],
             }),
             catalog: candidate_catalog("overlay-atomic"),
-            candidates: std::slice::from_ref(&candidate),
             local_results: &[],
-            candidates_current: false,
+            local_completions: std::slice::from_ref(&completion),
         },
         OverlayFilePublication {
             path: "src/b.py",
@@ -592,9 +593,8 @@ fn overlay_publication_replaces_payload_and_candidates_atomically() {
             aliases: &[],
             tape: None,
             catalog: candidate_catalog("overlay-atomic"),
-            candidates: &[],
             local_results: &[],
-            candidates_current: false,
+            local_completions: &[],
         },
     ];
     let result = store
@@ -703,6 +703,20 @@ fn a_publication_of_many_local_results_stays_within_the_statement_budget() {
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
+        // Beside every result, completion words of as many rules: one more statement, however
+        // many words.
+        let completions = (0..files)
+            .map(|file| {
+                (0..CHECKS)
+                    .map(|check| LocalCompletionPublication {
+                        rule: HashKey::sha256(format!("completed-{check}").as_bytes()),
+                        context: HashKey::sha256(format!("bulk-context-{file}").as_bytes()),
+                        word: 0,
+                        evaluated: check as u64,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
         let paths = (0..files)
             .map(|file| format!("src/results_{file}.py"))
             .collect::<Vec<_>>();
@@ -717,9 +731,8 @@ fn a_publication_of_many_local_results_stays_within_the_statement_budget() {
                 aliases: &[],
                 tape: None,
                 catalog,
-                candidates: &[],
                 local_results: &results[file],
-                candidates_current: false,
+                local_completions: &completions[file],
             })
             .collect::<Vec<_>>();
         let published = store
@@ -748,6 +761,12 @@ fn a_publication_of_many_local_results_stays_within_the_statement_budget() {
                 .collect::<Vec<_>>();
             expected.sort();
             assert_eq!(restored, expected, "file {file}");
+            let source = HashKey::sha256(&sources[file]);
+            let context = HashKey::sha256(format!("bulk-context-{file}").as_bytes());
+            let stored = store
+                .local_check_results_by_key(&[(source, context)], catalog)
+                .unwrap();
+            assert_eq!(stored[&(source, context)].completions.len(), CHECKS);
         }
     }
 }
@@ -767,9 +786,8 @@ fn relationship_revalidation_does_not_hash_payloads_under_write_lock() {
                 aliases: &[],
                 tape: None,
                 catalog,
-                candidates: &[],
                 local_results: &[],
-                candidates_current: false,
+                local_completions: &[],
             },
         )
         .unwrap();
@@ -815,9 +833,8 @@ fn local_results_are_scoped_by_context_hash() {
                 aliases: &[],
                 tape: None,
                 catalog,
-                candidates: &[],
                 local_results: &[first, second],
-                candidates_current: false,
+                local_completions: &[],
             },
         )
         .unwrap();
@@ -846,13 +863,92 @@ fn local_results_are_scoped_by_context_hash() {
         )
         .unwrap();
     assert_eq!(
-        by_key[&(HashKey::sha256(b"pass\n"), first_context)][0].bytes,
+        by_key[&(HashKey::sha256(b"pass\n"), first_context)].results[0].bytes,
         b"alpha"
     );
     assert_eq!(
-        by_key[&(HashKey::sha256(b"pass\n"), second_context)][0].bytes,
+        by_key[&(HashKey::sha256(b"pass\n"), second_context)].results[0].bytes,
         b"beta"
     );
+}
+
+/// Completion words are kept per (source, context, rule, word) under their catalog: a second
+/// publication adds its bits to the stored word's, every bit (the sign bit too) reads back as
+/// written, and another context or catalog reads none of them.
+#[test]
+fn completion_words_merge_per_context_and_catalog() {
+    let (_path, store) = store("local-completions");
+    let (workspace, catalog) = local_result_workspace(&store, "local-completions");
+    let first_context = HashKey::sha256(b"alpha/x.py");
+    let second_context = HashKey::sha256(b"beta/x.py");
+    let rule = HashKey::sha256(b"policy");
+    let other_rule = HashKey::sha256(b"other-policy");
+    let word = |rule, context, word, evaluated| LocalCompletionPublication {
+        rule,
+        context,
+        word,
+        evaluated,
+    };
+    let publish = |completions: &[LocalCompletionPublication]| {
+        store
+            .publish_overlay_file(
+                workspace,
+                OverlayFilePublication {
+                    path: "x.py",
+                    state_id: 1,
+                    source: b"pass\n",
+                    aliases: &[],
+                    tape: None,
+                    catalog,
+                    local_results: &[],
+                    local_completions: completions,
+                },
+            )
+            .unwrap()
+    };
+    publish(&[
+        word(rule, first_context, 0, 0b101),
+        word(rule, first_context, 1, 1 << 63),
+        word(other_rule, second_context, 0, 1),
+    ]);
+    publish(&[word(rule, first_context, 0, 0b010)]);
+    let source = HashKey::sha256(b"pass\n");
+    let read = |catalog| {
+        store
+            .local_check_results_by_key(
+                &[(source, first_context), (source, second_context)],
+                catalog,
+            )
+            .unwrap()
+    };
+    let stored = read(catalog);
+    let mut first = stored[&(source, first_context)].completions.clone();
+    first.sort_by_key(|completion| completion.word);
+    assert_eq!(
+        first,
+        [
+            StoredCompletion {
+                rule,
+                word: 0,
+                evaluated: 0b111
+            },
+            StoredCompletion {
+                rule,
+                word: 1,
+                evaluated: 1 << 63
+            },
+        ]
+    );
+    assert!(stored[&(source, first_context)].results.is_empty());
+    assert_eq!(
+        stored[&(source, second_context)].completions,
+        [StoredCompletion {
+            rule: other_rule,
+            word: 0,
+            evaluated: 1
+        }]
+    );
+    assert!(read(candidate_catalog("another-catalog")).is_empty());
 }
 
 #[test]
@@ -879,9 +975,8 @@ fn a_result_under_a_new_context_of_stored_objects_is_kept() {
                     aliases: &[],
                     tape: None,
                     catalog,
-                    candidates: &[],
                     local_results: results,
-                    candidates_current: false,
+                    local_completions: &[],
                 },
             )
             .unwrap()
@@ -924,9 +1019,8 @@ fn context_results_cascade_when_sources_and_clauses_are_deleted() {
                     aliases: &[],
                     tape: None,
                     catalog,
-                    candidates: &[],
                     local_results: &[result],
-                    candidates_current: false,
+                    local_completions: &[],
                 },
             )
             .unwrap();
@@ -982,9 +1076,8 @@ fn reconciliation_reprepares_source_collected_after_the_read() {
             aliases: &[],
             tape: None,
             catalog,
-            candidates: &[],
             local_results: &[],
-            candidates_current: false,
+            local_completions: &[],
         }],
         &|| polls.fetch_add(1, Ordering::SeqCst) >= 5,
     );
@@ -1021,9 +1114,8 @@ fn reconciliation_revalidates_clause_collected_before_relationship_write() {
                 aliases: &[],
                 tape: None,
                 catalog,
-                candidates: &[],
                 local_results: &[result],
-                candidates_current: false,
+                local_completions: &[],
             },
         )
         .unwrap();
@@ -1062,9 +1154,8 @@ fn reconciliation_revalidates_path_collected_before_relationship_write() {
                 aliases: &[],
                 tape: None,
                 catalog,
-                candidates: &[],
                 local_results: &[],
-                candidates_current: false,
+                local_completions: &[],
             },
         )
         .unwrap();
@@ -1087,9 +1178,8 @@ fn warm_overlay_publication_stores_new_git_aliases() {
         aliases,
         tape: None,
         catalog,
-        candidates: &[],
         local_results: &[],
-        candidates_current: false,
+        local_completions: &[],
     };
     let stored = store
         .publish_overlay_file(workspace, publication(&[]))
@@ -1125,9 +1215,8 @@ fn cancelled_overlay_publication_rolls_back_before_commit() {
         aliases: &[],
         tape: None,
         catalog: candidate_catalog("cancelled"),
-        candidates: &[],
         local_results: &[],
-        candidates_current: false,
+        local_completions: &[],
     };
     let result = store.publish_overlay_files_cancellable(workspace, &[publication], &|| {
         polls.fetch_add(1, Ordering::SeqCst) >= 2
@@ -1184,9 +1273,8 @@ fn overlay_publication_reports_busy_retries() {
                 aliases: &[],
                 tape: None,
                 catalog: candidate_catalog("retry"),
-                candidates: &[],
                 local_results: &[],
-                candidates_current: false,
+                local_completions: &[],
             }],
         )
         .unwrap();
@@ -1286,9 +1374,8 @@ fn one_operation_deadline_bounds_the_wait_across_publication_passes() {
             aliases: &[],
             tape: None,
             catalog: candidate_catalog("deadline"),
-            candidates: &[],
             local_results: &[],
-            candidates_current: false,
+            local_completions: &[],
         }],
         &|| false,
         &mut busy,
@@ -1641,9 +1728,8 @@ fn multiprocess_publish_helper() {
                 aliases: &[],
                 tape: None,
                 catalog: candidate_catalog("multiprocess"),
-                candidates: &[],
                 local_results: &[],
-                candidates_current: false,
+                local_completions: &[],
             }],
         )
         .unwrap();
@@ -2607,9 +2693,8 @@ fn derived_documents_live_and_die_with_their_primary_tape() {
                     documents: std::slice::from_ref(&document),
                 }),
                 catalog: candidate_catalog("derived-documents"),
-                candidates: &[],
                 local_results: &[],
-                candidates_current: false,
+                local_completions: &[],
             },
         )
         .unwrap();
@@ -2696,9 +2781,8 @@ fn a_single_language_tape_writes_no_document_rows() {
                     documents: &[],
                 }),
                 catalog: candidate_catalog("single-language"),
-                candidates: &[],
                 local_results: &[],
-                candidates_current: false,
+                local_completions: &[],
             },
         )
         .unwrap();

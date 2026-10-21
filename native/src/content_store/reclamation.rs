@@ -230,6 +230,17 @@ impl ContentStore {
              ORDER BY s.source_id LIMIT ?3)",
             params![current_generation, OBJECT_SOURCE, limit],
         )?;
+        execute_collect(
+            &transaction,
+            "DELETE FROM context_check_completions WHERE source_id IN (SELECT s.source_id FROM source_objects s \
+             WHERE s.created_generation < ?1 \
+             AND NOT EXISTS (SELECT 1 FROM tape_objects t WHERE t.source_id=s.source_id) \
+             AND NOT EXISTS (SELECT 1 FROM snapshot_files f WHERE f.source_id=s.source_id) \
+             AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.source_id=s.source_id) \
+             AND NOT EXISTS (SELECT 1 FROM object_pins p WHERE p.object_kind_id=?2 AND p.object_id=s.source_id) \
+             ORDER BY s.source_id LIMIT ?3)",
+            params![current_generation, OBJECT_SOURCE, limit],
+        )?;
         report.sources = execute_collect(
             &transaction,
             "DELETE FROM source_objects WHERE source_id IN (SELECT s.source_id FROM source_objects s \
@@ -246,6 +257,7 @@ impl ContentStore {
             "DELETE FROM candidate_checks WHERE check_id IN (SELECT c.check_id FROM candidate_checks c \
              WHERE NOT EXISTS (SELECT 1 FROM local_check_results r WHERE r.check_id=c.check_id) \
              AND NOT EXISTS (SELECT 1 FROM context_check_results r WHERE r.check_id=c.check_id) \
+             AND NOT EXISTS (SELECT 1 FROM context_check_completions r WHERE r.check_id=c.check_id) \
              ORDER BY c.check_id LIMIT ?1)",
             [limit],
         )?;
@@ -336,6 +348,7 @@ impl ContentStore {
              AND NOT EXISTS (SELECT 1 FROM completed_workspace_revisions r WHERE r.catalog_hash_id=h.hash_id) \
              AND NOT EXISTS (SELECT 1 FROM completed_directory_reuse d WHERE d.tree_hash_id=h.hash_id OR d.package_hash_id=h.hash_id OR d.catalog_hash_id=h.hash_id) \
              AND NOT EXISTS (SELECT 1 FROM context_check_results r WHERE r.context_hash_id=h.hash_id) \
+             AND NOT EXISTS (SELECT 1 FROM context_check_completions r WHERE r.context_hash_id=h.hash_id) \
              ORDER BY h.hash_id LIMIT ?1)",
             [limit],
         )?;

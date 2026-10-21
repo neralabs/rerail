@@ -212,12 +212,8 @@ fn restore_prepared_file(
     state: &mut WorkspaceState,
     input: FileInput,
     stored: StoredPathObjects,
-    persisted: &[crate::content_store::StoredLocalResult],
+    persisted: &crate::content_store::StoredLocalResults,
 ) -> Result<bool> {
-    // A `calls` closure reads each Python file's call summary, which only a job records.
-    if CrossFileScheduler::needs_job(state, &input) {
-        return Ok(false);
-    }
     let path = input.path.clone();
     let code_rules = state.code_rules.clone();
     let mut file = make_file(
@@ -226,13 +222,19 @@ fn restore_prepared_file(
         &code_rules,
         &mut state.candidate_sets,
     );
-    let Some(restored) = restore_complete_results(&mut file, &state.code_rules, persisted) else {
-        return Ok(false);
-    };
     file.source_digest = stored
         .source_hash
         .sha256_bytes()
         .ok_or_else(|| invalid("stored source canonical hash is not SHA-256"))?;
+    // A `calls` consumer waits for the closure; the file's other clauses are restored here.
+    let Some(consumers) =
+        CrossFileScheduler::defer_restored(state, &mut file, &persisted.results, &code_rules)
+    else {
+        return Ok(false);
+    };
+    let Some(restored) = restore_complete_results(&mut file, &code_rules, &[persisted]) else {
+        return Ok(false);
+    };
     file.stored = Some(StoredFile {
         source: stored.objects.source,
         tape: None,
@@ -241,6 +243,7 @@ fn restore_prepared_file(
     file.restored_result_ids = restored;
     file.candidates = Arc::new(Candidates::default());
     record_evidence(state, &path, &file);
+    CrossFileScheduler::record_restored(state, &path, &file, &consumers);
     state.insert_file(path, file);
     Ok(true)
 }

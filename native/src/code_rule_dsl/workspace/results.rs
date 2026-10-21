@@ -284,14 +284,11 @@ pub(super) fn evicted_file_states(
                     file.witnesses.insert(id, Vec::new());
                 }
             }
-            let mut persisted = results
-                .get(&key)
-                .map_or_else(Vec::new, |results| results.to_vec());
-            if let Some(results) = stamped.and_then(|stamped| results.get(&stamped)) {
-                persisted.extend(results.iter().cloned());
-            }
-            let persisted = persisted.as_slice();
-            if restore_complete_results(&mut file, &state.code_rules, persisted).is_none()
+            let persisted = std::iter::once(key)
+                .chain(stamped)
+                .filter_map(|key| results.get(&key).map(Arc::as_ref))
+                .collect::<Vec<_>>();
+            if restore_complete_results(&mut file, &state.code_rules, &persisted).is_none()
                 && complete
             {
                 return Err(invalid(format!(
