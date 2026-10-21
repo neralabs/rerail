@@ -179,16 +179,22 @@ function readJson<T>(path: string): T {
   return JSON.parse(readFileSync(path, "utf8")) as T;
 }
 
-/** Every violation message in a rule document, in order. */
+/** Every violation message in a rule document, in order, including each case of a message chosen by an option. */
 function messagesOf(document: unknown): string[] {
   const found: string[] = [];
+  const texts = (value: unknown): void => {
+    if (typeof value === "string") {
+      if (!found.includes(value)) found.push(value);
+    } else if (value !== null && typeof value === "object") {
+      for (const [key, inner] of Object.entries(value)) if (key !== "$option") texts(inner);
+    }
+  };
   const walk = (value: unknown): void => {
     if (Array.isArray(value)) value.forEach(walk);
     else if (value !== null && typeof value === "object") {
       for (const [key, inner] of Object.entries(value)) {
-        if (key === "message" && typeof inner === "string") {
-          if (!found.includes(inner)) found.push(inner);
-        } else walk(inner);
+        if (key === "message") texts(inner);
+        else walk(inner);
       }
     }
   };
