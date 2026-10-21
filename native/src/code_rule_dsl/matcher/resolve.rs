@@ -1088,7 +1088,7 @@ fn file_path() -> Option<Arc<str>> {
 /// The module system of the file being matched, for queries that leave `sourceType` to it: its
 /// path's and package's, else Node's reading of `root`'s syntax (`has_module_syntax`), read once.
 /// ESLint's `module` outside a file evaluation.
-pub(super) fn decide_file_source_type<D: Doc>(root: &Node<'_, D>) -> SourceType {
+pub(in crate::code_rule_dsl) fn decide_file_source_type<D: Doc>(root: &Node<'_, D>) -> SourceType {
     if let Some(source_type) = FILE_SCOPES.with_borrow(|slot| match slot {
         Some(slot) => slot.source_type,
         None => Some(SourceType::Module),

@@ -542,3 +542,61 @@ fn a_files_documents_are_batch_documents_of_their_own() {
         }
     }
 }
+
+/// A file whose path and manifest leave its module system to its syntax (a `.js` file of a package
+/// with no valid `type`) is read as `run_clause` reads it before a clause matches: CommonJS
+/// without module syntax, so `require` and `module` are its globals, a module with it. The SQL
+/// engine's terminals read the same module system (`decide_file_source_type`).
+#[test]
+fn a_file_s_syntax_decides_its_module_system_for_the_terminals() {
+    let document = crate::code_rule_dsl::test_support::clause_document(json!({
+        "id": "ast-match",
+        "forbid": { "ast": {
+            "language": "typescript",
+            "languageOptions": {},
+            "rule": { "kind": "identifier", "resolves": { "global": ["require", "module"] } },
+        } },
+        "violation": { "anchor": "witness.span", "code": "X", "message": "x" },
+    }));
+    let compiled = crate::code_rule_dsl::test_support::compile_document_with(
+        document,
+        &serde_json::from_str::<Value>(crate::code_rule_dsl::test_support::CAPABILITIES)
+            .expect("capabilities"),
+    )
+    .unwrap_or_else(|error| panic!("{}", error.reason));
+    let commonjs = "require; module;\n";
+    let module = "import x from 'x';\nrequire; module;\n";
+    let files = [
+        ("commonjs.js", Some("unset"), commonjs),
+        ("module.js", Some("unset"), module),
+        ("default.js", None, commonjs),
+    ];
+    let snapshot = json!({
+        "facts": [],
+        "files": files
+            .iter()
+            .map(|(path, package, source)| {
+                let mut file = json!({
+                    "language": crate::code_rule_dsl::language::label_of_path(path)
+                        .expect("a dialect file"),
+                    "path": path,
+                    "source": source,
+                });
+                if let Some(package) = package {
+                    file["package"] = json!({ "folder": "", "type": package });
+                }
+                file
+            })
+            .collect::<Vec<_>>(),
+        "format": "rerail.repository-snapshot/v1",
+        "revision": 0,
+    });
+    let result = same(&compiled, &snapshot);
+    let paths: Vec<&str> = result["violations"]
+        .as_array()
+        .expect("violations")
+        .iter()
+        .map(|violation| violation["path"].as_str().expect("a path"))
+        .collect();
+    assert_eq!(paths, ["commonjs.js", "commonjs.js"], "{result}");
+}

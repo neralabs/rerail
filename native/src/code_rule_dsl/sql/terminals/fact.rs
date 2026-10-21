@@ -14,8 +14,8 @@
 use super::Terminal;
 use crate::code_rule_dsl::literal::{ID_FLAG, SubDoc};
 use crate::code_rule_dsl::matcher::{
-    AstMatcher, FileScopeSlot, ParkedScopes, SubTables, export_text, exported_span, exported_text,
-    leaf_env, leaf_verdict, node_at,
+    AstMatcher, FileScopeSlot, ParkedScopes, SubTables, decide_file_source_type, export_text,
+    exported_span, exported_text, leaf_env, leaf_verdict, node_at,
 };
 use crate::code_rule_dsl::soundness::SyntaxErrors;
 use crate::code_rule_dsl::sql::exec::{Batch, BatchFile, BatchSlot};
@@ -303,7 +303,14 @@ pub(in crate::code_rule_dsl::sql) fn with_scopes<T>(
                 errors.hide_bindings(),
             );
             match input {
-                Some(input) => slot.file(input),
+                Some(input) => {
+                    let slot = slot.file(input);
+                    // As `run_clause` decides it before the clause matches: the module system the
+                    // document's syntax gives a file its path and manifest leave undecided, which
+                    // `resolves` and `binds` read (`file_source_type`).
+                    decide_file_source_type(&file.root.root());
+                    slot
+                }
                 None => slot,
             }
         }

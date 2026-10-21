@@ -69,7 +69,9 @@ pub(crate) use resolve::{
     file_phpstan, file_psalm, file_rerail_ignores, file_source_type, file_sqlfluff,
     file_vue_directives, table_reading,
 };
-pub(super) use resolve::{FileScopeSlot, ParkedScopes, Resolves, Unresolved};
+pub(super) use resolve::{
+    FileScopeSlot, ParkedScopes, Resolves, Unresolved, decide_file_source_type,
+};
 #[cfg(test)]
 pub(super) use resolve::{JSX_RUNTIME_DERIVATIONS, SOURCE_TYPE_DERIVATIONS, TABLE_BUILDS};
 pub(super) use run::{Stopped, enumerate, node_at, run_clause};
