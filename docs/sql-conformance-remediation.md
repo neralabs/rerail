@@ -689,17 +689,17 @@ Run the architecture checks with structural, semantic, cross-file, negative, and
 
 ## Current status and execution direction
 
-Phases 1 through 5 are complete.
+Phases 1 through 6 are complete.
 The aggregate Phase 2 through Phase 4 SQL gate is green for all 39 contracts.
-The four Phase 5 SQL and catalog contracts are also green.
-All Phase 2 through Phase 5 behavioral oracle checks are green.
+The four Phase 5 and ten Phase 6 SQL and catalog contracts are also green.
+All Phase 2 through Phase 6 behavioral oracle checks are green.
 
 The completed aggregate contracts include:
 
 - Thirteen Phase 2 truth and value statements.
 - Ten Phase 3 utility statements.
 - Sixteen Phase 4 semantic fact statements.
-- Forty-three ordered terminal catalogs with 105 terminal entries.
+- Fifty-three ordered terminal catalogs with 124 terminal entries.
 
 The catalog fixture contains only ordered terminal-catalog data.
 The SQL fixture is the only owner of authored SQL statements.
@@ -719,7 +719,7 @@ Commit `24e32bed` is its TDD-green implementation.
 Commit `c2358ea9` is the completed red commit for exact Phase 5 SQL and terminal catalogs.
 Commit `5e7178b3` is its TDD-green implementation.
 
-Phases 1 through 5 are complete.
+Phases 1 through 6 are complete.
 Parsed literals, relational host predicates, and exported parsed captures execute through bounded
 parse-fact descriptors and SQL composition. Generated results cross typed document-map rows in SQL.
 Missing maps, invalid spans, and overlaps fail closed before registration. Source and generated
@@ -730,9 +730,17 @@ mapping contract operates on typed generated-document identities and coordinates
 All four Phase 5 authored SQL statements and all four ordered terminal catalogs pass exact,
 behavioral, repeated, and concurrent compilation checks.
 
-The next required package is Phase 6 clause-level relational semantics.
-Do not change the completed Phase 2 through Phase 4 contracts to accommodate later work.
-All 39 Phase 2 through Phase 4 catalogs pass exact, repeated, and concurrent compilation checks.
+Phase 6 lowers file regexes, `select_when`, `require_each`, maximum, distinct, and grouped
+budgets through completion-guarded relational SQL. File language, path, module, and required-text
+conditions prune tasks before terminal demand. Syntax-error absence proofs remain unknown. Producer
+failures are batch-local, and clause-local dependency guards do not suppress independent clauses.
+The authorized Phase 2 through Phase 5 SQL correction replaced global dependency guards with
+clause-local producer guards without changing their relational results or terminal catalogs.
+
+All ten Phase 6 authored statements and ordered catalogs pass exact, behavioral, repeated,
+concurrent, and independent low-level digest checks. The next required package is Phase 7 SQL
+violation extraction. All 39 Phase 2 through Phase 4 catalogs continue to pass exact, repeated, and
+concurrent compilation checks.
 
 ### Relation to the packed execution spike
 
