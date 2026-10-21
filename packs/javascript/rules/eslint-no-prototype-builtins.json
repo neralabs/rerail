@@ -3,7 +3,7 @@
  "id": "eslint-no-prototype-builtins",
  "revision": 3,
  "mode": "steer",
- "description": "Port of ESLint's `no-prototype-builtins` rule (https://eslint.org/docs/latest/rules/no-prototype-builtins). Flags calling hasOwnProperty, isPrototypeOf or propertyIsEnumerable as a method of an object, reported at the property. Scope only matters to ESLint's suggestion, which is not a fix.",
+ "description": "Call hasOwnProperty, isPrototypeOf and propertyIsEnumerable through Object.prototype, not on the object; it may shadow them or have no prototype.",
  "scope": {
   "include": [
    "**/*"
@@ -47,7 +47,7 @@
    "violation": {
     "anchor": "capture.PROP",
     "code": "no-prototype-builtins",
-    "message": "Do not access Object.prototype method '$PROP' from target object.",
+    "message": "Call Object.prototype.$PROP.call(obj, ...) instead; the object may override $PROP or have no prototype.",
     "suppress": {
      "eslint": {
       "rules": [
@@ -119,7 +119,7 @@
    "violation": {
     "anchor": "capture.PROP",
     "code": "no-prototype-builtins",
-    "message": "Do not access Object.prototype method '$NAME' from target object.",
+    "message": "Call Object.prototype.$NAME.call(obj, ...) instead; the object may override $NAME or have no prototype.",
     "suppress": {
      "eslint": {
       "rules": [

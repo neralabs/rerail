@@ -3,7 +3,7 @@
   "id": "tlint-no-json-directive",
   "revision": 1,
   "mode": "steer",
-  "description": "tlint 9.7.0 NoJsonDirective: a @json directive, read from the view, where Blade compiles it to a call (in text, attribute values and script alike), whose host is the `@json(...)` directive.",
+  "description": "Avoid the @json Blade directive; use escaped echo output or an explicit json_encode() call instead.",
   "scope": {
     "include": [
       "**/*.blade.php"

@@ -3,7 +3,7 @@
   "id": "ruff-b007-unused-loop-control-variable",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's B007 (unused-loop-control-variable) with the default `dummy-variable-rgx`: a name bound by a `for` loop's target (itself, or inside tuple/list/starred targets) that does not match `^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$` and never occurs as a name expression in the loop body (the `else` clause does not count; attribute members, keyword-argument names, def/class names, parameters, import and global/nonlocal names and except-handler names are not name expressions). The message says `may not be used` when the body calls `locals`/`globals`/`vars`/`exec`/`eval` (by spelling; Ruff checks they are builtins). Match-statement capture, keyword-pattern, star and `as` names are not name expressions either. Reported on the target name.",
+  "description": "Rename for-loop variables the loop body never uses to start with an underscore; it shows the value is deliberately ignored.",
   "scope": {
     "include": [
       "**/*"

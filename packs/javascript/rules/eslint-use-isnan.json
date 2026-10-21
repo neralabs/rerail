@@ -3,7 +3,7 @@
   "id": "eslint-use-isnan",
   "revision": 4,
   "mode": "steer",
-  "description": "ESLint 10.11.0 use-isnan, default options. Port of ESLint's `use-isnan` rule (https://eslint.org/docs/latest/rules/use-isnan). Flags comparisons with NaN and, by default, `switch(NaN)` / `case NaN`. NaN and Number are resolved with `resolves` so a shadowing binding does not fire. Default options: enforceForSwitchCase true, enforceForIndexOf false. Options are declared in the `options` define (the rule's defaults); a variant is a config patch.",
+  "description": "Use Number.isNaN() instead of comparing with NaN or switching on NaN; NaN never equals anything, itself included.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -163,7 +163,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "use-isnan",
-        "message": "Use the isNaN function to compare with NaN.",
+        "message": "Replace this NaN comparison with Number.isNaN(value); NaN never equals anything, itself included.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -376,7 +376,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "use-isnan",
-        "message": "Array prototype method '$M' cannot find NaN.",
+        "message": "Use findIndex or findLastIndex with Number.isNaN instead of $M(NaN), which never finds NaN.",
         "suppress": {
           "eslint": {
             "rules": [

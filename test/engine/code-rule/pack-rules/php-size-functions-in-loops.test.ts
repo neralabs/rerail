@@ -121,12 +121,12 @@ describe(RULE_ID, () => {
   it("names the measured value and the safe rewrite in its message", () => {
     const [finding] = findings(compile(), REPORTED[0]![1]);
     expect(finding?.message).toBe(
-      "The loop condition re-reads the size of $items on every pass, and this rule found no change to $items inside the loop. If nothing changes it, assign the size to a variable before the loop and use the variable in the condition.",
+      "Assign the size of $items to a variable before the loop and use that in the condition; as written it is recomputed on every pass.",
     );
   });
 
   it("names the value, not the label, of a named argument", () => {
     const [finding] = findings(compile(), php("while (strlen(string: $text) > $pos) {", "    $pos++;", "}"));
-    expect(finding?.message).toContain("the size of $text on every pass");
+    expect(finding?.message).toContain("Assign the size of $text to a variable");
   });
 });

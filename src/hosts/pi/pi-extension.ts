@@ -158,7 +158,7 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
       attaching = pending;
       return pending;
     };
-    // The runtime keeps steer links relative; they point at this checkout's dashboard only here.
+    // The runtime records no links; the rules point at this checkout's dashboard only here.
     const sendDeliveries = async (current: RerailRuntime | NativeSessionClient, deliveries: readonly AdapterDelivery[]): Promise<void> =>
       sendNativeDeliveries(await linkDeliveries(deliveries, (native.context() ?? currentContext)?.cwd), (message, options_) => pi.sendMessage(message, options_),
         (sessionId, receiptId, ruleIds) => current.recordSteer(sessionId, receiptId, ruleIds));

@@ -3,7 +3,7 @@
   "id": "eslint-plugin-vue-require-v-for-key",
   "revision": 1,
   "mode": "steer",
-  "description": "Ports eslint-plugin-vue 10.11.1 `vue/require-v-for-key` (no options): an element that a `v-for` governs and that has no `v-bind:key`/`:key`/`.key` directive, reported at its start tag. An element is governed by its own `v-for`, or, when it is a child of a `<template>` or `<slot>` without a key, by that element's governors (checkKey recurses through keyless `<template>`/`<slot>` children), each governing `v-for` reporting once (`each` over the `v-for` directive, as ESLint reports once per visited `v-for`). `<template>` and `<slot>` elements themselves are never reported, nor is a component (utils.isCustomComponent: a static `is`, `:is`/`v-bind:is`/`.is` or `v-is`, or a raw tag name that is not a well-known name of its namespace, the `custom-tag` family shared with `no-v-text-v-html-on-component`). The `v-for` on the SFC's root `<template>` is never visited by ESLint and governs nothing. Reads the Vue tree only.",
+  "description": "Add a :key binding to elements (not components) that v-for renders in Vue templates, so Vue can track and reuse each item.",
   "scope": {
     "include": [
       "**/*.vue"

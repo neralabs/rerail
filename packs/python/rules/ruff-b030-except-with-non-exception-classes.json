@@ -3,7 +3,7 @@
   "id": "ruff-b030-except-with-non-exception-classes",
   "revision": 2,
   "mode": "steer",
-  "description": "Port of Ruff's B030 (except-with-non-exception-classes): flattens an `except`/`except*` type as Ruff's `flatten_iterables` does (a top-level tuple's elements; `*` unpacking of tuples and lists; both sides of `+`, splicing tuple sides and unpacking starred sides) and reports each resulting expression that is not a name, attribute, subscript or call. Parentheses and an `as` binding (`except E as e`, tree-sitter's as_pattern) are transparent.",
+  "description": "Use only exception classes, or tuples of them, in except clauses; other values such as literals or expressions are not valid exception types.",
   "scope": {
     "include": [
       "**/*"

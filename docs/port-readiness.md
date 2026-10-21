@@ -4,7 +4,7 @@ The port readiness gates decide whether a ported rule is good enough to ship. Ev
 must pass them, and CI fails when one does not. Every candidate (`packs/<id>/candidates/`) runs through the same gates,
 but its results are only reported, so CI shows how far each candidate got and why it stopped.
 
-The gates sit on top of the [pack validation contract](pack-format.md#the-validation-contract) (checks 1 to 6) and the
+The gates sit on top of the [pack validation contract](pack-format.md#the-validation-contract) (checks 1 to 8) and the
 conformance check (`npm run test:conformance`), which stay as they are. They are the V1 validation gates that
 nera-rule-validation ran by hand (its ADR 0006), brought into rerail so that nobody needs a second repository to
 validate a rule. The gates' code and the recorder's adapters are adapted from NRV's, not copied: they read rerail's

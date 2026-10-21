@@ -3,7 +3,7 @@
   "id": "react-jsx-no-comment-textnodes",
   "revision": 1,
   "mode": "steer",
-  "description": "eslint-plugin-react 7.37.5 react/jsx-no-comment-textnodes: JSX text with a line that starts (after whitespace) with `//` or `/*`.",
+  "description": "Wrap comments inside JSX children in braces; otherwise the comment text renders on the page.",
   "scope": {
     "include": [
       "**/*.ts",

@@ -3,7 +3,7 @@
   "id": "ruff-sim109-compare-with-tuple",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's SIM109 (compare-with-tuple): an `or` chain with two or more operands `N == name` (one `==`, both sides names) for the same `N`, anywhere in the chain; not reported when a comment lies inside the chain or follows it on its last line with only white space between (Ruff's has_comments). Reported on the whole `or` chain, once per such name.",
+  "description": "Use a membership test against a tuple instead of several or-chained equality checks of the same variable.",
   "scope": {
     "include": [
       "**/*"

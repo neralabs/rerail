@@ -27,6 +27,7 @@ import {
   defaultRerailDatabasePath,
   steerBlock,
   steerOrigin,
+  steerRules,
   type ConversationRule,
 } from "../../../src/engine/index.js";
 import { createPiConversationRulesExtension } from "../../../src/hosts/pi/pi-extension.js";
@@ -163,13 +164,14 @@ describe("Pi conversation-rules extension", () => {
     await harness.handlers.get("message_end")?.(event, harness.context);
     await harness.handlers.get("message_end")?.(event, harness.context);
 
+    const findings = [{ ruleId: "checkout", mode, message: "Check checkout requirements." }];
     expect(harness.messages).toEqual([
       {
         message: {
           customType: RULE_MESSAGE_TYPE,
-          content: steerBlock("checkout", "Check checkout requirements.", { mode, origin: steerOrigin("checkout") }),
+          content: steerBlock({ kind: "tool" }, findings),
           display: true,
-          details: { requested: mode, mechanism: "native-queue", sessionId: expect.any(String) },
+          details: { requested: mode, mechanism: "native-queue", sessionId: expect.any(String), rules: steerRules(findings, steerOrigin) },
         },
         options: { deliverAs: "steer" },
       },

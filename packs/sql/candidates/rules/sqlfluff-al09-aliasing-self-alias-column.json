@@ -3,7 +3,7 @@
   "id": "sqlfluff-al09-aliasing-self-alias-column",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0 AL09 (aliasing.self_alias.column): in a SELECT list, report a column reference aliased to its own last name part, either written identically (quotes and case included) or, both unquoted, differing in case only. Anchored at the select element's start.",
+  "description": "Don't alias a SQL column to its own name; if the alias is meant to change the name's case, quote it to make that explicit.",
   "scope": {
     "include": [
       "**/*.sql"

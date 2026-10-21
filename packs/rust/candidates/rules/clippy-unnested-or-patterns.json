@@ -3,7 +3,7 @@
   "id": "clippy-unnested-or-patterns",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Clippy 0.1.99's unnested_or_patterns: reports a match arm's, let's, if/while let's or parameter's pattern that holds an or-pattern Clippy nests: one with a parenthesised or-pattern among its alternatives, or with two alternatives (adjacent or not) built alike that differ in one sub-pattern at most: `&mut`, the same `x @`, `ref x @` or `mut x @` binding, a tuple, slice or tuple struct (same path) pattern whose differing element is not `..` on either side, among the first six, or a struct pattern (same path, both with or both without `..`, up to six fields in any order) whose other fields are the same, unless the two are the same shorthands only. The lint needs Rust 1.53 (`suppress.clippy.msrv`). Sub-patterns compare by their tokens, parentheses included. Macro arguments and macro_rules! bodies are token trees no syntax-level reader expands; `box` patterns (an unstable feature) do not parse.",
+  "description": "Nest Rust or-patterns so the shared part is written once and only the differing part alternates.",
   "scope": {"include": ["**/*"], "exclude": []},
   "clauses": [
     {
@@ -129,7 +129,7 @@
           "unnested": {"kind": "or_pattern", "has": {"stopBy": {"not": {"kind": "or_pattern"}}, "any": [{"matches": "paren-or"}, {"matches": "pair"}]}}
         },
         "rule": {"all": [{"any": [{"kind": "match_pattern"}, {"inside": {"field": "pattern", "kind": "let_declaration"}}, {"inside": {"field": "pattern", "kind": "let_condition"}}, {"inside": {"field": "pattern", "kind": "parameter"}}, {"inside": {"kind": "closure_parameters"}, "not": {"kind": "parameter"}}]}, {"any": [{"matches": "unnested"}, {"has": {"stopBy": {"any": [{"kind": "closure_expression"}, {"kind": "match_expression"}, {"kind": "let_condition"}, {"kind": "let_declaration"}, {"kind": "block"}, {"kind": "function_item"}]}, "matches": "unnested"}}]}]} } },
-      "violation": {"suppress": {"clippy": {"lints": ["clippy::unnested_or_patterns", "clippy::pedantic", "warnings"], "msrv": "1.53"}}, "anchor": "witness.span", "code": "unnested_or_patterns", "message": "Clippy unnested_or_patterns: unnested or-patterns"}
+      "violation": {"suppress": {"clippy": {"lints": ["clippy::unnested_or_patterns", "clippy::pedantic", "warnings"], "msrv": "1.53"}}, "anchor": "witness.span", "code": "unnested_or_patterns", "message": "Nest this or-pattern so the shared part is written once, e.g. Some(1 | 2) instead of Some(1) | Some(2)."}
     }
   ]
 }

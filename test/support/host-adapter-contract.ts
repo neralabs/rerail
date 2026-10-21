@@ -306,6 +306,7 @@ export function hostAdapterContract(options: HostAdapterContractOptions): void {
           mechanism: driver.profile.delivery.steer,
           content: "content:steer",
           ruleIds: [],
+          rules: [],
         },
         {
           sessionId: active.sessionId,
@@ -313,6 +314,7 @@ export function hostAdapterContract(options: HostAdapterContractOptions): void {
           mechanism: driver.profile.delivery.block,
           content: "content:block",
           ruleIds: [],
+          rules: [],
         },
       ]);
       expect(driver.persisted().filter(entry => entry.kind === "delivery")).toHaveLength(3);

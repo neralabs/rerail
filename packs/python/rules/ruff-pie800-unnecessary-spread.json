@@ -3,7 +3,7 @@
   "id": "ruff-pie800-unnecessary-spread",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's PIE800 (unnecessary-spread): a dict display spread with `**` into another dict display, reported on the inner dict (inside any parentheses).",
+  "description": "Write the entries directly instead of spreading a dict literal into another Python dict literal.",
   "scope": {
     "include": [
       "**/*"

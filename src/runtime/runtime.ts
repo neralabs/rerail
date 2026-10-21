@@ -13,6 +13,7 @@ import {
 } from "../engine/adapter-contract.js";
 import { RerailHostRuntime, type HostRuntimePort, type HostRuntimeSessionState } from "./host-runtime.js";
 import { autostartDaemon } from "./daemon-control.js";
+import { SteerRuleSchema } from "./event-protocol.js";
 import { CodeRuleBridge, generatedEditPaths, type SourceObservationCache } from "../engine/code-rule/code-rule-bridge.js";
 import { buildSteer, type AuditorCloseOptions, type CodeRuleAuditor, type AuditSettings, type CodeRuleViolation, type RuleSteerDelivery, type RepositoryAuditHooks, type SteerSourceOf } from "../engine/code-rule/code-rule.js";
 import { missedSteerDigestEnabled } from "../engine/experimental-features.js";
@@ -34,7 +35,7 @@ import { parseSampleSource, SAMPLE_BOUNDARIES } from "../engine/catalog/rule-sch
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 import { restorableRule, type DroppedEvents, type RuleMutation } from "./session-state.js";
 import { SessionLanes } from "./session-lanes.js";
-import { steerBlock } from "../engine/code-rule/rerail-steer.js";
+import { steerBlock, steerRules } from "../engine/code-rule/rerail-steer.js";
 import { steerOrigin } from "../engine/code-rule/steer-origin.js";
 import { SqliteSessionStore, type SessionAttribution } from "./session-store.js";
 import type {
@@ -76,9 +77,6 @@ const HOOK_EDIT_CHECK_MS = 1_000;
  */
 const NATIVE_EDIT_CHECK_MS = 10_000;
 
-/** The first line of the yield digest: its findings belong to steps the agent has already moved past. */
-const MISSED_STEERS_LEAD = "Rerail finished checking these edits only after the steps that made them had moved on:";
-
 /**
  * Waits for `work` up to `ms`, and says whether it finished; past the cap the work carries on in the background. The
  * wait only decides when the hook answers, so a failure of the check is not raised here: the check records its own
@@ -92,6 +90,11 @@ async function settledWithin(work: Promise<void>, ms: number): Promise<boolean> 
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** The tool a sample came from (`tool:<name>`); undefined for the conversation's own text. */
+function sampleTool(source: AdapterSample["source"]): string | undefined {
+  return source.startsWith("tool:") ? source.slice("tool:".length) : undefined;
 }
 
 function sampleOwner(source: AdapterSample["source"]): "user" | "assistant" | "tool" {
@@ -192,6 +195,8 @@ const LedgerEntrySchema = z.union([
       mechanism: z.enum(["observe", "native-queue", "additional-context", "deferred-context"]),
       content: z.string(),
       ruleIds: z.array(z.string()),
+      // Absent in a ledger written before deliveries carried their rules.
+      rules: z.array(SteerRuleSchema).default([]),
     }),
   }),
   z.object({ type: z.literal("rule-mutation"), mutation: z.unknown() }),
@@ -831,13 +836,15 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       if (!sources.has(violation.ruleId)) sources.set(violation.ruleId, sourceOf);
     }
     if (violations.length === 0) return undefined;
-    const steer = buildSteer(violations, ruleId => sources.get(ruleId)?.(ruleId));
+    // Its lead says the findings belong to steps the agent has already moved past.
+    const steer = buildSteer(violations, { kind: "late" }, ruleId => sources.get(ruleId)?.(ruleId));
     const digest: AdapterDelivery = {
       sessionId: state.descriptor.sessionId,
       requested: "steer",
       mechanism: ADAPTER_CAPABILITIES[state.descriptor.host].delivery.steer,
-      content: `${MISSED_STEERS_LEAD}\n\n${steer.content}`,
+      content: steer.content,
       ruleIds: steer.ruleIds,
+      rules: steer.rules,
     };
     try {
       await this.persistDelivery(digest);
@@ -1094,6 +1101,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
             mechanism: ADAPTER_CAPABILITIES[activeState.descriptor.host].delivery[requested],
             content,
             ruleIds: metadata?.ruleIds ?? [],
+            rules: metadata?.rules ?? [],
           },
           revision,
           scope: metadata?.scope ?? [],
@@ -1452,13 +1460,14 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       registry.markDelivered([match.ruleId], state.turn);
       await this.#append(state, { type: "rule-match", ruleId: match.ruleId, turn: state.turn });
       this.#nativeSession?.onMatch(match, sample, state.turn);
+      const findings = [{ ruleId: match.ruleId, mode: match.mode, message: match.action.content }];
       const delivery: AdapterDelivery = {
         sessionId: sample.sessionId,
         requested: match.mode,
         mechanism: ADAPTER_CAPABILITIES[state.descriptor.host].delivery[match.mode],
-        content: steerBlock(match.ruleId, match.action.content, { mode: match.mode, origin: steerOrigin(match.ruleId) }),
-        // Conversation rule matches are not code-rule steers, so they carry no code-rule ids.
-        ruleIds: [],
+        content: steerBlock({ kind: "tool", tool: sampleTool(sample.source) }, findings),
+        ruleIds: [match.ruleId],
+        rules: steerRules(findings, steerOrigin),
       };
       await this.#append(state, { type: "delivery", delivery });
       deliveries.push(delivery);

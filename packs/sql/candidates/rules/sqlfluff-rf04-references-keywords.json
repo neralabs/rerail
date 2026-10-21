@@ -3,7 +3,7 @@
   "id": "sqlfluff-rf04-references-keywords",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0 RF04 (references.keywords) with its defaults (unquoted_identifiers_policy = aliases, quoted_identifiers_policy = none): report a naked identifier of more than one character that names a table or column alias or a CREATE TABLE column definition and is a keyword. SQLFluff reads the file's dialect's unreserved keywords; the engine has no dialect setting, so the regex holds the keywords that SQLFluff's postgres and mysql dialects both list as unreserved (a reserved word cannot be a naked alias there). ALTER TABLE ... ADD COLUMN names are skipped, as SQLFluff's postgres dialect reads them as column references.",
+  "description": "Don't use SQL keywords as unquoted table aliases, column aliases or column names; rename them so they can't be misread.",
   "scope": {
     "include": [
       "**/*.sql"

@@ -3,7 +3,7 @@
   "id": "sqlfluff-st02-structure-simple-case",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0's ST02 (structure.simple_case): report a searched CASE with one WHEN that is a boolean (THEN TRUE ELSE FALSE, or the reverse), or whose condition is `column IS NULL` with the column as its ELSE, or `column IS NOT NULL` with the column as its THEN; anchored at the WHEN condition. A simple CASE, several WHENs, a compound condition and IS DISTINCT FROM are not reported.",
+  "description": "Replace a single-branch SQL CASE that only returns TRUE/FALSE or fills in a NULL with the condition itself or COALESCE.",
   "scope": {
     "include": [
       "**/*.sql"
@@ -101,7 +101,7 @@
       "violation": {
         "anchor": "capture.C",
         "code": "ST02",
-        "message": "Unnecessary CASE statement. Use COALESCE function instead.",
+        "message": "Replace this CASE with COALESCE($C, FALSE), prefixed with NOT if its THEN value is FALSE.",
         "suppress": {
           "sqlfluff": {
             "rules": [
@@ -245,7 +245,7 @@
       "violation": {
         "anchor": "capture.C",
         "code": "ST02",
-        "message": "Unnecessary CASE statement. Use COALESCE function or the column itself instead.",
+        "message": "Replace this CASE with COALESCE($X, <its THEN value>), or just $X if the THEN value is NULL.",
         "suppress": {
           "sqlfluff": {
             "rules": [
@@ -389,7 +389,7 @@
       "violation": {
         "anchor": "capture.C",
         "code": "ST02",
-        "message": "Unnecessary CASE statement. Use COALESCE function or the column itself instead.",
+        "message": "Replace this CASE with COALESCE($X, <its ELSE value>), or just $X if it has no ELSE.",
         "suppress": {
           "sqlfluff": {
             "rules": [

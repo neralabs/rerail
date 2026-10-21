@@ -3,7 +3,7 @@
   "id": "eslint-plugin-vue-no-use-v-if-with-v-for",
   "revision": 1,
   "mode": "steer",
-  "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-use-v-if-with-v-for` with default options (allowUsingIterationVar: false): a `v-if` directive on an element that also has `v-for`, reported at the `v-if` attribute. If the condition reads a name the element's `v-for` declares (a reference whose text equals a parameter name of the v-for arrow, as upstream compares names of `references` and `variables`) the message names the iterated source (`<source>` variable when it is an identifier, else expression); otherwise it asks to move the `v-if` to a wrapper. A clause over the file's own tree that reaches the script-block program through `embedded`: the `v-if` of an element with a `v-for` is `if (C) { (SRC), (ALIAS) => { <element> } }`, so a read of C reached from the `v-if` directive is compared with the parameters of the arrow its consequence holds, and the source expression is reached from the `v-for` directive.",
+  "description": "Don't put v-if on the same element as v-for; filter the list in a computed property or move the condition to a wrapper element.",
   "scope": {
     "include": [
       "**/*.vue"
@@ -360,7 +360,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "vue/no-use-v-if-with-v-for",
-        "message": "The '$SRC' variable inside 'v-for' directive should be replaced with a computed property that returns filtered array instead. You should not mix 'v-for' with 'v-if'.",
+        "message": "Replace '$SRC' in this v-for with a computed property that returns the filtered list, and drop the v-if.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -553,7 +553,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "vue/no-use-v-if-with-v-for",
-        "message": "The '$SRC' expression inside 'v-for' directive should be replaced with a computed property that returns filtered array instead. You should not mix 'v-for' with 'v-if'.",
+        "message": "Replace the '$SRC' expression in this v-for with a computed property that returns the filtered list, and drop the v-if.",
         "suppress": {
           "eslint": {
             "rules": [

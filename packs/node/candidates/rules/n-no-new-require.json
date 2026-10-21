@@ -3,7 +3,7 @@
   "id": "n-no-new-require",
   "revision": 2,
   "mode": "steer",
-  "description": "eslint-plugin-n 18.4.1 n/no-new-require: `new` whose callee is the identifier `require` (upstream reads the name only, no scope).",
+  "description": "Don't use new directly on a require() call; require the module into a variable first, then construct it, for readability.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -36,7 +36,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/no-new-require",
-        "message": "Unexpected use of new with require.",
+        "message": "Require the module into a variable first, then call new on that variable.",
         "suppress": {
           "eslint": {
             "rules": [

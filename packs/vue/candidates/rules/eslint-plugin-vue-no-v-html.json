@@ -3,7 +3,7 @@
   "id": "eslint-plugin-vue-no-v-html",
   "revision": 1,
   "mode": "steer",
-  "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-v-html` with default options (no ignorePattern): every `v-html` directive attribute, with or without an argument, modifiers or value; reads the directive_name token. Reported at the directive attribute.",
+  "description": "Avoid the v-html directive; rendering raw HTML can expose users to XSS attacks.",
   "scope": {
     "include": [
       "**/*.vue"
@@ -29,7 +29,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "vue/no-v-html",
-        "message": "'v-html' directive can lead to XSS attack.",
+        "message": "Render this content with text interpolation or components instead of v-html, or sanitize it first, to avoid XSS.",
         "suppress": {
           "eslint": {
             "rules": [

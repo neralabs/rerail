@@ -136,7 +136,7 @@ describe("source-scoped steers", () => {
         expect.objectContaining({ scope: "ai-output", status: "completed" }),
         expect.objectContaining({ scope: "repository", status: "running" }),
       ])));
-      expect(editDeliveries).toEqual([expect.objectContaining({ content: expect.stringContaining("No needle (edited.py:") })]);
+      expect(editDeliveries).toEqual([expect.objectContaining({ content: expect.stringContaining("- edited.py:1:1 — No needle [") })]);
       expect(await runtime.ingest({
         kind: "user-prompt", eventId: "poll", sessionId: session.sessionId, text: "continue",
       })).toEqual([]);
@@ -249,7 +249,7 @@ describe("source-scoped steers", () => {
       expect(await runtime.ingest({
         kind: "result", eventId: "result", sessionId: session.sessionId,
         toolCallId: "write", toolName: "write", output: "written",
-      })).toEqual([expect.objectContaining({ content: expect.stringContaining("No needle (edited.py:") })]);
+      })).toEqual([expect.objectContaining({ content: expect.stringContaining("- edited.py:1:1 — No needle [") })]);
       let ended = false;
       const turnEnd = runtime.ingest({ kind: "turn-end", eventId: "turn", sessionId: session.sessionId, text: "done" })
         .finally(() => { ended = true; });
@@ -558,7 +558,7 @@ describe("source-scoped steers", () => {
       expect(await runtime.ingest({
         kind: "result", eventId: "result", sessionId: session.sessionId,
         toolCallId: "write", toolName: "write", output: "written",
-      })).toEqual([expect.objectContaining({ content: expect.stringContaining("No needle (edited.py:") })]);
+      })).toEqual([expect.objectContaining({ content: expect.stringContaining("- edited.py:1:1 — No needle [") })]);
       expect(audits.list({ sessionId: session.sessionId }).audits).toEqual(expect.arrayContaining([
         expect.objectContaining({ scope: "ai-output", status: "completed", paths: ["edited.py"] }),
       ]));
@@ -674,7 +674,7 @@ describe("source-scoped steers", () => {
         test.attachments.workspaces[0]!.release();
         // Opened: the call it answered is not begun or finished late. The evaluator's first walk still sees the file
         // changed while it ran, as it sees any change it did not watch being made, and checks it.
-        expect(await test.steers()).toEqual([expect.objectContaining({ content: expect.stringContaining("No needle (edited.py:") })]);
+        expect(await test.steers()).toEqual([expect.objectContaining({ content: expect.stringContaining("- edited.py:1:1 — No needle [") })]);
 
       } finally { await test.close(); }
     });

@@ -3,7 +3,7 @@
   "id": "eslint-plugin-vue-no-setup-props-reactivity-loss",
   "revision": 1,
   "mode": "steer",
-  "description": "Ports eslint-plugin-vue 10.11.1 vue/no-setup-props-reactivity-loss (no options). Props containers are the first parameter of a `setup` function of a Vue component object (export default, Vue.component/mixin/extend, defineComponent, createApp, defineNuxtComponent, new Vue) and the variable(s) `const x = defineProps(...)`/`withDefaults(defineProps(...), ...)` binds at the top level of `<script setup>`. Reports a destructuring parameter / array or nested object pattern of the macro (destructuring), and, only for references in the root scope of the setup function or of `<script setup>` (no nested function, block, loop, class or catch between), a call holding a props member access, an array/object variable initializer or assignment holding one, a variable initializer or assignment whose member-chain base is a props member access or a plain destructured prop, a first template-literal/conditional part holding one, and a destructuring declarator/assignment of a props container (getProperty). Reads syntax and the file's scope table (binding definition names).",
+  "description": "Don't destructure Vue props or copy their values at the top level of setup() or script setup; the copies lose reactivity.",
   "scope": {
     "include": [
       "**/*.vue"
@@ -1316,7 +1316,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vue/no-setup-props-reactivity-loss",
-        "message": "Destructuring the `props` will cause the value to lose reactivity.",
+        "message": "Keep `props` whole and read its fields where used, or destructure with toRefs, so the values stay reactive.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1364,7 +1364,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vue/no-setup-props-reactivity-loss",
-        "message": "Getting a value from the `props` in root scope of `setup()` will cause the value to lose reactivity.",
+        "message": "Read this from `props` inside a computed, watcher or function in setup(), or use toRefs, so it stays reactive.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1408,7 +1408,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vue/no-setup-props-reactivity-loss",
-        "message": "Getting a value from the `props` in root scope of `setup()` will cause the value to lose reactivity.",
+        "message": "Read this from `props` inside a computed, watcher or function in setup(), or use toRefs, so it stays reactive.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1454,7 +1454,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vue/no-setup-props-reactivity-loss",
-        "message": "Getting a value from the `props` in root scope of `setup()` will cause the value to lose reactivity.",
+        "message": "Read this from `props` inside a computed, watcher or function in setup(), or use toRefs, so it stays reactive.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1533,7 +1533,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vue/no-setup-props-reactivity-loss",
-        "message": "Getting a value from the `props` in root scope of `setup()` will cause the value to lose reactivity.",
+        "message": "Read this from `props` inside a computed, watcher or function in setup(), or use toRefs, so it stays reactive.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1569,7 +1569,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vue/no-setup-props-reactivity-loss",
-        "message": "Getting a value from the `props` in root scope of `setup()` will cause the value to lose reactivity.",
+        "message": "Read this from `props` inside a computed, watcher or function in setup(), or use toRefs, so it stays reactive.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1605,7 +1605,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vue/no-setup-props-reactivity-loss",
-        "message": "Getting a value from the `props` in root scope of `setup()` will cause the value to lose reactivity.",
+        "message": "Read this from `props` inside a computed, watcher or function in setup(), or use toRefs, so it stays reactive.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1641,7 +1641,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vue/no-setup-props-reactivity-loss",
-        "message": "Getting a value from the `props` in root scope of `setup()` will cause the value to lose reactivity.",
+        "message": "Read this from `props` inside a computed, watcher or function in setup(), or use toRefs, so it stays reactive.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1700,7 +1700,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vue/no-setup-props-reactivity-loss",
-        "message": "Getting a value from the `props` in root scope of `setup()` will cause the value to lose reactivity.",
+        "message": "Read this from `props` inside a computed, watcher or function in setup(), or use toRefs, so it stays reactive.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1748,7 +1748,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vue/no-setup-props-reactivity-loss",
-        "message": "Getting a value from the `props` in root scope of `<script setup>` will cause the value to lose reactivity.",
+        "message": "Read this from `props` inside a computed, watcher or function, or use toRefs, so it stays reactive.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1792,7 +1792,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vue/no-setup-props-reactivity-loss",
-        "message": "Getting a value from the `props` in root scope of `<script setup>` will cause the value to lose reactivity.",
+        "message": "Read this from `props` inside a computed, watcher or function, or use toRefs, so it stays reactive.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1838,7 +1838,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vue/no-setup-props-reactivity-loss",
-        "message": "Getting a value from the `props` in root scope of `<script setup>` will cause the value to lose reactivity.",
+        "message": "Read this from `props` inside a computed, watcher or function, or use toRefs, so it stays reactive.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1917,7 +1917,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vue/no-setup-props-reactivity-loss",
-        "message": "Getting a value from the `props` in root scope of `<script setup>` will cause the value to lose reactivity.",
+        "message": "Read this from `props` inside a computed, watcher or function, or use toRefs, so it stays reactive.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1953,7 +1953,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vue/no-setup-props-reactivity-loss",
-        "message": "Getting a value from the `props` in root scope of `<script setup>` will cause the value to lose reactivity.",
+        "message": "Read this from `props` inside a computed, watcher or function, or use toRefs, so it stays reactive.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1989,7 +1989,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vue/no-setup-props-reactivity-loss",
-        "message": "Getting a value from the `props` in root scope of `<script setup>` will cause the value to lose reactivity.",
+        "message": "Read this from `props` inside a computed, watcher or function, or use toRefs, so it stays reactive.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -2025,7 +2025,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vue/no-setup-props-reactivity-loss",
-        "message": "Getting a value from the `props` in root scope of `<script setup>` will cause the value to lose reactivity.",
+        "message": "Read this from `props` inside a computed, watcher or function, or use toRefs, so it stays reactive.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -2084,7 +2084,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "vue/no-setup-props-reactivity-loss",
-        "message": "Getting a value from the `props` in root scope of `<script setup>` will cause the value to lose reactivity.",
+        "message": "Read this from `props` inside a computed, watcher or function, or use toRefs, so it stays reactive.",
         "suppress": {
           "eslint": {
             "rules": [

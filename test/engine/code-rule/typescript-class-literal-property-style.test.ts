@@ -46,7 +46,7 @@ function findings(compiled: NativeCompiledCodeRuleDsl, source: string): { line: 
 const ts = (...lines: string[]) => [...lines, ""].join("\n");
 
 describe("typescript-eslint-class-literal-property-style (NER-1785)", () => {
-  it("warns that a subclass accessor override breaks when the base getter becomes a field", async () => {
+  it("warns that a subclass accessor override keeps the base getter from becoming a field", async () => {
     const compiled = await compile();
     const source = ts(
       "class AbstractMesh {",
@@ -59,8 +59,7 @@ describe("typescript-eslint-class-literal-property-style (NER-1785)", () => {
     const reported = findings(compiled, source);
     expect(reported.map(finding => finding.line)).toEqual([2]);
     expect(reported[0]?.message).toMatch(/readonly field/);
-    expect(reported[0]?.message).toMatch(/subclass/);
-    expect(reported[0]?.message).toMatch(/TS2611/);
+    expect(reported[0]?.message).toMatch(/unless a subclass overrides it with `override get`/);
   });
 
   it("still reports literal getters with no override, and still skips override and setter-paired getters", async () => {

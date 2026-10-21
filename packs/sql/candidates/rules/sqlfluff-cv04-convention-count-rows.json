@@ -3,7 +3,7 @@
   "id": "sqlfluff-cv04-convention-count-rows",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0's CV04 (convention.count_rows) with default settings (prefer_count_1 and prefer_count_0 false): COUNT(*) is required for row counts; an unqualified COUNT whose only argument is the literal 0 or 1 is reported at the function's start, while COUNT(column), COUNT(DISTINCT ...) and other expressions are not.",
+  "description": "Use COUNT(*) instead of COUNT(1) or COUNT(0) to count rows in SQL; it states the intent directly.",
   "scope": {
     "include": [
       "**/*.sql"

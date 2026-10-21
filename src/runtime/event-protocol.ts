@@ -23,12 +23,22 @@ export const AdapterEventSchema: z.ZodType<AdapterEvent> = z.discriminatedUnion(
   z.object({ kind: z.literal("turn-end"), eventId: z.string().min(1), sessionId: z.string().min(1), session: SessionSchema.optional(), text: z.string() }).strict(),
 ]);
 
+/** A rule a delivery names, for the person's line (`SteerRule`). */
+export const SteerRuleSchema = z.object({
+  id: z.string().min(1),
+  state: z.enum(["steered", "logged"]),
+  origin: z.string().optional(),
+  url: z.string().optional(),
+}).strict();
+
 const DeliverySchema: z.ZodType<AdapterDelivery> = z.object({
   sessionId: z.string().min(1),
   requested: z.enum(RULE_MODES),
   mechanism: z.enum(["observe", "native-queue", "additional-context", "deferred-context"]),
   content: z.string(),
   ruleIds: z.array(z.string()),
+  // Absent from a daemon that predates deliveries carrying their rules.
+  rules: z.array(SteerRuleSchema).default([]),
 }).strict();
 
 const EventFrameSchema = z.object({ event: AdapterEventSchema }).strict();

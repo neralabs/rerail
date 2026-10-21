@@ -3,7 +3,7 @@
   "id": "bandit-b102-exec-used",
   "revision": 2,
   "mode": "steer",
-  "description": "Detect calls to Python's exec function, which executes supplied text as Python code and is risky when that code is not fully trusted. As in Bandit, the callee is a bare name whose qualified name through the file's import aliases is exec: exec itself unless an import aliases it to another name, or a name imported as the module exec. Remove the exec call and implement the intended operation explicitly.",
+  "description": "Avoid exec() calls in Python, including through import aliases; running text as code is dangerous unless that text is fully trusted.",
   "scope": {
     "include": [
       "**/*.py"
@@ -111,7 +111,7 @@
       "violation": {
         "code": "B102",
         "anchor": "witness.span",
-        "message": "This exec call executes supplied text as Python code and is risky when that code is not fully trusted. Remove exec and implement the intended operation explicitly.",
+        "message": "Replace this exec call with code that performs the intended operation directly, unless the executed text is fully trusted.",
         "suppress": {
           "nosec": {
             "codes": [

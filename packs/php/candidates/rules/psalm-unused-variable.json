@@ -3,7 +3,7 @@
   "id": "psalm-unused-variable",
   "revision": 1,
   "mode": "steer",
-  "description": "Psalm 6.19.1 UnusedVariable (--find-unused-variables): a variable whose value no read uses (\"$x is never referenced or the value is not used\"), bound by an assignment statement, a compound assignment or increment, a closure's `use` clause, `global`, or a `foreach` key or destructured element. Psalm reports a `foreach` value as UnusedForeachValue and a parameter as UnusedParam, and skips names starting with `$_`.",
+  "description": "Remove PHP variables whose value is never read, including unused closure use and global imports; names starting with $_ are exempt.",
   "scope": {
     "include": [
       "**/*.php"

@@ -3,7 +3,7 @@
   "id": "n-prefer-global-buffer",
   "revision": 2,
   "mode": "steer",
-  "description": "eslint-plugin-n 18.4.1 n/prefer-global/buffer (default \"always\"): `Buffer` read from the buffer module as ReferenceTracker (legacy mode) finds it \u2014 `require('buffer')`/`require('node:buffer')` with the global require, `process.getBuiltinModule(\u2026)` with the global process, through constant aliases, member reads, object-pattern properties, import/export specifiers and `export *`. No sourceType is pinned, so each file keeps its own module system (.cjs/.cts CommonJS; .mjs/.mts/.tsx an ES module; .js/.jsx/.ts by the nearest package.json's type, Node's syntax detection where that package.json sets no valid type, and an ES module where there is no package.json). As eslint-plugin-n's own configs (flat/mixed-esm-and-cjs picks per file), a CommonJS file has require, module, exports, __dirname and __filename (flat/recommended-script) and an ES module none of them (flat/recommended-module turns them off). So `require(\u2026)` is reached only in a CommonJS file; in an ES module only imports and `process.getBuiltinModule(\u2026)` are.",
+  "description": "Use the global Buffer instead of importing or requiring it from the buffer module; it is always available in Node.js.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -314,7 +314,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/buffer",
-        "message": "Unexpected use of 'require(\"buffer\").Buffer'. Use the global variable 'Buffer' instead.",
+        "message": "Use the global Buffer instead of reading Buffer from the buffer module.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -441,7 +441,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/buffer",
-        "message": "Unexpected use of 'require(\"buffer\").Buffer'. Use the global variable 'Buffer' instead.",
+        "message": "Drop Buffer from this destructuring and use the global Buffer instead.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -500,7 +500,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/buffer",
-        "message": "Unexpected use of 'require(\"buffer\").Buffer'. Use the global variable 'Buffer' instead.",
+        "message": "Remove Buffer from this import or export and use the global Buffer instead.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -537,7 +537,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/prefer-global/buffer",
-        "message": "Unexpected use of 'require(\"buffer\").Buffer'. Use the global variable 'Buffer' instead.",
+        "message": "Re-export only the names you need from the buffer module; Buffer is already a global.",
         "suppress": {
           "eslint": {
             "rules": [

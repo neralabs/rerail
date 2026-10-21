@@ -3,7 +3,7 @@
   "id": "bandit-b310-urllib-urlopen",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect URL-opening calls that require permitted-scheme review",
+  "description": "Restrict URLs passed to urllib's urlopen, urlretrieve, and URLopener to expected schemes; file: and custom schemes can expose local files.",
   "scope": {
     "include": [
       "**/*.py"

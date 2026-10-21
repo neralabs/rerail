@@ -21,7 +21,6 @@ import { SOURCE_LANGUAGES } from "../../../src/engine/code-rule/code-rule-langua
 import { bundledCodeRuleDslDirectory } from "../../../src/engine/code-rule/code-rule-compile.js";
 import { type CodeRule, codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
 import type { RuleMode } from "../../../src/engine/catalog/rule-mode.js";
-import { steerBlock } from "../../../src/engine/code-rule/rerail-steer.js";
 import type {
   NativeBinding,
   NativeCodeRuleDslWorkspace,
@@ -1032,10 +1031,17 @@ describe("mechanical code rule regressions", () => {
       await settled(enforcer);
 
       expect(requestSteer).toHaveBeenCalledTimes(1);
-      expect(requestSteer.mock.calls[0]![2]).toBe(steerBlock("test:logger", [
-        "Log user through the logger (web/App.tsx:2:15)",
-        "  Suggested fix: replace 2:3-2:20 with `logger.info(user)`",
-      ].join("\n"), { mode: "block", origin: "From your rule library." }));
+      expect(requestSteer.mock.calls[0]![2]).toBe([
+        "Rerail found 1 problem in your last edit:",
+        "- web/App.tsx:2:15 — Log user through the logger [test:logger]",
+        "  Suggested fix: replace 2:3–2:20 with `logger.info(user)`",
+        "Fix it, or tell the user in one line why you won't.",
+      ].join("\n"));
+      // Where the rule comes from is for the person's line, never the agent's text.
+      expect(requestSteer.mock.calls[0]![3]).toMatchObject({
+        ruleIds: ["test:logger"],
+        rules: [{ id: "test:logger", state: "steered", origin: "From your rule library." }],
+      });
       expect(auditForPath(audits, "web/App.tsx")?.result).toMatchObject({
         violations: [expect.objectContaining({ fix: { span: expect.objectContaining({ startLine: 1, startColumn: 2 }), text: "logger.info(user)" } })],
       });

@@ -3,7 +3,7 @@
   "id": "bandit-b323-unverified-context",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect creation of unverified SSL contexts",
+  "description": "Don't create SSL contexts with ssl._create_unverified_context(); it turns off certificate and hostname verification and allows man-in-the-middle attacks.",
   "scope": {
     "include": [
       "**/*.py"
@@ -33,7 +33,7 @@
       "violation": {
         "code": "B323",
         "anchor": "witness.span",
-        "message": "Creating an unverified SSL context disables certificate validation and hostname checks.",
+        "message": "Use ssl.create_default_context() instead, which verifies certificates and hostnames.",
         "suppress": {
           "nosec": {
             "codes": [

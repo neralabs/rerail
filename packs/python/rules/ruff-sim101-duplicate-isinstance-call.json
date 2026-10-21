@@ -3,7 +3,7 @@
   "id": "ruff-sim101-duplicate-isinstance-call",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's SIM101 (duplicate-isinstance-call): two adjacent operands of one `or` chain that are calls of the builtin `isinstance(T, C)` (exactly two positional arguments, no keywords) with equal targets (Ruff's ComparableExpr, `text: \"structure\"`; names without NFKC normalization), reported on the whole `or` chain once per run of adjacent such calls with equal targets. A parenthesized `or` is its own chain, as in Ruff's AST. `isinstance` must resolve to the builtin (`match_builtin_expr`: the unshadowed name, or `builtins.isinstance` through an import).",
+  "description": "Merge isinstance() checks on the same object joined by or into one call with a tuple of types.",
   "scope": {
     "include": [
       "**/*"

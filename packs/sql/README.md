@@ -108,3 +108,95 @@ Scoring one rule with every false positive and false negative printed:
 ```sh
 node --import tsx conformance/languages/cli.ts --pack sql --rule sqlfluff-al04-aliasing-unique-table --fixtures
 ```
+
+## Rule details
+
+What each rule matches beyond its one-line description: exact matching, edge cases, upstream settings and known divergences.
+
+### `sqlfluff-al04-aliasing-unique-table`
+
+Port of SQLFluff 4.4.0 AL04. Reports each later table relation whose explicit alias (or, unaliased, its table name) matches an earlier one in the same FROM clause, compared under PostgreSQL name folding.
+
+### `sqlfluff-al05-aliasing-unused`
+
+Port of SQLFluff 4.4.0 AL05 (aliasing.unused) with default settings. Not reported where the alias is required (a derived table or VALUES list) or where the same table is referenced more than once.
+
+### `sqlfluff-al08-aliasing-unique-column`
+
+Port of SQLFluff 4.4.0 AL08. In each SELECT list, reports each later reused explicit alias or column-reference name, case-insensitively, with identifier quote delimiters ignored.
+
+### `sqlfluff-al09-aliasing-self-alias-column`
+
+Port of SQLFluff 4.4.0 AL09 (aliasing.self_alias.column). Reports a column reference aliased to its own last name part, either written identically (quotes and case included) or, both unquoted, differing in case only (the "ambiguous self alias" message). Anchored at the select element's start.
+
+### `sqlfluff-am01-ambiguous-distinct`
+
+Port of SQLFluff 4.4.0 AM01 (ambiguous.distinct). Implementation note: the grammar puts GROUP BY in the FROM node after the SELECT node.
+
+### `sqlfluff-am02-ambiguous-union`
+
+Port of SQLFluff 4.4.0 AM02 (ambiguous.union). Flags a UNION not immediately followed by DISTINCT or ALL. SQLFluff skips AM02 in its postgres dialect (it runs in ANSI, MySQL and other dialects with UNION DISTINCT; not SQLite), so the rule would start off and be turned on for MySQL/ANSI repositories (README already covers the start-off part).
+
+### `sqlfluff-am05-ambiguous-join`
+
+Port of SQLFluff 4.4.0 AM05 (ambiguous.join) with default fully_qualify_join_types=inner: reports a join whose first join keyword is bare JOIN, anchored at the JOIN clause start.
+
+### `sqlfluff-am09-ambiguous-order-by-limit`
+
+Port of SQLFluff 4.4.0 AM09 (ambiguous.order_by_limit). Anchored at LIMIT. A LIMIT that ends a UNION, INTERSECT or EXCEPT belongs to the set expression, which SQLFluff's AM09 does not read. The grammar parses no OFFSET without LIMIT.
+
+### `sqlfluff-cv02-convention-coalesce`
+
+Port of SQLFluff 4.4.0 CV02 (convention.coalesce), default settings. Only unqualified IFNULL/NVL are reported; schema-qualified names are user-defined functions and are excluded.
+
+### `sqlfluff-cv04-convention-count-rows`
+
+Port of SQLFluff 4.4.0 CV04 (convention.count_rows) with prefer_count_1 and prefer_count_0 false. An unqualified COUNT whose only argument is the literal 0 or 1 is reported at the function's start; COUNT(column), COUNT(DISTINCT ...) and other expressions are not.
+
+### `sqlfluff-cv05-convention-is-null`
+
+Port of SQLFluff 4.4.0 CV05 (convention.is_null). Only =, != and <> whose right operand is the bare NULL literal (not parenthesised), anchored at the operator. A SET clause's assignment and an exclusion constraint's operator are not comparisons in the grammar, as SQLFluff skips them.
+
+### `sqlfluff-cv08-convention-left-join`
+
+Port of SQLFluff 4.4.0 CV08 (convention.left_join). Reports RIGHT JOIN and RIGHT OUTER JOIN at the start of the join clause.
+
+### `sqlfluff-pg01-postgres-excessive-locks`
+
+Port of SQLFluff 4.4.0 PG01 (postgres.excessive_locks), force_enable=true. CREATE INDEX (except UNIQUE), DROP INDEX, REINDEX and REFRESH MATERIALIZED VIEW must use CONCURRENTLY; each anchored at the statement start. Statements inside a dollar-quoted routine or DO body (a string to SQLFluff) or an error region are not read.
+
+### `sqlfluff-pg02-postgres-not-valid-foreign-key`
+
+Port of SQLFluff 4.4.0 PG02 (postgres.not_valid_foreign_key), force_enable=true. ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY must include NOT VALID; anchored at the ALTER TABLE start. Statements inside a dollar-quoted routine or DO body or an error region are not read.
+
+### `sqlfluff-rf01-references-from`
+
+Port of SQLFluff 4.4.0 RF01 (references.from), default settings. Flags the table qualifier of a column reference that names no table or alias in the FROM clause of its query or of an enclosing query.
+
+### `sqlfluff-rf04-references-keywords`
+
+Port of SQLFluff 4.4.0 RF04 (references.keywords) with defaults (unquoted_identifiers_policy = aliases, quoted_identifiers_policy = none). Reports a naked identifier of more than one character that names a table or column alias or a CREATE TABLE column definition and is a keyword. SQLFluff reads the file's dialect's unreserved keywords; the engine has no dialect setting, so the regex holds the keywords that SQLFluff's postgres and mysql dialects both list as unreserved (a reserved word cannot be a naked alias there). ALTER TABLE ... ADD COLUMN names are skipped, as SQLFluff's postgres dialect reads them as column references.
+
+### `sqlfluff-rf05-references-special-chars`
+
+Port of SQLFluff 4.4.0 RF05 (references.special_chars) with defaults (both identifier policies all, no space or additional characters allowed). Reports a naked or quoted identifier whose name, without quotes and underscores, holds a character other than a Unicode letter or digit (a doubled quote included). A name in a SELECT element that has an alias is not read (only the alias is), nor is a PostgreSQL extension name.
+
+### `sqlfluff-rf06-references-quoting`
+
+Port of SQLFluff 4.4.0 RF06 (references.quoting) with defaults (prefer_quoted_identifiers and prefer_quoted_keywords false, case_sensitive true), under SQLFluff's postgres dialect. Reports a double-quoted identifier whose name has no upper-case letter, matches the postgres naked-identifier template [\p{L}_][\p{L}\p{N}_$]* and is not one of the dialect's reserved words (its anti-template, embedded in the rule). A dollar-quoted routine body is not read.
+
+### `sqlfluff-st01-structure-else-null`
+
+Port of SQLFluff 4.4.0 ST01 (structure.else_null). Reports a CASE whose ELSE is the bare NULL literal, at the CASE start.
+
+### `sqlfluff-st02-structure-simple-case`
+
+Port of SQLFluff 4.4.0 ST02 (structure.simple_case). Reports a searched CASE with one WHEN that is boolean (THEN TRUE ELSE FALSE, or the reverse), or whose condition is `column IS NULL` with the column as its ELSE, or `column IS NOT NULL` with the column as its THEN; anchored at the WHEN condition. A simple CASE, several WHENs, a compound condition and IS DISTINCT FROM are not reported.
+
+### `sqlfluff-st08-structure-distinct`
+
+Port of SQLFluff 4.4.0 ST08 (structure.distinct). Three cases: in a SELECT DISTINCT whose first selected expression is parenthesized alone, reports the parentheses; where the parentheses start an arithmetic expression right after DISTINCT with no space, reports DISTINCT; and reports DISTINCT written as a function, DISTINCT(x), as an aggregate's lone argument (not around a subquery).
+
+### `sqlfluff-st10-structure-constant-expression`
+
+Port of SQLFluff 4.4.0 ST10 (structure.constant_expression). Reports =, != or <> whose operands are the same non-literal written identically, or two literals other than the allowed 1 = 1 and 1 = 0, anchored at the operator. A typed literal (timestamp '...') is not a literal there. An operand that is itself an arithmetic, bitwise or other binary expression is not one of SQLFluff's adjacent operands, so such comparisons are skipped.

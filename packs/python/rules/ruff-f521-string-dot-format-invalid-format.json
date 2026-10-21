@@ -3,7 +3,7 @@
   "id": "ruff-f521-string-dot-format-invalid-format",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F521 (string-dot-format-invalid-format): a `.format` call on a str literal the format parser refuses (unmatched braces, fields nested deeper than one level, an empty attribute or index, an unclosed `[`, a bad conversion or format spec). The format string is a str literal (no f/t/b prefix; implicit concatenations joined, escapes decoded, parentheses transparent) receiving `.format`, read with the `braceFormat` grammar (a port of ruff_python_literal's format parser as pyflakes' FormatSummary reads it).",
+  "description": "Keep str.format() strings well-formed, with balanced braces and valid fields and format specs; a malformed one raises ValueError at runtime.",
   "scope": {
     "include": [
       "**/*"

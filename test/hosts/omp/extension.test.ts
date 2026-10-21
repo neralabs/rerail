@@ -19,12 +19,12 @@ import {
   RULE_MESSAGE_TYPE,
   defaultRerailDatabasePath,
   resetRepositoryHistory,
-  linkSteers,
   steerBlock,
   steerOrigin,
   type ConversationRule,
   type RuleMode,
   type AdapterDelivery,
+  type SteerRule,
   openRerailDatabase,
   setRuleSetting,
   CodeRuleBridge,
@@ -37,9 +37,21 @@ import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/nat
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository } from "../../support/started-repository.js";
 
-/** The steer block a `mode` rule delivers, with its `Why?` link made absolute the way the OMP adapter does for `cwd`. */
-async function deliveredSteer(cwd: string, ruleId: string, guidance: string, mode: RuleMode = "steer"): Promise<string> {
-  return linkSteers(steerBlock(ruleId, guidance, { mode, origin: steerOrigin(ruleId) }), await steerDashboard(cwd));
+/** The steer block a `mode` conversation rule delivers for a step of the conversation. */
+function deliveredSteer(ruleId: string, guidance: string, mode: RuleMode = "steer"): string {
+  return steerBlock({ kind: "tool" }, [{ ruleId, mode, message: guidance }]);
+}
+
+/** The rules a `mode` rule's steer names, linked the way the OMP adapter links them for `cwd`. */
+async function deliveredRules(cwd: string, ruleId: string, mode: RuleMode = "steer"): Promise<SteerRule[]> {
+  const dashboard = await steerDashboard(cwd);
+  const origin = steerOrigin(ruleId);
+  return [{
+    id: ruleId,
+    state: mode === "log" ? "logged" : "steered",
+    ...(origin === undefined ? {} : { origin }),
+    ...(dashboard === undefined ? {} : { url: `${dashboard}#rule/${encodeURIComponent(ruleId)}` }),
+  }];
 }
 
 // Every test here builds real sessions (native model, engine, rule catalog); on a loaded CI runner a
@@ -168,9 +180,9 @@ describe("OMP conversation-rules extension", () => {
       {
         message: {
           customType: RULE_MESSAGE_TYPE,
-          content: await deliveredSteer(harness.context.cwd, "checkout", "Check checkout requirements.", mode),
+          content: deliveredSteer("checkout", "Check checkout requirements.", mode),
           display: true,
-          details: { requested: mode, mechanism: "native-queue", sessionId: "omp-test-session" },
+          details: { requested: mode, mechanism: "native-queue", sessionId: "omp-test-session", rules: await deliveredRules(harness.context.cwd, "checkout", mode) },
         },
         options: { deliverAs: "steer" },
       },
@@ -254,7 +266,7 @@ describe("OMP conversation-rules extension", () => {
     );
 
     expect(harness.messages.map(sent => sent.message.content)).toEqual([
-      await deliveredSteer(harness.context.cwd, "checkout", "From the library."),
+      deliveredSteer("checkout", "From the library."),
     ]);
     expect(harness.entries.map(entry => (entry.data as { ruleId: string }).ruleId)).toEqual(["checkout"]);
   });
@@ -508,8 +520,8 @@ describe("OMP conversation-rules extension", () => {
     await emit("after-reset");
 
     expect(harness.messages.map(sent => sent.message.content)).toEqual([
-      await deliveredSteer(harness.context.cwd, "checkout", "Check checkout requirements."),
-      await deliveredSteer(harness.context.cwd, "checkout", "Check checkout requirements."),
+      deliveredSteer("checkout", "Check checkout requirements."),
+      deliveredSteer("checkout", "Check checkout requirements."),
     ]);
     const reader = new SqliteSessionReader(databasePath);
     try {
@@ -987,8 +999,9 @@ describe("OMP conversation-rules extension", () => {
           sessionId: "omp-test-session",
           requested: "steer",
           mechanism: "native-queue",
-          content: steerBlock("checkout", "Check checkout requirements.", { mode: "steer", origin: steerOrigin("checkout") }),
-          ruleIds: [],
+          content: deliveredSteer("checkout", "Check checkout requirements."),
+          ruleIds: ["checkout"],
+          rules: [{ id: "checkout", state: "steered" }],
         }];
       };
 
@@ -1007,7 +1020,7 @@ describe("OMP conversation-rules extension", () => {
       // Nothing is returned: the steer itself is queued, and OMP continues the run with it once the prompt unwinds.
       await expect(stop).resolves.toBeUndefined();
       expect(harness.messages.map(sent => sent.message.content)).toEqual([
-        await deliveredSteer(harness.context.cwd, "checkout", "Check checkout requirements."),
+        deliveredSteer("checkout", "Check checkout requirements."),
       ]);
       await ended;
     });
@@ -1018,12 +1031,10 @@ describe("OMP conversation-rules extension", () => {
       createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
       await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
       const digested = Promise.withResolvers<void>();
-      const digest = `Rerail finished checking these edits only after the steps that made them had moved on:\n\n${steerBlock(
-        "checkout", "Check checkout requirements. (src/a.ts:2:7)", { mode: "steer", origin: steerOrigin("checkout") },
-      )}`;
+      const digest = steerBlock({ kind: "late" }, [{ ruleId: "checkout", mode: "steer", message: "Check checkout requirements.", location: "src/a.ts:2:7" }]);
       daemon.state.yield = async () => {
         await digested.promise;
-        return [{ sessionId: "omp-test-session", requested: "steer", mechanism: "native-queue", content: digest, ruleIds: ["checkout"] }];
+        return [{ sessionId: "omp-test-session", requested: "steer", mechanism: "native-queue", content: digest, ruleIds: ["checkout"], rules: [{ id: "checkout", state: "steered" }] }];
       };
       daemon.requests.length = 0;
 
@@ -1044,7 +1055,7 @@ describe("OMP conversation-rules extension", () => {
       digested.resolve();
       await expect(stop).resolves.toBeUndefined();
       expect(harness.messages.map(sent => [sent.message.content, sent.options])).toEqual([
-        [linkSteers(digest, await steerDashboard(harness.context.cwd)), { deliverAs: "steer" }],
+        [digest, { deliverAs: "steer" }],
       ]);
       await ended;
     });

@@ -3,7 +3,7 @@
   "id": "eslint-plugin-vue-no-child-content",
   "revision": 1,
   "mode": "steer",
-  "description": "Ports eslint-plugin-vue 10.11.1 `vue/no-child-content` with default options (directives html and text, one clause each): a paired (non self-closing) element whose start tag has `v-html`/`v-text` and whose children (between start and end tag) hold anything but whitespace-only text (text, interpolation, element, comment; the scanner keeps character references in the text, and one that decodes to a character `String.prototype.trim` strips, such as `&#32;` or `&nbsp;`, is whitespace as it is to the plugin). Reported where the child content starts: the end of the start tag.",
+  "description": "Don't put child content inside a Vue element that has v-html or v-text; the directive overwrites it.",
   "scope": {
     "include": [
       "**/*.vue"
