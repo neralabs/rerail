@@ -1,4 +1,4 @@
-use super::graph::Graph;
+use super::{graph::Graph, profile::Profile};
 use crate::code_rule_dsl::sql::{frames::FrameStore, timing::Started};
 use rusqlite::{
     Connection, Result, StatementStatus, ffi,
@@ -25,6 +25,7 @@ struct Publish {
     calls: Arc<AtomicUsize>,
     rows: Arc<AtomicUsize>,
     cells: Arc<AtomicUsize>,
+    profile: Arc<Profile>,
 }
 impl Aggregate<Buffer, String> for Publish {
     fn init(&self, _: &mut Context<'_>) -> Result<Buffer> {
@@ -40,7 +41,14 @@ impl Aggregate<Buffer, String> for Publish {
     }
     fn finalize(&self, _: &mut Context<'_>, acc: Option<Buffer>) -> Result<String> {
         let rows = acc.unwrap_or_default().rows;
+        let started = Started::now();
         self.frames.0.publish_spike_rows(&self.name, &rows)?;
+        self.profile.publication(
+            &self.name,
+            rows.len(),
+            rows.iter().map(Vec::len).sum(),
+            started.elapsed().cpu,
+        );
         self.calls.fetch_add(1, Ordering::Relaxed);
         self.rows.fetch_add(rows.len(), Ordering::Relaxed);
         self.cells
@@ -48,15 +56,22 @@ impl Aggregate<Buffer, String> for Publish {
         Ok(self.name.clone())
     }
 }
+struct Trace {
+    count: AtomicUsize,
+    statement: AtomicUsize,
+}
+
 unsafe extern "C" fn trace(
     mask: u32,
     context: *mut std::ffi::c_void,
-    _: *mut std::ffi::c_void,
+    statement: *mut std::ffi::c_void,
     _: *mut std::ffi::c_void,
 ) -> i32 {
     if mask == ffi::SQLITE_TRACE_STMT {
         // SAFETY: execute keeps this counter alive until it removes the trace callback.
-        unsafe { &*(context as *const AtomicUsize) }.fetch_add(1, Ordering::Relaxed);
+        let state = unsafe { &*(context as *const Trace) };
+        state.count.fetch_add(1, Ordering::Relaxed);
+        state.statement.store(statement as usize, Ordering::Relaxed);
     }
     0
 }
@@ -82,6 +97,31 @@ pub(super) fn execute(
     graph: &Graph,
     sql: &str,
 ) -> Result<Execution> {
+    execute_program(connection, frames, graph, &[sql.to_owned()], false)
+}
+
+pub(super) fn execute_program(
+    connection: &Connection,
+    frames: &Arc<FrameStore>,
+    graph: &Graph,
+    queries: &[String],
+    profiling: bool,
+) -> Result<Execution> {
+    execute_observed(connection, frames, graph, queries, profiling, None)
+}
+
+/// Retain plans and partial counters when a candidate hits its execution budget or fails.
+pub(super) fn execute_observed(
+    connection: &Connection,
+    frames: &Arc<FrameStore>,
+    graph: &Graph,
+    queries: &[String],
+    profiling: bool,
+    observation: Option<&mut Json>,
+) -> Result<Execution> {
+    super::scan::configure(connection, profiling)?;
+    let profile = Profile::new(profiling);
+    profile.register(connection)?;
     let calls = Arc::new(AtomicUsize::new(0));
     let published = Arc::new(AtomicUsize::new(0));
     let cells = Arc::new(AtomicUsize::new(0));
@@ -124,6 +164,7 @@ pub(super) fn execute(
                 calls: Arc::clone(&calls),
                 rows: Arc::clone(&published),
                 cells: Arc::clone(&cells),
+                profile: Arc::clone(&profile),
             },
         )?;
     }
@@ -143,29 +184,128 @@ pub(super) fn execute(
             Ok(token)
         },
     )?;
+    let mut hits = Vec::new();
+    let mut steps = Vec::new();
+    let mut error = None;
+    for sql in queries {
+        match execute_statement(connection, sql, &profile) {
+            Ok((step, fault)) => {
+                hits.extend(step.hits);
+                steps.push(step.metrics);
+                if fault.is_some() {
+                    error = fault;
+                    break;
+                }
+            }
+            Err(e) => {
+                error = Some(e);
+                break;
+            }
+        }
+    }
+    let metric_names = [
+        "sqlExecutions",
+        "prepareCpuNs",
+        "prepareWallNs",
+        "cpuNs",
+        "wallNs",
+        "vmSteps",
+        "fullscanSteps",
+        "sorts",
+        "automaticIndexRows",
+        "sqlBytes",
+    ];
+    let mut metrics = serde_json::Map::new();
+    for name in metric_names {
+        metrics.insert(
+            name.into(),
+            json!(
+                steps
+                    .iter()
+                    .map(|m| m[name].as_u64().unwrap_or(0))
+                    .sum::<u64>()
+            ),
+        );
+    }
+    metrics.insert("statements".into(), json!(steps));
+    metrics.insert("publishedSets".into(), json!(calls.load(Ordering::Relaxed)));
+    metrics.insert(
+        "publishedRows".into(),
+        json!(published.load(Ordering::Relaxed)),
+    );
+    metrics.insert(
+        "publishedCells".into(),
+        json!(cells.load(Ordering::Relaxed)),
+    );
+    metrics.insert("peakFrameRows".into(), json!(frames.peak()));
+    metrics.insert("relations".into(), json!(graph.relations.len()));
+    metrics.insert("sharedRelations".into(), json!(graph.intern_hits));
+    if profiling {
+        let diagnostic_started = Started::now();
+        metrics.insert("profile".into(), profile.report(graph));
+        let explain_started = Started::now();
+        metrics.insert(
+            "explain".into(),
+            json!(
+                queries
+                    .iter()
+                    .map(|sql| super::profile::explain(connection, sql))
+                    .collect::<Vec<_>>()
+            ),
+        );
+        metrics.insert("explainCpuNs".into(), json!(explain_started.elapsed().cpu));
+        metrics.insert(
+            "diagnosticCpuNs".into(),
+            json!(diagnostic_started.elapsed().cpu),
+        );
+    }
+    let mut metrics = Json::Object(metrics);
+    if profiling {
+        super::profile::summarize(&mut metrics, graph, &[]);
+    }
+    if let Some(observation) = observation {
+        *observation = metrics.clone();
+    }
+    if let Some(error) = error {
+        return Err(error);
+    }
+    Ok(Execution { hits, metrics })
+}
+
+fn execute_statement(
+    connection: &Connection,
+    sql: &str,
+    profile: &Arc<Profile>,
+) -> Result<(Execution, Option<rusqlite::Error>)> {
     let prepared = Started::now();
     let mut statement = connection.prepare(sql)?;
     let prepare = prepared.elapsed();
-    let count = AtomicUsize::new(0);
+    let count = Trace {
+        count: AtomicUsize::new(0),
+        statement: AtomicUsize::new(0),
+    };
     // Count actual SQLite statement executions, including any nested executions in callbacks.
     unsafe {
         ffi::sqlite3_trace_v2(
             connection.handle(),
             ffi::SQLITE_TRACE_STMT,
             Some(trace),
-            (&count as *const AtomicUsize).cast_mut().cast(),
+            (&count as *const Trace).cast_mut().cast(),
         );
     }
     let trace_guard = TraceGuard(connection);
     let ticks = Arc::new(AtomicUsize::new(0));
     let progress = Arc::clone(&ticks);
     let wall = Instant::now();
+    let sampled = Arc::clone(profile);
     connection.progress_handler(
         10_000,
         Some(move || {
+            sampled.sampled_vm.fetch_add(10_000, Ordering::Relaxed);
             progress.fetch_add(1, Ordering::Relaxed) > 50_000 || wall.elapsed().as_secs() > 30
         }),
     )?;
+    profile.sampled_vm.store(0, Ordering::Relaxed);
     let started = Started::now();
     let result = (|| -> Result<_> {
         let mut rows = statement.query([])?;
@@ -187,17 +327,27 @@ pub(super) fn execute(
     })();
     let elapsed = started.elapsed();
     drop(trace_guard);
-    let executions = count.load(Ordering::Relaxed);
+    let executions = count.count.load(Ordering::Relaxed);
     assert_eq!(
         executions, 1,
         "whole-call execution must issue exactly one SQL statement"
     );
-    let metrics = json!({"sqlExecutions":executions,"prepareCpuNs":prepare.cpu,"prepareWallNs":prepare.wall,"cpuNs":elapsed.cpu,"wallNs":elapsed.wall,
+    let scan = if profile.enabled {
+        super::scan::read(count.statement.load(Ordering::Relaxed))
+    } else {
+        Json::Null
+    };
+    let metrics = json!({"scans":scan,"sqlExecutions":executions,"prepareCpuNs":prepare.cpu,"prepareWallNs":prepare.wall,"cpuNs":elapsed.cpu,"wallNs":elapsed.wall,
         "vmSteps":statement.get_status(StatementStatus::VmStep),"fullscanSteps":statement.get_status(StatementStatus::FullscanStep),"sorts":statement.get_status(StatementStatus::Sort),
-        "automaticIndexRows":statement.get_status(StatementStatus::AutoIndex),"publishedSets":calls.load(Ordering::Relaxed),"publishedRows":published.load(Ordering::Relaxed),"publishedCells":cells.load(Ordering::Relaxed),
-        "peakFrameRows":frames.peak(),"relations":graph.relations.len(),"sharedRelations":graph.intern_hits,"sqlBytes":sql.len()});
-    Ok(Execution {
-        hits: result?,
-        metrics,
+        "automaticIndexRows":statement.get_status(StatementStatus::AutoIndex),"sqlBytes":sql.len()});
+    Ok(match result {
+        Ok(hits) => (Execution { hits, metrics }, None),
+        Err(e) => (
+            Execution {
+                hits: Vec::new(),
+                metrics,
+            },
+            Some(e),
+        ),
     })
 }

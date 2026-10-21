@@ -80,6 +80,11 @@ impl Verdict {
 pub(in crate::code_rule_dsl::sql) trait Verdicts:
     Send + Sync
 {
+    #[cfg(test)]
+    fn spike_eager_safe(&self) -> bool {
+        false
+    }
+
     fn rows<'t>(
         &self,
         node: Node<'t, TapeDoc>,
@@ -115,6 +120,10 @@ fn leaf_rows<'t, D: Doc>(
 }
 
 impl Verdicts for Leaf {
+    #[cfg(test)]
+    fn spike_eager_safe(&self) -> bool {
+        matches!(self.0, AstMatcher::TestUnknown(_))
+    }
     fn rows<'t>(
         &self,
         node: Node<'t, TapeDoc>,

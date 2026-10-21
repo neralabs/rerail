@@ -95,10 +95,7 @@ fn workload() {
             )
         })
         .collect();
-    let files = format!(
-        "SELECT CAST(key AS INTEGER) FROM json_each('{}')",
-        json!(vec![0; docs.len()])
-    );
+    let files = "SELECT file FROM node WHERE id=0".to_owned();
     let started = Instant::now();
     let mut builder = ProgramBuilder::default();
     let mut compiler = Compiler::default();
@@ -140,6 +137,11 @@ fn workload() {
         }
     }
     let compile_ms = started.elapsed().as_secs_f64() * 1000.;
+    if std::env::var("RERAIL_WHOLE_CALL_CASES")
+        .is_ok_and(|s| s.split(',').any(|s| s == "recursive-machine"))
+    {
+        recursive_corpus(out, &grammars, &labels, &each, &docs);
+    }
     std::fs::write(
         out.join("coverage.json"),
         serde_json::to_vec_pretty(&coverage).unwrap(),
@@ -166,32 +168,84 @@ fn workload() {
     let legacy_time = started.elapsed();
     let graph = compiler.graph;
     let mut alternatives = Vec::new();
-    for (mode, policy) in [
-        ("cte", Policy::All),
-        ("cte", Policy::Reuse),
-        ("cte", Policy::Boundaries),
-        ("buffers", Policy::All),
-        ("buffers", Policy::Reuse),
-        ("buffers", Policy::Boundaries),
+    for (mode, policy, budget, phases) in [
+        ("cte", Policy::All, 0, 1),
+        ("cte", Policy::Reuse, 0, 1),
+        ("cte", Policy::Boundaries, 0, 1),
+        ("buffers", Policy::All, 0, 1),
+        ("buffers", Policy::Reuse, 0, 1),
+        ("buffers", Policy::Boundaries, 0, 1),
+        ("shaped-64-1", Policy::All, 64, 1),
+        ("shaped-8-1", Policy::All, 8, 1),
+        ("shaped-16-1", Policy::All, 16, 1),
+        ("shaped-exists-64-1", Policy::All, 64, 1),
+        ("shaped-256-1", Policy::All, 256, 1),
+        ("shaped-64-4", Policy::All, 64, 4),
+        ("shaped-256-4", Policy::All, 256, 4),
     ] {
+        let case = format!("{mode}-{policy:?}");
+        if let Ok(selected) = std::env::var("RERAIL_WHOLE_CALL_CASES")
+            && !selected.split(',').any(|s| s == case)
+        {
+            continue;
+        }
         let mut fresh = ProgramBuilder::default();
         for (index, g) in grammars.iter().enumerate() {
             if !each[index] {
                 let _ = fresh.clause_each(g, None);
             }
         }
-        let (physical, sql) = if mode == "cte" {
-            (graph.clone(), graph.render(&outputs, policy))
+        let generated = crate::code_rule_dsl::sql::timing::Started::now();
+        let (physical, queries, planning) = if budget > 0 {
+            let shape = if mode.contains("exists") {
+                super::shapes::StageProbe::Exists
+            } else {
+                super::shapes::StageProbe::RowIn
+            };
+            let plan = super::physical::plan_with_shape(&graph, &outputs, budget, phases, shape);
+            (plan.graph, plan.queries, plan.metadata)
+        } else if mode == "cte" {
+            (
+                graph.clone(),
+                vec![graph.render(&outputs, policy)],
+                Value::Null,
+            )
         } else {
-            super::buffers::render(&graph, &outputs, policy)
+            let (physical, sql) = super::buffers::render(&graph, &outputs, policy);
+            (physical, vec![sql], Value::Null)
         };
-        std::fs::write(out.join(format!("{mode}-{policy:?}.sql")), &sql).unwrap();
+        let generation = generated.elapsed();
+        for (part, sql) in queries.iter().enumerate() {
+            std::fs::write(out.join(format!("{case}-{part}.sql")), sql).unwrap();
+        }
+        let profiling = std::env::var_os("RERAIL_WHOLE_CALL_PROFILE").is_some();
         let started = crate::code_rule_dsl::sql::timing::Started::now();
+        let mut observation = Value::Null;
         let mut record = sql::exec::with_terminals(
             docs.clone(),
             fresh.terminals,
-            |connection, _, frames| match run::execute(connection, frames, &physical, &sql) {
-                Ok(got) => {
+            |connection, _, frames| match run::execute_observed(
+                connection,
+                frames,
+                &physical,
+                &queries,
+                profiling,
+                Some(&mut observation),
+            ) {
+                Ok(mut got) => {
+                    if profiling {
+                        let owners: Vec<_> = coverage
+                            .iter()
+                            .filter(|c| c["supported"] == true)
+                            .map(|c| {
+                                (
+                                    c["relation"].as_u64().unwrap() as usize,
+                                    c["clause"].as_str().unwrap().to_owned(),
+                                )
+                            })
+                            .collect();
+                        super::profile::summarize(&mut got.metrics, &graph, &owners);
+                    }
                     let mut actual =
                         vec![
                             vec![Vec::new(); config["files"].as_array().unwrap().len()];
@@ -203,22 +257,35 @@ fn workload() {
                     let parity = actual == expected;
                     if !parity {
                         std::fs::write(
-                            out.join(format!("{policy:?}-mismatch.txt")),
+                            out.join(format!("{case}-mismatch.txt")),
                             format!("expected {expected:#?}\nactual {actual:#?}"),
                         )
                         .unwrap();
                     }
-                    json!({"mode":mode,"policy":format!("{policy:?}"),"parity":parity,"matches":got.hits.len(),"metrics":got.metrics})
+                    json!({"mode":mode,"policy":format!("{policy:?}"),"parity":parity,"matches":got.hits.len(),"metrics":got.metrics,"planning":planning})
                 }
                 Err(e) => {
-                    json!({"mode":mode,"policy":format!("{policy:?}"),"error":e.to_string(),"parity":null,"status":"rejected"})
+                    json!({"mode":mode,"policy":format!("{policy:?}"),"error":e.to_string(),"parity":null,"status":"rejected","metrics":observation})
                 }
             },
         );
         let total = started.elapsed();
-        record["wholeKernelCpuNs"] = json!(total.cpu);
+        record["wholeKernelCpuNs"] = json!(
+            total
+                .cpu
+                .saturating_sub(record["metrics"]["diagnosticCpuNs"].as_u64().unwrap_or(0))
+        );
         record["wholeKernelWallNs"] = json!(total.wall);
-        eprintln!("whole-call corpus {record}");
+        record["sqlGenerationCpuNs"] = json!(generation.cpu);
+        record["sqlGenerationWallNs"] = json!(generation.wall);
+        eprintln!(
+            "whole-call corpus {case}: parity={} error={} cpu={} vm={} publications={}",
+            record["parity"],
+            record["error"],
+            record["metrics"]["cpuNs"],
+            record["metrics"]["vmSteps"],
+            record["metrics"]["publishedRows"]
+        );
         alternatives.push(record);
     }
     let report = json!({"scope":"matching kernel; all roots of each admitted grammar in all configured files; no policy selectors, rendering, or cross-file policy composition", "files":config["files"],"policies":policies.len(),"clauses":grammars.len(),"admitted":admitted.len(),"compileWallMs":compile_ms,"estimatedMaxExpandedReferences":graph.expanded_references(),"legacySingleBatch":{"cpuNs":legacy_time.cpu,"wallNs":legacy_time.wall,"statements":session.stats().statements},"alternatives":alternatives});
@@ -235,5 +302,140 @@ fn workload() {
     assert!(
         !mismatches,
         "a completed whole-call plan changed roots or captures; inspect results.json"
+    );
+}
+
+fn recursive_corpus(
+    out: &Path,
+    grammars: &[&crate::code_rule_dsl::matcher::GrammarMatcher],
+    labels: &[String],
+    each: &[bool],
+    docs: &[(crate::code_rule_dsl::tape::TapeDoc, FileContext)],
+) {
+    use super::recursive_machine;
+    use crate::code_rule_dsl::sql::{
+        exec::{Captured, SqlMatch},
+        plan::SlotKind,
+    };
+    let mut builder = ProgramBuilder::default();
+    let mut admitted = Vec::new();
+    let mut statements = Vec::new();
+    let mut coverage = Vec::new();
+    for (i, grammar) in grammars.iter().enumerate() {
+        if each[i] {
+            coverage.push(
+                json!({"clause":labels[i],"supported":false,"reason":"violation.each enumeration"}),
+            );
+            continue;
+        }
+        let result = builder
+            .clause_each(grammar, None)
+            .map_err(|e| e.to_string())
+            .and_then(|s| {
+                recursive_machine::compile_batch_with_contract(&[&s], &builder.terminals).map(|_| s)
+            });
+        match result {
+            Ok(s) => {
+                coverage.push(json!({"clause":labels[i],"supported":true,"features":super::recursive::features(&s)}));
+                admitted.push(*grammar);
+                statements.push(s);
+            }
+            Err(e) => coverage.push(json!({"clause":labels[i],"supported":false,"reason":e})),
+        }
+    }
+    std::fs::write(
+        out.join("recursive-coverage.json"),
+        serde_json::to_vec_pretty(&coverage).unwrap(),
+    )
+    .unwrap();
+    if statements.is_empty() {
+        return;
+    }
+    let query = recursive_machine::compile_batch_with_contract(
+        &statements.iter().collect::<Vec<_>>(),
+        &builder.terminals,
+    )
+    .unwrap();
+    std::fs::write(out.join("recursive.sql"), &query).unwrap();
+    let mut session = sql::exec::compile(&admitted).unwrap().session().unwrap();
+    let runs: Vec<_> = (0..admitted.len())
+        .map(|statement| sql::ClauseRun {
+            statement,
+            files: (0..docs.len()).map(|file| (file, None)).collect(),
+        })
+        .collect();
+    let expected = session.run(docs.to_vec(), &runs);
+    let profiling = std::env::var_os("RERAIL_WHOLE_CALL_PROFILE").is_some();
+    let report = sql::exec::with_terminals(
+        docs.to_vec(),
+        builder.terminals,
+        |connection, batch, frames| {
+            recursive_machine::register_text(connection, batch).unwrap();
+            let mut observation = Value::Null;
+            match run::execute_observed(
+                connection,
+                frames,
+                &super::graph::Graph::default(),
+                &[query],
+                profiling,
+                Some(&mut observation),
+            ) {
+                Err(e) => {
+                    json!({"status":"rejected","error":e.to_string(),"parity":null,"clauses":statements.len(),"files":docs.len(),"metrics":observation})
+                }
+                Ok(got) => {
+                    let faults: Vec<_> = got.hits.iter().filter(|h| h.3["fault"] != 0).collect();
+                    let mut actual = vec![vec![Vec::new(); docs.len()]; statements.len()];
+                    for (rule, file, root, answer) in &got.hits {
+                        if answer["fault"] != 0 || answer["result"] != 1 {
+                            continue;
+                        }
+                        let captures = statements[*rule]
+                            .slots
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, s)| s.scope == 0)
+                            .filter_map(|(id, slot)| {
+                                answer["env"][id.to_string()].as_i64().map(|v| {
+                                    (
+                                        slot.name.clone(),
+                                        match slot.kind {
+                                            SlotKind::Node => Captured::Node(v as u32),
+                                            SlotKind::Count => Captured::Count(v),
+                                            _ => unreachable!(),
+                                        },
+                                    )
+                                })
+                            })
+                            .collect();
+                        actual[*rule][*file].push(SqlMatch {
+                            root: *root,
+                            captures,
+                        });
+                    }
+                    let parity = match &expected {
+                        Ok(e) => faults.is_empty() && *e == actual,
+                        Err(_) => faults.iter().any(|h| h.3["fault"] == 1),
+                    };
+                    json!({"status":"completed","parity":parity,"clauses":statements.len(),"files":docs.len(),"terminalRootVerdicts":got.hits.len(),"faults":faults,"metrics":got.metrics})
+                }
+            }
+        },
+    );
+    eprintln!(
+        "recursive corpus: {} clauses, parity={}, status={}, error={}",
+        statements.len(),
+        report["parity"],
+        report["status"],
+        report["error"]
+    );
+    std::fs::write(
+        out.join("recursive-results.json"),
+        serde_json::to_vec_pretty(&report).unwrap(),
+    )
+    .unwrap();
+    assert_ne!(
+        report["parity"], false,
+        "recursive corpus roots/captures differ"
     );
 }

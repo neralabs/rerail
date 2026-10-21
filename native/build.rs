@@ -10,6 +10,20 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 fn main() {
+    println!("cargo:rustc-check-cfg=cfg(rerail_scanstatus)");
+    println!("cargo:rerun-if-env-changed=LIBSQLITE3_FLAGS");
+    if std::env::var("LIBSQLITE3_FLAGS").is_ok_and(|flags| {
+        flags.split_whitespace().any(|f| {
+            matches!(
+                f,
+                "SQLITE_ENABLE_STMT_SCANSTATUS"
+                    | "-DSQLITE_ENABLE_STMT_SCANSTATUS"
+                    | "-DSQLITE_ENABLE_STMT_SCANSTATUS=1"
+            )
+        })
+    }) {
+        println!("cargo:rustc-cfg=rerail_scanstatus");
+    }
     napi_build::setup();
     for grammar in GRAMMARS {
         build_grammar(grammar);

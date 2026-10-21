@@ -3,16 +3,17 @@
 These experiments target one actual SQL execution across all selected files and rules in a Rerail call.
 They run under Rust tests. They do not change the addon or add runtime switches.
 The existing production compiler still uses its frame scheduler.
+See [the SQL generation follow-up](sql-generation-shape-spikes.md) for newer shapes, profiling, few-statement execution, and compiled recursive CTEs.
 
 ## Decision
 
 Build an immutable, typed relational compiler before allocating storage.
 Keep relation references symbolic through rule matching and policy composition.
 Select terminal demand sets and physical storage after global sharing and capture analysis.
-Compile the resulting program to one SQLite statement.
+Compile the resulting program to one SQLite statement, or a few bounded phases when backend limits justify them.
 
 Native leaves can process their input sets in parallel within that execution.
-Splitting the call into separate SQL executions per worker would violate the target.
+Statement count must stay small relative to the complete workload, rather than growing with workers, files, or rules.
 
 The data-layer provides useful examples of this architecture.
 Concatenating the current emitted statements into CTEs is insufficient.
@@ -52,7 +53,7 @@ Sources are under `native/src/code_rule_dsl/sql/spikes/whole_call/`.
 | Enumeration | `each.rs` enumerates a proved subtree witness shape and preserves distinct occurrences. | General exclusion-sensitive bodies need their own lowering. |
 | Input snapshots | `inputs.rs` changes file versions on one connection and tests all, selected, duplicate, and empty roots. | Connect the complete workspace selector contract. |
 | Positive recursion | `recursive.rs` compares a witness-propagation CTE and a tree interval join with native and scheduled SQL captures. | This does not establish equivalence for arbitrary recursive utilities. |
-| General recursion | Tests show answer replacement and nonconvergence in a synthetic SQL state schedule. | Compile native recursion semantics, demand dependencies, and cycle refusals. |
+| General recursion | `recursive_machine.rs` compiles real operators into a continuation CTE. Fixtures cover captures, negation, counts, unknowns, and reached cycles. | Complete unsupported scope and leaf contracts, and replace expensive generic transitions with specialized relations. |
 | SQLite limits | A minimal shared diamond reproduces the table-reference limit. Physical buffer experiments bound producer expansion. | Use a backend preparation budget in physical planning. |
 | Execution contract | `run.rs` uses SQLite tracing to assert exactly one statement execution, including nested executions. | After integration, add this assertion to addon-level acceptance tests. |
 
@@ -214,7 +215,8 @@ Classify recursive components before choosing their lowering.
 Use ordinary SQL for acyclic memo dependencies.
 After proving equivalence, use tree intervals or positive closure.
 Other components need ordered demands, replaceable answers, dependency invalidation, and the native cycle-refusal contract.
-The synthetic full-state SQL schedule demonstrates replacement, but it is not a general compiler solution.
+The original synthetic full-state SQL schedule demonstrates replacement, but it is not a general compiler solution.
+The [follow-up compiler](sql-generation-shape-spikes.md#recursive-rule-compilation) now executes real recursive operators in SQL.
 Its incomplete result is a demonstration status, not a replacement for native cycle-refusal semantics.
 
 Do not move the native recursive interpreter behind a SQL function to satisfy the statement counter.

@@ -67,12 +67,18 @@ fn one_compiled_connection_reads_new_file_versions_without_old_answers() {
 fn all_selected_empty_and_duplicate_root_scopes_share_one_call() {
     use crate::code_rule_dsl::sql::inputs::RootInputs;
     use std::sync::Arc;
-    let policy = compile("typescript", json!({"rule":{"pattern":"f($X)"}}));
+    let policy = compile(
+        "typescript",
+        json!({"rule":{"pattern":"f($X)","inside":{"kind":"function_declaration","stopBy":"end"}}}),
+    );
     let grammar = &grammar_matchers(&policy)[0];
-    let docs: Vec<_> = ["f(a); f(b);", "f(c);"]
-        .iter()
-        .map(|s| tape(GrammarDialect::TypeScript, s))
-        .collect();
+    let docs: Vec<_> = [
+        "function a(){f(a); function b(){f(b);}} f(outside);",
+        "function c(){f(c);}",
+    ]
+    .iter()
+    .map(|s| tape(GrammarDialect::TypeScript, s))
+    .collect();
     let selected: Vec<_> = (0..docs[0].transducer_len() as u32)
         .filter(|&id| {
             docs[0].transducer_kind(id) == GrammarDialect::TypeScript.kind_id("call_expression")
@@ -131,7 +137,7 @@ fn all_selected_empty_and_duplicate_root_scopes_share_one_call() {
         outputs.push((i, id));
         statements.push(statement);
     }
-    let (physical, query) = super::buffers::render(&compiler.graph, &outputs, Policy::Reuse);
+    let plan = super::physical::plan(&compiler.graph, &outputs, 8, 4);
     sql::exec::with_terminals(
         docs.into_iter()
             .map(|d| (d, FileContext::default()))
@@ -141,7 +147,8 @@ fn all_selected_empty_and_duplicate_root_scopes_share_one_call() {
             let roots = Arc::new(RootInputs::default());
             roots.register(connection).unwrap();
             roots.install(&runs);
-            let got = run::execute(connection, frames, &physical, &query).unwrap();
+            let got = run::execute_program(connection, frames, &plan.graph, &plan.queries, false)
+                .unwrap();
             let mut actual = vec![vec![Vec::new(); 2]; 3];
             for (clause, file, root, captures) in got.hits {
                 actual[clause][file].push(decode(&statements[clause], root, &captures));

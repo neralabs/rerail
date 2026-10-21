@@ -228,6 +228,18 @@ const NEAREST_MODULE: Module<'static, NearestTable> = Module::eponymous_only_mod
 /// An in-memory connection whose virtual tables read `slot`'s batch.
 fn connect(slot: &Arc<BatchSlot>) -> Result<Connection, SqlError> {
     let connection = Connection::open_in_memory()?;
+    #[cfg(all(test, rerail_scanstatus))]
+    // SAFETY: SQLite owns this live connection; the documented output argument is nullable.
+    // Profiling experiments enable counters explicitly; baseline sessions do not pay for them.
+    unsafe {
+        rusqlite::ffi::sqlite3_db_config(
+            connection.handle(),
+            rusqlite::ffi::SQLITE_DBCONFIG_STMT_SCANSTATUS,
+            0i32,
+            std::ptr::null_mut::<i32>(),
+        );
+    }
+
     connection.create_module(c"node", &NODE_MODULE, Some(Arc::clone(slot)))?;
     connection.create_module(c"pattern", &PATTERN_MODULE, Some(Arc::clone(slot)))?;
     connection.create_module(c"text_match", &TEXT_MODULE, Some(Arc::clone(slot)))?;

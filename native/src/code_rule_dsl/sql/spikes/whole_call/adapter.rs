@@ -216,6 +216,56 @@ impl Compiler {
                 let body = format!("{}{}", &sql[..at], &sql[end + 1..]);
                 let body = self.resolve(&body, &versions, stages, files)?;
                 let old = versions.get(target).copied();
+                // Root occurrence IDs are intrinsic to (file,node). Share that narrow domain
+                // across capture layouts instead of repeating row-number allocation per clause.
+                if old.is_none()
+                    && columns.len() >= 3
+                    && columns[0].name == "k"
+                    && columns[1].name == "file"
+                    && columns[2].name == "node"
+                    && body.starts_with("SELECT NULL, file, id")
+                    && let Some(from) = lex::top(&body)
+                        .into_iter()
+                        .find(|&at| body[at..].starts_with("FROM ("))
+                {
+                    let values = lex::arguments(body["SELECT ".len()..from].trim());
+                    if values.len() == columns.len()
+                        && values[3..].iter().all(|v| matches!(*v, "NULL" | "0"))
+                    {
+                        let source = self.graph.add(
+                            vec![
+                                Column {
+                                    name: "k".into(),
+                                    integer: true,
+                                },
+                                Column {
+                                    name: "file".into(),
+                                    integer: false,
+                                },
+                                Column {
+                                    name: "node".into(),
+                                    integer: false,
+                                },
+                            ],
+                            format!("SELECT file*4294967296+id,file,id {}", &body[from..]),
+                            Boundary::None,
+                        );
+                        let mut projected =
+                            vec!["r.k".to_owned(), "r.file".to_owned(), "r.node".to_owned()];
+                        projected.extend(values[3..].iter().map(|v| (*v).to_owned()));
+                        let id = self.graph.add(
+                            columns,
+                            format!(
+                                "SELECT {} FROM {} r",
+                                projected.join(","),
+                                Graph::name(source)
+                            ),
+                            Boundary::None,
+                        );
+                        versions.insert(target.to_owned(), id);
+                        continue;
+                    }
+                }
                 let key = columns
                     .iter()
                     .position(|c| c.integer && matches!(c.name.as_str(), "k" | "pk"));
