@@ -64,6 +64,22 @@ pub(super) fn index_build(rows: usize) -> IndexBuild {
 
 pub(super) struct IndexBuild(Option<Started>);
 
+/// Standalone replay measurements use counters without installing a connection trace.
+#[cfg(test)]
+pub(super) fn frame_counts<T>(body: impl FnOnce() -> T) -> (T, [u64; 9]) {
+    struct Active;
+    impl Drop for Active {
+        fn drop(&mut self) {
+            ACTIVE.set(ACTIVE.get() - 1);
+        }
+    }
+    let before = FRAME.get();
+    ACTIVE.set(ACTIVE.get() + 1);
+    let _active = Active;
+    let result = body();
+    (result, std::array::from_fn(|i| FRAME.get()[i] - before[i]))
+}
+
 impl Drop for IndexBuild {
     fn drop(&mut self) {
         if let Some(started) = self.0 {

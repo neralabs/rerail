@@ -2700,6 +2700,8 @@ impl<'s> Runner<'s> {
         if *MODE != Mode::Check {
             bound.text(step, &mut text);
         }
+        #[cfg(test)]
+        super::query_shapes::before_statement(self.connection, self.frames, &mut text)?;
         #[cfg(any(test, feature = "unbounded-work"))]
         let operation = self.profile_operation(&text, bound, step);
         let started = Started::now();

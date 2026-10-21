@@ -466,6 +466,9 @@ mod crossfile_tests;
 #[cfg(test)]
 mod placement_tests;
 #[cfg(test)]
+#[path = "../sql/spikes/query_workload.rs"]
+mod query_shape_workload;
+#[cfg(test)]
 mod storage_tests;
 #[cfg(test)]
 mod tests;

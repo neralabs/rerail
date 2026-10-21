@@ -1046,3 +1046,12 @@ Projecting the canonical integer key once is a separate compiler improvement aft
 `profile-frame-cost-1000/` contains the diagnostic capture and its recorded environment.
 `join-order-probe.json` compares identical SQL text with equal execution counts across both captures.
 `sql-families.json` records the family classification and counters.
+
+## Join, CTE, and statistics follow-up
+
+The [SQL shape investigation](sql-query-shape-spikes.md) compares joins, correlated subqueries, CTEs, copied inputs, and `ANALYZE` commands.
+It includes live-frame replay and 51 fresh-process workspace runs with complete native output parity.
+Explicit dependency order gives the hot sibling walk a bounded parent/range plan.
+The broader prototype reduces median apply CPU by approximately 3% on both tested corpora.
+Additional materialization and statistics do not close the remaining performance gap.
+All alternatives remain test-only experiments, with no new addon switches.

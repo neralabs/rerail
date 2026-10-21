@@ -17,6 +17,9 @@ mod nodes;
 mod plan;
 #[cfg(any(test, feature = "unbounded-work"))]
 mod profiling;
+#[cfg(test)]
+#[path = "spikes/query_shapes.rs"]
+pub(in crate::code_rule_dsl) mod query_shapes;
 mod recursion;
 pub(super) mod select_when;
 mod shapes;
