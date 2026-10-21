@@ -1,5 +1,9 @@
 # Native SQL relation experiments
 
+This document records historical experiments. The [final decisions](sql-shape-spikes.md#final-decisions) describe the current execution path.
+The current branch removes experimental execution flags and alternate input adapters.
+Historical commands require the corresponding older commit.
+
 Historical measurements. The [implementation report](native-relations-implementation.md) describes the adopted features and new benchmarks.
 
 Keep SQL for rule decisions, joins, aggregation, and diagnostics.

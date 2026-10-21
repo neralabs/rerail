@@ -1,9 +1,6 @@
 //! Benchmark-only attribution for the existing workspace evaluator.
 //! Disabled in production builds. Reports worker CPU separately from wall time.
 
-pub(super) mod capture_rows;
-pub(super) mod native_rows;
-mod native_tape;
 mod semantic;
 pub(super) mod sql;
 pub(crate) mod trace;

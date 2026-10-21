@@ -1,4 +1,4 @@
-//! Profile-only indexed access to completed output. No producer runs in callbacks.
+//! Indexed access to completed output. No producer runs in callbacks.
 use super::{Completed, MAX_OUTPUT_BYTES, Output, capacity, source, sql_error};
 use crate::code_rule_dsl::relational::{syntax::Source, table};
 use rusqlite::{Connection, types::Value, vtab::Context};
@@ -152,7 +152,7 @@ pub(super) fn publish(
     };
     let root = Index::build(&output.roots, size, &meter).map_err(sql_error)?;
     let node = Index::build(&output.nodes, size, &meter).map_err(sql_error)?;
-    table::register_transient(
+    table::register(
         db,
         name,
         Arc::new(CompletedSource {

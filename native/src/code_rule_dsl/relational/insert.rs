@@ -34,24 +34,7 @@ pub(super) fn insert_rows<R: IntoIterator<Item = Value>>(
     exhausted: &str,
 ) -> Result<()> {
     #[cfg(feature = "code-rule-profile")]
-    if !name.starts_with("__") && std::env::var_os("RERAIL_SQL_INPUT_VTAB").is_some() {
-        return super::super::profile::native_rows::load(
-            db,
-            name,
-            rows,
-            std::sync::Arc::clone(work),
-        );
-    }
-    #[cfg(feature = "code-rule-profile")]
     let mut span = crate::code_rule_dsl::profile::trace::Span::start("sql-input", name);
-    #[cfg(feature = "code-rule-profile")]
-    let requested = std::env::var("RERAIL_SQL_INSERT_BATCH")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(DEFAULT_ROWS)
-        .clamp(1, 256);
-    #[cfg(not(feature = "code-rule-profile"))]
-    let requested = DEFAULT_ROWS;
     let result = write_rows(
         db,
         name,
@@ -60,7 +43,7 @@ pub(super) fn insert_rows<R: IntoIterator<Item = Value>>(
         work,
         exhausted,
         Limits {
-            rows: requested,
+            rows: DEFAULT_ROWS,
             bytes: DEFAULT_BYTES,
             charge_rows: true,
         },

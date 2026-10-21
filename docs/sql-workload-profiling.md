@@ -78,7 +78,7 @@ Immutable syntax virtual tables record scans, indexed lookups, cursor advances, 
 Owner index construction records timing when it occurs inside an observed SQL execution.
 Normally, structural indexes already exist before SQL runs.
 Their preparation remains visible in the existing stage trace.
-The optional historical `--native-input rows` adapter uses a separate experimental module without these callback counters.
+The historical input adapter experiments no longer form part of the engine or profiling addon.
 
 Stage and publication operations record their inclusive cost and their exclusive cost after subtraction of child SQL.
 CPU rankings add SQL cost and exclusive operation cost once.

@@ -23,15 +23,12 @@ struct Shared {
     source: Arc<dyn Source>,
     stats: Arc<Counters>,
 }
-enum Registration {
-    Owned(Shared),
-    #[cfg(feature = "code-rule-profile")]
-    Transient(std::sync::Weak<dyn Source>, Arc<Counters>),
-}
+type Registration = Arc<parking_lot::Mutex<Option<Shared>>>;
 #[repr(C)]
 struct Table {
     base: rusqlite::ffi::sqlite3_vtab,
     shared: Shared,
+    registration: Registration,
 }
 fn quote(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
@@ -40,22 +37,6 @@ pub(super) fn register(
     db: &Connection,
     name: &str,
     source: Arc<dyn Source>,
-) -> Result<Arc<Counters>> {
-    register_inner(db, name, source, false)
-}
-#[cfg(feature = "code-rule-profile")]
-pub(super) fn register_transient(
-    db: &Connection,
-    name: &str,
-    source: Arc<dyn Source>,
-) -> Result<Arc<Counters>> {
-    register_inner(db, name, source, true)
-}
-fn register_inner(
-    db: &Connection,
-    name: &str,
-    source: Arc<dyn Source>,
-    transient: bool,
 ) -> Result<Arc<Counters>> {
     if name.is_empty()
         || name.len() > 120
@@ -67,30 +48,16 @@ fn register_inner(
     let module = CString::new(format!("native_source_{name}"))
         .map_err(|_| failure("invalid module name"))?;
     const MODULE: Module<Table> = Module::read_only_module();
-    #[cfg(feature = "code-rule-profile")]
-    let registration = if transient {
-        Registration::Transient(Arc::downgrade(&source), Arc::clone(&stats))
-    } else {
-        Registration::Owned(Shared {
-            source: Arc::clone(&source),
-            stats: Arc::clone(&stats),
-        })
-    };
-    #[cfg(not(feature = "code-rule-profile"))]
-    let registration = {
-        let _ = transient;
-        Registration::Owned(Shared {
-            source: Arc::clone(&source),
-            stats: Arc::clone(&stats),
-        })
-    };
+    let registration = Arc::new(parking_lot::Mutex::new(Some(Shared {
+        source,
+        stats: Arc::clone(&stats),
+    })));
     db.create_module(module.as_c_str(), &MODULE, Some(registration))?;
     db.execute_batch(&format!(
         "CREATE VIRTUAL TABLE {} USING {}",
         quote(name),
         quote(module.to_str().unwrap())
     ))?;
-    drop(source);
     Ok(stats)
 }
 // SAFETY: SQLite's base is first; auxiliary data and cursors own Arc references.
@@ -106,16 +73,11 @@ unsafe impl<'a> VTab<'a> for Table {
         _: &[&[u8]],
     ) -> Result<(Cow<'static, CStr>, Self)> {
         db.config(VTabConfig::Innocuous)?;
-        let shared = match aux.ok_or_else(|| failure("missing native row source"))? {
-            Registration::Owned(shared) => shared.clone(),
-            #[cfg(feature = "code-rule-profile")]
-            Registration::Transient(source, stats) => Shared {
-                source: source
-                    .upgrade()
-                    .ok_or_else(|| failure("completed source was released"))?,
-                stats: Arc::clone(stats),
-            },
-        };
+        let registration = aux.ok_or_else(|| failure("missing native row source"))?;
+        let shared = registration
+            .lock()
+            .clone()
+            .ok_or_else(|| failure("native row source was released"))?;
         let sql = CString::new(format!(
             "CREATE TABLE x({})",
             shared
@@ -133,6 +95,7 @@ unsafe impl<'a> VTab<'a> for Table {
             Self {
                 base: rusqlite::ffi::sqlite3_vtab::default(),
                 shared,
+                registration: Arc::clone(registration),
             },
         ))
     }
@@ -279,6 +242,11 @@ impl Cursor {
 }
 impl<'a> CreateVTab<'a> for Table {
     const KIND: VTabKind = VTabKind::Default;
+    fn destroy(&self) -> Result<()> {
+        // Disconnect can reconnect through the module. DROP releases its ownership.
+        self.registration.lock().take();
+        Ok(())
+    }
 }
 // SAFETY: SQLite's cursor base is first. No borrowed SQLite value escapes filter.
 unsafe impl VTabCursor for Cursor {

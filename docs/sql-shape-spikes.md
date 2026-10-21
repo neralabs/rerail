@@ -2,7 +2,34 @@
 
 The experiments isolate the four targets from the captured SQL report.
 The preferred combination reduces cold CPU by 33% and edit CPU by 42% on the pinned workload.
-All experiments remain optional. The shipped policy and default publication adapter remain unchanged.
+The accepted changes now form the normal execution path. The engine has no experiment switches.
+The historical measurements describe commit `b6934ddf`, before this promotion.
+
+## Final decisions
+
+| Proposal | Decision |
+| --- | --- |
+| Method identity index | Keep in the quality generator and generated policy |
+| Return range index and bound | Keep in the quality generator and generated policy |
+| Narrow projections | Apply during normal policy generation |
+| Completed-output virtual table | Use in every build and remove SQL-copy publication |
+| Forced join order | Reject and retain SQLite's join order |
+| UNION ALL, materialized CTE, and unpivot roots | Reject and retain the original root query |
+| Input row and capture adapters | Remove from the engine and profiling addon |
+| Shared input kind index | Remove because the measurements show no established gain |
+| Batch-size control | Remove and retain bounded 32-row batches |
+| Stage-retention control | Remove and always release after the last consumer |
+| Older authoring backends and broad shared scope | Remove their controls and retain the current three source domains |
+
+The profiling feature now adds observation only. It does not select an execution algorithm.
+The isolated historical SQL laboratory remains outside the engine's dependencies.
+Old experimental commands require a checkout of the corresponding historical commit.
+
+The permanent path passes the upstream corpus, production gates, and 177 edit transitions.
+It also passes 400 native tests in each build and the five tests in the producer gate.
+The ordinary build has no profiling feature. Its bounded build check disables LTO.
+Three fresh runs record median CPU of 1,967 ms cold and 707 ms for an edit.
+The [promotion evidence](../fixtures/host/data-layer-port/profiling/sql-shape-decisions.json) records those runs and the historical control.
 
 ## CPU results
 
@@ -83,9 +110,9 @@ The prototype guards retained arrays, both posting indexes, and scratch offsets 
 It retains the existing cancellation and work limits.
 Its dense offsets depend on the maximum node ordinal, so sparse ordinals can waste memory.
 The postings do not include the file identity, so SQLite filters candidates from other files.
-Both limitations require attention before general deployment.
-The transient module retains a weak source reference, while live tables and cursors retain strong references.
-This lifetime arrangement releases completed output after SQLite releases the table and its cursors.
+Both layouts can increase cost for sparse selections or many files. The output guard bounds their allocation.
+The module retains the source for SQLite reconnects. Live tables and cursors also retain the source.
+DROP releases the module's source reference. The final table or cursor release then frees the completed output.
 
 ## Root selection
 
@@ -116,13 +143,11 @@ The next experiments need physical column pruning, shared derived facts, and nar
 
 ## Reproduction
 
-Generate a policy candidate:
+Generate the policy through the normal sixth-batch generator:
 
 ```sh
-PYTHONDONTWRITEBYTECODE=1 python3 scripts/profiling/sql_shape_spikes.py \
-  --policy packs/data-layer/candidates/rules/data-layer-serverplan-quality.json \
-  --variant method-index --variant return-bounds --variant projections \
-  --output .rerail/profiles/sql-shape-best/data-layer-serverplan-quality.json
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/dsl/data_layer_generate_batch_six.py \
+  --source /path/to/pinned/nera-data-layer --repo /path/to/nera-data-layer-repo
 ```
 
 Select the profiling addon through `RERAIL_ENGINE_PATH`.
@@ -131,12 +156,12 @@ Run a fresh process for each measurement:
 ```sh
 PYTHONDONTWRITEBYTECODE=1 python3 scripts/profiling/run.py \
   --recording .rerail/profiles/batched-sql-integration/profile-five/selected-recording.json \
-  --policies .rerail/profiles/sql-shape-best --completed-output virtual \
+  --policies packs/data-layer/candidates/rules \
   --trace off --deadline 115 --allocator system-malloc-shim \
-  --output .rerail/profiles/sql-shape-best-run-1
+  --output .rerail/profiles/sql-shape-current-run-1
 ```
 
 For a diagnostic capture, add `--sql-profile --trace on --cold-only` and use a new output directory.
-For a publication control, use `--completed-output table` with the same addon.
-The controller clears inherited publication flags and records the selected adapter.
-The virtual adapter exists only with the `code-rule-profile` feature.
+The same publication adapter runs in ordinary and profiling builds.
+The publication regression compares completed output against an independent recursive SQL rule.
+The old table adapter and runtime selection flags no longer exist.
