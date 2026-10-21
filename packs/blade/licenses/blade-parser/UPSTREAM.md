@@ -339,7 +339,8 @@ Paths are relative to the pack directory, `packs/blade/`. Each fixture is writte
 | `upstream/blade-parser/fixtures/RequiredArgumentsTest/125.blade.php` | `tests/Validation/RequiredArgumentsTest.php` | the template test `required arguments validator does not detect issues` passes to `Document::fromText()` (dataset `('choice')`), captured verbatim |
 | `upstream/blade-parser/fixtures/RequiredArgumentsTest/126.blade.php` | `tests/Validation/RequiredArgumentsTest.php` | the template test `required arguments validator does not detect issues` passes to `Document::fromText()` (dataset `('use')`), captured verbatim |
 
-> `recording.json` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
-> table above: the tool-pack's `recording.lock` names it and a GitHub release holds the bytes (docs/port-readiness.md).
-> It carries excerpts of this upstream's tests (upstream's test files), redistributed under the licence above, together
-> with Rerail's Apache-2.0; `license.md` beside this file is this upstream's own, at the pinned commit.
+> The port readiness generator's answers for this tool-pack are no file of this pack, so they are recorded here rather
+> than in the table above: `npm run generate` writes them, and Rerail's private Azure blob store holds them, keyed by
+> the upstream version, not this repository (docs/generate-and-review.md). They carry excerpts of this upstream's tests
+> (upstream's test files), under the licence above, together with Rerail's Apache-2.0; `license.md` beside this file is
+> this upstream's own, at the pinned commit.

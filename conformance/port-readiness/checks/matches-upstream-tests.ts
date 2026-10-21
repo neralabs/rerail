@@ -203,7 +203,7 @@ export async function provenGaps(
     kinds.set(gap.id, kind);
     if (kind !== "valid-source") {
       problems.push(kind === "not-recorded"
-        ? `known gap ${gap.id}: no independent parser verdict on the probe is recorded; record the tool-pack again`
+        ? `known gap ${gap.id}: no independent parser verdict on the probe is recorded; generate the tool-pack again`
         : `known gap ${gap.id}: independent parsers do not read the probe as valid source (${kind}), so the parse failure is not the engine's`);
       continue;
     }

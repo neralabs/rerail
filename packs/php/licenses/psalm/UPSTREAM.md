@@ -315,8 +315,8 @@ Paths are relative to the pack directory, `packs/php/`. Each fixture is the `cod
 | `upstream/psalm/fixtures/UnusedVariableTest/valid/variableUsedIndirectly.php` | `tests/UnusedVariableTest.php` | the `code` of providerValidCodeParse() case `variableUsedIndirectly` |
 | `upstream/psalm/fixtures/UnusedVariableTest/valid/whileLoopVarUpdatedInWhileLoop.php` | `tests/UnusedVariableTest.php` | the `code` of providerValidCodeParse() case `whileLoopVarUpdatedInWhileLoop` |
 
-> `recording.json` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
-> table above: the tool-pack's `recording.lock` names it and a GitHub release holds the bytes (docs/port-readiness.md).
-> It carries excerpts of this upstream's tests (`tests/**/*.php`: the `code` of each providerValidCodeParse() and
-> providerInvalidCodeParse() case), redistributed under the licence above, together with Rerail's Apache-2.0; `LICENSE`
-> beside this file is this upstream's own, at the pinned commit.
+> The port readiness generator's answers for this tool-pack are no file of this pack, so they are recorded here rather
+> than in the table above: `npm run generate` writes them, and Rerail's private Azure blob store holds them, keyed by
+> the upstream version, not this repository (docs/generate-and-review.md). They carry excerpts of this upstream's tests
+> (`tests/**/*.php`: the `code` of each providerValidCodeParse() and providerInvalidCodeParse() case), under the licence
+> above, together with Rerail's Apache-2.0; `LICENSE` beside this file is this upstream's own, at the pinned commit.

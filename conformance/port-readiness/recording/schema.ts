@@ -1,8 +1,10 @@
 /**
- * The recording contract between the gates recorder (conformance/recorders/port-readiness/, run on a maintainer machine and
- * nightly) and the gates (conformance/port-readiness/, run in PR CI): what a live adapter answers, written as two files
- * the tool-pack's `recording.lock` names (store.ts) so the gates can read it back through a recorded adapter without
- * running upstream.
+ * The contract between the gates' generator (conformance/recorders/port-readiness/, run by an author and nightly) and
+ * the gates (conformance/port-readiness/, run in PR CI): what a live adapter answers, so the gates can read it back
+ * through a recorded adapter without running upstream. The answers are one GatesRecording and one GatesCorpusRecording,
+ * described below. They are stored split into the files of the `expected/` layout (the expected/ schemas at the end of
+ * this file; recording/expected.ts splits and joins them and keeps them, under the generator's key, in Azure Blob
+ * Storage and the local cache), which is what the gates read; nothing of them is in the tree.
  *
  * - `recording.json` (`rerail.port-readiness-recording/v2`) holds every PackAdapter answer the gates read except
  *   upstream's answers on the corpus: identity, tool-pack checks, the license digest, the words and names `not-overfit`
@@ -41,10 +43,6 @@ import type { ParserVerdict, Span } from "../types.js";
 
 export const RECORDING_FORMAT = "rerail.port-readiness-recording/v2";
 export const CORPUS_FORMAT = "rerail.port-readiness-corpus/v2";
-
-/** The two recordings' file names: the keys of a lock's `files`, and the stems of their asset names (store.ts). */
-export const RECORDING_FILE = "recording.json";
-export const CORPUS_FILE = "corpus.json";
 
 const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
@@ -258,7 +256,7 @@ export type RecordedCase = z.infer<typeof caseSchema>;
 /**
  * Every verdict list a recording writes out is in canonical form: it names the recording's `parsers` in their order,
  * and a list every parser was silent on is not written at all (an absent list means exactly that). Canonical form is
- * what makes `port-readiness:record --check` byte-comparable: there is one way to record a given answer.
+ * what makes the nightly's `npm run generate -- --drift` byte-comparable: there is one way to record a given answer.
  */
 function checkVerdicts(
   parsers: readonly RecordedParser[],
@@ -301,12 +299,12 @@ export const gatesRecordingSchema = z.strictObject({
   runtimes: z.record(z.string().regex(/^[a-z0-9._-]+$/u), z.record(z.string().regex(/^[A-Za-z0-9._-]+$/u), sha256)),
   /**
    * identity: how upstream ran and how its positions are read, as the report states it. No machine paths; a value that
-   * names the machine's toolchain (ESLint's `node <version>`) makes `port-readiness:record --check` differ across machines.
+   * names the machine's toolchain (ESLint's `node <version>`) makes the nightly's `--drift` differ across machines.
    */
   identity: z.record(nonEmpty, z.string()),
   /** packChecks: the tool-pack checks only the live adapter can make, as they stood when the recorder ran. */
   packChecks: z.array(checkSchema),
-  /** licenseText's sha256 (UTF-8): upstream's licence at the pinned commit; the kept copy (recorded-adapter.ts's licenseBytes over keptLicenseDirectory) must match it. */
+  /** licenseText's sha256 (UTF-8): upstream's licence at the pinned commit; the kept copy (upstream-files.ts's licenseBytes over keptLicenseDirectory) must match it. */
   licenseSha256: sha256,
   /**
    * licenseText itself: upstream's copyright and permission notice, which must accompany the excerpts of its tests this
@@ -436,11 +434,135 @@ export const gatesCorpusSchema = z.strictObject({
 
 export type GatesCorpusRecording = z.infer<typeof gatesCorpusSchema>;
 
-/**
- * A recording's text, the same on every machine: objects with their keys in code-unit order, two-space indentation, a
- * span tuple on one line, and a final newline.
+/*
+ * expected/: the same answers as the two recordings above, committed in the tool-pack (packs/<pack>/upstream/<tool>/
+ * expected/) and split so that a regeneration rewrites only what moved. recording/expected.ts writes and reads it: the
+ * generator splits a fresh recording into these files, and the gates join them back into one GatesRecording and one
+ * GatesCorpusRecording, which the schemas above check, so the recorded adapter answers from exactly what it answered
+ * from before.
+ *
+ * - `upstream.json` (expectedUpstreamSchema): the tool's facts, which no one rule or test file owns.
+ * - `rules/<rule>.json` (expectedRuleSchema): one upstream rule, by the name the pack's conformance.json gives it.
+ * - `cases/<test file>.json` (expectedTestFileSchema): one upstream test file, by its path in upstream's checkout, and
+ *   every case of it any rule reads, each finding stored once and keyed by rule.
+ * - `texts/<test file>.txt` (recording/expected.ts's textsFileText): the inline test texts read from that test file,
+ *   upstream's own text, which no file of upstream's checkout holds as it is (a RuleTester case's `code`).
+ * - `corpus/<task>.json` (expectedCorpusSchema): upstream's answers on the corpus files the goldens name, one file per
+ *   catalog task or pinned corpus (`rerail:<name>` is corpus/rerail/<name>.json).
  */
-export function recordingText(value: GatesRecording | GatesCorpusRecording): string {
+export const EXPECTED_FORMAT = "rerail.port-readiness-expected/v1";
+
+const recordingShape = gatesRecordingSchema.shape;
+
+export const expectedUpstreamSchema = z.strictObject({
+  format: z.literal(EXPECTED_FORMAT),
+  tool: recordingShape.tool,
+  adapter: recordingShape.adapter,
+  pins: recordingShape.pins,
+  runtimes: recordingShape.runtimes,
+  identity: recordingShape.identity,
+  packChecks: recordingShape.packChecks,
+  /** The sha256 of upstream's licence at the pinned commit; the licence itself is kept in packs/<pack>/licenses/<project>/. */
+  licenseSha256: recordingShape.licenseSha256,
+  inScopeSamples: recordingShape.inScopeSamples,
+  corpus: recordingShape.corpus,
+  keywords: recordingShape.keywords,
+  commentVocabulary: recordingShape.commentVocabulary,
+  fixtureWords: recordingShape.fixtureWords,
+  /**
+   * fixtureTexts' files (GatesRecording's `fixtureTexts.files`): the upstream files the gates rebuild texts from, at the
+   * pinned commit. Absent when the live adapter gives no origins, and then texts/ is empty too.
+   */
+  fixtureFiles: recordingShape.fixtureTexts.unwrap().shape.files.optional(),
+  /** Name sets two or more rules share; a set only one rule names is in that rule's file. */
+  nameSets: recordingShape.nameSets,
+  absent: recordingShape.absent,
+  parsers: recordingShape.parsers,
+  /**
+   * Parser verdicts on sources no test file's committed case source is: the known gaps' probes. Sorted by path, script
+   * and sha256, like every list of them.
+   */
+  parserVerdicts: recordingShape.parserVerdicts,
+  /** corpus.json's pins: the corpus tasks and the pack's pinned corpora the corpus answers were made on. */
+  corpusPins: gatesCorpusSchema.shape.pins,
+});
+
+export type ExpectedUpstream = z.infer<typeof expectedUpstreamSchema>;
+
+const ruleShape = ruleSchema.shape;
+
+export const expectedRuleSchema = z.strictObject({
+  facts: ruleShape.facts,
+  names: ruleShape.names,
+  /** The name sets only this rule names (an id two rules name is in upstream.json). */
+  nameSets: recordingShape.nameSets,
+  spanParts: ruleShape.spanParts,
+  /**
+   * The test files under cases/ whose cases are this rule's, in the order cases(name) lists them; within one, its cases
+   * keep the test file's order. Each test file once.
+   */
+  cases: z.array(relativePath).refine((files) => new Set(files).size === files.length, "names each test file once"),
+});
+
+export type ExpectedRule = z.infer<typeof expectedRuleSchema>;
+
+const caseShape = caseSchema.shape;
+const findingsByRule = z.record(nonEmpty, z.array(recordedSpanSchema));
+
+/** One case of a test file, with what upstream expects of every rule that reads it. */
+const expectedCaseSchema = z.strictObject({
+  fixture: caseShape.fixture,
+  variant: caseShape.variant,
+  path: caseShape.path,
+  parsedAs: caseShape.parsedAs,
+  script: caseShape.script,
+  skipped: caseShape.skipped,
+  file: caseShape.file,
+  sha256: caseShape.sha256,
+  /** Upstream's findings on the case for each rule whose cases include it, sorted by position: `[]` for none. */
+  expected: findingsByRule.refine((rules) => Object.keys(rules).length > 0, "names at least one rule"),
+  /** Upstream's written expectation for each of those rules that has one; a rule absent here has none (markup null). */
+  markup: findingsByRule.optional(),
+}).refine((testCase) => testCase.file !== null || testCase.skipped !== null, "only a skipped case has no committed source")
+  .refine((testCase) => Object.keys(testCase.markup ?? {}).every((rule) => rule in testCase.expected), "markup only for rules in expected");
+
+export type ExpectedCase = z.infer<typeof expectedCaseSchema>;
+
+export const expectedTestFileSchema = z.strictObject({
+  /** The upstream test file, relative to upstream's repository; its path under cases/ is this, with `.json`. */
+  test: relativePath,
+  /** sha256 of the test file's bytes at the pinned commit; null where upstream's checkout has no such file. */
+  sha256: sha256.nullable(),
+  /** Parser verdicts on the committed sources of this test file's cases, as GatesRecording's `parserVerdicts` holds them. */
+  parserVerdicts: recordingShape.parserVerdicts,
+  /** Every case of the test file a rule reads, in the order the rules list them. */
+  cases: z.array(expectedCaseSchema).min(1),
+});
+
+export type ExpectedTestFile = z.infer<typeof expectedTestFileSchema>;
+
+const corpusFileShape = corpusFileSchema.shape;
+
+export const expectedCorpusSchema = z.strictObject({
+  /** The catalog task, or `rerail:<corpus>` for a corpus the pack pins (corpus.json's `task`). */
+  task: corpusFileShape.task,
+  /** Its files the goldens name, sorted by path, as corpus.json's `files` without `task`. */
+  files: z.array(z.strictObject({
+    path: corpusFileShape.path,
+    sha256: corpusFileShape.sha256,
+    excluded: corpusFileShape.excluded,
+    findings: corpusFileShape.findings,
+    verdicts: corpusFileShape.verdicts,
+  })).min(1),
+});
+
+export type ExpectedCorpus = z.infer<typeof expectedCorpusSchema>;
+
+/**
+ * A recording's or an expected/ file's text, the same on every machine: objects with their keys in code-unit order,
+ * two-space indentation, a span tuple on one line, and a final newline.
+ */
+export function recordingText(value: object): string {
   const write = (node: unknown, indent: string): string => {
     if (node === null || typeof node !== "object") return JSON.stringify(node);
     const inner = `${indent}  `;

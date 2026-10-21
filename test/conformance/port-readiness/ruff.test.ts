@@ -322,30 +322,25 @@ test("ruffVersionMatches accepts the pinned version alone or with the pinned com
   assert.deepEqual(ruffVersionMatches("", "0.16.9", commit), other);
 });
 
-test("runtimeVersionCheck passes on the pinned Ruff and the pinned Python, and its detail names the form printed", () => {
+test("runtimeVersionCheck passes on the pinned Ruff and the pinned Python, and says the same whichever form the wheel printed", () => {
   const upstream = { version: "0.16.9", commit: "0be08a206f9c3180afd3e93bcc792ed5cb1f4db1" };
   const python = { version: "Python 3.13.12", pinned: "3.13.12" };
   const pins = "the pack pins 0.16.9 at 0be08a206 on Python 3.13.12";
-  assert.deepEqual(runtimeVersionCheck("ruff 0.16.9", python, upstream), {
-    id: "runtime-version",
-    ok: true,
-    detail: `the installed wheel reports \`ruff 0.16.9\` (the version alone, no build commit printed) on Python 3.13.12; ${pins}`,
-  });
-  assert.deepEqual(runtimeVersionCheck("ruff 0.16.9 (0be08a206 2026-09-24)", python, upstream), {
-    id: "runtime-version",
-    ok: true,
-    detail: `the installed wheel reports \`ruff 0.16.9 (0be08a206 2026-09-24)\` (the version and the pinned commit) on Python 3.13.12; ${pins}`,
-  });
+  const release = "the pinned release, ruff 0.16.9 (alone or with the pinned commit, as the platform's wheel prints it)";
+  // CI's Linux wheel and the macOS wheel print 0.16.9 differently; the generator's answers must not.
+  const linux = runtimeVersionCheck("ruff 0.16.9", python, upstream);
+  assert.deepEqual(linux, { id: "runtime-version", ok: true, detail: `the installed wheel reports ${release} on Python 3.13.12; ${pins}` });
+  assert.deepEqual(runtimeVersionCheck("ruff 0.16.9 (0be08a206 2026-09-24)", python, upstream), linux);
   // The pinned Ruff on another interpreter than .python-version pins still fails.
   assert.deepEqual(runtimeVersionCheck("ruff 0.16.9", { version: "Python 3.13.11", pinned: "3.13.12" }, upstream), {
     id: "runtime-version",
     ok: false,
-    detail: `the installed wheel reports \`ruff 0.16.9\` (the version alone, no build commit printed) on Python 3.13.11; ${pins}`,
+    detail: `the installed wheel reports ${release} on Python 3.13.11; ${pins}`,
   });
   assert.deepEqual(runtimeVersionCheck("ruff 0.16.8", python, upstream), {
     id: "runtime-version",
     ok: false,
-    detail: `the installed wheel reports \`ruff 0.16.8\` (neither the pinned version alone nor with the pinned commit) on Python 3.13.12; ${pins}`,
+    detail: `the installed wheel reports \`ruff 0.16.8\`, neither the pinned version alone nor with the pinned commit on Python 3.13.12; ${pins}`,
   });
 });
 

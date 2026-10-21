@@ -64,7 +64,7 @@ function narrowing(inScope: string[] | undefined) {
     mkdirSync(join(root, "packs/demo/upstream/bandit"), { recursive: true });
     writeFileSync(join(root, "packs/demo/upstream/bandit/gates.yaml"), manifest(inScope));
     const parsed = readGatesManifest(root, "demo", "bandit");
-    const checks = toolPackChecks({ root, manifest: parsed, lock: null, recording, corpus: null, tools: [{ name: "bandit", version: "1.0.0" }], names: [] });
+    const checks = toolPackChecks({ root, manifest: parsed, digest: "", recording, corpus: null, tools: [{ name: "bandit", version: "1.0.0" }], names: [] });
     return { inScope: parsed.rerail.in_scope, check: checks.find((check) => check.id === "in-scope-narrowing") };
   } finally {
     rmSync(root, { recursive: true, force: true });

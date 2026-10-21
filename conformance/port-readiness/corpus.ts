@@ -7,9 +7,9 @@ import { fileURLToPath } from "node:url";
 import { tableFromIPC, type Table } from "apache-arrow";
 import { z } from "zod";
 
-import { PACKAGE_ROOT } from "../../src/engine/index.js";
 import { runChecked, type CommandRunner } from "./process.js";
 import type { Check } from "./types.js";
+import { REPOSITORY_ROOT } from "./upstream-files.js";
 
 /**
  * The corpus goldens are read from: the code a SWE Atlas/Evo task ends with. For every pinned task
@@ -21,7 +21,7 @@ import type { Check } from "./types.js";
  */
 
 /** Where fetched corpora, results and scratch files are cached unless a run names another directory (gitignored). */
-export const DEFAULT_CACHE_ROOT = join(PACKAGE_ROOT, ".rerail", "port-readiness");
+export const DEFAULT_CACHE_ROOT = join(REPOSITORY_ROOT, ".rerail", "port-readiness");
 
 /** The pinned task list beside this module. */
 export const CORPUS_TASKS = fileURLToPath(new URL("./corpus-tasks.json", import.meta.url));

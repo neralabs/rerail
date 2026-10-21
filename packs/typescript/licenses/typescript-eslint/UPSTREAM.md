@@ -13,7 +13,7 @@ Each copied file is the `code` of one of the rule's own `valid` or `invalid` Rul
 by `upstream/generate.mjs`: cases with rule options, a custom parser, or type information for a rule that requires
 type checking are left out, and identical code is written once. The files named by a 12-character sha256 prefix
 (`fixtures/<test file>/<sha256 prefix>.<ext>`) are the code of the other cases, which the port readiness gates read: the gates
-recorder (`npm run port-readiness:record`) copies each one that no file of the pack already holds, verbatim, once per code.
+generator (`npm run generate`) copies each one that no file of the pack already holds, verbatim, once per code.
 
 Paths are relative to the pack directory, `packs/typescript/`.
 
@@ -2875,9 +2875,9 @@ Paths are relative to the pack directory, `packs/typescript/`.
 | `upstream/typescript-eslint/fixtures/unified-signatures/f8b677b197c6.ts` | `packages/eslint-plugin/tests/rules/unified-signatures.test.ts` | derived |
 | `upstream/typescript-eslint/fixtures/unified-signatures/fa8903378699.ts` | `packages/eslint-plugin/tests/rules/unified-signatures.test.ts` | derived |
 
-> `recording.json` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
-> table above: the tool-pack's `recording.lock` names it and a GitHub release holds the bytes (docs/port-readiness.md).
-> It carries excerpts of this upstream's tests (`packages/eslint-plugin/tests/rules/**/*.test.ts`: the `code` of each
-> RuleTester case), redistributed under the licence above, together with Rerail's Apache-2.0; `LICENSE` beside this file
-> is this upstream's own, at the pinned commit.
+> The port readiness generator's answers for this tool-pack are no file of this pack, so they are recorded here rather
+> than in the table above: `npm run generate` writes them, and Rerail's private Azure blob store holds them, keyed by
+> the upstream version, not this repository (docs/generate-and-review.md). They carry excerpts of this upstream's tests
+> (`packages/eslint-plugin/tests/rules/**/*.test.ts`: the `code` of each RuleTester case), under the licence above,
+> together with Rerail's Apache-2.0; `LICENSE` beside this file is this upstream's own, at the pinned commit.
 

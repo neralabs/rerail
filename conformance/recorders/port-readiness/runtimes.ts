@@ -8,7 +8,7 @@ import { parse as parseToml } from "smol-toml";
 
 import { runChecked, type CommandRunner } from "../../port-readiness/process.js";
 import type { ResolvedRuntime } from "../../port-readiness/recording/diff.js";
-import { LICENSE_SPARSE_PATTERNS, upstreamCheckoutDirectory } from "../../port-readiness/recorded-adapter.js";
+import { LICENSE_SPARSE_PATTERNS, upstreamCheckoutDirectory } from "../../port-readiness/upstream-files.js";
 import type { Check } from "../../port-readiness/types.js";
 
 /**
@@ -16,9 +16,9 @@ import type { Check } from "../../port-readiness/types.js";
  * runtimes installed from the manifests committed under `runtimes/<runtime>/` beside this module. A manifest pins every
  * direct dependency at an exact version; transitive packages resolve at install time and no lockfile is committed, so
  * only those direct pins are in GitHub's dependency graph (Dependabot's version updates cover the root package alone; a
- * security update against a pin here changes it and fails `runtime-pins` until the tool-pack is recorded again). When a
- * transitive release changes what upstream answers, `port-readiness:record --check` (the nightly) fails, and the fix is to pin
- * that package too (`overrides`). Every cached tree is reused only while it is
+ * security update against a pin here changes it and fails `runtime-pins` until the tool-pack is generated again). When a
+ * transitive release changes what upstream answers, the nightly's `npm run generate -- --drift` fails, and the fix is to
+ * pin that package too (`overrides`). Every cached tree is reused only while it is
  * unmodified, so editing the cache never changes a result.
  */
 
@@ -47,7 +47,7 @@ export function treeDigest(directory: string, keep: (path: string) => boolean = 
 /**
  * `text` with this machine's directories taken out of every path under them, so what upstream says about a file (a
  * message naming the scratch copy it analysed, or a PHP error naming a vendor file of the runtime) reads the same on
- * every machine and a recording made on one matches a lock made on another. Each directory is taken as given and
+ * every machine and answers generated on one match those generated on another. Each directory is taken as given and
  * resolved through its symlinks (macOS's /var is /private/var), the longest first, so a directory inside another (the
  * scratch directory inside the cache root) leaves no part of itself behind.
  */
@@ -157,7 +157,7 @@ export const COMPOSER_PINS = ["composer.json", ".php-version"] as const;
  * The extensions the pinned PHP loads, one per line as `php -n -m` names them, sorted: the build's profile, which
  * answers depend on (PHP_CodeSniffer's DeprecatedFunctions lists the functions `get_defined_functions()` finds). It is
  * kept once, in runtimes/php (whose build.sh builds that PHP), which every PHP tool-pack installs, so its digest is in
- * every PHP recording's lock.
+ * every PHP tool-pack's answers and generator key.
  */
 export const PHP_EXTENSIONS = "extensions.txt";
 /** A Rust toolchain is pinned by its rustup toolchain file: an exact release channel and its components. */
@@ -362,8 +362,8 @@ export interface PhpRuntime {
  * The `php` on PATH, which must be exactly the release `runtimes/<runtime>/.php-version` pins (an exact `x.y.z`), with
  * exactly the extensions runtimes/php/extensions.txt lists when it runs with no php.ini; any other throws, so nothing
  * is recorded on another PHP or another build of it. Unlike uv, Composer installs no interpreter: runtimes/php/build.sh
- * builds the pinned one, which CI's record and nightly legs put on PATH (.github/actions/php) and a maintainer puts
- * first on PATH to record locally.
+ * builds the pinned one, which CI's generating and nightly legs put on PATH (.github/actions/php) and a maintainer puts
+ * first on PATH to generate locally.
  */
 export async function pinnedPhp(runtime: string, runner: CommandRunner): Promise<{ php: string; version: string; pinned: string }> {
   const pinned = (await readFile(join(RUNTIMES_DIRECTORY, runtime, ".php-version"), "utf8")).trim();
@@ -390,7 +390,7 @@ export function extensionList(text: string): string[] {
  * A PHP runtime installed by Composer from `runtimes/<runtime>/` (composer.json, every requirement at an exact version,
  * and .php-version, which pins the interpreter exactly): `composer update` resolves it in the cache directory with no
  * plugins and no scripts, and the tree it resolved is in that directory's composer.lock. No lockfile is committed, as for
- * npm and uv: transitive packages resolve at install time, and the nightly's `--check` reports one that moves an answer.
+ * npm and uv: transitive packages resolve at install time, and the nightly's `--drift` reports one that moves an answer.
  * What each runtime resolved is kept for the recording summary (resolvedComposerRuntimes), so a transitive release
  * shows there without being recorded, and Composer's audit runs with blocking off: an advisory against a resolved
  * package is written to stderr, in the log, instead of failing the install.
@@ -430,8 +430,8 @@ export function installedPackages(directory: string): string[] {
 
 /**
  * Every Composer runtime this process used and the package set it resolved, by runtime name. Nothing locks the
- * transitive packages, so the recording summary lists them: a drift between two recordings is visible there, and is not
- * in recording.json or the lock, so a transitive release alone never fails a leg.
+ * transitive packages, so the generation summary lists them: a drift between two generations is visible there, and is
+ * not in the answers or their key, so a transitive release alone never fails a leg.
  */
 export function resolvedComposerRuntimes(): ResolvedRuntime[] {
   return [...RESOLVED_COMPOSER].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([runtime, packages]) => ({ runtime, packages }));

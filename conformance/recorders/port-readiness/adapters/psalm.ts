@@ -5,7 +5,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
-import { upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js";
+import { upstreamLicenseText } from "../../../port-readiness/upstream-files.js";
 import { psalmSpan, PSALM_SPAN_PARTS } from "../../../port-readiness/span-units/psalm.js";
 import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../port-readiness/types.js";
 import { createPhpToolkit, phpRegex, type PhpLiterals } from "../languages/php.js";
@@ -223,8 +223,16 @@ export async function createPsalmAdapter(pack: PackManifest, names: string[], ca
     && caseList.some(({ test }, index) => testOf.get(name) === test && runs[index]!.recommended.some((issue) => issue.type === name))));
 
   // Every case of every test class upstream ships: the test words and texts not-overfit reads.
+  // A code several test classes share is kept once, under the first of them in code-unit order.
+  const testOfCode = new Map<string, string>();
+  for (const test of facts.tests) {
+    for (const { code } of test.cases) {
+      const known = testOfCode.get(code);
+      if (known === undefined || test.path < known) testOfCode.set(code, test.path);
+    }
+  }
   const fixtureTexts = [...new Set(facts.tests.flatMap((test) => test.cases.map((testCase) => testCase.code)))];
-  const fixtureTextSources: FixtureTextSource[] = fixtureTexts.map((text) => ({ inline: text }));
+  const fixtureTextSources: FixtureTextSource[] = fixtureTexts.map((text) => ({ inline: text, test: testOfCode.get(text)! }));
   const fixtureWords = new Set([
     ...(await php.words(fixtureTexts)).flat(),
     // The issues a case ignores are its test configuration's option values.

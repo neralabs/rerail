@@ -1,8 +1,9 @@
 # Port readiness
 
 The port readiness gates judge every rule document of a gated tool-pack (one upstream tool in one pack: `python/ruff`,
-`typescript/typescript-eslint`) against the upstream linter it ports, from the recordings each tool-pack's committed
-`recording.lock` names. They are a layer on top of the pack contract (`test/engine/catalog/packs.test.ts`) and the
+`typescript/typescript-eslint`) against the upstream linter it ports, from the expected answers its generator
+(`npm run generate`) records, which live in Rerail's private Azure blob store and never in the tree
+(docs/generate-and-review.md). They are a layer on top of the pack contract (`test/engine/catalog/packs.test.ts`) and the
 conformance check, and a superset of the check: its verdict is the `passes-conformance` gate
 (checks/passes-conformance.ts), for candidates as well as shipped rules. Documents under `packs/<pack>/rules/` ship, and
 a failing one fails CI. Documents under `packs/<pack>/candidates/**` (except `candidates/probes/**`) go through the same
@@ -52,7 +53,7 @@ Only `policy-literals.ts` and `adapters/ruff-tests.ts` are unchanged. Every impo
 read rerail's layout. `upstream-status` is `provenance.ts` without its pack precondition: the kept licence's sha256 is a
 tool-pack check here, and the pack contract's checks 5 and 6 cover the rest. The adapters record upstream instead of
 answering the gates live, so each also lists the sources of its case texts (`fixtureTextSources`: a file's path and
-sha256, or the inline text); their span code moved to `span-units/`, which the gates read without them; their
+sha256, or the inline text and the test file it is from); their span code moved to `span-units/`, which the gates read without them; their
 runtimes come from `conformance/recorders/port-readiness/runtimes/` instead of an NRV checkout; Ruff reads the engine's scope
 options from this checkout instead of a pinned engine; Bandit's driver runs under `python -I`; and ESLint's recordings
 write `/rerail-gates-cache` for the recorder's cache directory.
@@ -79,7 +80,7 @@ Per-rule results are cached under `.rerail/port-readiness/results/<pack>/<tool>/
 `<tool>/shard-<i>of<n>/` (`--cache <dir>` moves the root).
 The key covers the gate code a cached verdict can read (`GATE_CODE`), the locked closure of the npm packages the gates
 load (`GATE_PACKAGES`) with `package.json`'s `type`, `port-readiness` and `build:native` scripts, the engine (tracked engine
-sources; not the native binary, but a run on one older than them saves nothing), the tool-pack's `gates.yaml` and the two recording digests its `recording.lock` names, the corpus pins, and
+sources; not the native binary, but a run on one older than them saves nothing), the tool-pack's `gates.yaml` and the digest of every answer file (`expectedDigest`), the corpus pins, and
 the rule's document, conformance entry, goldens and case sources. When every rule hits, nothing is fetched or
 evaluated. An entry that is not JSON, was written by another cache layout (`CACHE_FORMAT`), lacks the shape of a result,
 or names another document is a miss. In CI every run saves its results, pull requests included; GitHub scopes a pull
@@ -89,23 +90,30 @@ request's cache to that pull request, so main reads only what main's pushes and 
 
 ```
 packs/<pack>/upstream/<tool>/gates.yaml         the tool-pack's manifest (manifest.ts)
-packs/<pack>/upstream/<tool>/recording.lock     which recording this commit is judged against (recording/store.ts)
 packs/<pack>/upstream/<tool>/goldens.tsv        goldens of matches-upstream-tests, by document id, and the real-code run that found them
-
-.rerail/port-readiness/recordings/<sha256>.json          the recordings themselves, fetched or recorded, cached by digest
-  recording.json                                upstream's recorded answers (recording/schema.ts, rerail.port-readiness-recording/v2)
-  corpus.json                                   upstream's findings on the corpus (rerail.port-readiness-corpus/v2)
+.rerail/port-readiness/expected/<key>/          upstream's answers for one generator key, which npm run generate puts there (recording/expected.ts, recording/schema.ts)
+  upstream.json                                 tool facts: pins, runtimes' pin digests, licence sha256, keywords, comment vocabulary, test words
+  rules/<rule>.json                             one upstream rule: facts, names, span parts, the test files its cases are in
+  cases/<test file>.json                        one upstream test file: its sha256, parser verdicts, each case's findings and markup by rule
+  texts/<test file>.txt                         the inline test texts read from it (RuleTester code, Psalm providers), upstream's own text
+  corpus/<task>.json                            upstream's answers on the corpus files the goldens name, per task (rerail:<name> is rerail/<name>.json)
 ```
 
-The recordings are not in the tree: the lock names them and a GitHub release holds them, so `npm run port-readiness -- fetch
---pack <id> --tool <tool>` must have run (or `port-readiness:record`, which writes them straight into the cache). A download
-whose sha256 is not the one the lock names fails the run.
+The key is `<pack>/<tool>/<upstream version>/<inputs digest>`, the digest covering every tracked file the generator
+reads (docs/generate-and-review.md). `readRecordedInputs` reads the cached answers for the key and joins them into one
+recording and one corpus answer (`joinExpected`), checked against `recording/schema.ts`; the recorded adapter answers
+from those. Nothing is downloaded by the gates: a key the cache lacks fails the run (`answers for <key> are not
+available: run npm run generate -- --pack <pack> --tool <tool>`). A file the answers do not lay out, a test file a rule
+names that is missing, or a case no rule reads fails the run.
 
-`npm run port-readiness:record -- --pack <id> --tool <tool>` (conformance/recorders/port-readiness/) writes the recordings. A tool-pack
-check that fails fails every rule of the tool-pack: a shipped rule blocks, and a candidate is not ready to promote. The
-recording is stale when pins disagree between `gates.yaml`, `recording.lock`, `recording.json` and `conformance.json`, a
-runtime's pins (`package.json`, `pyproject.toml`, `.python-version`, `composer.json`, `.php-version`, PHP's `extensions.txt`, `rust-toolchain.toml`) differ from the ones the lock records, the kept
-licence (every `LICENSE` or `LICENCE` file under `licenses/<project>/`, in any letter case and with any extension, read in name order) is not the recorded one, or a rule is not recorded (`corpus-pins` and the recording checks). `corpus-complete` fails when a file `corpus.json` answers for was not fetched with its
+`npm run generate -- --pack <id> --tool <tool>` (conformance/recorders/port-readiness/expected-cli.ts) reads the
+answers from the local cache, else downloads main's from the store, else runs the live adapter and writes them there,
+with the case sources the tool-pack lacks and their `UPSTREAM.md` rows into the tree. CI uploads what it generates for
+review and promotes it on merge; the nightly generates every tool-pack again and fails on drift. A tool-pack
+check that fails fails every rule of the tool-pack: a shipped rule blocks, and a candidate is not ready to promote.
+The answers are stale when pins disagree between `gates.yaml`, `upstream.json` and `conformance.json`, a
+runtime's pins (`package.json`, `pyproject.toml`, `.python-version`, `composer.json`, `.php-version`, PHP's `extensions.txt`, `rust-toolchain.toml`) differ from the ones upstream.json records, the kept
+licence (every `LICENSE` or `LICENCE` file under `licenses/<project>/`, in any letter case and with any extension, read in name order) is not the recorded one, or a rule is not recorded (`corpus-pins` and the coverage checks). `corpus-complete` fails when a file the answers' `corpus/` answers for was not fetched with its
 recorded sha256 (a download or git fetch failed); those results are not cached. `bundled-load` loads every document in
 the pack's `rules/` together through rerail's bundled-rule loader, on every run, so a conflict between rules (a
 duplicate id) fails it.
@@ -115,8 +123,8 @@ complete. The report's method text says so.
 
 ## Packs that are not gated
 
-`pending.json` lists the ESLint-family tool-packs not gated yet. It is empty now that every one is recorded; a
-tool-pack listed there is still validated in nera-rule-validation until its recordings land, is reported as pending
+`pending.json` lists the ESLint-family tool-packs not gated yet. It is empty now that every one has answers; a
+tool-pack listed there is still validated in nera-rule-validation until its answers land, is reported as pending
 and is not frozen.
 
 `ungated-rules.json` freezes the shipped rules of every pack that has no gated or pending tool-pack (complexity).

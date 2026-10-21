@@ -208,7 +208,7 @@ export const gatesManifestSchema = z.strictObject({
     pack: z.string().regex(/^[a-z0-9-]+$/u),
     /**
      * The upstream project's directory under packs/<pack>/licenses/, which keeps its UPSTREAM.md and every licence file
-     * at the root of upstream's repository under its own name (recorded-adapter.ts's licenseFiles: LICENSE or LICENCE
+     * at the root of upstream's repository under its own name (upstream-files.ts's licenseFiles: LICENSE or LICENCE
      * in any letter case, with any extension or suffix).
      */
     project: z.string().regex(/^[A-Za-z0-9._-]+$/u),
@@ -267,8 +267,9 @@ const EXTRA_RUNTIMES: Record<GatesManifest["adapter"], string[]> = { bandit: ["p
  * Every runtime the adapter installs to record a tool-pack, sorted: upstream's own, the adapter's, the environment
  * the pack is linted in when gates.yaml names one (eslint-config-next's parsers and globals shape upstream's answers as
  * much as the plugin does), and the independent parser of Vue single-file components when an ESLint tool-pack lints
- * them (`eslint.vue.runtime`). The recorder pins each of them in the lock, and the gates' pins-agree check holds a lock
- * to exactly these, so a runtime gates.yaml names and the lock doesn't makes the recording stale, not unchecked.
+ * them (`eslint.vue.runtime`). The generator pins each of them in the answers' upstream.json, and the gates' pins-agree
+ * check holds the answers to exactly these, so a runtime gates.yaml names and the answers don't makes them stale, not
+ * unchecked.
  */
 export function recordedRuntimes(manifest: GatesManifest): string[] {
   const environment = manifest.eslint?.environment?.runtime;

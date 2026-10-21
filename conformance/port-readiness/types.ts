@@ -29,11 +29,14 @@ export type BlockingGateId = BlockingGate["id"];
 /** One deterministic check. `detail` says what was compared, so a failure explains itself. */
 /**
  * One fixtureTexts() entry's origin: a file of upstream's checkout (`path` relative to it, `sha256` of the text as the
- * adapter produced it, `transform` when that text is not the raw file), or an inline text that is no file.
+ * adapter produced it, `transform` when that text is not the raw file), or an inline text that is no file, with the
+ * upstream test file it was read from (`test`, relative to the checkout), under which the generator keeps it
+ * (`expected/texts/<test>.txt`). An adapter that reads the same text in several test files and keeps it once names the
+ * first of them in code-unit order.
  */
 export type FixtureTextSource =
   | { path: string; sha256: string; transform?: "notebook-code-cells" }
-  | { inline: string };
+  | { inline: string; test: string };
 
 export interface Check {
   id: string;

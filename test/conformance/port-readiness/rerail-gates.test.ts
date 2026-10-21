@@ -232,7 +232,7 @@ describe("engine-reads-goldens", () => {
 });
 
 describe("cache keys", () => {
-  const shared: SharedKeyInputs = { gateCode: "g", dependencies: "d", gatesYaml: "y", recordingJson: "j", corpusJson: "c", corpusTasks: "t", corpora: "[]" };
+  const shared: SharedKeyInputs = { gateCode: "g", dependencies: "d", gatesYaml: "y", expected: "x", corpusTasks: "t", corpora: "[]" };
   const rules = {
     a: { engine: "e", document: '{"id":"a"}', conformanceEntry: "{}", goldens: "[]", caseSources: ["fixtures/a.py\0aa"] },
     b: { engine: "e", document: '{"id":"b"}', conformanceEntry: "{}", goldens: "[]", caseSources: ["fixtures/b.py\0bb"] },
@@ -251,8 +251,8 @@ describe("cache keys", () => {
     assert.equal(ruleKey(shared, rules.b), ruleKey(shared, rules.b));
   });
 
-  it("a gate-code, dependency or recording change changes every key", () => {
-    for (const part of ["gateCode", "dependencies", "recordingJson", "corpusJson"] as const) {
+  it("a gate-code, dependency or expected/ change changes every key", () => {
+    for (const part of ["gateCode", "dependencies", "expected"] as const) {
       const changed = { ...shared, [part]: "changed" };
       assert.notEqual(ruleKey(changed, rules.a), ruleKey(shared, rules.a));
       assert.notEqual(ruleKey(changed, rules.b), ruleKey(shared, rules.b));
@@ -275,7 +275,7 @@ describe("cache keys", () => {
     assert.notEqual(shardOne({ ...pack, caseSources: ["fixtures/a.py\0aa", "fixtures/b.py\0bc"] }), before);
     assert.notEqual(shardOne({ ...pack, names: ["A", "B", "C"] }), before);
     assert.notEqual(shardOne({ ...pack, engine: "changed" }), before);
-    assert.notEqual(toolPackKey({ ...shared, recordingJson: "changed" }, pack, [ruleKey(shared, rules.a)]), before);
+    assert.notEqual(toolPackKey({ ...shared, expected: "changed" }, pack, [ruleKey(shared, rules.a)]), before);
     // The gap counts come from the shard's own results, so its judged rules are part of the key too.
     assert.notEqual(toolPackKey(shared, pack, [ruleKey(shared, rules.b)]), before);
   });

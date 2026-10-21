@@ -149,7 +149,7 @@ export function renderMarkdown(report: GatesReport): string {
     "",
     "## Tool-pack checks",
     "",
-    report.toolPackChecks.pass ? "Every tool-pack check passes." : "A tool-pack check fails, so every shipped rule of this tool-pack fails: the recording is stale.",
+    report.toolPackChecks.pass ? "Every tool-pack check passes." : "A tool-pack check fails, so every shipped rule of this tool-pack fails: the generated answers are stale.",
     "",
     "| Check | Result | Detail |",
     "| --- | --- | --- |",

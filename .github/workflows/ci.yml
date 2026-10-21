@@ -144,7 +144,8 @@ jobs:
               - '.github/workflows/ci.yml'
               - '.gitattributes'
               - '.github/actions/lfs/**'
-            # A rule's verdict depends on its document, the pack's recordings, the gate code and the engine.
+            # A rule's verdict depends on its document, the tool-pack's expected answers (keyed by everything the
+            # generator reads, all under these paths), the gate code and the engine.
             port-readiness:
               - 'packs/**'
               - 'conformance/**'
@@ -293,19 +294,216 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # A push to main promotes every gated tool-pack's expected answers (docs/port-readiness.md) to main's container in
+  # Azure Blob Storage, under its generator key, before the gates read them there: main's container already holds the
+  # key, or the merged pull request's answers job uploaded them under its number and they are copied (checked against
+  # their sha256 and key), or they are generated here. No job holding the main identity runs the generator, which runs
+  # upstream's code and the Composer packages it resolves, unlocked: promote finds what is missing, promote-generate
+  # generates it with no Azure token, and promote-upload uploads what it generated.
+  promote:
+    name: Promote the port readiness answers
+    needs: changes
+    if: github.event_name == 'push' && needs.changes.outputs.port-readiness != 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # pull-requests: the merged pull request's number. id-token: azure/login's OIDC exchange for the main identity
+    # (writes main's container, reads the -pr container).
+    permissions:
+      contents: read
+      pull-requests: read
+      id-token: write
+    outputs:
+      missing: ${{ steps.promote.outputs.missing }}
+      pr: ${{ steps.pr.outputs.number }}
+    env:
+      RERAIL_EXPECTED_ACCOUNT: ${{ vars.RERAIL_EXPECTED_ACCOUNT }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # The generator key hashes the tree as the answers jobs check it out, LFS objects included.
+      - uses: ./.github/actions/lfs
+
+      - uses: ./.github/actions/node-deps
+
+      # A push that no pull request merged (none is associated with it) has no pull request's answers to copy.
+      - id: pr
+        name: Find the pull request this push merged
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          number="$(gh api "repos/$REPO/commits/$SHA/pulls" --jq '.[0].number // empty')"
+          echo "$SHA merged ${number:+pull request #}${number:-no pull request}"
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+
+      - id: plan
+        name: List the gated tool-packs
+        run: node conformance/port-readiness/plan.mjs
+
+      - name: Log in to Azure
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID_MAIN }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # --no-generate exits 3 when neither container holds the key: those tool-packs go to promote-generate.
+      - id: promote
+        name: Promote what main's container or the pull request's holds
+        env:
+          PR: ${{ steps.pr.outputs.number }}
+          TOOL_PACKS: ${{ steps.plan.outputs.tool-packs }}
+        run: |
+          set -euo pipefail
+          missing=()
+          failed=()
+          while IFS= read -r toolpack; do
+            set +e
+            npm run generate -- --promote --no-generate --pack "${toolpack%%/*}" --tool "${toolpack#*/}" ${PR:+--pr "$PR"}
+            status=$?
+            set -e
+            case "$status" in
+              0) ;;
+              3) missing+=("$toolpack") ;;
+              *) failed+=("$toolpack") ;;
+            esac
+          done < <(jq -r '.[]' <<< "$TOOL_PACKS")
+          echo "missing=$(printf '%s\n' "${missing[@]}" | jq -cR 'select(. != "")' | jq -cs .)" >> "$GITHUB_OUTPUT"
+          if [ "${#missing[@]}" -gt 0 ]; then echo "::notice::no container holds these tool-packs' answers, so they are generated: ${missing[*]}"; fi
+          if [ "${#failed[@]}" -gt 0 ]; then
+            echo "::error::could not promote ${failed[*]} (the log above says why)"
+            exit 1
+          fi
+
+  promote-generate:
+    name: Generate the port readiness answers (${{ matrix.tool-pack }})
+    needs: [promote, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.promote.outputs.missing != '' && needs.promote.outputs.missing != '[]' }}
+    runs-on: ubuntu-24.04
+    # Generating javascript/eslint's answers runs upstream on 11,368 test cases.
+    timeout-minutes: 120
+    # No id-token: this job runs upstream's code.
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        tool-pack: ${{ fromJSON(needs.promote.outputs.missing) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      - uses: ./.github/actions/node-deps
+        with:
+          built: "true"
+
+      - id: tool-pack
+        name: Split the tool-pack
+        env:
+          TOOL_PACK: ${{ matrix.tool-pack }}
+        run: |
+          echo "pack=${TOOL_PACK%%/*}" >> "$GITHUB_OUTPUT"
+          echo "tool=${TOOL_PACK#*/}" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/generator-runtimes
+        with:
+          pack: ${{ steps.tool-pack.outputs.pack }}
+          tool: ${{ steps.tool-pack.outputs.tool }}
+
+      # No RERAIL_EXPECTED_ACCOUNT: the generator touches no container and writes only the local cache.
+      - name: Generate the answers
+        env:
+          PACK: ${{ steps.tool-pack.outputs.pack }}
+          TOOL: ${{ steps.tool-pack.outputs.tool }}
+        run: npm run generate -- --pack "$PACK" --tool "$TOOL"
+
+      - name: Hand the answers to promote-upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: promote-expected-${{ steps.tool-pack.outputs.pack }}-${{ steps.tool-pack.outputs.tool }}
+          path: .rerail/port-readiness/expected/
+          if-no-files-found: error
+          retention-days: 1
+
+  # --no-generate again: the answers come from promote-generate's artifacts through the local cache, and a tool-pack
+  # whose generation failed exits 3 here rather than generating under the main identity.
+  promote-upload:
+    name: Upload the generated port readiness answers
+    needs: [promote, promote-generate]
+    if: ${{ !cancelled() && needs.promote-generate.result != 'skipped' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RERAIL_EXPECTED_ACCOUNT: ${{ vars.RERAIL_EXPECTED_ACCOUNT }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      - uses: ./.github/actions/node-deps
+
+      - name: Download the generated answers
+        uses: actions/download-artifact@v8
+        with:
+          pattern: promote-expected-*
+          path: .rerail/port-readiness/expected
+          merge-multiple: true
+
+      - name: Log in to Azure
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID_MAIN }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Promote the generated answers
+        env:
+          PR: ${{ needs.promote.outputs.pr }}
+          MISSING: ${{ needs.promote.outputs.missing }}
+        run: |
+          set -euo pipefail
+          failed=()
+          while IFS= read -r toolpack; do
+            npm run generate -- --promote --no-generate --pack "${toolpack%%/*}" --tool "${toolpack#*/}" ${PR:+--pr "$PR"} || failed+=("$toolpack")
+          done < <(jq -r '.[]' <<< "$MISSING")
+          if [ "${#failed[@]}" -gt 0 ]; then
+            echo "::error::could not promote ${failed[*]}: promote-generate failed for them, or the upload did (the log above says why)"
+            exit 1
+          fi
+
   # Every rule a pack ships must pass the port readiness gates; candidates are only reported (docs/port-readiness.md).
   # They run when a pull request or a push to main touches a gate input (the changes job's port-readiness filter, and
-  # its accepted gaps); the nightly judges every rule regardless.
+  # its accepted gaps); the nightly judges every rule regardless. On a push they wait for the promote jobs, since they
+  # read the answers from main's container; they run whether or not promotion succeeded, and a tool-pack whose answers
+  # main's container lacks fails its leg.
   port-readiness:
     name: Port readiness
-    needs: [changes, build]
-    if: needs.changes.outputs.port-readiness != 'false'
-    # The report job posts the results as a pull request comment; the gates read the recordings' attestations.
+    needs: [changes, build, promote, promote-upload]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' && needs.changes.outputs.port-readiness != 'false' }}
+    # The report job posts pull request comments; the answers jobs log in to Azure with OIDC.
     permissions:
       contents: read
       issues: write
       pull-requests: write
-      attestations: read
+      id-token: write
     uses: ./.github/workflows/port-readiness.yml
     with:
       base: ${{ github.event.pull_request.base.sha || github.event.before }}

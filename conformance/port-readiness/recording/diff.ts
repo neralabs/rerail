@@ -1,11 +1,12 @@
 /**
- * What changed between the recording a tool-pack had and the one the recorder just made, per upstream rule.
+ * What changed between the answers a tool-pack had and the ones the generator just made, per upstream rule.
  *
- * Until the recordings left the tree, a re-record showed up in review as tens of thousands of changed JSON lines,
- * which nobody read and which said nothing about whether upstream's answers had actually moved. The recordings are
- * not in the diff at all now, so this is what takes their place: for each rule, how many expected findings upstream
- * gained or lost on its own tests, how many corpus files it now answers differently for, and which of its facts
- * changed. A rule that is absent here did not move, and a change in it is a reason to look at the rule.
+ * While the answers were in the tree, a regeneration showed up in review as tens of thousands of changed JSON lines,
+ * which nobody read and which said nothing about whether upstream's answers had actually moved. The answers are not in
+ * the tree at all now (they are generated into Azure Blob Storage, docs/port-readiness.md), so this is what takes their
+ * place: for each rule, how many expected findings upstream gained or lost on its own tests, how many corpus files it
+ * now answers differently for, and which of its facts changed. A rule that is absent here did not move, and a change
+ * in it is a reason to look at the rule.
  */
 
 import { canonicalJson } from "../checks/compact.js";
@@ -23,9 +24,9 @@ export interface RuleChange {
   corpusFilesChanged: number;
   /**
    * The fields of `rule().facts` whose values differ, sorted (`deprecation`, `recommended`, `tests`). Objects are
-   * compared by value, whatever order their keys are in: a locked recording is read back from its key-sorted text, and
-   * a fresh one keeps the order upstream built its options in (Bandit's gen_config dicts are not sorted). Lists keep
-   * their order, and a field the locked recording lacks counts as changed.
+   * compared by value, whatever order their keys are in: stored answers are read back from their key-sorted text, and
+   * fresh ones keep the order upstream built its options in (Bandit's gen_config dicts are not sorted). Lists keep
+   * their order, and a field the stored answers lack counts as changed.
    */
   factsChanged: string[];
 }
@@ -33,28 +34,28 @@ export interface RuleChange {
 export interface RecordingChanges {
   pack: string;
   tool: string;
-  /** Pins that moved, as `<field> <before> → <after>`; a re-record on unchanged pins has none. */
+  /** Pins that moved, as `<field> <before> → <after>`; a regeneration on unchanged pins has none. */
   pinsChanged: string[];
-  /** True when the tool-pack had no recording at all: every rule is `added` and nothing is a change to review. */
+  /** True when the tool-pack had no answers at all: every rule is `added` and nothing is a change to review. */
   first: boolean;
   /**
-   * Why the recording the committed lock named could not be read, when it could not. The tool-pack was recorded
-   * before, so this is not a first recording: what moved is unknown, which is not the same as nothing moving.
+   * Why the answers compared against could not be read, when they could not. The tool-pack was generated before, so
+   * this is not a first generation: what moved is unknown, which is not the same as nothing moving.
    */
   unavailable: string | null;
   /** Every rule whose answers moved, sorted by name. */
   rules: RuleChange[];
-  /** Totals, so a reader sees the shape of the recording even when no rule moved. */
+  /** Totals, so a reader sees the shape of the answers even when no rule moved. */
   totals: { rules: number; cases: number; corpusFiles: number };
   /**
-   * The Composer runtimes the recorder installed, each with the packages it resolved. Nothing locks their transitive
-   * packages, so they are listed here, where a drift between two recordings shows, and not in the recording or its
-   * lock: a transitive release alone never fails a leg.
+   * The Composer runtimes the generator installed, each with the packages it resolved. Nothing locks their transitive
+   * packages, so they are listed here, where a drift between two generations shows, and not in the answers or their
+   * key: a transitive release alone never fails a leg.
    */
   resolved: ResolvedRuntime[];
 }
 
-/** A runtime the recorder installed, and the package set it resolved as sorted `name@version`. */
+/** A runtime the generator installed, and the package set it resolved as sorted `name@version`. */
 export interface ResolvedRuntime {
   runtime: string;
   packages: string[];
@@ -63,8 +64,8 @@ export interface ResolvedRuntime {
 const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 /**
- * A fact as text that two equal values share whatever order their object keys are in. A fact the recording lacks, as
- * one made before the field existed would, is text no value has, so it reads as changed instead of failing the record.
+ * A fact as text that two equal values share whatever order their object keys are in. A fact the answers lack, as
+ * ones made before the field existed would, is text no value has, so it reads as changed instead of failing.
  */
 const factText = (value: unknown): string => (value === undefined ? "\u0000absent" : canonicalJson(value));
 
@@ -102,8 +103,8 @@ function caseFindings(recording: GatesRecording, rule: string): Map<string, Reco
 }
 
 /**
- * A rule's corpus findings on the files both recordings answer. A file one of them does not answer is not a change in
- * upstream's answer: the recorder answers only the files goldens name, so a file drops out when no golden names it.
+ * A rule's corpus findings on the files both answers cover. A file one of them does not answer is not a change in
+ * upstream's answer: the generator answers only the files goldens name, so a file drops out when no golden names it.
  */
 function corpusFindings(corpus: GatesCorpusRecording | null, rule: string, shared: Set<string>): Map<string, string> {
   const found = new Map<string, string>();
@@ -117,13 +118,13 @@ function corpusFindings(corpus: GatesCorpusRecording | null, rule: string, share
 
 export type RecordedPair = { recording: GatesRecording; corpus: GatesCorpusRecording | null };
 
-/** A recording the committed lock names that could not be read, and why. */
+/** Answers that were there to compare against but could not be read, and why. */
 export type UnreadRecording = { unavailable: string };
 
 /**
- * The per-rule summary of a re-record. `before` is null when the tool-pack had no recording, and says why when the
- * lock named one that could not be read: nothing is compared then, and the summary says so. `resolved` is what the
- * recorder's Composer runtimes resolved, carried into the summary as it is.
+ * The per-rule summary of a regeneration. `before` is null when the tool-pack had no answers, and says why when there
+ * were some that could not be read: nothing is compared then, and the summary says so. `resolved` is what the
+ * generator's Composer runtimes resolved, carried into the summary as it is.
  */
 export function diffRecordings(
   pack: string,
@@ -186,9 +187,9 @@ export function diffRecordings(
 }
 
 /**
- * Starts each per-rule summary comment, so port-readiness-record.yml finds a tool-pack's earlier ones to collapse when
- * it posts a new one, as port-readiness.yml does with its own comment. Summaries posted while the recordings were named
- * for the gates start with `<!-- rerail-gate-recording -->`, which the workflow collapses too.
+ * Starts each per-rule summary comment, so port-readiness.yml finds a tool-pack's earlier ones to collapse when it
+ * posts a new one. Summaries posted while the answers were recordings named for the gates start with
+ * `<!-- rerail-gate-recording -->`, which the workflow collapses too.
  */
 export const RECORDING_COMMENT_MARKER = "<!-- rerail-port-readiness-recording -->";
 
@@ -196,9 +197,9 @@ export const RECORDING_COMMENT_MARKER = "<!-- rerail-port-readiness-recording --
 const ROW_LIMIT = 60;
 
 /**
- * The summary as Markdown, for the pull request the recording was made for. It leads with whether upstream's answers
- * moved at all, because that is the one thing a reviewer needs from a re-record: a new recording whose answers are
- * the same is a recording of the same upstream, and a rule whose expected findings moved is a rule to look at.
+ * The summary as Markdown, for the pull request the answers were generated for. It leads with whether upstream's
+ * answers moved at all, because that is the one thing a reviewer needs from a regeneration: new answers that are the
+ * same are answers of the same upstream, and a rule whose expected findings moved is a rule to look at.
  */
 export function renderRecordingChanges(changes: RecordingChanges[]): string {
   const moved = changes.filter((entry) => entry.rules.length > 0 || entry.pinsChanged.length > 0);
@@ -208,9 +209,9 @@ export function renderRecordingChanges(changes: RecordingChanges[]): string {
   const headline = [...(uncompared.length > 0 ? [`⚠️ ${packs(uncompared.length)} not compared`] : []), ...(moved.length > 0 ? [`${packs(moved.length)} moved`] : [])];
   const lines = [
     RECORDING_COMMENT_MARKER,
-    `## Port readiness recordings: ${headline.length === 0 ? "✅ re-recorded, and upstream answers the same" : headline.join(", ")}`,
+    `## Port readiness answers: ${headline.length === 0 ? "✅ regenerated, and upstream answers the same" : headline.join(", ")}`,
     "",
-    "Upstream's recorded answers are not in the diff (`recording.lock` names them; docs/port-readiness.md). This is what changed in them.",
+    "Upstream's generated answers are not in the diff (they are stored in Azure Blob Storage by the generator's key; docs/port-readiness.md). This is what changed in them against main's.",
     "",
   ];
   for (const entry of changes) {
@@ -220,11 +221,11 @@ export function renderRecordingChanges(changes: RecordingChanges[]): string {
       lines.push(
         `### ${label}: ⚠️ not compared`,
         "",
-        `${shape}. The recording the committed \`recording.lock\` named could not be read (${entry.unavailable}), so what moved is unknown. This is not a first recording, and not a recording that answers the same.`,
+        `${shape}. The answers main holds could not be read (${entry.unavailable}), so what moved is unknown. This is not a first generation, and not answers that are the same.`,
         "",
       );
     } else if (entry.first) {
-      lines.push(`### ${label}: first recording`, "", `${shape}. Nothing to compare it with.`, "");
+      lines.push(`### ${label}: first generation`, "", `${shape}. Nothing to compare it with.`, "");
     } else if (entry.rules.length === 0 && entry.pinsChanged.length === 0) {
       lines.push(`### ${label}: unchanged`, "", `${shape}. Upstream answers exactly as it did.`, "");
     } else {
@@ -247,7 +248,7 @@ export function renderRecordingChanges(changes: RecordingChanges[]): string {
     // Every package, not a diff: the run before may not be at hand, and two summaries compare line by line.
     if (entry.resolved.length > 0) {
       lines.push(
-        "<details><summary>Composer packages this recording resolved (not locked; a transitive release shows here)</summary>",
+        "<details><summary>Composer packages this generation resolved (not locked; a transitive release shows here)</summary>",
         "",
         ...entry.resolved.map(({ runtime, packages }) => `- \`runtimes/${runtime}\`: ${packages.map((name) => `\`${name}\``).join(", ")}`),
         "",

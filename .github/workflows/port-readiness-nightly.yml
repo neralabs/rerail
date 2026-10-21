@@ -1,9 +1,10 @@
 name: Port readiness (nightly)
 
-# Once a day, and on demand: re-records every gated tool-pack's upstream answers and fails when a committed recording
-# no longer matches the pinned upstream (port-readiness:record --check), then judges every rule again and saves the fresh
-# results for pull requests to read. Pull requests judge rules against the committed recordings (port-readiness.yml); this
-# job keeps them honest.
+# Once a day, and on demand: generates every gated tool-pack's expected answers again from the pinned upstream and fails
+# when they differ from the answers main's container in Azure Blob Storage holds under the same generator key (a
+# transitive release that changes upstream's answers shows up here), then judges every rule again and saves the fresh
+# results for pull requests to read. Pull requests judge rules against the stored answers (port-readiness.yml); this
+# workflow keeps them honest.
 
 on:
   schedule:
@@ -94,64 +95,47 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # The drift check runs the recorder as port-readiness-record.yml does, with --check: upstream on its own tests and on
-  # the corpus files the goldens name, never the rest of the corpus. It reports when upstream moved and uploads nothing,
-  # so the night tells main without quietly re-recording main behind the maintainers. It is its own job rather than a
-  # call to that workflow because a called workflow's jobs may not ask for more than the caller grants, and the
-  # recorder's authorize and publish jobs ask for write: GitHub would refuse the whole nightly run at startup, and
-  # granting write here would hand the scheduled run a write token while upstream linters run.
-  record-check:
-    name: Recordings match upstream (${{ matrix.pack }} · ${{ matrix.tool }})
-    needs: build
+  plan:
+    name: List the gated tool-packs
     # Forks that turn scheduled workflows back on skip it; change the owner if the repository moves.
     if: github.repository_owner == 'neralabs'
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      tool-packs: ${{ steps.plan.outputs.tool-packs }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # plan.mjs imports only node: builtins, so no npm ci.
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - id: plan
+        name: Plan every leg
+        run: node conformance/port-readiness/plan.mjs
+
+  # The drift check generates each tool-pack's answers afresh (--force: upstream on its own tests and on the corpus
+  # files the goldens name, never the rest of the corpus) with no Azure token and no container, then the drift job
+  # compares them with main's. It reports when upstream moved and uploads nothing, so the night tells main without
+  # quietly regenerating main behind the maintainers. The two are split because no job holding the main identity, which
+  # can write main's container, runs upstream's code.
+  drift-generate:
+    name: Generate the answers again (${{ matrix.tool-pack }})
+    needs: [plan, build]
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
-    # attestations: read is for the fetch, which checks each recording's attestation (recording/fetch.ts).
     permissions:
       contents: read
-      attestations: read
     strategy:
       fail-fast: false
-      # port-readiness-record.yml's matrix: every gated tool-pack.
       matrix:
-        include:
-          - pack: python
-            tool: ruff
-          - pack: python
-            tool: bandit
-          - pack: react
-            tool: eslint-plugin-react
-          - pack: react
-            tool: eslint-plugin-react-hooks
-          - pack: javascript
-            tool: eslint
-          - pack: javascript
-            tool: eslint-plugin-unicorn
-          - pack: typescript
-            tool: typescript-eslint
-          - pack: typescript
-            tool: eslint-plugin-vitest
-          - pack: next
-            tool: eslint-plugin-next
-          - pack: php
-            tool: phpcs
-          - pack: php
-            tool: phpstan
-          - pack: php
-            tool: psalm
-          - pack: blade
-            tool: tlint
-          - pack: blade
-            tool: blade-parser
-          - pack: blade
-            tool: bladestan
-          - pack: sql
-            tool: sqlfluff
-          - pack: rust
-            tool: clippy
-          - pack: vue
-            tool: eslint-plugin-vue
+        tool-pack: ${{ fromJSON(needs.plan.outputs.tool-packs) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -162,82 +146,129 @@ jobs:
       - uses: ./.github/actions/lfs
 
       - uses: ./.github/actions/node-deps
+        with:
+          built: "true"
 
-      - name: Build the package
-        run: npm run build:js
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
-
-      # The php and blade tool-packs run their upstream under the exact PHP their runtime pins, and Composer installs it.
-      - name: Set up the pinned PHP and Composer
-        if: matrix.pack == 'php' || matrix.pack == 'blade'
-        uses: ./.github/actions/php
-
-      # Clippy's recorder runs the rustup toolchain its runtime pins (runtimes/<runtime>/rust-toolchain.toml: an exact
-      # release with clippy), and refuses any other build; no other leg needs Rust.
-      - id: clippy-toolchain
-        name: Read the Rust toolchain Clippy's runtime pins
-        if: matrix.tool == 'clippy'
+      - id: tool-pack
+        name: Split the tool-pack
         env:
-          PACK: ${{ matrix.pack }}
-          TOOL: ${{ matrix.tool }}
+          TOOL_PACK: ${{ matrix.tool-pack }}
+        run: |
+          echo "pack=${TOOL_PACK%%/*}" >> "$GITHUB_OUTPUT"
+          echo "tool=${TOOL_PACK#*/}" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/generator-runtimes
+        with:
+          pack: ${{ steps.tool-pack.outputs.pack }}
+          tool: ${{ steps.tool-pack.outputs.tool }}
+
+      # No RERAIL_EXPECTED_ACCOUNT: the generator touches no container and writes only the local cache.
+      - name: Generate the answers
+        env:
+          PACK: ${{ steps.tool-pack.outputs.pack }}
+          TOOL: ${{ steps.tool-pack.outputs.tool }}
+        run: npm run generate -- --pack "$PACK" --tool "$TOOL" --force
+
+      - name: Hand the answers to the drift check
+        uses: actions/upload-artifact@v7
+        with:
+          name: drift-expected-${{ steps.tool-pack.outputs.pack }}-${{ steps.tool-pack.outputs.tool }}
+          path: .rerail/port-readiness/expected/
+          if-no-files-found: error
+          retention-days: 3
+
+  # `npm run generate -- --drift` runs no generator: it compares the answers in the local cache (drift-generate's) with
+  # the blob main's container holds under the same key, and exits 1 when they differ or main holds none, 2 when the
+  # local answers are missing (their generation failed).
+  drift:
+    name: Answers match upstream
+    needs: [plan, drift-generate]
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # id-token: azure/login's OIDC exchange for the main identity, which reads main's container here.
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RERAIL_EXPECTED_ACCOUNT: ${{ vars.RERAIL_EXPECTED_ACCOUNT }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # The generator key hashes the tree as drift-generate checked it out, LFS objects included.
+      - uses: ./.github/actions/lfs
+
+      - uses: ./.github/actions/node-deps
+
+      - name: Download the regenerated answers
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          pattern: drift-expected-*
+          path: .rerail/port-readiness/expected
+          merge-multiple: true
+
+      - name: Log in to Azure
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID_MAIN }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Compare with main's answers
+        env:
+          TOOL_PACKS: ${{ needs.plan.outputs.tool-packs }}
         run: |
           set -euo pipefail
-          runtime="$(sed -n 's/^  runtime: *\([a-z0-9._-]*\) *$/\1/p' "packs/$PACK/upstream/$TOOL/gates.yaml")"
-          echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' "conformance/recorders/port-readiness/runtimes/$runtime/rust-toolchain.toml")" >> "$GITHUB_OUTPUT"
-
-      - name: Install the pinned Rust toolchain with clippy
-        if: matrix.tool == 'clippy'
-        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
-        with:
-          toolchain: ${{ steps.clippy-toolchain.outputs.channel }}
-          components: clippy
-
-      # The recorder's own cache, restored so a night reuses what port-readiness-record.yml saved. The paths are
-      # port-readiness-record.yml's exactly, which GitHub requires for one to restore what the other saved. `recordings/*`
-      # rather than `recordings`, so the negation drops upload/: the cache archives each path the glob lists, recursively.
-      # Restored only, never saved: what this job would add to it is what the recorder installed and ran, upstream's code
-      # and unlocked Composer packages among it, and a save after that would hand main's scope whatever that code wrote.
-      - name: Restore the upstream runtimes, checkouts, corpus and recordings
-        uses: actions/cache/restore@v6
-        with:
-          path: |
-            .rerail/port-readiness/runtimes
-            .rerail/port-readiness/upstream
-            .rerail/port-readiness/corpus
-            .rerail/port-readiness/recordings/*
-            !.rerail/port-readiness/recordings/upload
-          key: port-readiness-record-${{ matrix.pack }}-${{ matrix.tool }}-${{ hashFiles('conformance/recorders/port-readiness/runtimes/**', format('packs/{0}/upstream/{1}/gates.yaml', matrix.pack, matrix.tool), 'conformance/port-readiness/corpus-tasks.json') }}
-          restore-keys: |
-            port-readiness-record-${{ matrix.pack }}-${{ matrix.tool }}-
-
-      - name: Fetch the recording the manifest names
-        continue-on-error: true
-        env:
-          PACK: ${{ matrix.pack }}
-          TOOL: ${{ matrix.tool }}
-          GITHUB_TOKEN: ${{ github.token }}
-        run: npm run port-readiness -- fetch --pack "$PACK" --tool "$TOOL"
-
-      - name: Report drift against the committed manifest
-        env:
-          PACK: ${{ matrix.pack }}
-          TOOL: ${{ matrix.tool }}
-        run: npm run port-readiness:record -- --pack "$PACK" --tool "$TOOL" --check
+          drifted=()
+          failed=()
+          mkdir -p "$RUNNER_TEMP/drift"
+          while IFS= read -r toolpack; do
+            changes="$RUNNER_TEMP/drift/${toolpack%%/*}--${toolpack#*/}.md"
+            set +e
+            npm run generate -- --drift --pack "${toolpack%%/*}" --tool "${toolpack#*/}" --changes "$changes"
+            status=$?
+            set -e
+            case "$status" in
+              0) ;;
+              1) drifted+=("$toolpack"); if [ -s "$changes" ]; then cat "$changes" >> "$GITHUB_STEP_SUMMARY"; fi ;;
+              *) failed+=("$toolpack") ;;
+            esac
+          done < <(jq -r '.[]' <<< "$TOOL_PACKS")
+          {
+            echo "## Port readiness answers against the pinned upstream"
+            echo
+            if [ "${#drifted[@]}" -eq 0 ] && [ "${#failed[@]}" -eq 0 ]; then
+              echo "Every tool-pack's regenerated answers are the ones main's container holds."
+            fi
+            if [ "${#drifted[@]}" -gt 0 ]; then
+              echo "Upstream answers differently from main's stored answers for: ${drifted[*]}. Find what moved (a transitive release, a runtime left unpinned) and pin it: the pin moves the generator key, and the pull request that lands it carries the new answers."
+            fi
+            if [ "${#failed[@]}" -gt 0 ]; then
+              echo "Not compared (the generation or the comparison failed; the logs say why): ${failed[*]}."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${#drifted[@]}" -gt 0 ] || [ "${#failed[@]}" -gt 0 ]; then
+            echo "::error::answers drifted from main's: ${drifted[*]:-none}; not compared: ${failed[*]:-none}"
+            exit 1
+          fi
 
   gates:
     name: Port readiness, uncached
     needs: build
     # Forks that turn scheduled workflows back on skip it; change the owner if the repository moves.
     if: github.repository_owner == 'neralabs'
-    # The called report job asks for these to post on pull requests; a scheduled run posts nothing. The called gates
-    # job reads the recordings' attestations.
+    # The called report job asks for issues and pull-requests to post on pull requests; a scheduled run posts nothing.
+    # The called answers jobs log in to Azure with OIDC, as the main identity, and read main's container.
     permissions:
       contents: read
       issues: write
       pull-requests: write
-      attestations: read
+      id-token: write
     uses: ./.github/workflows/port-readiness.yml
     with:
       no-cache: true

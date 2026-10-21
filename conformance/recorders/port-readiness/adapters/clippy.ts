@@ -4,11 +4,10 @@ import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, posix, relative, resolve, sep } from "node:path";
 
-import { PACKAGE_ROOT } from "../../../../src/engine/index.js";
 import type { CorpusFile } from "../../../port-readiness/corpus.js";
 import { checkoutPinned, readRerailCorpora, rerailCorpusId, type RerailCorpus } from "../../../port-readiness/corpus.js";
 import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
-import { upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js";
+import { REPOSITORY_ROOT, upstreamLicenseText } from "../../../port-readiness/upstream-files.js";
 import { clippySpan, rustcSpan, type RustcSpan } from "../../../port-readiness/span-units/clippy.js";
 import type { FixtureTextSource, PackAdapter, PackManifest, ParserVerdict, Span, SpanParts, UpstreamCase, UpstreamFile, UpstreamRule } from "../../../port-readiness/types.js";
 import { closingIndex, lexRust, rustLiterals, rustRegex, splitTopLevel, withoutTestItems, type RustLiterals, type RustToken } from "../languages/rust.js";
@@ -506,7 +505,7 @@ export async function createClippyAdapter(pack: PackManifest, names: string[], c
     const corpusEditions = new Map<string, string>();
     const editionOf = (file: { path: string; source: string }) => corpusEditions.get(`${file.path}\0${sha256(file.source)}`)
       ?? directives(file.source).find(([key]) => key === "edition")?.[1] ?? DEFAULT_EDITION;
-    const corpora = await readRerailCorpora(PACKAGE_ROOT, pack.rerail.pack);
+    const corpora = await readRerailCorpora(REPOSITORY_ROOT, pack.rerail.pack);
     const parserName = `rustc ${runtime.pin.channel} -Zparse-crate-root-only`;
 
     // The configuration options every corpus unit compiles under before its own (features, test profile, debug

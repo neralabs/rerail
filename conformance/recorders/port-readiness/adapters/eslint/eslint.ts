@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
 import { runChecked, type CommandRunner } from "../../../../port-readiness/process.js";
-import { upstreamLicenseText } from "../../../../port-readiness/recorded-adapter.js";
+import { upstreamLicenseText } from "../../../../port-readiness/upstream-files.js";
 import { eslintSpan, eslintSpanParts, messageSpan } from "../../../../port-readiness/span-units/eslint.js";
 import type { Check, EslintUpstream, FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamFile, UpstreamRule } from "../../../../port-readiness/types.js";
 import {
@@ -66,7 +66,8 @@ interface DriverCase {
 }
 interface Tests {
   files: { file: string; runs: number; error: string | null }[];
-  texts: { code: string; jsx: boolean }[];
+  /** Every case's code and fix outputs, once per language, with the first test file (code-unit order) that holds it. */
+  texts: { code: string; jsx: boolean; test: string }[];
   configurations: string[];
   testFiles: Record<string, string[]>;
   cases: Record<string, DriverCase[]>;
@@ -548,7 +549,7 @@ export async function createEslintAdapter(pack: PackManifest, names: string[], c
   const tests = await ask<Tests>({ op: "tests", tests: setup.tests, names: ruleNames, caseTesters: setup.case_testers ?? [] });
   // A case whose code names its own file (Unicorn's filename-case writes `/* Filename: <absolute path> */`), or whose
   // options name one (eslint-plugin-vue's no-restricted-call-after-await takes `path.join(process.cwd(), './foo')`),
-  // would carry the recording machine's cache path into the recording, and `port-readiness:record --check` would differ
+  // would carry the generating machine's cache path into the recording, and the nightly's `--drift` would differ
   // on every other machine: the cache root reads the same everywhere instead. Such a path is no finding's position.
   const machineRoot = resolve(cacheRoot);
   const stable = (code: string) => code.replaceAll(machineRoot, CACHE_ROOT_IN_RECORDINGS);
@@ -666,7 +667,11 @@ export async function createEslintAdapter(pack: PackManifest, names: string[], c
   const fixtureTexts = [...new Set([...tests.texts.map(({ code }) => code), ...fixtureSources])];
   // Each text's origin, in the same order: a test's code inline, a fixture source by its path in the checkout.
   const sourceOf = new Map<string, FixtureTextSource>();
-  for (const { code } of tests.texts) if (!sourceOf.has(code)) sourceOf.set(code, { inline: code });
+  // A code read as JSX in one test file and as plain JS in another is one text: it keeps the first test file of both.
+  for (const { code, test } of tests.texts) {
+    const known = sourceOf.get(code);
+    if (known === undefined || ("test" in known && test < known.test)) sourceOf.set(code, { inline: code, test });
+  }
   fixtureFiles.filter((file) => SOURCE_EXTENSIONS.has(extname(file))).forEach((file, index) => {
     const text = fixtureSources[index]!;
     if (!sourceOf.has(text)) sourceOf.set(text, { path: relative(upstream.directory, file).split(sep).join("/"), sha256: createHash("sha256").update(text).digest("hex") });
