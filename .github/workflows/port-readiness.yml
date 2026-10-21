@@ -58,7 +58,7 @@ jobs:
 
       # plan.mjs imports only node: builtins, so no npm ci.
       - name: Set up Node.js v24
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: "24"
 
