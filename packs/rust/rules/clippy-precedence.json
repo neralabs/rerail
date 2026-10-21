@@ -3,7 +3,7 @@
   "id": "clippy-precedence",
   "revision": 3,
   "mode": "steer",
-  "description": "Port of Clippy 0.1.99's precedence lint: reports a shift or bitwise operation whose operand is an unparenthesized arithmetic (+ - * / %) operation, at every nesting depth, and a method call whose receiver is an unparenthesized closure (spanning the call); macro expansion and type/value semantics are not modelled.",
+  "description": "Parenthesize arithmetic used as an operand of a shift or bitwise operator in Rust; the precedence is easy to misread.",
   "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [
     {

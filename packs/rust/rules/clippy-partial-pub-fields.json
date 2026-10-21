@@ -3,7 +3,7 @@
   "id": "clippy-partial-pub-fields",
   "revision": 2,
   "mode": "steer",
-  "description": "Port of Clippy 0.1.99's partial_pub_fields: in a struct whose first field is `pub` (exactly: `pub(crate)` and other restricted visibilities are not), reports the first field that is not, and in one whose first field is not `pub`, the first field that is, at the field's visibility (a zero-width point at the field's start when it has none).",
+  "description": "Make a Rust struct's fields either all pub or all non-pub; mixing them blurs what the type exposes.",
   "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [
     {
@@ -36,7 +36,7 @@
         { "regex": "^pub$", "inside": { "kind": "ordered_field_declaration_list", "inside": { "kind": "struct_item" } }, "follows": { "stopBy": "end", "regex": "^,$" }, "not": { "follows": { "stopBy": "end", "kind": "visibility_modifier", "regex": "^pub$" } } },
         { "precedes": { "stopBy": { "not": { "matches": "skipped" } }, "matches": "tuple-first-private-after-pub" } }
       ] } } },
-      "violation": { "suppress": { "clippy": { "lints": ["clippy::partial_pub_fields", "clippy::restriction", "warnings"] } }, "anchor": "witness.span", "code": "partial_pub_fields", "message": "Clippy partial_pub_fields: mixed usage of pub and non-pub fields" }
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::partial_pub_fields", "clippy::restriction", "warnings"] } }, "anchor": "witness.span", "code": "partial_pub_fields", "message": "Match this field's visibility to the struct's other fields: make all of them pub or none of them." }
     },
     {
       "id": "inherited-visibility-after-pub",
@@ -44,7 +44,7 @@
         { "matches": "first-private-after-pub", "not": { "has": { "kind": "visibility_modifier" } } },
         { "matches": "tuple-first-private-after-pub", "not": { "matches": "tuple-vis" } }
       ] } } },
-      "violation": { "suppress": { "clippy": { "lints": ["clippy::partial_pub_fields", "clippy::restriction", "warnings"] } }, "anchor": "witness.start", "code": "partial_pub_fields", "message": "Clippy partial_pub_fields: mixed usage of pub and non-pub fields" }
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::partial_pub_fields", "clippy::restriction", "warnings"] } }, "anchor": "witness.start", "code": "partial_pub_fields", "message": "Match this field's visibility to the struct's other fields: make all of them pub or none of them." }
     }
   ]
 }
