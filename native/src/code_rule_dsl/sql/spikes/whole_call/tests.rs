@@ -102,7 +102,7 @@ fn check(rules: Vec<Value>, sources: &[&str]) -> Value {
             &runs,
         )
         .unwrap();
-    let mut builder = ProgramBuilder::default();
+    let mut builder = ProgramBuilder::spike(super::amplification::guards::apply);
     let statements: Vec<_> = grammars
         .iter()
         .map(|g| builder.clause_each(g, None).unwrap())
@@ -158,30 +158,36 @@ fn check(rules: Vec<Value>, sources: &[&str]) -> Value {
                 );
                 eprintln!("whole-call buffers {policy:?} {}", got.metrics);
             }
-            for phases in [1, 4] {
-                let plan = super::physical::plan(&graph, &outputs, 16, phases);
-                let got =
-                    run::execute_program(connection, frames, &plan.graph, &plan.queries, true)
-                        .unwrap_or_else(|e| {
-                            panic!("shaped {phases}: {e}\n{}", plan.queries.join(";\n"))
-                        });
-                let mut actual = vec![vec![Vec::new(); sources.len()]; grammars.len()];
-                for (clause, file, root, values) in got.hits {
-                    actual[clause][file].push(decode(&statements[clause], root, &values));
+            for narrow in [false, true] {
+                for phases in [1, 4] {
+                    let mut candidate = graph.clone();
+                    if narrow {
+                        super::amplification::constants::apply(&mut candidate, &outputs);
+                    }
+                    let plan = super::physical::plan(&candidate, &outputs, 16, phases);
+                    let got =
+                        run::execute_program(connection, frames, &plan.graph, &plan.queries, true)
+                            .unwrap_or_else(|e| {
+                                panic!("shaped {phases}: {e}\n{}", plan.queries.join(";\n"))
+                            });
+                    let mut actual = vec![vec![Vec::new(); sources.len()]; grammars.len()];
+                    for (clause, file, root, values) in got.hits {
+                        actual[clause][file].push(decode(&statements[clause], root, &values));
+                    }
+                    assert_eq!(
+                        actual, expected,
+                        "shaped {phases}: complete roots and captures"
+                    );
+                    assert!(plan.queries.len() <= 4);
+                    assert_eq!(got.metrics["sqlExecutions"], plan.queries.len());
+                    assert!(
+                        got.metrics["explain"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .all(|p| p["plan"].is_array())
+                    );
                 }
-                assert_eq!(
-                    actual, expected,
-                    "shaped {phases}: complete roots and captures"
-                );
-                assert!(plan.queries.len() <= 4);
-                assert_eq!(got.metrics["sqlExecutions"], plan.queries.len());
-                assert!(
-                    got.metrics["explain"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .all(|p| p["plan"].is_array())
-                );
             }
             chosen.unwrap()
         },
@@ -286,7 +292,7 @@ fn a_terminal_failure_cannot_disappear_behind_a_later_false_filter() {
             Err("injected terminal failure".into())
         }
     }
-    let statement = Statement {
+    let mut statement = Statement {
         slots: Vec::new(),
         kinds: None,
         op: Op::All(vec![
@@ -301,6 +307,7 @@ fn a_terminal_failure_cannot_disappear_behind_a_later_false_filter() {
         units: Vec::new(),
         sources: Vec::new(),
     };
+    super::amplification::guards::apply(&mut statement);
     let mut compiler = Compiler::default();
     let id = compiler
         .emitted(&emit::clause(&statement), "file,node", &[], "SELECT 0")

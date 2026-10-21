@@ -3,6 +3,7 @@
 These test-only spikes extend [the whole-call experiments](sql-whole-call-compiler-spikes.md).
 They run on `jeremy/sql-capture-demand-spikes` and preserve Tim's branch.
 The production addon still uses the existing scheduler.
+See [the work amplification follow-up](sql-work-amplification-spikes.md) for constant capture elimination, recursive demand comparisons, and compiled witness segments.
 
 ## Execution contract
 

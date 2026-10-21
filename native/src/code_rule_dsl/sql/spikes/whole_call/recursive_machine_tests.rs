@@ -66,70 +66,105 @@ fn check(language: &str, policies: Vec<Value>, sources: &[&str], cycle: bool) {
     } else {
         recursive_machine::compile_batch(&statements.iter().collect::<Vec<_>>()).unwrap()
     };
+    let mut variants = vec![("baseline".to_owned(), sql)];
+    for variant in [
+        recursive_machine::LeafPlan::Kinds,
+        recursive_machine::LeafPlan::Capture,
+        recursive_machine::LeafPlan::Partitioned,
+    ] {
+        variants.push((
+            format!("{variant:?}"),
+            recursive_machine::compile_variant(
+                &statements.iter().collect::<Vec<_>>(),
+                &builder.terminals,
+                variant,
+            )
+            .unwrap(),
+        ));
+    }
+    for (name, group, binary) in [
+        ("shared64", 64, false),
+        ("binary", 0, true),
+        ("shared64-binary", 64, true),
+    ] {
+        variants.push((
+            name.to_owned(),
+            recursive_machine::compile_scoped(
+                &statements.iter().collect::<Vec<_>>(),
+                &builder.terminals,
+                recursive_machine::LeafPlan::Partitioned,
+                group,
+                binary,
+            )
+            .unwrap(),
+        ));
+    }
     sql::exec::with_terminals(docs, builder.terminals, |connection, batch, frames| {
-        recursive_machine::register_text(connection, batch).unwrap();
-        let got = run::execute_program(
-            connection,
-            frames,
-            &Graph::default(),
-            std::slice::from_ref(&sql),
-            true,
-        )
-        .unwrap_or_else(|e| panic!("{e}\n{sql}"));
-        let faults: Vec<_> = got.hits.iter().filter(|row| row.3["fault"] != 0).collect();
-        if cycle {
-            assert!(legacy.is_err());
-            assert!(faults.iter().any(|r| r.3["fault"] == 1));
-            return;
-        }
-        assert!(
-            faults.is_empty(),
-            "unexpected recursive scheduler fault {faults:?}"
-        );
-        let mut actual = vec![vec![Vec::new(); sources.len()]; statements.len()];
-        for (rule, file, root, answer) in &got.hits {
-            if answer["result"] != 1 {
+        for (variant, sql) in &variants {
+            recursive_machine::register_text(connection, batch).unwrap();
+            let got = run::execute_program(
+                connection,
+                frames,
+                &Graph::default(),
+                std::slice::from_ref(sql),
+                true,
+            )
+            .unwrap_or_else(|e| panic!("{e}\n{sql}"));
+            let faults: Vec<_> = got.hits.iter().filter(|row| row.3["fault"] != 0).collect();
+            if cycle {
+                assert!(legacy.is_err());
+                assert!(faults.iter().any(|r| r.3["fault"] == 1));
                 continue;
             }
-            let mut captures = Vec::new();
-            for (id, slot) in statements[*rule]
-                .slots
-                .iter()
-                .enumerate()
-                .filter(|(_, s)| s.scope == 0)
-            {
-                if let Some(value) = answer["env"][id.to_string()].as_i64() {
-                    captures.push((
-                        slot.name.clone(),
-                        match slot.kind {
-                            SlotKind::Node => Captured::Node(value as u32),
-                            SlotKind::Count => Captured::Count(value),
-                            _ => unreachable!(),
-                        },
-                    ));
+            assert!(
+                faults.is_empty(),
+                "unexpected recursive scheduler fault {faults:?}"
+            );
+            let mut actual = vec![vec![Vec::new(); sources.len()]; statements.len()];
+            for (rule, file, root, answer) in &got.hits {
+                if answer["result"] != 1 {
+                    continue;
                 }
+                let mut captures = Vec::new();
+                for (id, slot) in statements[*rule]
+                    .slots
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| s.scope == 0)
+                {
+                    if let Some(value) = answer["env"][id.to_string()].as_i64() {
+                        captures.push((
+                            slot.name.clone(),
+                            match slot.kind {
+                                SlotKind::Node => Captured::Node(value as u32),
+                                SlotKind::Count => Captured::Count(value),
+                                _ => unreachable!(),
+                            },
+                        ));
+                    }
+                }
+                actual[*rule][*file].push(SqlMatch {
+                    root: *root,
+                    captures,
+                });
             }
-            actual[*rule][*file].push(SqlMatch {
-                root: *root,
-                captures,
-            });
+            assert_eq!(
+                &actual,
+                legacy.as_ref().unwrap(),
+                "recursive CTE complete roots and captures"
+            );
+            eprintln!(
+                "SQL recursive scheduler {variant}: {} rules, {} files, {} VM, {} steps, {} SQL bytes",
+                statements.len(),
+                sources.len(),
+                got.metrics["vmSteps"],
+                got.hits
+                    .iter()
+                    .map(|h| h.3["steps"].as_u64().unwrap())
+                    .sum::<u64>(),
+                sql.len()
+            );
         }
-        assert_eq!(
-            actual,
-            legacy.unwrap(),
-            "recursive CTE complete roots and captures"
-        );
-        eprintln!(
-            "SQL recursive scheduler {} rules, {} files, {} VM, {} steps, {} SQL bytes",
-            statements.len(),
-            sources.len(),
-            got.metrics["vmSteps"],
-            got.hits
-                .iter()
-                .map(|h| h.3["steps"].as_u64().unwrap())
-                .sum::<u64>(),
-            sql.len()
-        );
     });
 }
 #[test]

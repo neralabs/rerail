@@ -97,7 +97,7 @@ fn workload() {
         .collect();
     let files = "SELECT file FROM node WHERE id=0".to_owned();
     let started = Instant::now();
-    let mut builder = ProgramBuilder::default();
+    let mut builder = spike_builder();
     let mut compiler = Compiler::default();
     let mut admitted = Vec::new();
     let mut statements = Vec::new();
@@ -182,6 +182,9 @@ fn workload() {
         ("shaped-256-1", Policy::All, 256, 1),
         ("shaped-64-4", Policy::All, 64, 4),
         ("shaped-256-4", Policy::All, 256, 4),
+        ("narrow-8-1", Policy::All, 8, 1),
+        ("narrow-16-1", Policy::All, 16, 1),
+        ("narrow-64-4", Policy::All, 64, 4),
     ] {
         let case = format!("{mode}-{policy:?}");
         if let Ok(selected) = std::env::var("RERAIL_WHOLE_CALL_CASES")
@@ -189,7 +192,7 @@ fn workload() {
         {
             continue;
         }
-        let mut fresh = ProgramBuilder::default();
+        let mut fresh = spike_builder();
         for (index, g) in grammars.iter().enumerate() {
             if !each[index] {
                 let _ = fresh.clause_each(g, None);
@@ -202,7 +205,15 @@ fn workload() {
             } else {
                 super::shapes::StageProbe::RowIn
             };
-            let plan = super::physical::plan_with_shape(&graph, &outputs, budget, phases, shape);
+            let mut candidate = graph.clone();
+            let narrowing = if mode.starts_with("narrow") {
+                super::amplification::constants::apply(&mut candidate, &outputs)
+            } else {
+                Value::Null
+            };
+            let mut plan =
+                super::physical::plan_with_shape(&candidate, &outputs, budget, phases, shape);
+            plan.metadata["narrowing"] = narrowing;
             (plan.graph, plan.queries, plan.metadata)
         } else if mode == "cte" {
             (
@@ -317,7 +328,7 @@ fn recursive_corpus(
         exec::{Captured, SqlMatch},
         plan::SlotKind,
     };
-    let mut builder = ProgramBuilder::default();
+    let mut builder = spike_builder();
     let mut admitted = Vec::new();
     let mut statements = Vec::new();
     let mut coverage = Vec::new();
@@ -351,11 +362,31 @@ fn recursive_corpus(
     if statements.is_empty() {
         return;
     }
-    let query = recursive_machine::compile_batch_with_contract(
+    let leaf_plan = match std::env::var("RERAIL_WHOLE_CALL_LEAVES").as_deref() {
+        Ok("kinds") => recursive_machine::LeafPlan::Kinds,
+        Ok("capture") => recursive_machine::LeafPlan::Capture,
+        Ok("partitioned") => recursive_machine::LeafPlan::Partitioned,
+        _ => recursive_machine::LeafPlan::Baseline,
+    };
+    let memo = std::env::var("RERAIL_WHOLE_CALL_MEMO").unwrap_or_default();
+    let group = if memo.contains("shared") {
+        std::env::var("RERAIL_WHOLE_CALL_ROOT_GROUP")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(64)
+    } else {
+        0
+    };
+    let binary = memo.contains("binary");
+    let query = recursive_machine::compile_scoped(
         &statements.iter().collect::<Vec<_>>(),
         &builder.terminals,
+        leaf_plan,
+        group,
+        binary,
     )
     .unwrap();
+    std::fs::write(out.join("recursive-leaf-plan.json"),serde_json::to_vec_pretty(&json!({"leafPlan":format!("{leaf_plan:?}"),"guards":builder.spike_transform.is_some(),"rootGroup":group,"binary":binary})).unwrap()).unwrap();
     std::fs::write(out.join("recursive.sql"), &query).unwrap();
     let mut session = sql::exec::compile(&admitted).unwrap().session().unwrap();
     let runs: Vec<_> = (0..admitted.len())
@@ -417,6 +448,9 @@ fn recursive_corpus(
                         Ok(e) => faults.is_empty() && *e == actual,
                         Err(_) => faults.iter().any(|h| h.3["fault"] == 1),
                     };
+                    if faults.iter().any(|h| h.3["fault"] == 2) {
+                        return json!({"status":"rejected","parity":null,"error":"root transition budget","faults":faults,"metrics":got.metrics});
+                    }
                     json!({"status":"completed","parity":parity,"clauses":statements.len(),"files":docs.len(),"terminalRootVerdicts":got.hits.len(),"faults":faults,"metrics":got.metrics})
                 }
             }
@@ -438,4 +472,12 @@ fn recursive_corpus(
         report["parity"], false,
         "recursive corpus roots/captures differ"
     );
+}
+
+fn spike_builder() -> ProgramBuilder {
+    let mut builder = ProgramBuilder::default();
+    if std::env::var_os("RERAIL_WHOLE_CALL_GUARDS").is_some() {
+        builder.spike_transform = Some(super::amplification::guards::apply);
+    }
+    builder
 }

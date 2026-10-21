@@ -2,6 +2,7 @@
 //! The adapter retains the existing semantic lowerings, but replaces physical frame steps with
 //! immutable typed relation references. Unsupported stateful constructs fail explicitly.
 mod adapter;
+mod amplification;
 mod buffers;
 mod composition;
 mod crossfile;

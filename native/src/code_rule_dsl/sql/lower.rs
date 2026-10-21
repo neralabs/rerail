@@ -59,6 +59,9 @@ pub(super) struct Stage {
 /// The terminals and stages a set of clauses shares.
 #[derive(Default)]
 pub(super) struct ProgramBuilder {
+    /// Test-only logical pass applied before both stage and clause SQL generation.
+    #[cfg(test)]
+    pub(super) spike_transform: Option<fn(&mut Statement)>,
     pub(super) terminals: Vec<Terminal>,
     pub(super) stages: Vec<Stage>,
     stage_index: HashMap<String, usize>,
@@ -129,6 +132,14 @@ impl Analysis {
 }
 
 impl ProgramBuilder {
+    #[cfg(test)]
+    pub(super) fn spike(transform: fn(&mut Statement)) -> Self {
+        Self {
+            spike_transform: Some(transform),
+            ..Self::default()
+        }
+    }
+
     /// `clause_each`, leaving the program as it was where the engine refuses the clause: a
     /// refused clause leaves no stage or terminal in the program. Lowering only appends to the
     /// terminals and the stages, and the indexes it adds point past what was there before; the
@@ -180,7 +191,16 @@ impl ProgramBuilder {
             None => op,
         };
         let op = lowerer.unknowable(op);
-        Ok(lowerer.finish(kinds, op))
+        let statement = lowerer.finish(kinds, op);
+        #[cfg(test)]
+        let statement = {
+            let mut statement = statement;
+            if let Some(transform) = self.spike_transform {
+                transform(&mut statement);
+            }
+            statement
+        };
+        Ok(statement)
     }
 }
 
@@ -1135,6 +1155,14 @@ impl<'p> Lowerer<'p> {
             let (op, _) = lowerer.lower(rule, 0, &BTreeSet::new())?;
             let op = lowerer.unknowable(op);
             lowerer.finish(kinds, op)
+        };
+        #[cfg(test)]
+        let statement = {
+            let mut statement = statement;
+            if let Some(transform) = self.program.spike_transform {
+                transform(&mut statement);
+            }
+            statement
         };
         let sql = timed(&mut self.program.stage_emission, || {
             emit::stage(&statement, self.three)

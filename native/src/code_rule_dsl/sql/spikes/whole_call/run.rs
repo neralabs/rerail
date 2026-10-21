@@ -296,13 +296,20 @@ fn execute_statement(
     let trace_guard = TraceGuard(connection);
     let ticks = Arc::new(AtomicUsize::new(0));
     let progress = Arc::clone(&ticks);
+    let stopped = Arc::new(AtomicUsize::new(0));
+    let stop_reason = Arc::clone(&stopped);
     let wall = Instant::now();
     let sampled = Arc::clone(profile);
     connection.progress_handler(
         10_000,
         Some(move || {
             sampled.sampled_vm.fetch_add(10_000, Ordering::Relaxed);
-            progress.fetch_add(1, Ordering::Relaxed) > 50_000 || wall.elapsed().as_secs() > 30
+            let vm = progress.fetch_add(1, Ordering::Relaxed) > 50_000;
+            let elapsed = wall.elapsed().as_secs() > 30;
+            if vm || elapsed {
+                stop_reason.store(if vm { 1 } else { 2 }, Ordering::Relaxed);
+            }
+            vm || elapsed
         }),
     )?;
     profile.sampled_vm.store(0, Ordering::Relaxed);
@@ -337,7 +344,12 @@ fn execute_statement(
     } else {
         Json::Null
     };
-    let metrics = json!({"scans":scan,"sqlExecutions":executions,"prepareCpuNs":prepare.cpu,"prepareWallNs":prepare.wall,"cpuNs":elapsed.cpu,"wallNs":elapsed.wall,
+    let interruption = match stopped.load(Ordering::Relaxed) {
+        1 => Some("vm_budget"),
+        2 => Some("wall_budget"),
+        _ => None,
+    };
+    let metrics = json!({"interruption":interruption,"scans":scan,"sqlExecutions":executions,"prepareCpuNs":prepare.cpu,"prepareWallNs":prepare.wall,"cpuNs":elapsed.cpu,"wallNs":elapsed.wall,
         "vmSteps":statement.get_status(StatementStatus::VmStep),"fullscanSteps":statement.get_status(StatementStatus::FullscanStep),"sorts":statement.get_status(StatementStatus::Sort),
         "automaticIndexRows":statement.get_status(StatementStatus::AutoIndex),"sqlBytes":sql.len()});
     Ok(match result {

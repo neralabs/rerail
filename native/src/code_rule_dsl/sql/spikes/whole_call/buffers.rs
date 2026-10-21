@@ -53,7 +53,15 @@ pub(super) fn render_plan(
     }
     let substitutions: HashMap<_, _> = cuts
         .iter()
-        .map(|&id| (Graph::name(id), format!("buffer_{id}")))
+        .map(|&id| {
+            use std::hash::{Hash, Hasher};
+            let mut hash = std::collections::hash_map::DefaultHasher::new();
+            graph.relations[id].columns.hash(&mut hash);
+            (
+                Graph::name(id),
+                format!("buffer_{id}_{:016x}", hash.finish()),
+            )
+        })
         .collect();
     // A buffer can be released after its last physical reader. Inline relations inherit
     // their transitive buffer reads; crossing another cut stops the walk.
@@ -96,7 +104,7 @@ pub(super) fn render_plan(
         let mut names: Vec<_> = last_use
             .iter()
             .filter(|(_, last)| **last == at)
-            .map(|(id, _)| format!("buffer_{id}"))
+            .map(|(id, _)| substitutions[&Graph::name(*id)].clone())
             .collect();
         names.sort();
         serde_json::to_string(&names).unwrap()
@@ -127,7 +135,7 @@ pub(super) fn render_plan(
     let mut actions = Vec::new();
     for (at, &id) in cuts.iter().enumerate() {
         let r = &graph.relations[id];
-        let handle = format!("buffer_{id}");
+        let handle = substitutions[&Graph::name(id)].clone();
         physical.handles.push((handle.clone(), id));
         let cols = r
             .columns
