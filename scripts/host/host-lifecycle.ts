@@ -22,16 +22,17 @@
  *      and its session-start row lands within 12 s of the process spawn.
  *   3. Rerail's ledger holds exactly one `steer` delivery attributed to rerail-lifecycle:sql-execute-fstring for the first
  *      tool result that writes api/probe.py; later model-chosen edits are outside this assertion.
- *   4. The host's own session transcript recorded receiving that steer (the `custom_message` entry
- *      `sendMessage` appends, tagged `customType: "rerail.rule"` by both extensions), and an assistant
- *      message follows it in the same transcript, so it was in the model's context.
+ *   4. The host's own session transcript recorded receiving that steer inside the probe write's tool result
+ *      (a text block of a `toolResult` message), never as a `custom_message` tagged `customType: "rerail.rule"`,
+ *      which both hosts count as the start of a turn; and an assistant message follows it in the same
+ *      transcript, so it was in the model's context.
  *
  * Anything that depends on what the model chose to say is printed as INFO, never asserted.
  */
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import {
@@ -44,11 +45,10 @@ import {
   upsertLibraryRule,
 } from "../../src/engine/index.js";
 import { setRepositoryStarted, SqliteSessionReader, type SessionEventRecord } from "../../src/runtime/index.js";
+import { DIST, ensureFresh, jsonlFiles } from "./host-harness.js";
 
 type Host = "omp" | "pi";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const DIST = join(ROOT, "dist");
 const TIMEOUT_MS = 180_000;
 /**
  * Ceiling on the extension's own session start, measured from Rerail's records (process spawn to the
@@ -58,7 +58,7 @@ const TIMEOUT_MS = 180_000;
 const MAX_SESSION_START_MS = 12_000;
 const CODE = "SQL_EXECUTE_FSTRING";
 /** The one enabled code rule: a Python `.execute(...)` call whose SQL is an f-string interpolating into the statement. */
-const CODE_RULE = {
+export const CODE_RULE = {
   format: CODE_RULE_FORMAT,
   id: "rerail-lifecycle:sql-execute-fstring",
   revision: 1,
@@ -115,9 +115,9 @@ const CallResultPayload = z.object({ toolName: z.string(), input: z.unknown().op
 /** Text content as both hosts store it: a string, or parts with `text`. */
 const Content = z.union([z.string(), z.array(z.union([z.string(), z.object({ text: z.string().optional() })]))]);
 /**
- * One line of the host's own session jsonl (OMP and Pi share the session-manager format). The steer
- * arrives as a `custom_message` entry, the model's replies as `message` entries with role `assistant`.
- * Every other entry type is kept opaque as `other`.
+ * One line of the host's own session jsonl (OMP and Pi share the session-manager format). An edit's steer
+ * arrives in its `toolResult` message (any later one as a `custom_message` entry), the model's replies as
+ * `message` entries with role `assistant`. Every other entry type is kept opaque as `other`.
  */
 const HostEntry = z.union([
   z.object({ type: z.literal("custom_message"), customType: z.string(), content: Content }),
@@ -152,8 +152,10 @@ type HostTranscript = {
   files: number;
   /** Every jsonl line, one per entry. */
   lines: string[];
-  /** Indexes of `custom_message` entries tagged `rerail.rule` whose text is the steer. */
+  /** Indexes of `toolResult` messages with the steer as one of their text blocks. */
   steerEntries: number[];
+  /** Indexes of `custom_message` entries tagged `rerail.rule` whose text is the steer. */
+  messageEntries: number[];
   /** Index of the first assistant message after the single steer entry, when both exist. */
   assistantAfter: number | undefined;
   replies: number;
@@ -232,16 +234,6 @@ function extensionErrors(run: Run): string[] {
     .map((line) => line.trim().replace(/^.*(default|pi)-extension\.js\): /u, "").slice(0, 160));
 }
 
-/** Refuse to prove anything about a `dist/` that is older than `src/`: the run would test stale code. */
-async function ensureFresh(extension: string): Promise<void> {
-  const built = await stat(extension).catch(() => undefined);
-  if (built === undefined) throw new Error(`${extension} is missing: run \`npm run build:ts\` first`);
-  for (const name of await readdir(join(ROOT, "src"), { recursive: true })) {
-    const source = await stat(join(ROOT, "src", name));
-    if (source.isFile() && source.mtimeMs > built.mtimeMs) throw new Error(`${extension} is older than src/${name}: run \`npm run build:ts\` first`);
-  }
-}
-
 async function project(): Promise<Workspace> {
   const root = await mkdtemp(join(tmpdir(), "rerail-lifecycle-"));
   await mkdir(join(root, "api"), { recursive: true });
@@ -268,18 +260,6 @@ async function project(): Promise<Workspace> {
   }
   env.RERAIL_HOME = rerailHome;
   return { root, env, databasePath, sessionDir: join(root, ".host-sessions") };
-}
-
-async function jsonlFiles(directory: string): Promise<string[]> {
-  const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
-  const files = await Promise.all(
-    entries.map(async (entry) => {
-      const path = join(directory, entry.name);
-      if (entry.isDirectory()) return jsonlFiles(path);
-      return entry.name.endsWith(".jsonl") ? [path] : [];
-    }),
-  );
-  return files.flat();
 }
 
 function textOf(content: z.infer<typeof Content>): string {
@@ -361,6 +341,10 @@ async function readHostTranscript(sessionDir: string, steerContent: string): Pro
   const lines = (await Promise.all(files.map((file) => readFile(file, "utf8")))).flatMap((text) => text.split("\n").filter(Boolean));
   const entries = lines.map((line) => HostEntry.parse(JSON.parse(line)));
   const steerEntries = entries.flatMap((entry, index) =>
+    steerContent !== "" && entry.type === "message" && entry.message.role === "toolResult" && Array.isArray(entry.message.content)
+      && entry.message.content.some((part) => typeof part !== "string" && part.text === steerContent) ? [index] : [],
+  );
+  const messageEntries = entries.flatMap((entry, index) =>
     steerContent !== "" && entry.type === "custom_message" && entry.customType === RULE_MESSAGE_TYPE
       && textOf(entry.content) === steerContent ? [index] : [],
   );
@@ -372,6 +356,7 @@ async function readHostTranscript(sessionDir: string, steerContent: string): Pro
     files: files.length,
     lines,
     steerEntries,
+    messageEntries,
     assistantAfter,
     replies: assistants.length,
     lastReply: last?.type === "message" ? textOf(last.message.content) : "",
@@ -427,9 +412,9 @@ function report(host: Host, { run, rerail, steer, transcript }: Evidence): void 
   const at = transcript.steerEntries.join(",") || "-";
   check(
     assertions,
-    `${host} transcript recorded the steer once`,
-    transcript.files === 1 && transcript.steerEntries.length === 1,
-    `${transcript.files} transcript file(s), ${transcript.lines.length} entries, ${transcript.steerEntries.length} custom_message/${RULE_MESSAGE_TYPE} ${plural} with the steer text at index ${at}`,
+    `${host} transcript recorded the steer once, in the write's result`,
+    transcript.files === 1 && transcript.steerEntries.length === 1 && transcript.messageEntries.length === 0,
+    `${transcript.files} transcript file(s), ${transcript.lines.length} entries, ${transcript.steerEntries.length} toolResult ${plural} with the steer text at index ${at}, ${transcript.messageEntries.length} custom_message/${RULE_MESSAGE_TYPE} with it`,
   );
   const placement =
     transcript.assistantAfter === undefined

@@ -11,10 +11,9 @@ import { isOmittedFailuresSummary, isSourceGap } from "./audit.js";
 
 import {
   auditSettingsSchema, auditSettingsPatchSchema, repositoryAuditSchema, auditRequestInputSchema, auditRequestSchema,
-  DEFAULT_AUDIT_SETTINGS, type AuditSettings, type RepositoryAudit, type AuditControls, type AuditRequest,
+  DEFAULT_AUDIT_SETTINGS, type AuditSettings, type AuditSettingsPatch, type RepositoryAudit, type AuditControls, type AuditRequest,
 } from "./audit-control-schema.js";
 export interface PolicyOwnerClaim { readonly token: string; }
-
 const GIT_OUTPUT_LIMIT = 10 * 1024 * 1024;
 
 /**
@@ -173,14 +172,28 @@ export class SqliteAuditControlStore {
   updateSettings(sessionId: string, patch: z.input<typeof auditSettingsPatchSchema>): AuditControls {
     const parsed = auditSettingsPatchSchema.parse(patch);
     this.#database.transaction(() => {
-      const session = requireSession(this.#database, sessionId);
-      const workspaceRoot = canonicalWorkspace(session.cwd);
-      const previous = this.#database.select().from(auditSettings).where(eq(auditSettings.workspaceRoot, workspaceRoot)).get();
-      const settings = auditSettingsSchema.parse({ ...DEFAULT_AUDIT_SETTINGS, ...(previous === undefined ? {} : parseSettings(previous.settings)), ...parsed });
-      this.#database.insert(auditSettings).values({ workspaceRoot, settings, updatedAt: Date.now() })
-        .onConflictDoUpdate({ target: auditSettings.workspaceRoot, set: { settings, updatedAt: Date.now() } }).run();
+      this.#saveSettings(canonicalWorkspace(requireSession(this.#database, sessionId).cwd), parsed);
     });
     return this.getSettings(sessionId);
+  }
+  /** `updateSettings` for a checkout by its folder, before any session there exists: what its sessions start with. */
+  updateWorkspaceSettings(workspaceRoot: string, patch: z.input<typeof auditSettingsPatchSchema>): AuditSettings {
+    const parsed = auditSettingsPatchSchema.parse(patch);
+    return this.#database.transaction(() => this.#saveSettings(canonicalWorkspace(workspaceRoot), parsed));
+  }
+  /**
+   * Merges `patch` over the checkout's saved settings, else the defaults, and saves the result. The default strategy,
+   * `message`, is left out of the row, as rows read before the key existed, so a release that reads `{ scope, mode }`
+   * strictly still reads every row that does not opt into an experimental strategy.
+   */
+  #saveSettings(workspaceRoot: string, patch: AuditSettingsPatch): AuditSettings {
+    const previous = this.#database.select().from(auditSettings).where(eq(auditSettings.workspaceRoot, workspaceRoot)).get();
+    const settings = auditSettingsSchema.parse({ ...DEFAULT_AUDIT_SETTINGS, ...(previous === undefined ? {} : parseSettings(previous.settings)), ...patch });
+    const { steerStrategy, ...saved } = settings;
+    const row = steerStrategy === "message" ? saved : settings;
+    this.#database.insert(auditSettings).values({ workspaceRoot, settings: row, updatedAt: Date.now() })
+      .onConflictDoUpdate({ target: auditSettings.workspaceRoot, set: { settings: row, updatedAt: Date.now() } }).run();
+    return settings;
   }
   /**
    * Claim the audit of one checkout for this session: false while another live session audits it or once one completed.

@@ -27,9 +27,9 @@ describe("Claude Code session enforcement golden output", () => {
     await expect(drawn(String(output.systemMessage))).toMatchFileSnapshot(`${GOLDEN}/n4b-two-rules.txt`);
   });
 
-  it("N4c: a late steer shows its line at Stop; the block waits for the next message", async () => {
+  it("N4c: a late steer shows its line at Stop; the block waits for the next tool call", async () => {
     await expect(goldenJson(claudeHookOutput("Stop", [NO_EXPLICIT_ANY], { mark: SCENE_MARK }))).toMatchFileSnapshot(`${GOLDEN}/n4c-late-steer-stop.json`);
-    await expect(goldenJson(claudeHookOutput("UserPromptSubmit", [{ ...NO_EXPLICIT_ANY, shown: true }], { mark: SCENE_MARK })))
+    await expect(goldenJson(claudeHookOutput("PostToolUse", [{ ...NO_EXPLICIT_ANY, shown: true }], { mark: SCENE_MARK })))
       .toMatchFileSnapshot(`${GOLDEN}/n4c-late-steer-next-message.json`);
   });
 });

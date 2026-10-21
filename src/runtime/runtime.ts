@@ -4,19 +4,27 @@ import { join, resolve } from "node:path";
 import { z } from "zod/v4";
 import {
   ADAPTER_CAPABILITIES,
+  STEER_STRATEGIES,
   type AdapterDelivery,
   type AdapterEvent,
   type AdapterSample,
   type AdapterSession,
   type RerailEventLoop,
   type RerailHost,
+  type SteerStrategy,
 } from "../engine/adapter-contract.js";
 import { RerailHostRuntime, type HostRuntimePort, type HostRuntimeSessionState } from "./host-runtime.js";
 import { autostartDaemon } from "./daemon-control.js";
 import { SteerRuleSchema } from "./event-protocol.js";
-import { CodeRuleBridge, generatedEditPaths, type SourceObservationCache } from "../engine/code-rule/code-rule-bridge.js";
-import { buildSteer, type AuditorCloseOptions, type CodeRuleAuditor, type AuditSettings, type CodeRuleViolation, type RuleSteerDelivery, type RepositoryAuditHooks, type SteerSourceOf } from "../engine/code-rule/code-rule.js";
-import { missedSteerDigestEnabled } from "../engine/experimental-features.js";
+import {
+  CodeRuleBridge, generatedEditPaths, type RewoundEdit, type SourceObservationCache,
+} from "../engine/code-rule/code-rule-bridge.js";
+import {
+  buildSteer, type AuditorCloseOptions, type CodeRuleAuditor, type AuditSettings, type CodeRuleViolation, type RuleSteerDelivery,
+  type RepositoryAuditHooks, type SteerMetadata, type SteerSourceOf,
+} from "../engine/code-rule/code-rule.js";
+import type { AuditSettings as CheckoutAuditSettings } from "../engine/audit/audit-control-schema.js";
+import { missedSteerDigestEnabled, steerStrategiesEnabled } from "../engine/experimental-features.js";
 import type { AuditRecorder, AuditRecord } from "../engine/audit/audit.js";
 import { SqliteAuditStore } from "../engine/audit/audit-store.js";
 import { SqliteAuditControlStore, type PolicyOwnerClaim } from "../engine/audit/audit-control.js";
@@ -35,7 +43,7 @@ import { parseSampleSource, SAMPLE_BOUNDARIES } from "../engine/catalog/rule-sch
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 import { restorableRule, type DroppedEvents, type RuleMutation } from "./session-state.js";
 import { SessionLanes } from "./session-lanes.js";
-import { steerBlock, steerRules } from "../engine/code-rule/rerail-steer.js";
+import { rewoundSteer, steerBlock, steerRules, subagentSteer } from "../engine/code-rule/rerail-steer.js";
 import { steerOrigin } from "../engine/code-rule/steer-origin.js";
 import { SqliteSessionStore, type SessionAttribution } from "./session-store.js";
 import type {
@@ -90,6 +98,11 @@ async function settledWithin(work: Promise<void>, ms: number): Promise<boolean> 
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** The strategy a session steers with: the saved one only while the experimental switch is on, else `message`. */
+function effectiveSteerStrategy(settings: Pick<CheckoutAuditSettings, "steerStrategy">): SteerStrategy {
+  return steerStrategiesEnabled() ? settings.steerStrategy : "message";
 }
 
 /** The tool a sample came from (`tool:<name>`); undefined for the conversation's own text. */
@@ -197,6 +210,9 @@ const LedgerEntrySchema = z.union([
       ruleIds: z.array(z.string()),
       // Absent in a ledger written before deliveries carried their rules.
       rules: z.array(SteerRuleSchema).default([]),
+      strategy: z.enum(STEER_STRATEGIES).optional(),
+      toolCallId: z.string().optional(),
+      rewound: z.array(z.string()).optional(),
     }),
   }),
   z.object({ type: z.literal("rule-mutation"), mutation: z.unknown() }),
@@ -333,6 +349,16 @@ interface PendingSteer {
 }
 
 /**
+ * A tool call's result being ingested: while it is open, a steer from the call's own edit check rides that result
+ * (`toolCallId`), and a `rewind` one rolls the edit back. `steers` settle once each steer that began a rollback in it
+ * is queued, so the result answers with that steer.
+ */
+interface ResultWindow {
+  readonly toolCallId: string;
+  readonly steers: Promise<void>[];
+}
+
+/**
  * One finding of a generated-edit steer that arrived while no boundary of its session was waiting for it, held for the
  * session's yield digest. `scope` is the finding's own source when the steer spoke for it, so a later edit of one file
  * drops only that file's findings; a finding elsewhere is stale once any source of its steer is.
@@ -370,6 +396,10 @@ interface RuntimeSessionState {
   turn: number;
   eventDeliveries: Map<string, AdapterDelivery[]>;
   pendingSteers: PendingSteer[];
+  /** How the session's code-rule steers reach the agent; read with its audit settings. */
+  steerStrategy: SteerStrategy;
+  /** Open while a tool call's result is ingested; unset otherwise. */
+  resultWindow: ResultWindow | undefined;
   codeRuleRevision: number;
   codeRuleSourceVersions: Map<string, number>;
   /** Sources whose queued steer a newer revision of them dropped before delivery, until the auditor asks (`undelivered`). */
@@ -509,7 +539,8 @@ export interface RerailRuntimeOptions {
    * nothing is recorded, set up or imported for them. Defaults to true.
    */
   trusted?: boolean;
-  auditSettings?: AuditSettings;
+  /** Defaults for checkouts without saved audit settings; saved settings win. */
+  auditSettings?: Partial<CheckoutAuditSettings>;
   /** Delivers a completed background code-rule result without waiting for another host event. */
   deliverBackground?: (delivery: AdapterDelivery) => Promise<void> | void;
   /** Transfers a prepared session's host ownership before durable publication. */
@@ -562,7 +593,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #createAuditor: NonNullable<RerailRuntimeOptions["createAuditor"]>;
   readonly #deliverBackground: RerailRuntimeOptions["deliverBackground"];
   readonly #beforeSessionPublish: RerailRuntimeOptions["beforeSessionPublish"];
-  readonly #auditSettings: Required<AuditSettings>;
+  readonly #auditSettings: CheckoutAuditSettings;
   readonly #controls: SqliteAuditControlStore;
   readonly #controlTimer: NodeJS.Timeout;
   readonly #autostart: boolean;
@@ -682,12 +713,25 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       const index = state.pendingCodeRuleCalls.findIndex((call) => call.id === event.toolCallId);
       if (index >= 0) {
         const [call] = state.pendingCodeRuleCalls.splice(index, 1);
-        // From the finish on, which may check the edit before it returns, to the end of the wait.
-        await this.#waitingForEditChecks(state, false, async () => {
-          await bridge?.finish(call!.id, event.failed === true);
-          await this.#append(state, { type: "policy-result", toolCallId: call!.id });
-          await this.#awaitEditChecks(state, bridge, ADAPTER_CAPABILITIES[descriptor.host].toolSurface === "native" ? NATIVE_EDIT_CHECK_MS : HOOK_EDIT_CHECK_MS);
-        });
+        // While the result is ingested, a steer from the call's edit check rides it, and a `rewind` one may roll the edit
+        // back (`#rewind`).
+        const window: ResultWindow | undefined = bridge === undefined ? undefined : { toolCallId: call!.id, steers: [] };
+        state.resultWindow = window;
+        try {
+          // From the finish on, which may check the edit before it returns, to the end of the wait.
+          await this.#waitingForEditChecks(state, false, async () => {
+            await bridge?.finish(call!.id, event.failed === true, { rewindable: true });
+            await this.#append(state, { type: "policy-result", toolCallId: call!.id });
+            await this.#awaitEditChecks(state, bridge, ADAPTER_CAPABILITIES[descriptor.host].toolSurface === "native" ? NATIVE_EDIT_CHECK_MS : HOOK_EDIT_CHECK_MS);
+          });
+        } finally {
+          if (window !== undefined) {
+            // A steer from now on is a message; one that already rolled the edit back is queued before this answers.
+            state.resultWindow = undefined;
+            bridge!.release(call!.id);
+            await Promise.all(window.steers);
+          }
+        }
       }
     }
     // A hook host's stop hook is the end of the agent's run; OMP and Pi end a turn at every model call, and yield later.
@@ -1052,6 +1096,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const items = ledger.flatMap((entry) => (entry.type === "sample" ? [entry.item] : []));
     const source = new MutableContentSource(items);
     const watermarks = await JsonlWatermarkStore.open(join(directory, "watermarks.jsonl"));
+    // Saved settings win over the runtime's defaults; `#scheduleAuditRequests` keeps the strategy current.
+    const auditSettings = this.#controls.getWorkspaceSettings(checkout.cwd);
     const opened: RuntimeSessionState = {
       descriptor: session,
       checkout,
@@ -1069,6 +1115,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       turn,
       eventDeliveries: new Map(),
       pendingSteers: [],
+      steerStrategy: effectiveSteerStrategy(auditSettings ?? this.#auditSettings),
+      resultWindow: undefined,
       codeRuleRevision: 0,
       codeRuleSourceVersions: new Map(),
       undeliveredSources: new Set(),
@@ -1088,7 +1136,6 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     };
     // Set when the evaluator failed to open: what it observed while opening belongs to no live evaluator.
     let retired = false;
-    const auditSettings = this.#controls.getWorkspaceSettings(checkout.cwd);
     const steerDelivery: RuleSteerDelivery = {
       requestSteer: async (sessionId, requested, content, metadata) => {
         const activeState = this.#sessions.get(sessionId);
@@ -1102,6 +1149,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
             content,
             ruleIds: metadata?.ruleIds ?? [],
             rules: metadata?.rules ?? [],
+            strategy: "message",
           },
           revision,
           scope: metadata?.scope ?? [],
@@ -1110,21 +1158,46 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
           this.#recordUndelivered(activeState, pending);
           return "discarded";
         }
+        const strategy = activeState.steerStrategy;
+        if (strategy === "subagent")
+          pending.delivery = { ...pending.delivery, content: subagentSteer(content, activeState.descriptor.host), strategy };
         const findings = metadata?.generatedEdit;
-        const missed = activeState.editCheckWaits === 0 || (activeState.overdueEditChecks !== undefined && activeState.yieldWaits === 0);
-        if (findings !== undefined && missed && missedSteerDigestEnabled()) {
-          // Experimental (off unless enabled): the boundary that waited for this edit has answered, so a steer now would
-          // reach the agent at some later, unrelated step; its findings wait for the digest at the end of the agent's run.
-          const scope = new Set(pending.scope);
-          for (const violation of findings.violations) {
-            const own = violation.path !== undefined && scope.has(violation.path);
-            activeState.missedFindings.push({
-              violation, sourceOf: findings.sourceOf, revision, scope: own ? [violation.path!] : pending.scope,
-            });
+        const window = activeState.resultWindow;
+        // The check of the very edit whose result is being ingested: the host can put the steer into that result.
+        const own = window !== undefined && findings !== undefined
+          && activeState.codeRuleBridge?.checks(window.toolCallId, metadata!.revision, metadata!.scope) === true;
+        if (own) pending.delivery = { ...pending.delivery, toolCallId: window.toolCallId };
+        if (strategy === "rewind" && own) {
+          // Queued before the result answers, so the steer goes out with the edit it rolled back.
+          const queued = Promise.withResolvers<void>();
+          window.steers.push(queued.promise);
+          try {
+            await this.#rewind(activeState, window.toolCallId, pending, metadata!);
+            if (activeState.closed || retired) return "discarded";
+            if (!this.#isCurrentSteer(activeState, pending)) {
+              this.#recordUndelivered(activeState, pending);
+              return "discarded";
+            }
+            activeState.pendingSteers.push(pending);
+          } finally {
+            queued.resolve();
           }
-          return "queued";
+        } else {
+          const missed = activeState.editCheckWaits === 0 || (activeState.overdueEditChecks !== undefined && activeState.yieldWaits === 0);
+          if (findings !== undefined && missed && missedSteerDigestEnabled()) {
+            // Experimental (off unless enabled): the boundary that waited for this edit has answered, so a steer now would
+            // reach the agent at some later, unrelated step; its findings wait for the digest at the end of the agent's run.
+            const scope = new Set(pending.scope);
+            for (const violation of findings.violations) {
+              const own = violation.path !== undefined && scope.has(violation.path);
+              activeState.missedFindings.push({
+                violation, sourceOf: findings.sourceOf, revision, scope: own ? [violation.path!] : pending.scope,
+              });
+            }
+            return "queued";
+          }
+          activeState.pendingSteers.push(pending);
         }
-        activeState.pendingSteers.push(pending);
         if (activeState.codeRuleReady && metadata?.background === true && this.#deliverBackground !== undefined) {
           const inFlight = this.#deliverSteer(activeState, pending, true);
           const waitsForNativeBoundary = metadata.generatedEdit !== undefined
@@ -1479,9 +1552,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   #scheduleAuditRequests(sessionId: string): void {
     const state = this.#sessions.get(sessionId);
     if (state === undefined || state.closed || state.ownerClaim === undefined) return;
-    state.codeRuleBridge?.updateSettings(this.#controls.hasUserSettings(sessionId)
-      ? this.#controls.getSettings(sessionId).settings
-      : this.#auditSettings);
+    const settings = this.#controls.hasUserSettings(sessionId) ? this.#controls.getSettings(sessionId).settings : this.#auditSettings;
+    state.steerStrategy = effectiveSteerStrategy(settings);
+    state.codeRuleBridge?.updateSettings(settings);
     if (state.auditRequestWork !== undefined) return;
     const work = this.#runAuditRequests(sessionId);
     state.auditRequestWork = work;
@@ -1533,13 +1606,44 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
   }
 
-  /** Whether a steer, or a held finding, still speaks for the current revision of every source it names. */
-  #isCurrentSteer(state: RuntimeSessionState, pending: Pick<PendingSteer, "revision" | "scope">): boolean {
+  /**
+   * Whether a steer, or a held finding, still speaks for the current revision of every source it names. A steer whose
+   * edit was rolled back always does: it is the agent's only word that its edit is gone.
+   */
+  #isCurrentSteer(state: RuntimeSessionState, pending: Pick<PendingSteer, "revision" | "scope"> & { delivery?: AdapterDelivery }): boolean {
     return !state.closed
       && this.#sessions.get(state.descriptor.sessionId) === state
-      && (pending.scope.length === 0
-        ? pending.revision >= state.codeRuleRevision
-        : pending.scope.every(path => (state.codeRuleSourceVersions.get(path) ?? 0) <= pending.revision));
+      && (pending.delivery?.rewound !== undefined
+        || (pending.scope.length === 0
+          ? pending.revision >= state.codeRuleRevision
+          : pending.scope.every(path => (state.codeRuleSourceVersions.get(path) ?? 0) <= pending.revision)));
+  }
+
+  /**
+   * Rolls the window's tool call back for `pending` when the bridge can (`CodeRuleBridge.rewind`), and makes `pending`
+   * the rollback's steer: the notice of what was put back and the steer, tagged with the call, at the rollback's
+   * revision. Otherwise `pending` stays the steer it is.
+   */
+  async #rewind(state: RuntimeSessionState, toolCallId: string, pending: PendingSteer, metadata: SteerMetadata): Promise<void> {
+    const bridge = state.codeRuleBridge;
+    if (bridge === undefined) return;
+    let rewound: RewoundEdit | undefined;
+    try {
+      rewound = await bridge.rewind(toolCallId, metadata.revision, metadata.scope);
+    } catch (error) {
+      process.stderr.write(`rerail: could not roll back tool call ${toolCallId}: ${error instanceof Error ? error.message : String(error)}\n`);
+      return;
+    }
+    const paths = rewound === undefined ? [] : [...rewound.restored, ...rewound.deleted];
+    if (rewound === undefined || paths.length === 0) return;
+    pending.revision = Math.max(pending.revision, rewound.revision);
+    pending.delivery = {
+      ...pending.delivery,
+      content: rewoundSteer(pending.delivery.content, rewound),
+      strategy: "rewind",
+      toolCallId,
+      rewound: paths,
+    };
   }
 
   /** Marks the sources whose newer revision keeps a steer, or a held finding, from the agent (`undeliveredSources`). */

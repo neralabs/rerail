@@ -116,6 +116,7 @@ Rerail 0.1.0 releases code rules in `log` or `steer` mode, the dashboard, and th
 | Block mode | `mode: "block"`, stored and delivered exactly like `steer`; the dashboard shows it as not in this version |
 | Activation profiles | `rerail activate`, `rerail activation request`, `rerail profile` and `--profile` |
 | Event stream | `rerail events` |
+| Steer strategies `rewind` and `subagent`, experimental: off unless `RERAIL_EXPERIMENTAL_STEER_STRATEGIES=1` | `steerStrategy` in the audit settings (`rerail settings --steer-strategy`, `audit_settings_update`); Pi's `rerail_fix` tool; `benchmark/steer-strategy.ts` |
 
 `rerail settings` and the `audit_settings_*` operations are not tagged yet: their 0.1.0 scope is still being decided.
 
@@ -365,8 +366,8 @@ The daemon owns the resident kernel execution service and exposes the Rerail dat
 | `session_events`              | `GET /api/sessions/{sessionId}/events?after=&before=&limit=`          | Ordered transcript events, at most 500 per page: forward from `after`, or the page before `before`; `nextAfter` continues the read.        |
 | `work_links_list`             | `GET /api/sessions/{sessionId}/work-links`                            | External references linked to a session.                                                                                                                                                         |
 | `work_links_add`              | `PUT /api/sessions/{sessionId}/work-links`                            | `{ kind, reference, url? }`; re-linking updates the url.                                                                                                                                         |
-| `audit_settings_get`          | `GET /api/sessions/{sessionId}/audit-settings`                        | Ongoing audit defaults (`scope`, run `mode`) and the first `repositoryAudit` for the session's canonical workspace, with its `repositoryAuditRecord`.                                          |
-| `audit_settings_update`       | `PATCH /api/sessions/{sessionId}/audit-settings`                      | Update the ongoing defaults; `mode` is `steer` or `log`.                                                                                                                                         |
+| `audit_settings_get`          | `GET /api/sessions/{sessionId}/audit-settings`                        | Ongoing audit defaults (`scope`, run `mode`, experimental `steerStrategy`) and the first `repositoryAudit` for the session's canonical workspace, with its `repositoryAuditRecord`.                         |
+| `audit_settings_update`       | `PATCH /api/sessions/{sessionId}/audit-settings`                      | Update the ongoing defaults; `mode` is `steer` or `log`, `steerStrategy` (experimental) is `message`, `rewind` or `subagent`.                                                                                   |
 | `audit_requests_create`       | `POST /api/sessions/{sessionId}/audit-requests`                       | Internal testing. Queue an explicit audit for one session.                                                                                                                                       |
 | `audit_requests_list`         | `GET /api/sessions/{sessionId}/audit-requests`                        | Internal testing. `{ auditRequests }`: the session's explicit audit requests and the `auditIds` they produced.                                                                                   |
 | `audits_list`                 | `GET /api/audits?auditId=&sessionId=&status=&scope=&mode=`            | `{ audits, total }`: durable audit records with their `violations` and failures; `mode` filters the run mode (`steer` or `log`).                                                                 |
@@ -404,7 +405,9 @@ An audit has three scopes and two independent run modes:
 
 The `steer` run mode records results and sends violations of `steer` and `block` rules to the agent; violations of rules in `log` mode are only recorded. The `log` run mode records the same results without conversation output. There are no acknowledged violations, violation baselines, or already-seen suppression. Changing relevant source can produce the same violation again.
 
-`RerailRuntime` accepts ongoing `auditSettings: { scope, mode }` defaults; `NativeCodeRuleEnforcer` accepts the same settings directly. The first time Rerail sees a canonical workspace in local storage, it starts one independent full-repository audit in `log` mode. Later sessions in that workspace start without repeating that automatic audit. User-requested scans are also fixed to `log` mode and choose between the full eligible repository or the tracked, staged, and untracked files in the current Git diff.
+Experimental, in [internal testing](#internal-testing): the workspace's `steerStrategy` decides how a code-rule steer reaches the agent, and takes effect only where `RERAIL_EXPERIMENTAL_STEER_STRATEGIES=1` is set in the environment of the process that runs Rerail's runtime (the daemon for OMP, Claude Code, Codex and Cursor; the coding agent itself for a Pi session running Rerail in process). Without it every steer goes out as `message`, whatever is saved. `message` (the default, and what settings saved before it existed read as) sends it as its own message. `subagent` sends the same message ending with an instruction to hand the fix to a subagent with the host's subagent tool (`rerail_fix` in Pi, which Rerail registers; `task` in OMP; `Task` in Claude Code and Cursor; `spawn_agent` in Codex) and keep to the agent's own task. `rewind` rolls back an edit whose own check steers while its tool result is still being answered: every file the call captured goes back to its preimage (a file it created is deleted), all or none, and the steer, opening with what was put back and that the edit is to be redone following the rule, goes into that tool call's result. Rerail's rollback is audited in `log` mode, so the restored file steers nothing on its own. An edit whose preimage could not be read, a steer for a file the call did not capture, and a steer that arrives after the result was answered (a one-shot hook waits a second) are sent as a `message` instead. The session ledger's `delivery` entries record each steer's `strategy`, and a rolled-back edit's `toolCallId` and `rewound` paths.
+
+`RerailRuntime` accepts ongoing `auditSettings: { scope, mode, steerStrategy }` defaults; `NativeCodeRuleEnforcer` accepts `scope` and `mode` directly. The first time Rerail sees a canonical workspace in local storage, it starts one independent full-repository audit in `log` mode. Later sessions in that workspace start without repeating that automatic audit. User-requested scans are also fixed to `log` mode and choose between the full eligible repository or the tracked, staged, and untracked files in the current Git diff.
 
 AI-output scope uses source diffs, not differences between old and new violation IDs. A newly created file is entirely generated output. Pre-edit source is captured at the host's tool-call boundary; an edit made without one, such as a shell write or a Codex `apply_patch` that its hooks do not show, takes as its pre-edit source the text Rerail last saw the file with in this session (the most recently changed 64 MB of them), else its Git index or `HEAD` blob, either only when its SHA-256 equals the file's digest before the change; reading the blobs never fetches a partial clone's missing objects. Where none matches, the edit's generated lines are unknown, so that edit reports its whole file, as `touched-files` does; once Rerail has seen the file change in the session, its later edits report only their own lines again. Parsing and cross-file query context may be broader than reporting scope. Source, parse, and match caches remain incremental; repository scans stream bounded source batches through a separate native workspace.
 
@@ -456,6 +459,8 @@ the coding agent, select a session explicitly; Rerail never guesses the most rec
 ```sh
 rerail settings --session <session-id>
 rerail settings --session <session-id> --scope touched-files --mode log
+RERAIL_EXPERIMENTAL_STEER_STRATEGIES=1 rerail daemon start   # experimental: the daemon honours the strategy
+rerail settings --session <session-id> --steer-strategy rewind
 rerail scan --session <session-id> --scope repository --wait
 rerail scan --session <session-id> --scope git-diff --wait --json
 ```
@@ -493,11 +498,12 @@ does not share rules across repositories; rule ownership is the repository's
 promote checkout settings.
 Effective settings identify their workspace and storage location.
 
-The ongoing defaults are automatic `ai-output` audits in `steer` mode: an
-edit is told only about violations in the lines it added or changed, not about
-what the rest of its file already broke. `--scope touched-files` reports whole
-edited files instead. A workspace whose settings were saved keeps the scope
-they name. Saved scope/mode changes affect subsequent automatic evaluations,
+The ongoing defaults are automatic `ai-output` audits in `steer` mode, steered
+with the `message` strategy: an edit is told only about violations in the lines
+it added or changed, not about what the rest of its file already broke.
+`--scope touched-files` reports whole edited files instead. A workspace whose
+settings were saved keeps the scope they name. Saved scope/mode/strategy changes
+affect subsequent automatic evaluations,
 including running sessions; they do not rewrite a running evaluation or its
 recorded results. Every repository in retained scan history receives one
 automatic full-repository, `log`-only baseline. When Rerail becomes active in a

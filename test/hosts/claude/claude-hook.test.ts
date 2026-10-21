@@ -152,7 +152,7 @@ describe("Claude Code one-shot hook", () => {
     }
   });
 
-  it("shows a late steer's line at Stop and gives the coding agent its block with the next message, without the line again", async () => {
+  it("shows a late steer's line at Stop and gives the coding agent its block at the next tool call, not with the person's prompt", async () => {
     const root = await temporaryDirectory();
     const storageRoot = join(root, "sessions");
     const common = { session_id: "claude-session", cwd: root };
@@ -164,12 +164,18 @@ describe("Claude Code one-shot hook", () => {
     expect(await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p1" }, scriptedLoop({ "turn-end": blocks }), storageRoot, { NO_COLOR: "1" }))
       .toEqual({ systemMessage: "\n◆ R E R A I L · a  steered\n◆ R E R A I L · b  steered" });
 
-    const next = scriptedLoop({ "user-prompt": [delivery("steer", editSteer("c", "Fix c."), ["c"])] });
-    const output = await handleClaudeEvent({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p2", prompt: "next" }, next, storageRoot, { NO_COLOR: "1" });
+    // UserPromptSubmit's context lands inside the person's turn, so every steer held then waits for the next tool call.
+    const prompt = scriptedLoop({ "user-prompt": [delivery("steer", editSteer("c", "Fix c."), ["c"])] });
+    expect(await handleClaudeEvent({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p2", prompt: "next" }, prompt, storageRoot, { NO_COLOR: "1" }))
+      .toEqual({});
+
+    const output = await handleClaudeEvent({
+      ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: "tool-2", tool_input: {},
+    }, scriptedLoop({}), storageRoot, { NO_COLOR: "1" });
     expect(output).toEqual({
       systemMessage: "◆ R E R A I L · c  steered",
       hookSpecificOutput: {
-        hookEventName: "UserPromptSubmit",
+        hookEventName: "PreToolUse",
         // The held steers reached the agent after it had moved on, and their lead says so; the new one leads as an edit's.
         additionalContext: [
           editSteer("a", "Fix a.").replace("Rerail found 1 problem in your last edit:", "Rerail finished checking your earlier edits after you moved on:"),
@@ -195,6 +201,9 @@ describe("Claude Code one-shot hook", () => {
     expect(receipts).toEqual([["a", "b"]]);
 
     await serve({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p2", prompt: "next" }, scriptedLoop({ "user-prompt": [delivery("steer", editSteer("c", "Fix c."), ["c"])] }));
+    expect(receipts).toEqual([["a", "b"]]);
+
+    await serve({ ...common, hook_event_name: "PostToolUse", tool_name: "Read", tool_use_id: "tool-2", tool_input: {}, tool_response: "ok" }, scriptedLoop({}));
     expect(receipts).toEqual([["a", "b"], ["c"]]);
   });
 
@@ -205,7 +214,7 @@ describe("Claude Code one-shot hook", () => {
     });
   });
 
-  it("routes steer and block deliveries through additionalContext or the pending file", async () => {
+  it("routes steer and block deliveries through additionalContext or the pending file, never the person's prompt", async () => {
     const root = await temporaryDirectory();
     const storageRoot = join(root, "sessions");
     const common = { session_id: "claude-session", cwd: root };
@@ -248,8 +257,11 @@ describe("Claude Code one-shot hook", () => {
 
     expect(await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p1" }, scriptedLoop({}), storageRoot)).toEqual({});
 
-    expect(await handleClaudeEvent({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p2", prompt: "next" }, scriptedLoop({}), storageRoot)).toEqual({
-      hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: "Deferred steer.\n\nDeferred block." },
+    expect(await handleClaudeEvent({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p2", prompt: "next" }, scriptedLoop({}), storageRoot)).toEqual({});
+    expect(await handleClaudeEvent({
+      ...common, hook_event_name: "PostToolUse", tool_name: "Read", tool_use_id: "tool-2", tool_input: {}, tool_response: "ok",
+    }, scriptedLoop({}), storageRoot)).toEqual({
+      hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: "Deferred steer.\n\nDeferred block." },
     });
 
     expect(await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p2" }, scriptedLoop({}), storageRoot)).toEqual({});
@@ -273,7 +285,7 @@ describe("Claude Code one-shot hook", () => {
       storageRoot,
     )).toEqual({});
     expect(await handleClaudeEvent(
-      { ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p2", prompt: "new session" },
+      { ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: "tool-1", tool_input: {} },
       scriptedLoop({}),
       storageRoot,
     )).toEqual({});

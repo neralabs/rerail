@@ -206,6 +206,20 @@ describe("rerail scan and settings CLI", () => {
     expect(settings.settings.mode).toBe("steer");
   });
 
+  it("saves the steer strategy for the session's checkout and keeps the other settings", async () => {
+    const { home } = await fixture();
+    let output = "";
+    expect(await runAuditCommand("settings", ["--session", "s1", "--steer-strategy", "rewind"], {
+      home, stdout: { write: text => { output += text; return true; } },
+    })).toBe(0);
+    expect(output).toMatch(/^Ongoing settings for .+: ai-output\/steer, steer strategy rewind \(/u);
+    output = "";
+    expect(await runAuditCommand("settings", ["--session", "s1", "--mode", "log", "--json"], {
+      home, stdout: { write: text => { output += text; return true; } },
+    })).toBe(0);
+    expect(auditControlsResponseSchema.parse(JSON.parse(output)).settings).toEqual({ scope: "ai-output", mode: "log", steerStrategy: "rewind" });
+  });
+
   it("reports an empty Git diff without starting an audit", async () => {
     const { root, home } = await fixture();
     let output = "";
@@ -392,5 +406,12 @@ describe("rerail scan and settings CLI", () => {
 
   it("requires a session instead of guessing the latest one", async () => {
     await expect(runAuditCommand("scan", [], { home: "/unused" })).rejects.toThrow("--session is required");
+  });
+
+  it("refuses a steer strategy it does not know before reaching Rerail", async () => {
+    await expect(runAuditCommand("settings", ["--session", "s1", "--steer-strategy", "undo"], { home: "/unused" }))
+      .rejects.toThrow("--steer-strategy must be message, rewind, or subagent");
+    await expect(runAuditCommand("settings", ["--session", "s1", "--steer-strategy"], { home: "/unused" }))
+      .rejects.toThrow("--steer-strategy requires a value");
   });
 });

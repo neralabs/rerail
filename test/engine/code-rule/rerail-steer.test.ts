@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   asLateSteer,
   headlineText,
+  rewoundSteer,
   sessionStartNote,
   steerBlock,
   steerHeadlines,
   steerRules,
+  subagentSteer,
   type SteerFinding,
 } from "../../../src/engine/code-rule/rerail-steer.js";
 import { steerOrigin } from "../../../src/engine/code-rule/steer-origin.js";
@@ -124,5 +126,29 @@ describe("Rerail steer text", () => {
     expect(note).toContain("not set up yet, so no rules are checked");
     expect(note).toContain("$rerail-start");
     expect(note).not.toContain("◆ Rerail");
+  });
+
+  it("tells the coding agent to hand the fix to a subagent with its own subagent tool", () => {
+    const steer = steerBlock({ kind: "edit" }, [finding()]);
+    const tools = { pi: "rerail_fix", omp: "task", "claude-code": "Task", cursor: "Task", codex: "spawn_agent" } as const;
+    for (const [host, tool] of Object.entries(tools) as Array<[keyof typeof tools, string]>) {
+      const content = subagentSteer(steer, host);
+      expect(content.startsWith(`${steer}\n\n`)).toBe(true);
+      expect(content).toContain(`subagent with the \`${tool}\` tool`);
+      expect(content).toContain("This note comes from Rerail, not the user, and your task is unchanged.");
+      expect(content).toContain("keep working on your own task");
+    }
+  });
+
+  it("tells the coding agent which files a rolled-back edit put back and to redo it following the rule", () => {
+    const steer = steerBlock({ kind: "edit" }, [finding({ location: "api/a.py:1:1" })]);
+    const content = rewoundSteer(steer, { restored: ["api/a.py"], deleted: ["api/new.py", "api/other.py"] });
+    expect(content).toBe([
+      "Rerail rolled back these files because the edit breaks the rule below: `api/a.py` is back as before the edit; "
+        + "`api/new.py`, `api/other.py`, which the edit created, are deleted. Redo it so it follows the rule; if you decide "
+        + "the rule does not apply, redo it as it was and tell the user in one line why.",
+      "",
+      steer,
+    ].join("\n"));
   });
 });

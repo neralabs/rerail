@@ -159,6 +159,7 @@ function usage(): string {
     "",
     internalTesting("Not part of the 0.1.0 release:"),
     "  rerail scan --session <id> [--scope repository|git-diff] [--wait] [--json]",
+    "  rerail settings --session <id> --steer-strategy message|rewind|subagent   experimental: takes effect with RERAIL_EXPERIMENTAL_STEER_STRATEGIES=1",
     "  rerail [--profile <name>] events",
     "  rerail [--profile <name>] activate --file <profile.jws> --trust-root <roots.json>",
     "  rerail [--profile <name>] activate --code <code> --activation-url <url> --trust-root <roots.json>",

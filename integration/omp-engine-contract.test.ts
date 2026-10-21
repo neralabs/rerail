@@ -31,9 +31,14 @@ describe("OMP native code rule contract", () => {
       vi.stubEnv("RERAIL_HOME", join(cwd, "home"));
       const steer = steerText(CONTRACT_CURSOR_EXECUTE_RULE_ID, CONTRACT_CURSOR_EXECUTE_MESSAGE, "api/route.py:2:5");
       vi.unstubAllEnvs();
+      // The steer of the write's own check rides the write's result, never a message the host takes for a turn start.
       expect(evidence.branch).toEqual(expect.arrayContaining([
-        expect.objectContaining({ type: "custom_message", content: expect.stringContaining(steer) }),
+        expect.objectContaining({
+          type: "message",
+          message: expect.objectContaining({ role: "toolResult", toolName: "write", content: expect.arrayContaining([{ type: "text", text: steer }]) }),
+        }),
       ]));
+      expect(evidence.branch.filter(entry => entry.type === "custom_message")).not.toContainEqual(expect.objectContaining({ customType: "rerail.rule" }));
       expect(host.frames.filter(frame => frame.type === "extension_error")).toEqual([]);
     } finally {
       try { await host?.close(); } finally { await rm(cwd, { recursive: true, force: true }); }
