@@ -81,8 +81,13 @@ Today's `rerail.rule-pack/v1` ([format](rule-packs.md#format)): `id`, `name`, `c
 `match`, `honourSuppressionComments`, and per rule `id`, `title`, `group`, optional `mode`, `on` and
 `examples: { caught, passes }`. One change: a rule now names its document, `rules/<id>.json`, so a pack is
 self-contained. A pack may ship no rules (`"rules": []`) while all its ports are candidates; such a pack is never
-recommended. `document` is required (`rulePackFileSchema` in `src/engine/catalog/rule-packs.ts`); core reads each rule's document
-from the pack:
+recommended. A ported rule starts at the level upstream's recommended configuration gives it: a rule upstream sets to
+`warn` (an ESLint-family `"warn"`, a Clippy lint whose default level is `warn`, a PHP_CodeSniffer warning) carries
+`"mode": "log"` in pack.json, so it is recorded and steers no one until a repository switches it to `steer`; a rule
+upstream sets to `error` or `deny` keeps its document's `steer`. Tools with no warning level (Ruff, Bandit, SQLFluff,
+PHPStan, Psalm, tlint, blade-parser) keep the document's mode, and the document itself stays a faithful port with no
+level. `document` is required (`rulePackFileSchema` in `src/engine/catalog/rule-packs.ts`); core reads each rule's
+document from the pack:
 
 ```json
 { "id": "complexity-cyclomatic-python", "document": "rules/complexity-cyclomatic-python.json", "title": "Keep Python functions at cyclomatic complexity 6 or lower", "group": "Complexity" }
