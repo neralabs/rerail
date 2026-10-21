@@ -11,8 +11,13 @@ use std::path::{Path, PathBuf};
 
 fn main() {
     napi_build::setup();
+    // Rust-only edits rerun this script for the engine identity. Reuse completed
+    // parser generation, including after a bounded build was interrupted.
+    let generator = std::fs::read(std::env::current_exe().expect("build executable"))
+        .expect("build executable is readable");
+    let generator_identity = Sha256::digest(&generator);
     for grammar in GRAMMARS {
-        build_grammar(grammar);
+        build_grammar(grammar, &generator_identity);
     }
     let registry = generate_languages();
     configure_fixtures();
@@ -150,7 +155,7 @@ const GRAMMARS: &[VendoredGrammar] = &[
     },
 ];
 
-fn build_grammar(grammar: &VendoredGrammar) {
+fn build_grammar(grammar: &VendoredGrammar, generator_identity: &[u8]) {
     for input in grammar.inputs {
         println!("cargo:rerun-if-changed={input}");
     }
@@ -199,16 +204,27 @@ fn build_grammar(grammar: &VendoredGrammar) {
     }
     let json = std::fs::read_to_string(format!("{source}/grammar.json"))
         .unwrap_or_else(|error| panic!("{name} grammar is unreadable: {error}"));
-    let (generated, parser) = tree_sitter_generate::generate_parser_for_grammar(
-        &json,
-        Some(grammar.version),
-        tree_sitter_generate::OptLevel::default(),
-        &mut Vec::new(),
-    )
-    .unwrap_or_else(|error| panic!("{name} parser does not generate: {error}"));
-    assert_eq!(generated, name);
     let parser_path = out.join(format!("{name}_parser.c"));
-    std::fs::write(&parser_path, parser).expect("generated parser is writable");
+    let parser_stamp = parser_path.with_extension("sha256");
+    let key = identity::parser_cache_key(
+        generator_identity,
+        json.as_bytes(),
+        &format!("{:?}", grammar.version),
+    );
+    if !parser_path.is_file()
+        || std::fs::read_to_string(&parser_stamp).ok().as_deref() != Some(&key)
+    {
+        let (generated, parser) = tree_sitter_generate::generate_parser_for_grammar(
+            &json,
+            Some(grammar.version),
+            tree_sitter_generate::OptLevel::default(),
+            &mut Vec::new(),
+        )
+        .unwrap_or_else(|error| panic!("{name} parser does not generate: {error}"));
+        assert_eq!(generated, name);
+        std::fs::write(&parser_path, parser).expect("generated parser is writable");
+        std::fs::write(parser_stamp, key).expect("parser fingerprint is writable");
+    }
     cc::Build::new()
         .include(grammar.headers)
         .file(parser_path)

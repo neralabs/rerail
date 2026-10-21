@@ -70,6 +70,12 @@ pub(super) struct Grammar {
 }
 
 impl Grammar {
+    pub(super) fn field_code(&self, name: &str) -> Option<u16> {
+        self.kinds.field_id(name)
+    }
+    pub(super) fn has_field(&self, name: &str) -> bool {
+        self.kinds.field_id(name).is_some()
+    }
     pub(super) fn new(lang: GrammarDialect) -> Result<Arc<Self>, String> {
         let kinds = lang.kinds();
         if kinds.kind_count() > KIND_LIMIT || kinds.field_count() >= FIELD_LIMIT {
@@ -1533,6 +1539,8 @@ fn node_extents(nodes: &[Rec], segments: &SegmentMap) -> Vec<(u32, u32)> {
         .collect()
 }
 
+pub(super) type KindPostings = rustc_hash::FxHashMap<u16, Vec<u32>>;
+
 /// A node's row and column, as tree-sitter's `TSPoint` counts them: only `\n` ends a row. The
 /// evaluator's line table follows the linter a port mirrors (a lone `\r` ends a Ruff line), so
 /// positions keep their own table, built on first use: violations place spans with the line table,
@@ -1964,7 +1972,6 @@ impl TapeDoc {
         self.data[node as usize].kind
     }
 
-    #[cfg(test)]
     fn kind_alias(&self, node: u32) -> Option<&(String, bool)> {
         self.kind_overrides
             .binary_search_by_key(&node, |&(index, _)| index)
@@ -1972,7 +1979,6 @@ impl TapeDoc {
             .map(|slot| &self.kind_aliases[self.kind_overrides[slot].1 as usize])
     }
 
-    #[cfg(test)]
     fn node_is_named(&self, node: u32) -> bool {
         self.kind_alias(node).map_or_else(
             || self.grammar.kind_is_named(self.data[node as usize].kind),
@@ -1984,7 +1990,6 @@ impl TapeDoc {
         self.data[node as usize].field
     }
 
-    #[cfg(test)]
     pub(super) fn transducer_flags(&self, node: u32) -> u8 {
         let rec = &self.data[node as usize];
         u8::from(self.node_is_named(node))
@@ -2013,7 +2018,6 @@ impl TapeDoc {
         [rec.extra, rec.error, rec.missing]
     }
 
-    #[cfg(test)]
     pub(super) fn transducer_parent(&self, node: u32) -> Option<u32> {
         let parent = self.data[node as usize].parent;
         (parent != NONE).then_some(parent)
@@ -2278,7 +2282,18 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         if field_id == 0 {
             None
         } else {
-            self.children().find(|child| child.rec().field == field_id)
+            #[cfg(feature = "code-rule-profile")]
+            let mut examined = 0;
+            let found = self.children().find(|child| {
+                #[cfg(feature = "code-rule-profile")]
+                {
+                    examined += 1;
+                }
+                child.rec().field == field_id
+            });
+            #[cfg(feature = "code-rule-profile")]
+            super::profile::navigation::record(examined, found.is_some());
+            found
         }
     }
 }

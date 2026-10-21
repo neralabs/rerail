@@ -1,0 +1,2097 @@
+{
+  "format": "rerail.sql-spikes/v1",
+  "date": "2026-10-20",
+  "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "nativeSha256": "a55f08af93997e1dcdd6b27e22a086bb2f097b0a1509f4e92acfe4f662e08c5f",
+  "build": {
+    "profile": "release",
+    "features": [
+      "code-rule-profile"
+    ],
+    "lto": "thin",
+    "codegenUnits": 256,
+    "allocator": "system malloc via existing jemalloc symbol shim"
+  },
+  "workload": {
+    "selection": "fixtures/host/data-layer-port/profiling/quality-five.json",
+    "files": 5,
+    "bytes": 1026452,
+    "sha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043"
+  },
+  "offDomainControl": {
+    "reference": "Baseline-relative findings; not upstream oracle",
+    "source": "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+    "relocatedPath": "impl/common/l9999_misc/spike_workload.py",
+    "expectedFindings": 3,
+    "recordingSha256": "a7d72de2db4d047bb7c8f22c6b78e5bb44e19c57526839b381f22f8682c16cbf"
+  },
+  "policies": {
+    "baseline": {
+      "rawSha256": "10711c221d35768b0b535ddbd559eec54ba062b6a8ae62b566016368058de194",
+      "file": ".rerail/profiles/sql-spikes-2026-10-20/policies/baseline/data-layer-serverplan-quality.json"
+    },
+    "union-all": {
+      "rawSha256": "db831577db6e1a34de11374bb000c84bf2fe258e2e318b00c5b122766642da9f",
+      "file": ".rerail/profiles/sql-spikes-2026-10-20/policies/union-all/data-layer-serverplan-quality.json"
+    },
+    "roots-fixed": {
+      "rawSha256": "e48da0a1bea6479ada717b543ce74fa650074a49a874cad46f5a52323232dd40",
+      "file": ".rerail/profiles/sql-spikes-2026-10-20/policies/roots-fixed/data-layer-serverplan-quality.json"
+    },
+    "no-path": {
+      "rawSha256": "1dd2cedeef66298a0e0c782a5aba272a54b318f73938c3fcdb6da7c2c95be07b",
+      "file": ".rerail/profiles/sql-spikes-2026-10-20/policies/no-path/data-layer-serverplan-quality.json"
+    },
+    "compact-keys": {
+      "rawSha256": "36332c37b0cabbe5ddfec2493cccbfcd1cdac64abad45a95173b29c2fcb3390c",
+      "file": ".rerail/profiles/sql-spikes-2026-10-20/policies/compact-keys/data-layer-serverplan-quality.json"
+    },
+    "compact-no-path": {
+      "rawSha256": "490ebd32c565ad45a791b6c73edb22cab9521da2da094c2188e1b19d26a367f6",
+      "file": ".rerail/profiles/sql-spikes-2026-10-20/policies/compact-no-path/data-layer-serverplan-quality.json"
+    },
+    "narrow-selectors": {
+      "rawSha256": "666155350aa49b38e34ec9d697baa4ad790d0d4ba2928a0d3081023b21fa20a7",
+      "file": ".rerail/profiles/sql-spikes-2026-10-20/policies/narrow-selectors/data-layer-serverplan-quality.json"
+    },
+    "narrow-projections": {
+      "rawSha256": "08af20888461042471140c8cc64438f250595211a3251c5bced393742337a0f4",
+      "file": ".rerail/profiles/sql-spikes-2026-10-20/policies/narrow-projections/data-layer-serverplan-quality.json"
+    },
+    "all-shared": {
+      "rawSha256": "f92e6c5aad94b5b4f1f27260c02fefa96fdff13b444416fa697cf69ab7d1c914",
+      "file": ".rerail/profiles/sql-spikes-2026-10-20/policies/all-shared/data-layer-serverplan-quality.json"
+    },
+    "combined-path": {
+      "rawSha256": "e24c7611b8a2ea76cbcd1c39fd8ac93b5ce31fac21df571b7e0bd3be5de0bd91",
+      "file": ".rerail/profiles/sql-spikes-2026-10-20/policies/combined-path/data-layer-serverplan-quality.json"
+    },
+    "combined-safe": {
+      "rawSha256": "81fe9c24521922dfe6ecf9c2829d2f695c5a2516e5abbca09784ff0ee1618b49",
+      "file": ".rerail/profiles/sql-spikes-2026-10-20/policies/combined-safe/data-layer-serverplan-quality.json"
+    },
+    "combined-cst": {
+      "rawSha256": "416048f9b6fc23f04d41ce31181f873547ee78f65f03430c12c61ec609af2003",
+      "file": ".rerail/profiles/sql-spikes-2026-10-20/policies/combined-cst/data-layer-serverplan-quality.json"
+    },
+    "combined-scoped": {
+      "rawSha256": "7677275c6c884939d1f0d367f83dea77c89f8c48a882b519877b1f90abca8545",
+      "file": ".rerail/profiles/sql-spikes-2026-10-20/policies/combined-scoped/data-layer-serverplan-quality.json"
+    }
+  },
+  "isolatedRuns": {
+    "baseline": "final-baseline",
+    "union-all": "final-union-all",
+    "roots": "follow-roots-fixed",
+    "no-path": "final-no-path",
+    "compact-keys": "final-compact-keys",
+    "compact-no-path": "final-compact-no-path",
+    "narrow-selectors": "final-narrow-selectors",
+    "narrow-projections": "final-narrow-projections",
+    "all-shared": "final-all-shared",
+    "insert32": "final-insert32",
+    "shared-input-index": "final-shared-input-index"
+  },
+  "runs": {
+    "final-baseline": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/final-baseline",
+      "trace": "off",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 43.709341417008545,
+      "hostLoadStart": [
+        60.888671875,
+        69.63720703125,
+        61.37548828125
+      ],
+      "hostLoadEnd": [
+        65.00732421875,
+        69.57763671875,
+        61.78173828125
+      ],
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113"
+      },
+      "files": 5,
+      "bytes": 1026452,
+      "compileMs": 1565.1955420000004,
+      "coldWallMs": 37152.800124999994,
+      "coldCpuMs": 14224.672999999999,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 1374453760,
+      "expected": 0,
+      "actual": 0,
+      "parityPassed": true
+    },
+    "final-union-all": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/final-union-all",
+      "trace": "off",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 33.57929558400065,
+      "hostLoadStart": [
+        65.00732421875,
+        69.57763671875,
+        61.78173828125
+      ],
+      "hostLoadEnd": [
+        68.859375,
+        69.93408203125,
+        62.17236328125
+      ],
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:0bf8f1e8a1ffe8c9af3bc10ac6db38a3d95025266a527d896e4cde05dea6100f"
+      },
+      "files": 5,
+      "bytes": 1026452,
+      "compileMs": 994.973209,
+      "coldWallMs": 31288.998916999997,
+      "coldCpuMs": 12525.944,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 1378516992,
+      "expected": 0,
+      "actual": 0,
+      "parityPassed": true
+    },
+    "follow-roots-fixed": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/follow-roots-fixed",
+      "trace": "off",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 28.565444624982774,
+      "hostLoadStart": [
+        70.56494140625,
+        76.134765625,
+        70.0009765625
+      ],
+      "hostLoadEnd": [
+        64.24951171875,
+        74.2861328125,
+        69.51611328125
+      ],
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:8050928df5637fd7efd78441276154ad61213277f2ca52f1b6c6dd97298ea211"
+      },
+      "files": 5,
+      "bytes": 1026452,
+      "compileMs": 644.075625,
+      "coldWallMs": 26077.248,
+      "coldCpuMs": 13829.973,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 1197834240,
+      "expected": 0,
+      "actual": 0,
+      "parityPassed": true
+    },
+    "final-no-path": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/final-no-path",
+      "trace": "off",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 27.593699582997942,
+      "hostLoadStart": [
+        64.3759765625,
+        68.779296875,
+        62.0244140625
+      ],
+      "hostLoadEnd": [
+        60.0771484375,
+        67.3291015625,
+        61.73291015625
+      ],
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:f6188b88bdbe2182fedaba294ae9080754a17994aee63b3cfdadf0cd3169c255"
+      },
+      "files": 5,
+      "bytes": 1026452,
+      "compileMs": 690.4358750000001,
+      "coldWallMs": 25710.304417,
+      "coldCpuMs": 12327.665,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 1190199296,
+      "expected": 0,
+      "actual": 0,
+      "parityPassed": true
+    },
+    "final-compact-keys": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/final-compact-keys",
+      "trace": "off",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 36.27458158301306,
+      "hostLoadStart": [
+        60.0771484375,
+        67.3291015625,
+        61.73291015625
+      ],
+      "hostLoadEnd": [
+        79.59814453125,
+        71.20654296875,
+        63.3564453125
+      ],
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:e9a00e9aae8d61ce3bbc8b44afdca7424d06b4c2ec162525dff8e4299eb66856"
+      },
+      "files": 5,
+      "bytes": 1026452,
+      "compileMs": 1170.7215,
+      "coldWallMs": 33376.812583,
+      "coldCpuMs": 13137.51,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 1267335168,
+      "expected": 0,
+      "actual": 0,
+      "parityPassed": true
+    },
+    "final-compact-no-path": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/final-compact-no-path",
+      "trace": "off",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 26.368544500001008,
+      "hostLoadStart": [
+        79.59814453125,
+        71.20654296875,
+        63.3564453125
+      ],
+      "hostLoadEnd": [
+        76.82421875,
+        71.28173828125,
+        63.6513671875
+      ],
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:f5b9e2ccf8fe0b4f11934fdf19ac57e50c636012df880143be2783321a85e75a"
+      },
+      "files": 5,
+      "bytes": 1026452,
+      "compileMs": 988.8915000000002,
+      "coldWallMs": 23991.459291,
+      "coldCpuMs": 12279.341999999999,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 1045299200,
+      "expected": 0,
+      "actual": 0,
+      "parityPassed": true
+    },
+    "final-narrow-selectors": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/final-narrow-selectors",
+      "trace": "off",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 30.478939666994847,
+      "hostLoadStart": [
+        76.82421875,
+        71.28173828125,
+        63.6513671875
+      ],
+      "hostLoadEnd": [
+        66.04443359375,
+        69.21142578125,
+        63.166015625
+      ],
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:6c99bb723bfcbf0d3dd58c8317908cc4aab0148434e31c60edce13893b5b3e78"
+      },
+      "files": 5,
+      "bytes": 1026452,
+      "compileMs": 913.1133329999998,
+      "coldWallMs": 28242.303125,
+      "coldCpuMs": 14141.935,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 1332412416,
+      "expected": 0,
+      "actual": 0,
+      "parityPassed": true
+    },
+    "final-narrow-projections": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/final-narrow-projections",
+      "trace": "off",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 34.34757337500923,
+      "hostLoadStart": [
+        66.04443359375,
+        69.21142578125,
+        63.166015625
+      ],
+      "hostLoadEnd": [
+        61.103515625,
+        67.48388671875,
+        62.77099609375
+      ],
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:883893fcedf03b26e809a7a8c83d79edd2562f22c20aecdea183a82d6707ad7d"
+      },
+      "files": 5,
+      "bytes": 1026452,
+      "compileMs": 821.4316670000001,
+      "coldWallMs": 32312.375208,
+      "coldCpuMs": 13857.055,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 1312751616,
+      "expected": 0,
+      "actual": 0,
+      "parityPassed": true
+    },
+    "final-all-shared": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/final-all-shared",
+      "trace": "off",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 26.44397716698586,
+      "hostLoadStart": [
+        61.103515625,
+        67.48388671875,
+        62.77099609375
+      ],
+      "hostLoadEnd": [
+        59.0791015625,
+        66.50830078125,
+        62.5556640625
+      ],
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:879ab737e76584024ab0b4fdf39a02cae8f8fab67d2f4469b669fd9c6a84eb2d"
+      },
+      "files": 5,
+      "bytes": 1026452,
+      "compileMs": 1152.402416,
+      "coldWallMs": 23626.292209,
+      "coldCpuMs": 9777.306999999999,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 1309982720,
+      "expected": 0,
+      "actual": 0,
+      "parityPassed": true
+    },
+    "final-insert32": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/final-insert32",
+      "trace": "off",
+      "external": "none",
+      "insertBatch": 32,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 29.111907250015065,
+      "hostLoadStart": [
+        59.0791015625,
+        66.50830078125,
+        62.5556640625
+      ],
+      "hostLoadEnd": [
+        61.849609375,
+        66.5380859375,
+        62.70654296875
+      ],
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113"
+      },
+      "files": 5,
+      "bytes": 1026452,
+      "compileMs": 839.3970000000002,
+      "coldWallMs": 26957.109833000002,
+      "coldCpuMs": 14279.237000000001,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 1383579648,
+      "expected": 0,
+      "actual": 0,
+      "parityPassed": true
+    },
+    "final-shared-input-index": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/final-shared-input-index",
+      "trace": "off",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": true,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 30.01109812501818,
+      "hostLoadStart": [
+        61.849609375,
+        66.5380859375,
+        62.70654296875
+      ],
+      "hostLoadEnd": [
+        58.318359375,
+        65.189453125,
+        62.3466796875
+      ],
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113"
+      },
+      "files": 5,
+      "bytes": 1026452,
+      "compileMs": 605.201125,
+      "coldWallMs": 28210.773125000003,
+      "coldCpuMs": 14063.34,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 1373339648,
+      "expected": 0,
+      "actual": 0,
+      "parityPassed": true
+    },
+    "final-baseline-repeat": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/final-baseline-repeat",
+      "trace": "off",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 44.844625166995684,
+      "hostLoadStart": [
+        58.318359375,
+        65.189453125,
+        62.3466796875
+      ],
+      "hostLoadEnd": [
+        65.40234375,
+        66.2900390625,
+        62.90966796875
+      ],
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113"
+      },
+      "files": 5,
+      "bytes": 1026452,
+      "compileMs": 885.333875,
+      "coldWallMs": 42821.946292,
+      "coldCpuMs": 14213.17,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 1378091008,
+      "expected": 0,
+      "actual": 0,
+      "parityPassed": true
+    },
+    "follow-combined-path": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/follow-combined-path",
+      "trace": "off",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 13.98272079101298,
+      "hostLoadStart": [
+        64.24951171875,
+        74.2861328125,
+        69.51611328125
+      ],
+      "hostLoadEnd": [
+        60.8134765625,
+        73.0703125,
+        69.1669921875
+      ],
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:011822352f4690fdffcbce9e14f9d8ab751aec24d7509f2c61c832c412e08302"
+      },
+      "files": 5,
+      "bytes": 1026452,
+      "compileMs": 650.422416,
+      "coldWallMs": 12506.308541,
+      "coldCpuMs": 8463.243,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 1168637952,
+      "expected": 0,
+      "actual": 0,
+      "parityPassed": true
+    },
+    "follow-combined-safe": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/follow-combined-safe",
+      "trace": "off",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 13.692936500010546,
+      "hostLoadStart": [
+        60.8134765625,
+        73.0703125,
+        69.1669921875
+      ],
+      "hostLoadEnd": [
+        56.494140625,
+        71.50146484375,
+        68.673828125
+      ],
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:1d9470750ba0283e83b4651f0f3e6cfde9d51064f0a2aeafe5a02845715bdc61"
+      },
+      "files": 5,
+      "bytes": 1026452,
+      "compileMs": 484.713666,
+      "coldWallMs": 12395.083166,
+      "coldCpuMs": 7603.915,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 980287488,
+      "expected": 0,
+      "actual": 0,
+      "parityPassed": true
+    },
+    "follow-combined-cst": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/follow-combined-cst",
+      "trace": "off",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 13.311064499983331,
+      "hostLoadStart": [
+        56.494140625,
+        71.50146484375,
+        68.673828125
+      ],
+      "hostLoadEnd": [
+        53.0625,
+        69.9931640625,
+        68.18408203125
+      ],
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:206e3bd6581fc19c627e07682ef2e42ed81a2aa0b0dcc4b6f29bdebd8aa4e3ac"
+      },
+      "files": 5,
+      "bytes": 1026452,
+      "compileMs": 706.7978340000002,
+      "coldWallMs": 11399.835083,
+      "coldCpuMs": 7477.601000000001,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 1024425984,
+      "expected": 0,
+      "actual": 0,
+      "parityPassed": true
+    },
+    "follow-combined-all": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/follow-combined-all",
+      "trace": "off",
+      "external": "none",
+      "insertBatch": 32,
+      "sharedInputIndex": true,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 12.350742000009632,
+      "hostLoadStart": [
+        53.0625,
+        69.9931640625,
+        68.18408203125
+      ],
+      "hostLoadEnd": [
+        50.42578125,
+        68.873046875,
+        67.80712890625
+      ],
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:206e3bd6581fc19c627e07682ef2e42ed81a2aa0b0dcc4b6f29bdebd8aa4e3ac"
+      },
+      "files": 5,
+      "bytes": 1026452,
+      "compileMs": 718.0957499999998,
+      "coldWallMs": 10830.210167000001,
+      "coldCpuMs": 7326.945,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 1012219904,
+      "expected": 0,
+      "actual": 0,
+      "parityPassed": true
+    },
+    "follow-all-shared-repeat": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/follow-all-shared-repeat",
+      "trace": "off",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 17.76388762498391,
+      "hostLoadStart": [
+        50.42578125,
+        68.873046875,
+        67.80712890625
+      ],
+      "hostLoadEnd": [
+        49.14892578125,
+        67.3896484375,
+        67.29931640625
+      ],
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:879ab737e76584024ab0b4fdf39a02cae8f8fab67d2f4469b669fd9c6a84eb2d"
+      },
+      "files": 5,
+      "bytes": 1026452,
+      "compileMs": 702.051292,
+      "coldWallMs": 16072.117790999999,
+      "coldCpuMs": 9861.273000000001,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 1356382208,
+      "expected": 0,
+      "actual": 0,
+      "parityPassed": true
+    },
+    "follow-off-domain-baseline": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/follow-off-domain-baseline",
+      "trace": "off",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 6.514526415994624,
+      "hostLoadStart": [
+        49.14892578125,
+        67.3896484375,
+        67.29931640625
+      ],
+      "hostLoadEnd": [
+        49.9375,
+        67.25,
+        67.25048828125
+      ],
+      "workloadSha256": "931a470674b676efe8dccc9aad09cf818b1f0052474be2f538b8995e3a9cd883",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113"
+      },
+      "files": 1,
+      "bytes": 591737,
+      "compileMs": 588.486416,
+      "coldWallMs": 5240.421375,
+      "coldCpuMs": 3864.206,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 767098880,
+      "expected": 3,
+      "actual": 3,
+      "parityPassed": true
+    },
+    "follow-off-domain-all-shared": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/follow-off-domain-all-shared",
+      "trace": "off",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 10.94799200000125,
+      "hostLoadStart": [
+        49.9375,
+        67.25,
+        67.25048828125
+      ],
+      "hostLoadEnd": [
+        49.7548828125,
+        66.62060546875,
+        67.025390625
+      ],
+      "workloadSha256": "931a470674b676efe8dccc9aad09cf818b1f0052474be2f538b8995e3a9cd883",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:879ab737e76584024ab0b4fdf39a02cae8f8fab67d2f4469b669fd9c6a84eb2d"
+      },
+      "files": 1,
+      "bytes": 591737,
+      "compileMs": 651.4119580000001,
+      "coldWallMs": 9592.201708,
+      "coldCpuMs": 5685.513,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 1147633664,
+      "expected": 3,
+      "actual": 3,
+      "parityPassed": true
+    },
+    "follow-off-domain-combined-safe": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/follow-off-domain-combined-safe",
+      "trace": "off",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 12.46108529198682,
+      "hostLoadStart": [
+        49.7548828125,
+        66.62060546875,
+        67.025390625
+      ],
+      "hostLoadEnd": [
+        48.00927734375,
+        65.41259765625,
+        66.5869140625
+      ],
+      "workloadSha256": "931a470674b676efe8dccc9aad09cf818b1f0052474be2f538b8995e3a9cd883",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:1d9470750ba0283e83b4651f0f3e6cfde9d51064f0a2aeafe5a02845715bdc61"
+      },
+      "files": 1,
+      "bytes": 591737,
+      "compileMs": 796.5824590000001,
+      "coldWallMs": 10576.641042,
+      "coldCpuMs": 4591.397,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 873775104,
+      "expected": 3,
+      "actual": 3,
+      "parityPassed": true
+    },
+    "follow-baseline-full": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/follow-baseline-full",
+      "trace": "off",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 39.04217124998104,
+      "hostLoadStart": [
+        48.00927734375,
+        65.41259765625,
+        66.5869140625
+      ],
+      "hostLoadEnd": [
+        61.2626953125,
+        66.68310546875,
+        66.9990234375
+      ],
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113"
+      },
+      "files": 5,
+      "bytes": 1026452,
+      "compileMs": 971.157625,
+      "coldWallMs": 29550.257332999998,
+      "coldCpuMs": 14384.903,
+      "unchangedMs": 11.966542000001937,
+      "editWallMs": 7277.587040999999,
+      "editCpuMs": 3776.373,
+      "peakRssBytes": 1388494848,
+      "expected": 0,
+      "actual": 0,
+      "parityPassed": true
+    },
+    "follow-combined-safe-full": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/follow-combined-safe-full",
+      "trace": "off",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 22.725674541987246,
+      "hostLoadStart": [
+        61.2626953125,
+        66.68310546875,
+        66.9990234375
+      ],
+      "hostLoadEnd": [
+        72.2763671875,
+        68.80224609375,
+        67.7490234375
+      ],
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:1d9470750ba0283e83b4651f0f3e6cfde9d51064f0a2aeafe5a02845715bdc61"
+      },
+      "files": 5,
+      "bytes": 1026452,
+      "compileMs": 1225.110125,
+      "coldWallMs": 16964.366625,
+      "coldCpuMs": 7515.779,
+      "unchangedMs": 19.59766700000182,
+      "editWallMs": 3314.8804579999996,
+      "editCpuMs": 2029.664,
+      "peakRssBytes": 1023475712,
+      "expected": 0,
+      "actual": 0,
+      "parityPassed": true
+    },
+    "follow-baseline-traced": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/follow-baseline-traced",
+      "trace": "on",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 21.667833916988457,
+      "hostLoadStart": [
+        72.2763671875,
+        68.80224609375,
+        67.7490234375
+      ],
+      "hostLoadEnd": [
+        67.4931640625,
+        68.02880859375,
+        67.50390625
+      ],
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113"
+      },
+      "files": 5,
+      "bytes": 1026452,
+      "compileMs": 704.138125,
+      "coldWallMs": 20046.75575,
+      "coldCpuMs": 15128.445,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 1341325312,
+      "expected": 0,
+      "actual": 0,
+      "parityPassed": true
+    },
+    "follow-combined-safe-traced": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/follow-combined-safe-traced",
+      "trace": "on",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 14.28579445797368,
+      "hostLoadStart": [
+        67.4931640625,
+        68.02880859375,
+        67.50390625
+      ],
+      "hostLoadEnd": [
+        65.8447265625,
+        67.609375,
+        67.36083984375
+      ],
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:1d9470750ba0283e83b4651f0f3e6cfde9d51064f0a2aeafe5a02845715bdc61"
+      },
+      "files": 5,
+      "bytes": 1026452,
+      "compileMs": 483.4348749999999,
+      "coldWallMs": 13006.469375,
+      "coldCpuMs": 8086.716,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 1018429440,
+      "expected": 0,
+      "actual": 0,
+      "parityPassed": true
+    },
+    "follow-combined-scoped": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/follow-combined-scoped",
+      "trace": "off",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 12.957140500016976,
+      "hostLoadStart": [
+        60.4443359375,
+        66.76513671875,
+        67.1396484375
+      ],
+      "hostLoadEnd": [
+        56.18701171875,
+        65.50439453125,
+        66.6826171875
+      ],
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:230281cf315b7c0d812085bee172ce3bcec0e59a774d54d10072fa9ec29cb1e2"
+      },
+      "files": 5,
+      "bytes": 1026452,
+      "compileMs": 519.4832090000001,
+      "coldWallMs": 11410.701375,
+      "coldCpuMs": 7500.866,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 976633856,
+      "expected": 0,
+      "actual": 0,
+      "parityPassed": true
+    },
+    "follow-off-domain-combined-scoped": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/follow-off-domain-combined-scoped",
+      "trace": "off",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 8.56920599998557,
+      "hostLoadStart": [
+        56.18701171875,
+        65.50439453125,
+        66.6826171875
+      ],
+      "hostLoadEnd": [
+        55.611328125,
+        65.22998046875,
+        66.57861328125
+      ],
+      "workloadSha256": "931a470674b676efe8dccc9aad09cf818b1f0052474be2f538b8995e3a9cd883",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:230281cf315b7c0d812085bee172ce3bcec0e59a774d54d10072fa9ec29cb1e2"
+      },
+      "files": 1,
+      "bytes": 591737,
+      "compileMs": 906.367125,
+      "coldWallMs": 6237.805791999999,
+      "coldCpuMs": 2748.2749999999996,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 765689856,
+      "expected": 3,
+      "actual": 3,
+      "parityPassed": true
+    },
+    "follow-combined-scoped-sampled": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/follow-combined-scoped-sampled",
+      "trace": "off",
+      "external": "sample",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 22.156391291006003,
+      "hostLoadStart": [
+        55.611328125,
+        65.22998046875,
+        66.57861328125
+      ],
+      "hostLoadEnd": [
+        51.81103515625,
+        63.544921875,
+        65.93017578125
+      ],
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:230281cf315b7c0d812085bee172ce3bcec0e59a774d54d10072fa9ec29cb1e2"
+      },
+      "files": 5,
+      "bytes": 1026452,
+      "compileMs": 1012.1349160000002,
+      "coldWallMs": 17072.018792000003,
+      "coldCpuMs": 8080.654,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 985907200,
+      "expected": 0,
+      "actual": 0,
+      "parityPassed": true
+    },
+    "follow-combined-scoped-traced": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/follow-combined-scoped-traced",
+      "trace": "on",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 17.140525208000327,
+      "hostLoadStart": [
+        51.81103515625,
+        63.544921875,
+        65.93017578125
+      ],
+      "hostLoadEnd": [
+        50.09033203125,
+        62.58740234375,
+        65.5458984375
+      ],
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:230281cf315b7c0d812085bee172ce3bcec0e59a774d54d10072fa9ec29cb1e2"
+      },
+      "files": 5,
+      "bytes": 1026452,
+      "compileMs": 755.8553339999999,
+      "coldWallMs": 15075.574375,
+      "coldCpuMs": 8096.499000000001,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 984530944,
+      "expected": 0,
+      "actual": 0,
+      "parityPassed": true
+    },
+    "follow-off-domain-combined-scoped-traced": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/follow-off-domain-combined-scoped-traced",
+      "trace": "on",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 7.903500790998805,
+      "hostLoadStart": [
+        50.09033203125,
+        62.58740234375,
+        65.5458984375
+      ],
+      "hostLoadEnd": [
+        47.70263671875,
+        61.66259765625,
+        65.1826171875
+      ],
+      "workloadSha256": "931a470674b676efe8dccc9aad09cf818b1f0052474be2f538b8995e3a9cd883",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:230281cf315b7c0d812085bee172ce3bcec0e59a774d54d10072fa9ec29cb1e2"
+      },
+      "files": 1,
+      "bytes": 591737,
+      "compileMs": 803.501417,
+      "coldWallMs": 5935.434458,
+      "coldCpuMs": 2884.855,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 775766016,
+      "expected": 3,
+      "actual": 3,
+      "parityPassed": true
+    },
+    "follow-baseline-final": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/follow-baseline-final",
+      "trace": "off",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 30.891445207991637,
+      "hostLoadStart": [
+        47.70263671875,
+        61.66259765625,
+        65.1826171875
+      ],
+      "hostLoadEnd": [
+        46.20703125,
+        59.97216796875,
+        64.447265625
+      ],
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113"
+      },
+      "files": 5,
+      "bytes": 1026452,
+      "compileMs": 939.4289170000002,
+      "coldWallMs": 28594.201665999997,
+      "coldCpuMs": 14459.435,
+      "unchangedMs": null,
+      "editWallMs": null,
+      "editCpuMs": null,
+      "peakRssBytes": 1372979200,
+      "expected": 0,
+      "actual": 0,
+      "parityPassed": true
+    },
+    "follow-combined-scoped-full": {
+      "artifact": ".rerail/profiles/sql-spikes-2026-10-20/follow-combined-scoped-full",
+      "trace": "off",
+      "external": "none",
+      "insertBatch": 1,
+      "sharedInputIndex": false,
+      "deadlineSeconds": 115.0,
+      "elapsedSeconds": 18.434839541005204,
+      "hostLoadStart": [
+        58.08837890625,
+        61.1083984375,
+        64.23046875
+      ],
+      "hostLoadEnd": [
+        51.92626953125,
+        59.51220703125,
+        63.58544921875
+      ],
+      "workloadSha256": "aca54177a953bc219ee626c53171f2902770c83c473750d2262c95516ad8b043",
+      "policyDigests": {
+        "data-layer-serverplan-quality": "sha256:230281cf315b7c0d812085bee172ce3bcec0e59a774d54d10072fa9ec29cb1e2"
+      },
+      "files": 5,
+      "bytes": 1026452,
+      "compileMs": 650.2727499999999,
+      "coldWallMs": 12282.754542,
+      "coldCpuMs": 7938.647,
+      "unchangedMs": 10.84429099999943,
+      "editWallMs": 4046.6013329999987,
+      "editCpuMs": 2126.157,
+      "peakRssBytes": 984776704,
+      "expected": 0,
+      "actual": 0,
+      "parityPassed": true
+    }
+  },
+  "comparisons": {
+    "union-all": {
+      "phases": {
+        "cold": {
+          "baselineMs": 37152.800124999994,
+          "experimentMs": 31288.998916999997,
+          "wallSpeedup": 1.1874077602659914,
+          "baselineCpuMs": 14224.672999999999,
+          "experimentCpuMs": 12525.944
+        }
+      },
+      "baselinePeakRssBytes": 1374453760,
+      "experimentPeakRssBytes": 1378516992,
+      "changedPolicies": {
+        "data-layer-serverplan-quality": {
+          "baseline": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113",
+          "experiment": "sha256:0bf8f1e8a1ffe8c9af3bc10ac6db38a3d95025266a527d896e4cde05dea6100f"
+        }
+      },
+      "nativeSha256": "a55f08af93997e1dcdd6b27e22a086bb2f097b0a1509f4e92acfe4f662e08c5f",
+      "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."
+    },
+    "roots": {
+      "phases": {
+        "cold": {
+          "baselineMs": 37152.800124999994,
+          "experimentMs": 26077.248,
+          "wallSpeedup": 1.4247208955868347,
+          "baselineCpuMs": 14224.672999999999,
+          "experimentCpuMs": 13829.973
+        }
+      },
+      "baselinePeakRssBytes": 1374453760,
+      "experimentPeakRssBytes": 1197834240,
+      "changedPolicies": {
+        "data-layer-serverplan-quality": {
+          "baseline": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113",
+          "experiment": "sha256:8050928df5637fd7efd78441276154ad61213277f2ca52f1b6c6dd97298ea211"
+        }
+      },
+      "nativeSha256": "a55f08af93997e1dcdd6b27e22a086bb2f097b0a1509f4e92acfe4f662e08c5f",
+      "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."
+    },
+    "no-path": {
+      "phases": {
+        "cold": {
+          "baselineMs": 37152.800124999994,
+          "experimentMs": 25710.304417,
+          "wallSpeedup": 1.4450548512538834,
+          "baselineCpuMs": 14224.672999999999,
+          "experimentCpuMs": 12327.665
+        }
+      },
+      "baselinePeakRssBytes": 1374453760,
+      "experimentPeakRssBytes": 1190199296,
+      "changedPolicies": {
+        "data-layer-serverplan-quality": {
+          "baseline": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113",
+          "experiment": "sha256:f6188b88bdbe2182fedaba294ae9080754a17994aee63b3cfdadf0cd3169c255"
+        }
+      },
+      "nativeSha256": "a55f08af93997e1dcdd6b27e22a086bb2f097b0a1509f4e92acfe4f662e08c5f",
+      "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."
+    },
+    "compact-keys": {
+      "phases": {
+        "cold": {
+          "baselineMs": 37152.800124999994,
+          "experimentMs": 33376.812583,
+          "wallSpeedup": 1.1131320593483884,
+          "baselineCpuMs": 14224.672999999999,
+          "experimentCpuMs": 13137.51
+        }
+      },
+      "baselinePeakRssBytes": 1374453760,
+      "experimentPeakRssBytes": 1267335168,
+      "changedPolicies": {
+        "data-layer-serverplan-quality": {
+          "baseline": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113",
+          "experiment": "sha256:e9a00e9aae8d61ce3bbc8b44afdca7424d06b4c2ec162525dff8e4299eb66856"
+        }
+      },
+      "nativeSha256": "a55f08af93997e1dcdd6b27e22a086bb2f097b0a1509f4e92acfe4f662e08c5f",
+      "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."
+    },
+    "compact-no-path": {
+      "phases": {
+        "cold": {
+          "baselineMs": 37152.800124999994,
+          "experimentMs": 23991.459291,
+          "wallSpeedup": 1.5485844222463472,
+          "baselineCpuMs": 14224.672999999999,
+          "experimentCpuMs": 12279.341999999999
+        }
+      },
+      "baselinePeakRssBytes": 1374453760,
+      "experimentPeakRssBytes": 1045299200,
+      "changedPolicies": {
+        "data-layer-serverplan-quality": {
+          "baseline": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113",
+          "experiment": "sha256:f5b9e2ccf8fe0b4f11934fdf19ac57e50c636012df880143be2783321a85e75a"
+        }
+      },
+      "nativeSha256": "a55f08af93997e1dcdd6b27e22a086bb2f097b0a1509f4e92acfe4f662e08c5f",
+      "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."
+    },
+    "narrow-selectors": {
+      "phases": {
+        "cold": {
+          "baselineMs": 37152.800124999994,
+          "experimentMs": 28242.303125,
+          "wallSpeedup": 1.3155017832845386,
+          "baselineCpuMs": 14224.672999999999,
+          "experimentCpuMs": 14141.935
+        }
+      },
+      "baselinePeakRssBytes": 1374453760,
+      "experimentPeakRssBytes": 1332412416,
+      "changedPolicies": {
+        "data-layer-serverplan-quality": {
+          "baseline": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113",
+          "experiment": "sha256:6c99bb723bfcbf0d3dd58c8317908cc4aab0148434e31c60edce13893b5b3e78"
+        }
+      },
+      "nativeSha256": "a55f08af93997e1dcdd6b27e22a086bb2f097b0a1509f4e92acfe4f662e08c5f",
+      "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."
+    },
+    "narrow-projections": {
+      "phases": {
+        "cold": {
+          "baselineMs": 37152.800124999994,
+          "experimentMs": 32312.375208,
+          "wallSpeedup": 1.1498009628150636,
+          "baselineCpuMs": 14224.672999999999,
+          "experimentCpuMs": 13857.055
+        }
+      },
+      "baselinePeakRssBytes": 1374453760,
+      "experimentPeakRssBytes": 1312751616,
+      "changedPolicies": {
+        "data-layer-serverplan-quality": {
+          "baseline": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113",
+          "experiment": "sha256:883893fcedf03b26e809a7a8c83d79edd2562f22c20aecdea183a82d6707ad7d"
+        }
+      },
+      "nativeSha256": "a55f08af93997e1dcdd6b27e22a086bb2f097b0a1509f4e92acfe4f662e08c5f",
+      "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."
+    },
+    "all-shared": {
+      "phases": {
+        "cold": {
+          "baselineMs": 37152.800124999994,
+          "experimentMs": 23626.292209,
+          "wallSpeedup": 1.5725192847165126,
+          "baselineCpuMs": 14224.672999999999,
+          "experimentCpuMs": 9777.306999999999
+        }
+      },
+      "baselinePeakRssBytes": 1374453760,
+      "experimentPeakRssBytes": 1309982720,
+      "changedPolicies": {
+        "data-layer-serverplan-quality": {
+          "baseline": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113",
+          "experiment": "sha256:879ab737e76584024ab0b4fdf39a02cae8f8fab67d2f4469b669fd9c6a84eb2d"
+        }
+      },
+      "nativeSha256": "a55f08af93997e1dcdd6b27e22a086bb2f097b0a1509f4e92acfe4f662e08c5f",
+      "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."
+    },
+    "insert32": {
+      "phases": {
+        "cold": {
+          "baselineMs": 37152.800124999994,
+          "experimentMs": 26957.109833000002,
+          "wallSpeedup": 1.3782189691388491,
+          "baselineCpuMs": 14224.672999999999,
+          "experimentCpuMs": 14279.237000000001
+        }
+      },
+      "baselinePeakRssBytes": 1374453760,
+      "experimentPeakRssBytes": 1383579648,
+      "changedPolicies": {},
+      "nativeSha256": "a55f08af93997e1dcdd6b27e22a086bb2f097b0a1509f4e92acfe4f662e08c5f",
+      "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."
+    },
+    "shared-input-index": {
+      "phases": {
+        "cold": {
+          "baselineMs": 37152.800124999994,
+          "experimentMs": 28210.773125000003,
+          "wallSpeedup": 1.3169720645506056,
+          "baselineCpuMs": 14224.672999999999,
+          "experimentCpuMs": 14063.34
+        }
+      },
+      "baselinePeakRssBytes": 1374453760,
+      "experimentPeakRssBytes": 1373339648,
+      "changedPolicies": {},
+      "nativeSha256": "a55f08af93997e1dcdd6b27e22a086bb2f097b0a1509f4e92acfe4f662e08c5f",
+      "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."
+    },
+    "combined-path": {
+      "phases": {
+        "cold": {
+          "baselineMs": 37152.800124999994,
+          "experimentMs": 12506.308541,
+          "wallSpeedup": 2.9707247348968147,
+          "baselineCpuMs": 14224.672999999999,
+          "experimentCpuMs": 8463.243
+        }
+      },
+      "baselinePeakRssBytes": 1374453760,
+      "experimentPeakRssBytes": 1168637952,
+      "changedPolicies": {
+        "data-layer-serverplan-quality": {
+          "baseline": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113",
+          "experiment": "sha256:011822352f4690fdffcbce9e14f9d8ab751aec24d7509f2c61c832c412e08302"
+        }
+      },
+      "nativeSha256": "a55f08af93997e1dcdd6b27e22a086bb2f097b0a1509f4e92acfe4f662e08c5f",
+      "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."
+    },
+    "combined-safe": {
+      "phases": {
+        "cold": {
+          "baselineMs": 37152.800124999994,
+          "experimentMs": 12395.083166,
+          "wallSpeedup": 2.997382077024782,
+          "baselineCpuMs": 14224.672999999999,
+          "experimentCpuMs": 7603.915
+        }
+      },
+      "baselinePeakRssBytes": 1374453760,
+      "experimentPeakRssBytes": 980287488,
+      "changedPolicies": {
+        "data-layer-serverplan-quality": {
+          "baseline": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113",
+          "experiment": "sha256:1d9470750ba0283e83b4651f0f3e6cfde9d51064f0a2aeafe5a02845715bdc61"
+        }
+      },
+      "nativeSha256": "a55f08af93997e1dcdd6b27e22a086bb2f097b0a1509f4e92acfe4f662e08c5f",
+      "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."
+    },
+    "combined-cst": {
+      "phases": {
+        "cold": {
+          "baselineMs": 37152.800124999994,
+          "experimentMs": 11399.835083,
+          "wallSpeedup": 3.259064701769598,
+          "baselineCpuMs": 14224.672999999999,
+          "experimentCpuMs": 7477.601000000001
+        }
+      },
+      "baselinePeakRssBytes": 1374453760,
+      "experimentPeakRssBytes": 1024425984,
+      "changedPolicies": {
+        "data-layer-serverplan-quality": {
+          "baseline": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113",
+          "experiment": "sha256:206e3bd6581fc19c627e07682ef2e42ed81a2aa0b0dcc4b6f29bdebd8aa4e3ac"
+        }
+      },
+      "nativeSha256": "a55f08af93997e1dcdd6b27e22a086bb2f097b0a1509f4e92acfe4f662e08c5f",
+      "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."
+    },
+    "combined-all": {
+      "phases": {
+        "cold": {
+          "baselineMs": 37152.800124999994,
+          "experimentMs": 10830.210167000001,
+          "wallSpeedup": 3.4304782226854447,
+          "baselineCpuMs": 14224.672999999999,
+          "experimentCpuMs": 7326.945
+        }
+      },
+      "baselinePeakRssBytes": 1374453760,
+      "experimentPeakRssBytes": 1012219904,
+      "changedPolicies": {
+        "data-layer-serverplan-quality": {
+          "baseline": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113",
+          "experiment": "sha256:206e3bd6581fc19c627e07682ef2e42ed81a2aa0b0dcc4b6f29bdebd8aa4e3ac"
+        }
+      },
+      "nativeSha256": "a55f08af93997e1dcdd6b27e22a086bb2f097b0a1509f4e92acfe4f662e08c5f",
+      "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."
+    },
+    "combined-scoped": {
+      "phases": {
+        "cold": {
+          "baselineMs": 37152.800124999994,
+          "experimentMs": 11410.701375,
+          "wallSpeedup": 3.2559611284192416,
+          "baselineCpuMs": 14224.672999999999,
+          "experimentCpuMs": 7500.866
+        }
+      },
+      "baselinePeakRssBytes": 1374453760,
+      "experimentPeakRssBytes": 976633856,
+      "changedPolicies": {
+        "data-layer-serverplan-quality": {
+          "baseline": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113",
+          "experiment": "sha256:230281cf315b7c0d812085bee172ce3bcec0e59a774d54d10072fa9ec29cb1e2"
+        }
+      },
+      "nativeSha256": "a55f08af93997e1dcdd6b27e22a086bb2f097b0a1509f4e92acfe4f662e08c5f",
+      "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."
+    },
+    "off-domain-all-shared": {
+      "phases": {
+        "cold": {
+          "baselineMs": 5240.421375,
+          "experimentMs": 9592.201708,
+          "wallSpeedup": 0.546321015187726,
+          "baselineCpuMs": 3864.206,
+          "experimentCpuMs": 5685.513
+        }
+      },
+      "baselinePeakRssBytes": 767098880,
+      "experimentPeakRssBytes": 1147633664,
+      "changedPolicies": {
+        "data-layer-serverplan-quality": {
+          "baseline": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113",
+          "experiment": "sha256:879ab737e76584024ab0b4fdf39a02cae8f8fab67d2f4469b669fd9c6a84eb2d"
+        }
+      },
+      "nativeSha256": "a55f08af93997e1dcdd6b27e22a086bb2f097b0a1509f4e92acfe4f662e08c5f",
+      "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."
+    },
+    "off-domain-combined-safe": {
+      "phases": {
+        "cold": {
+          "baselineMs": 5240.421375,
+          "experimentMs": 10576.641042,
+          "wallSpeedup": 0.49547123270896765,
+          "baselineCpuMs": 3864.206,
+          "experimentCpuMs": 4591.397
+        }
+      },
+      "baselinePeakRssBytes": 767098880,
+      "experimentPeakRssBytes": 873775104,
+      "changedPolicies": {
+        "data-layer-serverplan-quality": {
+          "baseline": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113",
+          "experiment": "sha256:1d9470750ba0283e83b4651f0f3e6cfde9d51064f0a2aeafe5a02845715bdc61"
+        }
+      },
+      "nativeSha256": "a55f08af93997e1dcdd6b27e22a086bb2f097b0a1509f4e92acfe4f662e08c5f",
+      "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."
+    },
+    "off-domain-combined-scoped": {
+      "phases": {
+        "cold": {
+          "baselineMs": 5240.421375,
+          "experimentMs": 6237.805791999999,
+          "wallSpeedup": 0.8401065294018696,
+          "baselineCpuMs": 3864.206,
+          "experimentCpuMs": 2748.2749999999996
+        }
+      },
+      "baselinePeakRssBytes": 767098880,
+      "experimentPeakRssBytes": 765689856,
+      "changedPolicies": {
+        "data-layer-serverplan-quality": {
+          "baseline": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113",
+          "experiment": "sha256:230281cf315b7c0d812085bee172ce3bcec0e59a774d54d10072fa9ec29cb1e2"
+        }
+      },
+      "nativeSha256": "a55f08af93997e1dcdd6b27e22a086bb2f097b0a1509f4e92acfe4f662e08c5f",
+      "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."
+    },
+    "full-combined-scoped": {
+      "phases": {
+        "cold": {
+          "baselineMs": 29550.257332999998,
+          "experimentMs": 12282.754542,
+          "wallSpeedup": 2.405833091588292,
+          "baselineCpuMs": 14384.903,
+          "experimentCpuMs": 7938.647
+        },
+        "unchanged": {
+          "baselineMs": 11.966542000001937,
+          "experimentMs": 10.84429099999943,
+          "wallSpeedup": 1.1034877245550276,
+          "baselineCpuMs": 11.008,
+          "experimentCpuMs": 10.783999999999999
+        },
+        "edit": {
+          "baselineMs": 7277.587040999999,
+          "experimentMs": 4046.6013329999987,
+          "wallSpeedup": 1.7984442849982132,
+          "baselineCpuMs": 3776.373,
+          "experimentCpuMs": 2126.157
+        }
+      },
+      "baselinePeakRssBytes": 1388494848,
+      "experimentPeakRssBytes": 984776704,
+      "changedPolicies": {
+        "data-layer-serverplan-quality": {
+          "baseline": "sha256:66c85fe16c016aa27561ade5f6903e946da0984f79d9b2837860975d927ff113",
+          "experiment": "sha256:230281cf315b7c0d812085bee172ce3bcec0e59a774d54d10072fa9ec29cb1e2"
+        }
+      },
+      "nativeSha256": "a55f08af93997e1dcdd6b27e22a086bb2f097b0a1509f4e92acfe4f662e08c5f",
+      "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."
+    }
+  },
+  "oracleCorpus": {
+    "corpusSha256": "d8b9f6211e871cf674c42ea1f835ee3df6f8f0b9cdce0351b840b01c219036a7",
+    "sourceCalls": 192,
+    "supplementalProbes": 8,
+    "variants": {
+      "baseline": {
+        "calls": 200,
+        "positive": 135,
+        "clean": 65,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "engineFailures": 0,
+        "executionPathDifferences": 0,
+        "artifacts": [
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-baseline.json"
+        ]
+      },
+      "union-all": {
+        "calls": 200,
+        "positive": 135,
+        "clean": 65,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "engineFailures": 0,
+        "executionPathDifferences": 0,
+        "artifacts": [
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-union-all.json"
+        ]
+      },
+      "roots-fixed": {
+        "calls": 200,
+        "positive": 135,
+        "clean": 65,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "engineFailures": 0,
+        "executionPathDifferences": 0,
+        "artifacts": [
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-roots-fixed-0.json",
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-roots-fixed-1.json",
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-roots-fixed-2.json",
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-roots-fixed-3.json",
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-roots-fixed-4.json"
+        ]
+      },
+      "no-path": {
+        "calls": 200,
+        "positive": 135,
+        "clean": 65,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "engineFailures": 0,
+        "executionPathDifferences": 0,
+        "artifacts": [
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-no-path.json"
+        ]
+      },
+      "compact-keys": {
+        "calls": 200,
+        "positive": 135,
+        "clean": 65,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "engineFailures": 0,
+        "executionPathDifferences": 0,
+        "artifacts": [
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-compact-keys.json"
+        ]
+      },
+      "compact-no-path": {
+        "calls": 200,
+        "positive": 135,
+        "clean": 65,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "engineFailures": 0,
+        "executionPathDifferences": 0,
+        "artifacts": [
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-compact-no-path.json"
+        ]
+      },
+      "narrow-selectors": {
+        "calls": 200,
+        "positive": 135,
+        "clean": 65,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "engineFailures": 0,
+        "executionPathDifferences": 0,
+        "artifacts": [
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-narrow-selectors.json"
+        ]
+      },
+      "narrow-projections": {
+        "calls": 200,
+        "positive": 135,
+        "clean": 65,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "engineFailures": 0,
+        "executionPathDifferences": 0,
+        "artifacts": [
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-narrow-projections.json"
+        ]
+      },
+      "all-shared": {
+        "calls": 200,
+        "positive": 135,
+        "clean": 65,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "engineFailures": 0,
+        "executionPathDifferences": 0,
+        "artifacts": [
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-all-shared.json"
+        ]
+      },
+      "insert32": {
+        "calls": 200,
+        "positive": 135,
+        "clean": 65,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "engineFailures": 0,
+        "executionPathDifferences": 0,
+        "artifacts": [
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-insert32.json"
+        ]
+      },
+      "shared-input-index": {
+        "calls": 200,
+        "positive": 135,
+        "clean": 65,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "engineFailures": 0,
+        "executionPathDifferences": 0,
+        "artifacts": [
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-shared-input-index.json"
+        ]
+      },
+      "combined-path": {
+        "calls": 200,
+        "positive": 135,
+        "clean": 65,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "engineFailures": 0,
+        "executionPathDifferences": 0,
+        "artifacts": [
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-combined-path-0.json",
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-combined-path-1.json",
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-combined-path-2.json",
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-combined-path-3.json",
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-combined-path-4.json"
+        ]
+      },
+      "combined-safe": {
+        "calls": 200,
+        "positive": 135,
+        "clean": 65,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "engineFailures": 0,
+        "executionPathDifferences": 0,
+        "artifacts": [
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-combined-safe-0.json",
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-combined-safe-1.json",
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-combined-safe-2.json",
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-combined-safe-3.json",
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-combined-safe-4.json"
+        ]
+      },
+      "combined-cst": {
+        "calls": 200,
+        "positive": 135,
+        "clean": 65,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "engineFailures": 0,
+        "executionPathDifferences": 0,
+        "artifacts": [
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-combined-cst-0.json",
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-combined-cst-1.json",
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-combined-cst-2.json",
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-combined-cst-3.json",
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-combined-cst-4.json"
+        ]
+      },
+      "combined-all": {
+        "calls": 200,
+        "positive": 135,
+        "clean": 65,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "engineFailures": 0,
+        "executionPathDifferences": 0,
+        "artifacts": [
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-combined-all.json"
+        ]
+      },
+      "combined-scoped": {
+        "calls": 200,
+        "positive": 135,
+        "clean": 65,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "engineFailures": 0,
+        "executionPathDifferences": 0,
+        "artifacts": [
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-combined-scoped-0.json",
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-combined-scoped-1.json",
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-combined-scoped-2.json",
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-combined-scoped-3.json",
+          ".rerail/profiles/sql-spikes-2026-10-20/corpus-combined-scoped-4.json"
+        ]
+      }
+    }
+  },
+  "productionGates": {
+    "all-shared": {
+      "reference": "Unchanged baseline production policy, not upstream oracle",
+      "cases": 219,
+      "positive": 130,
+      "clean": 89,
+      "differences": 0,
+      "transitions": 57,
+      "transitionDifferences": 0
+    },
+    "combined-safe": {
+      "reference": "Unchanged baseline production policy, not upstream oracle",
+      "cases": 219,
+      "positive": 130,
+      "clean": 89,
+      "differences": 0,
+      "transitions": 57,
+      "transitionDifferences": 0
+    },
+    "combined-scoped": {
+      "reference": "Unchanged baseline production policy, not upstream oracle",
+      "cases": 219,
+      "positive": 130,
+      "clean": 89,
+      "differences": 0,
+      "transitions": 57,
+      "transitionDifferences": 0
+    }
+  },
+  "failedRootExperiment": {
+    "falseNegatives": 4,
+    "cases": [
+      "scripts/tests/test_lint_serverplan_quality.py::test_projection_helper_eager_materialization_fallback_is_spq043",
+      "scripts/tests/test_lint_serverplan_quality.py::test_generic_projection_helper_execute_materialization_fallback_is_spq043",
+      "scripts/tests/test_lint_serverplan_quality.py::test_serverplan_projection_helper_execute_materialization_fallback_is_spq043",
+      "scripts/tests/test_lint_serverplan_quality.py::test_include_through_skip_is_spq035"
+    ],
+    "rootCauses": [
+      "Comprehension parent of for_in_clause",
+      "Unfielded comparison operands"
+    ],
+    "correctedArtifact": "corpus-roots-fixed-{0..4}.json"
+  },
+  "directSqliteTests": {
+    "forestDiamondCycleDanglingAndUnicodeParity": [
+      "no-path",
+      "compact-keys",
+      "compact-no-path"
+    ],
+    "unionAllDiamondChangesResults": true,
+    "unionAllCycleInterrupted": true,
+    "scopeGateSkipsProducerExpression": true
+  },
+  "forestStatistics": {
+    "violations": {
+      "self_edges": 0,
+      "duplicate_ids": 0,
+      "multiple_parents": 0,
+      "duplicate_edges": 0
+    },
+    "artifact": ".rerail/profiles/sql-spikes-2026-10-20/forest-statistics.json",
+    "scope": "Five selected production files; not a guarantee for malformed CSTs"
+  },
+  "attributedProfiles": {
+    "baseline-traced": {
+      "coldProcessCpuMs": 15128.445,
+      "leafCpuMs": {
+        "sql-materialize": 6741.274660999998,
+        "sql-index": 3084.5497859999996,
+        "input-extract": 1907.7767900000013,
+        "sql-result": 75.17983100000001,
+        "sql-input": 431.3285410000002,
+        "sql-analyze": 64.12129399999999,
+        "sql-validate": 52.152120000000004
+      },
+      "unassignedCpuMs": 2772.061977000001,
+      "largestStagesCpuMs": {
+        "descendants": 4133.253332,
+        "nodes": 1732.4783290000005,
+        "ownership": 1544.7800379999999,
+        "edges": 422.3349130000001,
+        "scoped_nodes": 323.447626,
+        "scope_owners": 264.8140839999999,
+        "py_names": 179.82554,
+        "methods": 112.641042,
+        "call_paths": 94.71412399999998,
+        "loop_names": 89.92791699999998,
+        "method_nodes": 77.792958,
+        "assignments": 64.783374
+      }
+    },
+    "combined-scoped-traced": {
+      "coldProcessCpuMs": 8096.499000000001,
+      "leafCpuMs": {
+        "sql-materialize": 3884.7771330000055,
+        "sql-index": 1211.7929169999989,
+        "input-extract": 653.8375830000003,
+        "sql-input": 177.13325,
+        "sql-result": 28.942916,
+        "sql-validate": 50.560947999999996,
+        "sql-analyze": 38.747158000000006
+      },
+      "unassignedCpuMs": 2050.707094999996,
+      "largestStagesCpuMs": {
+        "descendant_pairs": 1809.078375,
+        "nodes": 678.327876,
+        "ownership": 533.1273330000001,
+        "scoped_nodes": 337.81854500000003,
+        "scope_owners": 276.270041,
+        "node_keys": 141.37175100000002,
+        "edges": 140.609791,
+        "compact_edges": 119.388544,
+        "method_nodes": 95.017334,
+        "call_paths": 93.72650100000003,
+        "methods": 90.65629200000001,
+        "py_names": 76.48000200000001
+      }
+    },
+    "off-domain-combined-scoped-traced": {
+      "coldProcessCpuMs": 2884.855,
+      "leafCpuMs": {
+        "sql-materialize": 784.7635839999999,
+        "input-extract": 542.388126,
+        "sql-index": 322.058338,
+        "sql-validate": 11.61541699999999,
+        "sql-input": 103.53591800000001,
+        "sql-result": 22.087667,
+        "sql-analyze": 8.332535000000002
+      },
+      "unassignedCpuMs": 1090.073415,
+      "largestStagesCpuMs": {
+        "nodes": 407.081543,
+        "ownership": 311.199585,
+        "edges": 89.33558300000001,
+        "scope_owners": 66.771042,
+        "py_names": 43.415167,
+        "self_stores": 39.309417,
+        "syntax_rows_1": 20.589584,
+        "calls": 15.271834,
+        "syntax_rows_0": 13.858667,
+        "keywords": 11.810666000000001,
+        "assignments": 11.155293,
+        "functions": 7.113043
+      },
+      "guardedClosureCounters": [
+        {
+          "autoIndexRows": 0,
+          "failed": 0,
+          "fullscanSteps": 0,
+          "sorts": 0,
+          "vmSteps": 46
+        }
+      ]
+    }
+  },
+  "externalProfiler": {
+    "tool": "/usr/bin/sample",
+    "sampleWindows": [
+      {
+        "file": "sample-1.txt",
+        "phaseOverlap": [
+          {
+            "phase": "compile",
+            "overlapMs": 821.706
+          }
+        ],
+        "activeNativeSamples": 797
+      },
+      {
+        "file": "sample-2.txt",
+        "phaseOverlap": [
+          {
+            "phase": "cold",
+            "overlapMs": 1000.0
+          }
+        ],
+        "activeNativeSamples": 828
+      },
+      {
+        "file": "sample-3.txt",
+        "phaseOverlap": [
+          {
+            "phase": "cold",
+            "overlapMs": 1000.0
+          }
+        ],
+        "activeNativeSamples": 832
+      },
+      {
+        "file": "sample-4.txt",
+        "phaseOverlap": [
+          {
+            "phase": "cold",
+            "overlapMs": 1000.0
+          }
+        ],
+        "activeNativeSamples": 819
+      },
+      {
+        "file": "sample-5.txt",
+        "phaseOverlap": [
+          {
+            "phase": "cold",
+            "overlapMs": 1000.0
+          }
+        ],
+        "activeNativeSamples": 813
+      },
+      {
+        "file": "sample-6.txt",
+        "phaseOverlap": [
+          {
+            "phase": "cold",
+            "overlapMs": 246.27
+          },
+          {
+            "phase": "report",
+            "overlapMs": 753.73
+          }
+        ],
+        "activeNativeSamples": 0
+      }
+    ],
+    "pureColdWindowCount": 4,
+    "pureColdActiveNativeSamples": 3292,
+    "pureColdSubsystemSamples": {
+      "sqlite": 3222,
+      "relational-host": 70
+    },
+    "pureColdTopSelf": {
+      "sqlite3VdbeExec (rerail_engine.darwin-arm64.node)": 849,
+      "sqlite3BtreeTableMoveto (rerail_engine.darwin-arm64.node)": 448,
+      "_platform_memmove (libsystem_platform.dylib)": 213,
+      "sqlite3VdbeRecordCompareWithSkip (rerail_engine.darwin-arm64.node)": 139,
+      "_platform_memcmp (libsystem_platform.dylib)": 127,
+      "sqlite3BtreeIndexMoveto (rerail_engine.darwin-arm64.node)": 114,
+      "vdbeRecordCompareInt (rerail_engine.darwin-arm64.node)": 83,
+      "pcache1FetchStage2 (rerail_engine.darwin-arm64.node)": 77,
+      "vdbeRecordCompareString (rerail_engine.darwin-arm64.node)": 66,
+      "balance (rerail_engine.darwin-arm64.node)": 62,
+      "vdbeSorterCompareInt (rerail_engine.darwin-arm64.node)": 61,
+      "_xzm_xzone_malloc_tiny (libsystem_malloc.dylib)": 55,
+      "btreeParseCellPtr (rerail_engine.darwin-arm64.node)": 48,
+      "sqlite3VdbeSerialGet (rerail_engine.darwin-arm64.node)": 46,
+      "sqlite3PcacheRelease (rerail_engine.darwin-arm64.node)": 41
+    },
+    "pureColdTopBottomUp": [
+      {
+        "samples": 457,
+        "frames": [
+          "sqlite3VdbeExec (rerail_engine.darwin-arm64.node)",
+          "sqlite3_step (rerail_engine.darwin-arm64.node)",
+          "_RNvMNtCsgw7S5GYSqLo_8rusqlite9statementNtB2_9Statement29execute_with_bound_parameters (rerail_engine.darwin-arm64.node)"
+        ]
+      },
+      {
+        "samples": 437,
+        "frames": [
+          "sqlite3BtreeTableMoveto (rerail_engine.darwin-arm64.node)",
+          "sqlite3VdbeFinishMoveto (rerail_engine.darwin-arm64.node)",
+          "sqlite3VdbeExec (rerail_engine.darwin-arm64.node)"
+        ]
+      },
+      {
+        "samples": 102,
+        "frames": [
+          "sqlite3BtreeIndexMoveto (rerail_engine.darwin-arm64.node)",
+          "sqlite3VdbeExec (rerail_engine.darwin-arm64.node)",
+          "sqlite3_step (rerail_engine.darwin-arm64.node)"
+        ]
+      },
+      {
+        "samples": 78,
+        "frames": [
+          "vdbeRecordCompareInt (rerail_engine.darwin-arm64.node)",
+          "sqlite3BtreeIndexMoveto (rerail_engine.darwin-arm64.node)",
+          "sqlite3VdbeExec (rerail_engine.darwin-arm64.node)"
+        ]
+      }
+    ],
+    "warning": "Window counts favor sampled SQL work; they are not whole-workload CPU percentages."
+  },
+  "validation": {
+    "typecheckAndRepositoryChecks": "pass",
+    "profilingPythonTests": 22,
+    "sharedIndexRustUnitTests": 1,
+    "defaultPolicyRegeneratedByteIdentical": true,
+    "noExperimentPromotedToDefault": true,
+    "nativeVitestTests": 344,
+    "nativeVitestFailures": 0
+  }
+}

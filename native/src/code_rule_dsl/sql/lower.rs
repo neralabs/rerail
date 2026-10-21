@@ -1768,7 +1768,8 @@ impl<'p> Lowerer<'p> {
                 let reads = layout.reads().map(str::to_owned).collect();
                 self.leaf(matcher, scope, &reads, true, bound)
             }
-            AstMatcher::Semantic(Semantic::Resolves(_)) => {
+            // `filePath` reads the file's path (`resolve::file_path`), set for the file's batch.
+            AstMatcher::Semantic(Semantic::Resolves(_) | Semantic::FilePath(_)) => {
                 self.leaf(matcher, scope, &BTreeSet::new(), true, bound)
             }
             AstMatcher::Semantic(semantic) => self.semantic(matcher, semantic, scope, bound),

@@ -52,8 +52,15 @@ pub(super) fn validate(
     if let Some(format_args) = rule.get("formatArgs") {
         validate_format_args(format_args, &format!("{path}/formatArgs"), limits, utils)?;
     }
+    if let Some(value) = rule.get("filePath") {
+        super::super::options::text_condition(
+            Some(value),
+            &format!("{path}/filePath"),
+            limits.max_regex_pattern_bytes,
+        )?;
+    }
     if let Some(layout) = rule.get("layout") {
-        validate_layout(layout, &format!("{path}/layout"))?;
+        validate_layout(layout, &format!("{path}/layout"), limits)?;
     }
     if let Some(calls) = rule.get("calls") {
         let calls_path = format!("{path}/calls");
@@ -129,6 +136,13 @@ pub(super) fn compile_key(
         (Stage::Ordered, "formatArgs") => {
             Some(compile_format_args(value, language, path, gaps, utils))
         }
+        (Stage::Atomic, "filePath") => Some(
+            super::super::options::text_condition(Some(value), path, usize::MAX).map(|condition| {
+                AstMatcher::Semantic(Semantic::FilePath(std::sync::Arc::new(
+                    condition.expect("provided value"),
+                )))
+            }),
+        ),
         (Stage::Late, "layout") => Some(compile_layout(value, path)),
         (Stage::Late, "value") => Some(compile_value(
             value,
@@ -207,9 +221,11 @@ fn compile_calls(
     use crate::code_rule_dsl::language::adapter::{
         Adapter, CallFeature, CallRules, gate, with_adapter,
     };
+    let definition = crate::code_rule_dsl::calls::split(calls, path)?.definition;
     let (verdict, kinds) = with_adapter!(Family::of(language), A => (
         <<A as Adapter>::Calls as CallRules>::feature(CallFeature::Calls),
-        <<A as Adapter>::Calls as CallRules>::CALL_KINDS,
+        if definition { <<A as Adapter>::Calls as CallRules>::FUNCTION_KINDS }
+        else { <<A as Adapter>::Calls as CallRules>::CALL_KINDS },
     ));
     gate(path, verdict)?;
     let collector = utils.calls.ok_or_else(|| {

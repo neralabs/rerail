@@ -79,7 +79,10 @@ impl Lowerer<'_> {
             Semantic::Host(test) => self.host(&test.rule, bound),
             // A rule over the program the file embeds reads another document of the file.
             Semantic::Embedded(_) => unsupported("embedded"),
-            Semantic::Resolves(_) | Semantic::Value(_) | Semantic::Layout(_) => {
+            Semantic::Resolves(_)
+            | Semantic::Value(_)
+            | Semantic::Layout(_)
+            | Semantic::FilePath(_) => {
                 unreachable!("plain leaves lower as fact terminals")
             }
         }

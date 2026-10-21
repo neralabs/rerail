@@ -1,7 +1,10 @@
 //! Benchmark-only attribution for the existing workspace evaluator.
 //! Disabled in production builds. Reports worker CPU separately from wall time.
 
+pub(super) mod navigation;
 mod semantic;
+pub(super) mod sql;
+pub(crate) mod trace;
 use ast_grep_core::matcher::{DumpPattern, Matcher};
 use serde_json::{Value, json};
 use std::borrow::Cow;
@@ -110,8 +113,11 @@ pub(super) fn record_query(
     matcher: &AstMatcher,
     root_kinds: Option<BTreeSet<u16>>,
 ) {
-    eprintln!(
-        "RERAIL_CODE_RULE_ANCHOR {}",
+    if std::env::var_os("RERAIL_CODE_RULE_ANCHORS").is_none() {
+        return;
+    }
+    trace::emit(
+        "RERAIL_CODE_RULE_ANCHOR",
         json!({
             "ruleId": rule_id,
             "clauseId": check_id,
@@ -119,12 +125,13 @@ pub(super) fn record_query(
             "rootKinds": root_kinds.map(|kinds| kinds.into_iter()
                 .map(|id| language.kind_name(id)).collect::<Vec<_>>()),
             "matcher": describe_matcher(matcher, language),
-        })
+        }),
     );
 }
 
 #[derive(Default)]
 struct Profile {
+    field_lookups: navigation::Counters,
     revision: u32,
     regex_ns: u128,
     parse_ns: u128,
@@ -147,11 +154,6 @@ struct Profile {
     active_line_bytes: usize,
     active_navigation_line_bytes: usize,
     peak_transient_bytes: Option<usize>,
-    retained_source_bytes: Option<usize>,
-    retained_tape_bytes: Option<usize>,
-    retained_grammar_bytes: Option<usize>,
-    retained_dispatch_bytes: Option<usize>,
-    retained_result_bytes: Option<usize>,
     native_acquisitions: usize,
     native_active: usize,
     native_peak: usize,
@@ -260,26 +262,35 @@ impl Drop for PhaseTimer {
 
 /// Associates one Rayon worker with the active apply profile. Nested timers then
 /// suspend candidate lookup and rule-evaluation preparation, so each CPU interval has one owner.
-pub(super) struct WorkerProfile;
+pub(super) struct WorkerProfile(bool);
 
 impl WorkerProfile {
     pub(super) fn start() -> Self {
+        // Rayon can run a small iterator on the apply thread itself. Keep that
+        // thread's session and timers; clearing them loses the rest of the apply.
+        if PROFILE.with(|profile| profile.borrow().is_some()) {
+            return Self(false);
+        }
         let session = ACTIVE_SESSION
             .lock()
             .expect("profile session mutex poisoned")
             .clone();
         PROFILE.with(|profile| *profile.borrow_mut() = session);
+        navigation::reset();
         PHASE_STACK.with(|stack| {
             let mut stack = stack.borrow_mut();
             stack.clear();
             stack.push((Phase::Manifest, thread_cpu_ns().unwrap_or_default()));
         });
-        Self
+        Self(true)
     }
 }
 
 impl Drop for WorkerProfile {
     fn drop(&mut self) {
+        if !self.0 {
+            return;
+        }
         let now = thread_cpu_ns().unwrap_or_default();
         while PHASE_STACK.with(|stack| !stack.borrow().is_empty()) {
             PHASE_STACK.with(|stack| {
@@ -287,6 +298,7 @@ impl Drop for WorkerProfile {
                 with_profile(|profile| *phase_total(profile, phase) += now.saturating_sub(started));
             });
         }
+        navigation::flush();
         PROFILE.with(|profile| *profile.borrow_mut() = None);
     }
 }
@@ -341,22 +353,6 @@ pub(super) fn record_transient(navigation_bytes: usize) {
         let bytes = navigation_bytes + profile.active_line_bytes;
         profile.active_navigation_line_bytes = bytes;
         profile.peak_transient_bytes = Some(profile.peak_transient_bytes.unwrap_or(0).max(bytes));
-    });
-}
-
-pub(super) fn record_retained(
-    source: usize,
-    tape: usize,
-    grammar: usize,
-    dispatch: usize,
-    results: usize,
-) {
-    with_profile(|profile| {
-        profile.retained_source_bytes = Some(source);
-        profile.retained_tape_bytes = Some(tape);
-        profile.retained_grammar_bytes = Some(grammar);
-        profile.retained_dispatch_bytes = Some(dispatch);
-        profile.retained_result_bytes = Some(results);
     });
 }
 
@@ -427,6 +423,7 @@ pub(super) fn thread_cpu_ns() -> Option<u128> {
 
 impl ApplyProfile {
     pub(super) fn start(revision: u32, cpu_started: Option<u128>) -> Self {
+        navigation::reset();
         let _ = Phase::Other;
         let session = Arc::new(Mutex::new(Profile {
             revision,
@@ -463,6 +460,7 @@ impl Drop for ApplyProfile {
                 with_profile(|profile| *phase_total(profile, phase) += now.saturating_sub(started));
             });
         }
+        navigation::flush();
         let session = PROFILE.with(|profile| profile.borrow_mut().take());
         *ACTIVE_SESSION
             .lock()
@@ -483,10 +481,11 @@ impl Drop for ApplyProfile {
                 + profile.serialization_ns
                 + profile.other_ns;
             let named_worker_cpu_ns = total_worker_cpu_ns.saturating_sub(profile.other_ns);
-            eprintln!(
-                "RERAIL_CODE_RULE_PROFILE {}",
+            trace::emit(
+                "RERAIL_CODE_RULE_PROFILE",
                 serde_json::json!({
                     "revision": profile.revision,
+                    "fieldLookups": profile.field_lookups,
                     "applyNs": elapsed,
                     "workerCpuNs": worker_cpu_ns,
                     "totalWorkerCpuNs": total_worker_cpu_ns,
@@ -504,11 +503,6 @@ impl Drop for ApplyProfile {
                     "astMatchNs": profile.dispatch_ns,
                     "serializationNs": profile.serialization_ns,
                     "otherNs": profile.other_ns,
-                    "retainedSourceBytesEstimate": profile.retained_source_bytes,
-                    "retainedTapeBytesEstimate": profile.retained_tape_bytes,
-                    "retainedGrammarBytesEstimate": profile.retained_grammar_bytes,
-                    "retainedDispatchBytesEstimate": profile.retained_dispatch_bytes,
-                    "retainedResultBytesEstimate": profile.retained_result_bytes,
                     "peakTransientNavigationLineIndexBytesEstimate": profile.peak_transient_bytes,
                     "visitedNodes": profile.visited_nodes,
                     "indexedFiles": profile.indexed_files,
@@ -519,7 +513,7 @@ impl Drop for ApplyProfile {
                     "rejectedRuleFiles": profile.rejected_rule_files,
                     "selectedRootPairs": profile.selected_root_pairs,
                     "fallbackRuleFiles": profile.fallback_rule_files,
-                })
+                }),
             );
         }
     }
@@ -528,6 +522,19 @@ impl Drop for ApplyProfile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nested_worker_keeps_the_apply_session_and_phase_stack() {
+        let _apply = ApplyProfile::start(17, thread_cpu_ns());
+        let session = PROFILE.with(|profile| profile.borrow().clone().unwrap());
+        let before = PHASE_STACK.with(|stack| stack.borrow().len());
+        {
+            let _worker = WorkerProfile::start();
+            let _timer = PhaseTimer::start(Phase::Other);
+        }
+        assert!(PROFILE.with(|profile| Arc::ptr_eq(profile.borrow().as_ref().unwrap(), &session)));
+        assert_eq!(PHASE_STACK.with(|stack| stack.borrow().len()), before);
+    }
 
     #[test]
     fn transient_peak_includes_lines_without_a_document_and_counts_shared_lines_once() {

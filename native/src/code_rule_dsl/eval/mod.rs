@@ -17,8 +17,8 @@ pub(super) use output::{
     violation_ids,
 };
 pub(super) use query::{
-    Engine, WitnessError, document_matcher, evaluate_files, evaluate_query, file_language,
-    grammar_matcher, witness_from_match, witnesses_from_match,
+    Engine, TapeCacheSlot, WitnessError, document_matcher, evaluate_files, evaluate_query,
+    file_language, file_tape, grammar_matcher, witness_from_match, witnesses_from_match,
 };
 #[cfg(test)]
 pub(super) use query::{reset_shared_group_lookups, shared_group_lookups};
@@ -246,7 +246,14 @@ pub(super) fn evaluate_code_rule(
     mode: &str,
     engine: Engine,
 ) -> Result<Evaluation> {
-    evaluate_clauses(code_rule, snapshot, mode, &code_rule.clauses, engine)
+    let mut evaluation = evaluate_clauses(code_rule, snapshot, mode, &code_rule.clauses, engine)?;
+    if code_rule
+        .report_count_gt
+        .is_some_and(|maximum| evaluation.violations.len() <= maximum)
+    {
+        evaluation.violations.clear();
+    }
+    Ok(evaluation)
 }
 
 pub(super) fn evaluate_clauses(
@@ -256,6 +263,8 @@ pub(super) fn evaluate_clauses(
     clauses: &[CompiledClause],
     engine: Engine,
 ) -> Result<Evaluation> {
+    let _tapes = TapeCacheSlot::install();
+    let _syntax = super::relational::syntax::Pool::install();
     if mode != "decision" && mode != "report" {
         return Err(invalid(format!("unsupported evaluation mode `{mode}`")));
     }
@@ -296,6 +305,7 @@ pub(super) fn evaluate_clauses(
         &mut evaluation.metrics,
         engine,
     )?;
+    let mut relational_jobs = Vec::new();
     for clause in clauses {
         match &clause.kind {
             ClauseKind::Forbid(query) => {
@@ -308,7 +318,7 @@ pub(super) fn evaluate_clauses(
                     &code_rule.scope,
                     &mut evaluation.metrics,
                     limits,
-                    mode == "decision",
+                    mode == "decision" && code_rule.report_count_gt.is_none(),
                     &mut partial,
                     Some(&clause.violation),
                     &mut util_limit,
@@ -360,7 +370,7 @@ pub(super) fn evaluate_clauses(
                     evaluation
                         .violations
                         .push(violation_from_witness(code_rule, clause, witness));
-                    if mode == "decision" {
+                    if mode == "decision" && code_rule.report_count_gt.is_none() {
                         break;
                     }
                 }
@@ -407,6 +417,59 @@ pub(super) fn evaluate_clauses(
                     evidence::budget(code_rule, clause, query, rows, engine),
                 );
             }
+            ClauseKind::Relational(plan) => {
+                let partitions = if plan.per_file {
+                    snapshot
+                        .files
+                        .iter()
+                        .filter(|file| code_rule.scope.matches(&file.path))
+                        .map(|file| Snapshot {
+                            revision: snapshot.revision,
+                            files: vec![file.clone()],
+                        })
+                        .collect::<Vec<_>>()
+                } else {
+                    vec![snapshot.clone()]
+                };
+                for partition in partitions {
+                    #[cfg(feature = "code-rule-profile")]
+                    let _context = super::profile::trace::Context::enter(
+                        &code_rule.id,
+                        &clause.id,
+                        (partition.files.len() == 1).then(|| partition.files[0].path.as_str()),
+                    );
+                    let rows = plan
+                        .inputs
+                        .iter()
+                        .map(|(name, input)| {
+                            #[cfg(not(feature = "code-rule-profile"))]
+                            let _ = name;
+                            #[cfg(feature = "code-rule-profile")]
+                            let mut span = super::profile::trace::Span::start("input-extract", name);
+                            let rows =
+                            stateless_rows(
+                                code_rule,
+                                clause,
+                                (input, evidence::Side::Counted),
+                                &partition,
+                                &mut evaluation.metrics,
+                                engine,
+                            );
+                            #[cfg(feature = "code-rule-profile")]
+                            span.detail(|| serde_json::json!({"rows": rows.as_ref().ok().map(|rows| rows.witnesses.len()), "failed": rows.is_err()}));
+                            rows
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    relational_jobs.push(super::relational::Job {
+                        code_rule,
+                        clause,
+                        rows,
+                        facts: Vec::new(),
+                        snapshot: partition,
+                        budget: super::budget::Context::capture(),
+                    });
+                }
+            }
             ClauseKind::Llm => evaluation.failures.push(failure(
                 &clause.id,
                 "missing-capability",
@@ -414,6 +477,9 @@ pub(super) fn evaluate_clauses(
                 None,
             )),
         }
+    }
+    for result in super::relational::evaluate_batch(relational_jobs) {
+        merge(&mut evaluation, result);
     }
     if evaluation.metrics.witnesses > limits.max_witnesses
         && !evaluation.failures.iter().any(|failure| {
@@ -437,10 +503,42 @@ fn merge(evaluation: &mut Evaluation, mut other: Evaluation) {
     evaluation.metrics.witnesses += other.metrics.witnesses;
 }
 
+/// Full file-local projections preserve the original local semantic side tables. `engine` matches
+/// the plan's inputs.
+pub(super) fn relational_rows(
+    code_rule: &CompiledCodeRule,
+    clause: &CompiledClause,
+    plan: &super::relational::Plan,
+    snapshot: &Snapshot,
+    metrics: &mut Metrics,
+    engine: Engine,
+) -> Result<Vec<evidence::Rows>> {
+    let _calls = stateless_calls(
+        code_rule,
+        snapshot,
+        std::slice::from_ref(clause),
+        metrics,
+        engine,
+    )?;
+    plan.inputs
+        .iter()
+        .map(|(_, input)| {
+            stateless_rows(
+                code_rule,
+                clause,
+                (input, evidence::Side::Counted),
+                snapshot,
+                metrics,
+                engine,
+            )
+        })
+        .collect()
+}
+
 /// An evidence relation's rows in a stateless snapshot: each file of the code rule's scope and the
 /// relation's domain evaluated alone by `engine`, so that one file's failure makes only its rows
 /// unknown.
-fn stateless_rows(
+pub(super) fn stateless_rows(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
     (relation, side): (&FactQuery, evidence::Side),
@@ -513,7 +611,7 @@ fn stateless_calls(
 ) -> Result<Option<calls::EvaluationSlot>> {
     let mut terms = Terms::default();
     for clause in clauses {
-        if let ClauseKind::Forbid(query) = &clause.kind {
+        if let Some(query) = clause.kind.calls_query() {
             for term in query.calls() {
                 terms.add(&term);
             }
@@ -643,7 +741,7 @@ fn stateless_calls(
             evaluated.insert(Arc::clone(&term.seed_key), starts);
         }
     }
-    let view = calls::CallsView::build(terms.questions(), summaries.clone(), &seeds);
+    let view = calls::CallsView::build_modes(terms.questions(), summaries.clone(), &seeds);
     Ok(Some(calls::EvaluationSlot::install(
         calls::EvaluationCalls {
             view: Arc::new(view),

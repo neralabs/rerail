@@ -1,4 +1,4 @@
-use super::calls::{SeedScope, TermId, Through};
+use super::calls::{Mode, SeedScope, TermId};
 use super::json::invalid;
 use super::matcher::{GrammarMatcher, Transform};
 use super::module_path::ModulePath;
@@ -418,12 +418,21 @@ pub(super) enum FixPlan {
 pub(super) struct Projection {
     pub(super) field: String,
     pub(super) source: ProjectionSource,
+    /// First regex match's selected group, or null when the source/group does not match.
+    pub(super) extract: Option<(Regex, usize)>,
 }
 
 #[derive(Clone)]
 pub(super) enum ProjectionSource {
     /// A capture's text (a multi-node capture's nodes joined as in the source).
     Capture(String),
+    /// A capture's source byte offset, for identity and partition keys.
+    CaptureStart(String),
+    CaptureEnd(String),
+    CaptureKind(String),
+    CaptureLine(String),
+    /// Decoded/exported capture text, or a host node's source text.
+    CaptureText(String),
     /// The file's path, its directory, its file name, or its name without extensions.
     Path,
     Directory,
@@ -441,6 +450,22 @@ pub(super) struct FactQuery {
     pub(super) predicate: Option<Value>,
     /// Rows projected from an AST query's matches in every file of the code rule's scope.
     pub(super) ast: Arc<AstRelation>,
+    pub(super) closure: Vec<NameClosure>,
+    pub(super) each: Option<String>,
+    pub(super) anchor: Anchor,
+}
+
+/// A staged, cycle-safe closure over authored relation fields. Earlier sets may seed later sets;
+/// later edges never feed back into an earlier stage.
+#[derive(Clone, Debug)]
+pub(super) struct NameClosure {
+    pub(super) name: String,
+    pub(super) seeds: Vec<String>,
+    pub(super) seed_field: Option<String>,
+    pub(super) edges: Option<(String, String)>,
+    pub(super) extends: Vec<String>,
+    pub(super) partition_by: Vec<String>,
+    pub(super) contains: Vec<(String, String)>,
 }
 
 #[derive(Clone)]
@@ -458,11 +483,58 @@ pub(super) enum RegexSource {
     Path,
 }
 
+/// Optional filters over matched text and independent source lines.
+#[derive(Clone, Default)]
+pub(super) struct RegexOptions {
+    pub(super) include: Vec<Regex>,
+    pub(super) exclude: Vec<Regex>,
+    pub(super) content_include: Vec<Regex>,
+    pub(super) content_exclude: Vec<Regex>,
+    pub(super) lines: Option<RegexLines>,
+    pub(super) paths: Option<CodeRuleScope>,
+}
+
+#[derive(Clone)]
+pub(super) struct RegexLines {
+    pub(super) include: Vec<Regex>,
+    pub(super) exclude: Vec<Regex>,
+    pub(super) first: bool,
+    pub(super) lf_only: bool,
+    pub(super) state: Option<RegexLineState>,
+    pub(super) indentation: Option<RegexIndentation>,
+}
+
+#[derive(Clone)]
+pub(super) struct RegexLineState {
+    pub(super) initial: usize,
+    pub(super) emit: Vec<bool>,
+    pub(super) transitions: Vec<RegexLineTransition>,
+}
+
+#[derive(Clone)]
+pub(super) struct RegexLineTransition {
+    pub(super) from: usize,
+    pub(super) to: usize,
+    pub(super) pattern: Regex,
+    pub(super) min: u64,
+    pub(super) max: Option<u64>,
+    pub(super) odd: Option<bool>,
+    pub(super) skip: bool,
+}
+
+#[derive(Clone)]
+pub(super) struct RegexIndentation {
+    pub(super) exclude_under: Regex,
+    pub(super) reset: Regex,
+    pub(super) ignore: Vec<Regex>,
+}
+
 #[derive(Clone)]
 pub(super) enum Query {
     Regex {
         regex: Regex,
         source: RegexSource,
+        options: Box<RegexOptions>,
     },
     Ast {
         /// One compiled matcher per grammar the rule language spans; a file uses the grammar its label selects.
@@ -517,7 +589,7 @@ pub(super) struct CallsTerm {
     pub(super) key: Arc<str>,
     /// Identifies its seed query: terms differing only in `through` share it.
     pub(super) seed_key: Arc<str>,
-    pub(super) through: Through,
+    pub(super) through: Mode,
     /// Which definitions the seed query's witnesses stand for.
     pub(super) seed_scope: SeedScope,
     /// `{ all: [{ kind: function_definition }, <inner rule>] }` with the query's utilities: its
@@ -553,7 +625,7 @@ impl Terms {
     }
 
     /// Each term's key and mode, by id: what a `CallsView` asks.
-    pub(super) fn questions(&self) -> Vec<(Arc<str>, Through)> {
+    pub(super) fn questions(&self) -> Vec<(Arc<str>, Mode)> {
         self.terms
             .iter()
             .map(|term| (Arc::clone(&term.key), term.through))
@@ -564,6 +636,7 @@ impl Terms {
 #[derive(Clone)]
 pub(super) enum ClauseKind {
     Forbid(Query),
+    Relational(super::relational::Plan),
     RequireEach {
         subject: FactQuery,
         evidence: FactQuery,
@@ -578,12 +651,24 @@ pub(super) enum ClauseKind {
     Llm,
 }
 
+impl ClauseKind {
+    pub(super) fn calls_query(&self) -> Option<&Query> {
+        match self {
+            Self::Forbid(query) => Some(query),
+            Self::Relational(plan) => plan.references.as_ref().map(|reference| &reference.query),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct CompiledClause {
     pub(super) id: String,
     pub(super) violation: ViolationSpec,
     pub(super) kind: ClauseKind,
     pub(super) synthetic: bool,
+    /// A SQL input needs only its selected anchor and already computed projection.
+    pub(super) projected_only: bool,
     /// A synthetic leaf under a `select_when`'s `exists` side: one witness answers it, so a file's
     /// evaluation stops at its first witness.
     pub(super) decision: bool,
@@ -618,6 +703,8 @@ impl RuleMode {
 #[derive(Clone)]
 pub(super) struct CompiledCodeRule {
     pub(super) id: String,
+    /// Report the rule's combined findings only when their count exceeds this ceiling.
+    pub(super) report_count_gt: Option<usize>,
     pub(super) rule_mode: RuleMode,
     pub(super) canonical: String,
     pub(super) digest: String,
@@ -636,6 +723,10 @@ impl CompiledCodeRule {
                 subject.ast.query.reads_server_graph() || evidence.ast.query.reads_server_graph()
             }
             ClauseKind::Budget { query, .. } => query.ast.query.reads_server_graph(),
+            ClauseKind::Relational(plan) => plan
+                .inputs
+                .iter()
+                .any(|(_, input)| input.ast.query.reads_server_graph()),
             ClauseKind::Llm => false,
         })
     }

@@ -92,6 +92,7 @@ fn regex_leaf() -> Query {
     Query::Regex {
         regex: regex::Regex::new("x").expect("regex"),
         source: RegexSource::Content,
+        options: Default::default(),
     }
 }
 

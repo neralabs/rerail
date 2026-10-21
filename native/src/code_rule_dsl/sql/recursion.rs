@@ -237,6 +237,7 @@ fn visit<'r>(rule: &'r AstMatcher, stop: bool, seen: &mut dyn FnMut(&'r AstMatch
                 | Semantic::Arguments(_)
                 | Semantic::Capture(_)
                 | Semantic::Layout(_)
+                | Semantic::FilePath(_)
                 | Semantic::Calls(_) => {}
             }
             for item in inner {
@@ -572,6 +573,7 @@ fn holds(rule: &AstMatcher, scopes: &[Held], names: &mut Held) {
             Semantic::Resolves(_)
             | Semantic::Value(_)
             | Semantic::Layout(_)
+            | Semantic::FilePath(_)
             | Semantic::Host(_) => {}
         },
         AstMatcher::Kind(_) | AstMatcher::Regex(_) | AstMatcher::Compare(_) | AstMatcher::Never => {

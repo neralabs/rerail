@@ -663,11 +663,23 @@ impl FilePass {
         for &id in &file.candidates.regex {
             let code_rule = &code_rules[id.0];
             let clause = &code_rule.clauses[id.1];
-            let ClauseKind::Forbid(Query::Regex { regex, source }) = &clause.kind else {
+            let ClauseKind::Forbid(Query::Regex {
+                regex,
+                source,
+                options,
+            }) = &clause.kind
+            else {
                 unreachable!()
             };
             let witnesses = file.witnesses.entry(id).or_default();
             witnesses.clear();
+            if options
+                .paths
+                .as_ref()
+                .is_some_and(|paths| !paths.matches(&file.input.path))
+            {
+                continue;
+            }
             let limits = &code_rule.capabilities.limits;
             if file.input.source.len() > limits.max_source_bytes || limits.max_files == 0 {
                 file.failures
@@ -692,7 +704,12 @@ impl FilePass {
             // Each clause scans under its own allowance, so one clause's matches spend none of
             // another's; the file's clause-work ceiling bounds them together.
             let Some(((matches, complete), ran)) = work.run(haystack.len(), || {
-                query::regex_matches(regex, haystack, limits.max_witnesses.saturating_add(1))
+                query::regex_query_matches(
+                    regex,
+                    haystack,
+                    options,
+                    limits.max_witnesses.saturating_add(1),
+                )
             }) else {
                 file.failures
                     .insert(id, (FILE_BUDGET_EXCEEDED, FILE_CLAUSE_WORK_EXCEEDED));
@@ -702,7 +719,20 @@ impl FilePass {
             let plain =
                 regex.capture_names().flatten().next().is_none() && clause.violation.fix.is_none();
             let mut stopped = false;
-            for range in matches {
+            for matched in matches {
+                let range = matched.range;
+                let offset = matched.context.start;
+                let context = &haystack[matched.context];
+                let span = |start, end| {
+                    let mut result = span(offset + start, offset + end);
+                    if let Some(line) = matched.line {
+                        result.start_line = line;
+                        result.end_line = line;
+                        result.start_column = start;
+                        result.end_column = end;
+                    }
+                    result
+                };
                 if witnesses.len() >= limits.max_witnesses {
                     // An output cap, not a work limit: the clause found more than it may report.
                     file.failures
@@ -711,7 +741,7 @@ impl FilePass {
                     break;
                 }
                 let found = regex
-                    .captures_at(haystack, range.start)
+                    .captures_at(context, range.start)
                     .expect("a regex match has captures");
                 assert_eq!(found.get(0).expect("whole match").range(), range);
                 if plain {
@@ -1042,10 +1072,12 @@ impl<'c> DocumentRead<'c> {
                 // failure reports `file.syntax` in place of its static message
                 // (`results::failure_message`).
                 SyntaxReading::Unread(message) => {
-                    for &(slot, _) in &slots {
-                        file.failures
-                            .entry(file.candidates.ast[slot])
-                            .or_insert(("source-incomplete", UNREAD));
+                    for &(slot, grammar) in &slots {
+                        if grammar.invalid_syntax.is_none() {
+                            file.failures
+                                .entry(file.candidates.ast[slot])
+                                .or_insert(("source-incomplete", UNREAD));
+                        }
                     }
                     file.syntax.get_or_insert(message);
                 }
@@ -1067,7 +1099,10 @@ impl<'c> DocumentRead<'c> {
             } else {
                 &errors
             };
-            if !file.failures.contains_key(&id) && read.incomplete(grammar) && gates.admit(grammar)
+            if !file.failures.contains_key(&id)
+                && grammar.invalid_syntax.is_none()
+                && read.incomplete(grammar)
+                && gates.admit(grammar)
             {
                 file.failures
                     .insert(id, ("source-incomplete", "file has syntax errors"));
@@ -1095,6 +1130,9 @@ impl<'c> DocumentRead<'c> {
             .iter()
             .map(|&(slot, grammar)| {
                 !file.failures.contains_key(&file.candidates.ast[slot])
+                    && grammar
+                        .invalid_syntax
+                        .is_none_or(|invalid| invalid != errors.is_empty())
                     && grammar
                         .text
                         .as_ref()
@@ -1720,7 +1758,9 @@ fn evaluate_clauses(
                             *work = crate::code_rule_dsl::matcher::end_clause().0;
                         }
                         let errors = if grammar.crosses { file_errors } else { errors };
-                        if errors.meets(&place.place(matched.get_node())) {
+                        if grammar.invalid_syntax != Some(true)
+                            && errors.meets(&place.place(matched.get_node()))
+                        {
                             return Ok(true);
                         }
                         let matched_node = matched.get_node();
@@ -1778,7 +1818,12 @@ fn evaluate_clauses(
                                 return Ok(false);
                             }
                         };
-                        for witness in found {
+                        for mut witness in found {
+                            if code_rule.clauses[id.1].projected_only {
+                                witness.span =
+                                    violations::anchored_span(&violation.anchor, &witness).0;
+                                witness.captures.retain_projection();
+                            }
                             let witnesses = file.witnesses.get_mut(&id).expect("eligible check");
                             if witnesses.len() >= limits.max_witnesses {
                                 // An output cap, not a work limit.

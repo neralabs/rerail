@@ -1,0 +1,2380 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-lazy-result-usage",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer lazy_result_usage at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "impl/**/*.py",
+      "data_layer/**/*.py",
+      "_internal/**/*.py",
+      "l[0-9][0-9][0-9][0-9]_*/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**",
+      "**/test/**",
+      "**/tests/**",
+      "**/test_*.py"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "options": {
+          "oracleAnalyzer": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "language": "python",
+        "utils": {
+          "lazy-base": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "identifier"
+                      },
+                      {
+                        "regex": "^(?:ABC|Protocol)$"
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "attribute"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^(?:ABC|Protocol)$"
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "attribute"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "subscript"
+                      },
+                      {
+                        "kind": "generic_type"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "matches": "lazy-base",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "execute",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "regex": "^(?:execute)$"
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "name"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "class_definition"
+                    },
+                    {
+                      "has": {
+                        "all": [
+                          {
+                            "regex": "Query|Table|Transaction"
+                          },
+                          {
+                            "not": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:AsyncConnectionWrapper|AsyncCursor|BaseDeferredQuery|Connection|Cursor|DeferredInsertFromQueryBuilder|InProcessExecutor|JobExecutor|MigrationExecutorProtocol|SyncExecutor)$"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "not": {
+                              "regex": "^_*(?:Async|Lazy)"
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor",
+                        "field": "name"
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "has": {
+                            "matches": "lazy-base",
+                            "stopBy": "neighbor"
+                          },
+                          "stopBy": "neighbor",
+                          "field": "superclasses"
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "has": {
+                            "any": [
+                              {
+                                "all": [
+                                  {
+                                    "kind": "function_definition"
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "regex": "^(?:execute_lazy)$"
+                                        }
+                                      ],
+                                      "stopBy": "neighbor",
+                                      "field": "name"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "all": [
+                                  {
+                                    "kind": "decorated_definition"
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "function_definition"
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": "^(?:execute_lazy)$"
+                                              }
+                                            ],
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        }
+                                      ],
+                                      "stopBy": "neighbor"
+                                    }
+                                  }
+                                ]
+                              }
+                            ],
+                            "stopBy": "neighbor"
+                          },
+                          "stopBy": "neighbor",
+                          "field": "body"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": {
+                    "kind": "class_definition"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "regex": "LazyResult|LazySeq|DeferredFuture",
+                    "stopBy": "neighbor",
+                    "field": "return_type"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "all": [
+                      {
+                        "kind": "block"
+                      },
+                      {
+                        "has": {
+                          "any": [
+                            {
+                              "kind": "pass_statement"
+                            },
+                            {
+                              "all": [
+                                {
+                                  "kind": "expression_statement"
+                                },
+                                {
+                                  "has": {
+                                    "kind": "ellipsis",
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ]
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        }
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "all": [
+                              {
+                                "not": {
+                                  "kind": "comment"
+                                }
+                              },
+                              {
+                                "nthChild": {
+                                  "position": 2,
+                                  "ofRule": {
+                                    "not": {
+                                      "kind": "comment"
+                                    }
+                                  }
+                                }
+                              }
+                            ],
+                            "stopBy": "neighbor"
+                          }
+                        }
+                      }
+                    ],
+                    "stopBy": "neighbor",
+                    "field": "body"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "decorated_definition"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "decorator"
+                            },
+                            {
+                              "has": {
+                                "any": [
+                                  {
+                                    "any": [
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "identifier"
+                                          },
+                                          {
+                                            "regex": "^(?:abstractmethod|legacy_async|legacy_sync)$"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "attribute"
+                                          },
+                                          {
+                                            "has": {
+                                              "all": [
+                                                {
+                                                  "kind": "identifier"
+                                                },
+                                                {
+                                                  "regex": "^(?:abstractmethod|legacy_async|legacy_sync)$"
+                                                }
+                                              ],
+                                              "stopBy": "neighbor",
+                                              "field": "attribute"
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "all": [
+                                      {
+                                        "kind": "call"
+                                      },
+                                      {
+                                        "has": {
+                                          "any": [
+                                            {
+                                              "all": [
+                                                {
+                                                  "kind": "identifier"
+                                                },
+                                                {
+                                                  "regex": "^(?:abstractmethod|legacy_async|legacy_sync)$"
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "all": [
+                                                {
+                                                  "kind": "attribute"
+                                                },
+                                                {
+                                                  "has": {
+                                                    "all": [
+                                                      {
+                                                        "kind": "identifier"
+                                                      },
+                                                      {
+                                                        "regex": "^(?:abstractmethod|legacy_async|legacy_sync)$"
+                                                      }
+                                                    ],
+                                                    "stopBy": "neighbor",
+                                                    "field": "attribute"
+                                                  }
+                                                }
+                                              ]
+                                            }
+                                          ],
+                                          "stopBy": "neighbor",
+                                          "field": "function"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ],
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    ],
+                    "stopBy": "neighbor"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "any": [
+                      {
+                        "all": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "regex": "^(?:execute_lazy)$"
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "kind": "attribute"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:execute_lazy)$"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "attribute"
+                            }
+                          }
+                        ]
+                      }
+                    ],
+                    "stopBy": "end"
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "notRegex": "tests/|test_|__pycache__|l2055_lazy_result/|l2070_batching/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "lazy_result_usage",
+        "anchor": "witness.span",
+        "message": "lazy_result_usage: execute"
+      }
+    },
+    {
+      "id": "first",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "regex": "^(?:first)$"
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "name"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "class_definition"
+                    },
+                    {
+                      "has": {
+                        "all": [
+                          {
+                            "regex": "Query|Table|Transaction"
+                          },
+                          {
+                            "not": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:AsyncConnectionWrapper|AsyncCursor|BaseDeferredQuery|Connection|Cursor|DeferredInsertFromQueryBuilder|InProcessExecutor|JobExecutor|MigrationExecutorProtocol|SyncExecutor)$"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "not": {
+                              "regex": "^_*(?:Async|Lazy)"
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor",
+                        "field": "name"
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "has": {
+                            "matches": "lazy-base",
+                            "stopBy": "neighbor"
+                          },
+                          "stopBy": "neighbor",
+                          "field": "superclasses"
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "has": {
+                            "any": [
+                              {
+                                "all": [
+                                  {
+                                    "kind": "function_definition"
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "regex": "^(?:execute_lazy|first_lazy)$"
+                                        }
+                                      ],
+                                      "stopBy": "neighbor",
+                                      "field": "name"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "all": [
+                                  {
+                                    "kind": "decorated_definition"
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "function_definition"
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": "^(?:execute_lazy|first_lazy)$"
+                                              }
+                                            ],
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        }
+                                      ],
+                                      "stopBy": "neighbor"
+                                    }
+                                  }
+                                ]
+                              }
+                            ],
+                            "stopBy": "neighbor"
+                          },
+                          "stopBy": "neighbor",
+                          "field": "body"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": {
+                    "kind": "class_definition"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "regex": "LazyResult|LazySeq|DeferredFuture",
+                    "stopBy": "neighbor",
+                    "field": "return_type"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "all": [
+                      {
+                        "kind": "block"
+                      },
+                      {
+                        "has": {
+                          "any": [
+                            {
+                              "kind": "pass_statement"
+                            },
+                            {
+                              "all": [
+                                {
+                                  "kind": "expression_statement"
+                                },
+                                {
+                                  "has": {
+                                    "kind": "ellipsis",
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ]
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        }
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "all": [
+                              {
+                                "not": {
+                                  "kind": "comment"
+                                }
+                              },
+                              {
+                                "nthChild": {
+                                  "position": 2,
+                                  "ofRule": {
+                                    "not": {
+                                      "kind": "comment"
+                                    }
+                                  }
+                                }
+                              }
+                            ],
+                            "stopBy": "neighbor"
+                          }
+                        }
+                      }
+                    ],
+                    "stopBy": "neighbor",
+                    "field": "body"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "decorated_definition"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "decorator"
+                            },
+                            {
+                              "has": {
+                                "any": [
+                                  {
+                                    "any": [
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "identifier"
+                                          },
+                                          {
+                                            "regex": "^(?:abstractmethod|legacy_async|legacy_sync)$"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "attribute"
+                                          },
+                                          {
+                                            "has": {
+                                              "all": [
+                                                {
+                                                  "kind": "identifier"
+                                                },
+                                                {
+                                                  "regex": "^(?:abstractmethod|legacy_async|legacy_sync)$"
+                                                }
+                                              ],
+                                              "stopBy": "neighbor",
+                                              "field": "attribute"
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "all": [
+                                      {
+                                        "kind": "call"
+                                      },
+                                      {
+                                        "has": {
+                                          "any": [
+                                            {
+                                              "all": [
+                                                {
+                                                  "kind": "identifier"
+                                                },
+                                                {
+                                                  "regex": "^(?:abstractmethod|legacy_async|legacy_sync)$"
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "all": [
+                                                {
+                                                  "kind": "attribute"
+                                                },
+                                                {
+                                                  "has": {
+                                                    "all": [
+                                                      {
+                                                        "kind": "identifier"
+                                                      },
+                                                      {
+                                                        "regex": "^(?:abstractmethod|legacy_async|legacy_sync)$"
+                                                      }
+                                                    ],
+                                                    "stopBy": "neighbor",
+                                                    "field": "attribute"
+                                                  }
+                                                }
+                                              ]
+                                            }
+                                          ],
+                                          "stopBy": "neighbor",
+                                          "field": "function"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ],
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    ],
+                    "stopBy": "neighbor"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "any": [
+                      {
+                        "all": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "regex": "^(?:execute_lazy|first_lazy)$"
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "kind": "attribute"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:execute_lazy|first_lazy)$"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "attribute"
+                            }
+                          }
+                        ]
+                      }
+                    ],
+                    "stopBy": "end"
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "notRegex": "tests/|test_|__pycache__|l2055_lazy_result/|l2070_batching/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "lazy_result_usage",
+        "anchor": "witness.span",
+        "message": "lazy_result_usage: first"
+      }
+    },
+    {
+      "id": "one",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "regex": "^(?:one)$"
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "name"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "class_definition"
+                    },
+                    {
+                      "has": {
+                        "all": [
+                          {
+                            "regex": "Query|Table|Transaction"
+                          },
+                          {
+                            "not": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:AsyncConnectionWrapper|AsyncCursor|BaseDeferredQuery|Connection|Cursor|DeferredInsertFromQueryBuilder|InProcessExecutor|JobExecutor|MigrationExecutorProtocol|SyncExecutor)$"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "not": {
+                              "regex": "^_*(?:Async|Lazy)"
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor",
+                        "field": "name"
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "has": {
+                            "matches": "lazy-base",
+                            "stopBy": "neighbor"
+                          },
+                          "stopBy": "neighbor",
+                          "field": "superclasses"
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "has": {
+                            "any": [
+                              {
+                                "all": [
+                                  {
+                                    "kind": "function_definition"
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "regex": "^(?:execute_lazy|one_lazy)$"
+                                        }
+                                      ],
+                                      "stopBy": "neighbor",
+                                      "field": "name"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "all": [
+                                  {
+                                    "kind": "decorated_definition"
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "function_definition"
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": "^(?:execute_lazy|one_lazy)$"
+                                              }
+                                            ],
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        }
+                                      ],
+                                      "stopBy": "neighbor"
+                                    }
+                                  }
+                                ]
+                              }
+                            ],
+                            "stopBy": "neighbor"
+                          },
+                          "stopBy": "neighbor",
+                          "field": "body"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": {
+                    "kind": "class_definition"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "regex": "LazyResult|LazySeq|DeferredFuture",
+                    "stopBy": "neighbor",
+                    "field": "return_type"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "all": [
+                      {
+                        "kind": "block"
+                      },
+                      {
+                        "has": {
+                          "any": [
+                            {
+                              "kind": "pass_statement"
+                            },
+                            {
+                              "all": [
+                                {
+                                  "kind": "expression_statement"
+                                },
+                                {
+                                  "has": {
+                                    "kind": "ellipsis",
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ]
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        }
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "all": [
+                              {
+                                "not": {
+                                  "kind": "comment"
+                                }
+                              },
+                              {
+                                "nthChild": {
+                                  "position": 2,
+                                  "ofRule": {
+                                    "not": {
+                                      "kind": "comment"
+                                    }
+                                  }
+                                }
+                              }
+                            ],
+                            "stopBy": "neighbor"
+                          }
+                        }
+                      }
+                    ],
+                    "stopBy": "neighbor",
+                    "field": "body"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "decorated_definition"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "decorator"
+                            },
+                            {
+                              "has": {
+                                "any": [
+                                  {
+                                    "any": [
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "identifier"
+                                          },
+                                          {
+                                            "regex": "^(?:abstractmethod|legacy_async|legacy_sync)$"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "attribute"
+                                          },
+                                          {
+                                            "has": {
+                                              "all": [
+                                                {
+                                                  "kind": "identifier"
+                                                },
+                                                {
+                                                  "regex": "^(?:abstractmethod|legacy_async|legacy_sync)$"
+                                                }
+                                              ],
+                                              "stopBy": "neighbor",
+                                              "field": "attribute"
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "all": [
+                                      {
+                                        "kind": "call"
+                                      },
+                                      {
+                                        "has": {
+                                          "any": [
+                                            {
+                                              "all": [
+                                                {
+                                                  "kind": "identifier"
+                                                },
+                                                {
+                                                  "regex": "^(?:abstractmethod|legacy_async|legacy_sync)$"
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "all": [
+                                                {
+                                                  "kind": "attribute"
+                                                },
+                                                {
+                                                  "has": {
+                                                    "all": [
+                                                      {
+                                                        "kind": "identifier"
+                                                      },
+                                                      {
+                                                        "regex": "^(?:abstractmethod|legacy_async|legacy_sync)$"
+                                                      }
+                                                    ],
+                                                    "stopBy": "neighbor",
+                                                    "field": "attribute"
+                                                  }
+                                                }
+                                              ]
+                                            }
+                                          ],
+                                          "stopBy": "neighbor",
+                                          "field": "function"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ],
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    ],
+                    "stopBy": "neighbor"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "any": [
+                      {
+                        "all": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "regex": "^(?:execute_lazy|one_lazy)$"
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "kind": "attribute"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:execute_lazy|one_lazy)$"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "attribute"
+                            }
+                          }
+                        ]
+                      }
+                    ],
+                    "stopBy": "end"
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "notRegex": "tests/|test_|__pycache__|l2055_lazy_result/|l2070_batching/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "lazy_result_usage",
+        "anchor": "witness.span",
+        "message": "lazy_result_usage: one"
+      }
+    },
+    {
+      "id": "one_or_none",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "regex": "^(?:one_or_none)$"
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "name"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "class_definition"
+                    },
+                    {
+                      "has": {
+                        "all": [
+                          {
+                            "regex": "Query|Table|Transaction"
+                          },
+                          {
+                            "not": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:AsyncConnectionWrapper|AsyncCursor|BaseDeferredQuery|Connection|Cursor|DeferredInsertFromQueryBuilder|InProcessExecutor|JobExecutor|MigrationExecutorProtocol|SyncExecutor)$"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "not": {
+                              "regex": "^_*(?:Async|Lazy)"
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor",
+                        "field": "name"
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "has": {
+                            "matches": "lazy-base",
+                            "stopBy": "neighbor"
+                          },
+                          "stopBy": "neighbor",
+                          "field": "superclasses"
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "has": {
+                            "any": [
+                              {
+                                "all": [
+                                  {
+                                    "kind": "function_definition"
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "regex": "^(?:execute_lazy|one_or_none_lazy)$"
+                                        }
+                                      ],
+                                      "stopBy": "neighbor",
+                                      "field": "name"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "all": [
+                                  {
+                                    "kind": "decorated_definition"
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "function_definition"
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": "^(?:execute_lazy|one_or_none_lazy)$"
+                                              }
+                                            ],
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        }
+                                      ],
+                                      "stopBy": "neighbor"
+                                    }
+                                  }
+                                ]
+                              }
+                            ],
+                            "stopBy": "neighbor"
+                          },
+                          "stopBy": "neighbor",
+                          "field": "body"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": {
+                    "kind": "class_definition"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "regex": "LazyResult|LazySeq|DeferredFuture",
+                    "stopBy": "neighbor",
+                    "field": "return_type"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "all": [
+                      {
+                        "kind": "block"
+                      },
+                      {
+                        "has": {
+                          "any": [
+                            {
+                              "kind": "pass_statement"
+                            },
+                            {
+                              "all": [
+                                {
+                                  "kind": "expression_statement"
+                                },
+                                {
+                                  "has": {
+                                    "kind": "ellipsis",
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ]
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        }
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "all": [
+                              {
+                                "not": {
+                                  "kind": "comment"
+                                }
+                              },
+                              {
+                                "nthChild": {
+                                  "position": 2,
+                                  "ofRule": {
+                                    "not": {
+                                      "kind": "comment"
+                                    }
+                                  }
+                                }
+                              }
+                            ],
+                            "stopBy": "neighbor"
+                          }
+                        }
+                      }
+                    ],
+                    "stopBy": "neighbor",
+                    "field": "body"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "decorated_definition"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "decorator"
+                            },
+                            {
+                              "has": {
+                                "any": [
+                                  {
+                                    "any": [
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "identifier"
+                                          },
+                                          {
+                                            "regex": "^(?:abstractmethod|legacy_async|legacy_sync)$"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "attribute"
+                                          },
+                                          {
+                                            "has": {
+                                              "all": [
+                                                {
+                                                  "kind": "identifier"
+                                                },
+                                                {
+                                                  "regex": "^(?:abstractmethod|legacy_async|legacy_sync)$"
+                                                }
+                                              ],
+                                              "stopBy": "neighbor",
+                                              "field": "attribute"
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "all": [
+                                      {
+                                        "kind": "call"
+                                      },
+                                      {
+                                        "has": {
+                                          "any": [
+                                            {
+                                              "all": [
+                                                {
+                                                  "kind": "identifier"
+                                                },
+                                                {
+                                                  "regex": "^(?:abstractmethod|legacy_async|legacy_sync)$"
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "all": [
+                                                {
+                                                  "kind": "attribute"
+                                                },
+                                                {
+                                                  "has": {
+                                                    "all": [
+                                                      {
+                                                        "kind": "identifier"
+                                                      },
+                                                      {
+                                                        "regex": "^(?:abstractmethod|legacy_async|legacy_sync)$"
+                                                      }
+                                                    ],
+                                                    "stopBy": "neighbor",
+                                                    "field": "attribute"
+                                                  }
+                                                }
+                                              ]
+                                            }
+                                          ],
+                                          "stopBy": "neighbor",
+                                          "field": "function"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ],
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    ],
+                    "stopBy": "neighbor"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "any": [
+                      {
+                        "all": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "regex": "^(?:execute_lazy|one_or_none_lazy)$"
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "kind": "attribute"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:execute_lazy|one_or_none_lazy)$"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "attribute"
+                            }
+                          }
+                        ]
+                      }
+                    ],
+                    "stopBy": "end"
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "notRegex": "tests/|test_|__pycache__|l2055_lazy_result/|l2070_batching/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "lazy_result_usage",
+        "anchor": "witness.span",
+        "message": "lazy_result_usage: one_or_none"
+      }
+    },
+    {
+      "id": "select_one",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "regex": "^(?:select_one)$"
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "name"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "class_definition"
+                    },
+                    {
+                      "has": {
+                        "all": [
+                          {
+                            "regex": "Query|Table|Transaction"
+                          },
+                          {
+                            "not": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:AsyncConnectionWrapper|AsyncCursor|BaseDeferredQuery|Connection|Cursor|DeferredInsertFromQueryBuilder|InProcessExecutor|JobExecutor|MigrationExecutorProtocol|SyncExecutor)$"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "not": {
+                              "regex": "^_*(?:Async|Lazy)"
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor",
+                        "field": "name"
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "has": {
+                            "matches": "lazy-base",
+                            "stopBy": "neighbor"
+                          },
+                          "stopBy": "neighbor",
+                          "field": "superclasses"
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "has": {
+                            "any": [
+                              {
+                                "all": [
+                                  {
+                                    "kind": "function_definition"
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "regex": "^(?:execute_lazy|select_one_lazy)$"
+                                        }
+                                      ],
+                                      "stopBy": "neighbor",
+                                      "field": "name"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "all": [
+                                  {
+                                    "kind": "decorated_definition"
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "function_definition"
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": "^(?:execute_lazy|select_one_lazy)$"
+                                              }
+                                            ],
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        }
+                                      ],
+                                      "stopBy": "neighbor"
+                                    }
+                                  }
+                                ]
+                              }
+                            ],
+                            "stopBy": "neighbor"
+                          },
+                          "stopBy": "neighbor",
+                          "field": "body"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": {
+                    "kind": "class_definition"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "regex": "LazyResult|LazySeq|DeferredFuture",
+                    "stopBy": "neighbor",
+                    "field": "return_type"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "all": [
+                      {
+                        "kind": "block"
+                      },
+                      {
+                        "has": {
+                          "any": [
+                            {
+                              "kind": "pass_statement"
+                            },
+                            {
+                              "all": [
+                                {
+                                  "kind": "expression_statement"
+                                },
+                                {
+                                  "has": {
+                                    "kind": "ellipsis",
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ]
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        }
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "all": [
+                              {
+                                "not": {
+                                  "kind": "comment"
+                                }
+                              },
+                              {
+                                "nthChild": {
+                                  "position": 2,
+                                  "ofRule": {
+                                    "not": {
+                                      "kind": "comment"
+                                    }
+                                  }
+                                }
+                              }
+                            ],
+                            "stopBy": "neighbor"
+                          }
+                        }
+                      }
+                    ],
+                    "stopBy": "neighbor",
+                    "field": "body"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "decorated_definition"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "decorator"
+                            },
+                            {
+                              "has": {
+                                "any": [
+                                  {
+                                    "any": [
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "identifier"
+                                          },
+                                          {
+                                            "regex": "^(?:abstractmethod|legacy_async|legacy_sync)$"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "attribute"
+                                          },
+                                          {
+                                            "has": {
+                                              "all": [
+                                                {
+                                                  "kind": "identifier"
+                                                },
+                                                {
+                                                  "regex": "^(?:abstractmethod|legacy_async|legacy_sync)$"
+                                                }
+                                              ],
+                                              "stopBy": "neighbor",
+                                              "field": "attribute"
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "all": [
+                                      {
+                                        "kind": "call"
+                                      },
+                                      {
+                                        "has": {
+                                          "any": [
+                                            {
+                                              "all": [
+                                                {
+                                                  "kind": "identifier"
+                                                },
+                                                {
+                                                  "regex": "^(?:abstractmethod|legacy_async|legacy_sync)$"
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "all": [
+                                                {
+                                                  "kind": "attribute"
+                                                },
+                                                {
+                                                  "has": {
+                                                    "all": [
+                                                      {
+                                                        "kind": "identifier"
+                                                      },
+                                                      {
+                                                        "regex": "^(?:abstractmethod|legacy_async|legacy_sync)$"
+                                                      }
+                                                    ],
+                                                    "stopBy": "neighbor",
+                                                    "field": "attribute"
+                                                  }
+                                                }
+                                              ]
+                                            }
+                                          ],
+                                          "stopBy": "neighbor",
+                                          "field": "function"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ],
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    ],
+                    "stopBy": "neighbor"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "any": [
+                      {
+                        "all": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "regex": "^(?:execute_lazy|select_one_lazy)$"
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "kind": "attribute"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:execute_lazy|select_one_lazy)$"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "attribute"
+                            }
+                          }
+                        ]
+                      }
+                    ],
+                    "stopBy": "end"
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "notRegex": "tests/|test_|__pycache__|l2055_lazy_result/|l2070_batching/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "lazy_result_usage",
+        "anchor": "witness.span",
+        "message": "lazy_result_usage: select_one"
+      }
+    },
+    {
+      "id": "select_one_or_raise",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "regex": "^(?:select_one_or_raise)$"
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "name"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "class_definition"
+                    },
+                    {
+                      "has": {
+                        "all": [
+                          {
+                            "regex": "Query|Table|Transaction"
+                          },
+                          {
+                            "not": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:AsyncConnectionWrapper|AsyncCursor|BaseDeferredQuery|Connection|Cursor|DeferredInsertFromQueryBuilder|InProcessExecutor|JobExecutor|MigrationExecutorProtocol|SyncExecutor)$"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "not": {
+                              "regex": "^_*(?:Async|Lazy)"
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor",
+                        "field": "name"
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "has": {
+                            "matches": "lazy-base",
+                            "stopBy": "neighbor"
+                          },
+                          "stopBy": "neighbor",
+                          "field": "superclasses"
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "has": {
+                            "any": [
+                              {
+                                "all": [
+                                  {
+                                    "kind": "function_definition"
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "regex": "^(?:select_one_or_raise_lazy)$"
+                                        }
+                                      ],
+                                      "stopBy": "neighbor",
+                                      "field": "name"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "all": [
+                                  {
+                                    "kind": "decorated_definition"
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "function_definition"
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": "^(?:select_one_or_raise_lazy)$"
+                                              }
+                                            ],
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        }
+                                      ],
+                                      "stopBy": "neighbor"
+                                    }
+                                  }
+                                ]
+                              }
+                            ],
+                            "stopBy": "neighbor"
+                          },
+                          "stopBy": "neighbor",
+                          "field": "body"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": {
+                    "kind": "class_definition"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "regex": "LazyResult|LazySeq|DeferredFuture",
+                    "stopBy": "neighbor",
+                    "field": "return_type"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "all": [
+                      {
+                        "kind": "block"
+                      },
+                      {
+                        "has": {
+                          "any": [
+                            {
+                              "kind": "pass_statement"
+                            },
+                            {
+                              "all": [
+                                {
+                                  "kind": "expression_statement"
+                                },
+                                {
+                                  "has": {
+                                    "kind": "ellipsis",
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ]
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        }
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "all": [
+                              {
+                                "not": {
+                                  "kind": "comment"
+                                }
+                              },
+                              {
+                                "nthChild": {
+                                  "position": 2,
+                                  "ofRule": {
+                                    "not": {
+                                      "kind": "comment"
+                                    }
+                                  }
+                                }
+                              }
+                            ],
+                            "stopBy": "neighbor"
+                          }
+                        }
+                      }
+                    ],
+                    "stopBy": "neighbor",
+                    "field": "body"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "all": [
+                      {
+                        "kind": "decorated_definition"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "decorator"
+                            },
+                            {
+                              "has": {
+                                "any": [
+                                  {
+                                    "any": [
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "identifier"
+                                          },
+                                          {
+                                            "regex": "^(?:abstractmethod|legacy_async|legacy_sync)$"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "attribute"
+                                          },
+                                          {
+                                            "has": {
+                                              "all": [
+                                                {
+                                                  "kind": "identifier"
+                                                },
+                                                {
+                                                  "regex": "^(?:abstractmethod|legacy_async|legacy_sync)$"
+                                                }
+                                              ],
+                                              "stopBy": "neighbor",
+                                              "field": "attribute"
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "all": [
+                                      {
+                                        "kind": "call"
+                                      },
+                                      {
+                                        "has": {
+                                          "any": [
+                                            {
+                                              "all": [
+                                                {
+                                                  "kind": "identifier"
+                                                },
+                                                {
+                                                  "regex": "^(?:abstractmethod|legacy_async|legacy_sync)$"
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "all": [
+                                                {
+                                                  "kind": "attribute"
+                                                },
+                                                {
+                                                  "has": {
+                                                    "all": [
+                                                      {
+                                                        "kind": "identifier"
+                                                      },
+                                                      {
+                                                        "regex": "^(?:abstractmethod|legacy_async|legacy_sync)$"
+                                                      }
+                                                    ],
+                                                    "stopBy": "neighbor",
+                                                    "field": "attribute"
+                                                  }
+                                                }
+                                              ]
+                                            }
+                                          ],
+                                          "stopBy": "neighbor",
+                                          "field": "function"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ],
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    ],
+                    "stopBy": "neighbor"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "any": [
+                      {
+                        "all": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "regex": "^(?:select_one_or_raise_lazy)$"
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "kind": "attribute"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:select_one_or_raise_lazy)$"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "attribute"
+                            }
+                          }
+                        ]
+                      }
+                    ],
+                    "stopBy": "end"
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "notRegex": "tests/|test_|__pycache__|l2055_lazy_result/|l2070_batching/"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "lazy_result_usage",
+        "anchor": "witness.span",
+        "message": "lazy_result_usage: select_one_or_raise"
+      }
+    }
+  ]
+}

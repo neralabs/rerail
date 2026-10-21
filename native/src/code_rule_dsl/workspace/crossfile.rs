@@ -13,7 +13,7 @@ use super::persisted::file_context;
 use super::{ClauseId, FileState, WorkspaceState};
 use crate::code_rule_dsl::eval::file_language;
 use crate::code_rule_dsl::json::invalid;
-use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, FileInput, Metrics};
+use crate::code_rule_dsl::model::{CompiledCodeRule, FileInput, Metrics};
 use crate::code_rule_dsl::tape;
 use crate::content_store::{HashKey, LocalResultPublication, StoredLocalResult};
 use napi::Result;
@@ -58,14 +58,20 @@ pub(super) struct CrossFileScheduler {
 }
 
 impl CrossFileScheduler {
+    pub(super) fn evaluation_slot(&self) -> Option<crate::code_rule_dsl::calls::EvaluationSlot> {
+        self.calls.evaluation_slot()
+    }
     pub(super) fn register(
         state: &mut WorkspaceState,
         index: usize,
         code_rule: &mut CompiledCodeRule,
     ) -> Result<()> {
-        if code_rule.clauses.iter().any(
-            |clause| matches!(&clause.kind, ClauseKind::Forbid(query) if !query.calls().is_empty()),
-        ) {
+        if code_rule.clauses.iter().any(|clause| {
+            clause
+                .kind
+                .calls_query()
+                .is_some_and(|query| !query.calls().is_empty())
+        }) {
             state.crossfile.calls.register(index, code_rule)?;
         }
         Ok(())
@@ -290,6 +296,9 @@ impl CrossFileScheduler {
         let Some((view, changed)) = state.crossfile.calls.refresh() else {
             return Ok(evicted);
         };
+        state
+            .dirty_globals
+            .extend(state.crossfile.calls.take_dirty_globals());
         let code_rules = refresh.context.code_rules;
         let mut jobs = Vec::new();
         // Each job's silent terms, recorded with its stamp once the job is done.

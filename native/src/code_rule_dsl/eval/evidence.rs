@@ -15,6 +15,7 @@ use crate::code_rule_dsl::tape::tape_doc;
 use crate::code_rule_dsl::violations::{self, NodeGroup, Witness};
 use ast_grep_core::Doc;
 use ast_grep_core::matcher::NodeMatch;
+use ast_grep_core::replacer::Content;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
 
@@ -41,9 +42,8 @@ pub(crate) enum Side {
     Counted,
 }
 
-/// The violation spec an evidence producer's witnesses use: the clause's projection and same-node
-/// regex groups, without fixes or `each` (a relation row is one match), and the comments its
-/// `side` answers to.
+/// The violation spec an evidence producer's witnesses use: its projection, enumeration, anchor
+/// and same-node regex groups, without fixes, and the comments its `side` answers to.
 pub(crate) fn producer_violation(
     clause: &CompiledClause,
     relation: &FactQuery,
@@ -53,7 +53,8 @@ pub(crate) fn producer_violation(
     violation.project = relation.ast.project.clone();
     violation.fix = None;
     violation.fix_range = None;
-    violation.each = None;
+    violation.each = relation.each.clone();
+    violation.anchor = relation.anchor.clone();
     // Compiling refuses `suppress` on a relation clause: only `rerail-ignore` reaches its rows.
     violation.suppress = None;
     match side {
@@ -82,59 +83,124 @@ pub(super) fn project<D: Doc>(
     groups: &[NodeGroup],
 ) -> Value {
     let env = matched.get_env();
+    let capture_range = |capture: &str| {
+        env.get_match(capture)
+            .map(|node| node.range())
+            .or_else(|| {
+                let nodes = env.get_multiple_matches(capture);
+                Some(nodes.first()?.range().start..nodes.last()?.range().end)
+            })
+            .or_else(|| exported_span(env, capture))
+            .or_else(|| {
+                groups
+                    .iter()
+                    .find(|(name, _, _)| name == capture)
+                    .map(|(_, _, range)| range.clone())
+            })
+    };
     // A capture's text is the file's at the bytes it stands for (`origin`).
     let place = InFile::of(matched.get_node()).expect("a witness's document is a file's");
     let (directory, name) = file.path.rsplit_once('/').unwrap_or(("", &file.path));
     let module = file.module.as_deref();
     let fields = project
         .iter()
-        .map(|Projection { field, source }| {
-            let value = match source {
-                // A capture's text is the file's where it stands for one file range, else its own
-                // (an embedded program's), never the file's bytes between its ranges.
-                ProjectionSource::Capture(capture) => {
-                    let text = env
+        .map(
+            |Projection {
+                 field,
+                 source,
+                 extract,
+             }| {
+                let value = match source {
+                    // A capture's text is the file's where it stands for one file range, else its
+                    // own (an embedded program's), never the file's bytes between its ranges.
+                    ProjectionSource::Capture(capture) => {
+                        let text = env
+                            .get_match(capture)
+                            .map(|node| place.text(node).into_owned())
+                            .or_else(|| {
+                                let nodes = env.get_multiple_matches(capture);
+                                let (first, last) = (nodes.first()?, nodes.last()?);
+                                let range = first.range().start..last.range().end;
+                                let own = tape_doc(first).map_or_else(
+                                    || first.text(),
+                                    |doc| doc.get_source()[range.clone()].into(),
+                                );
+                                Some(place.range_text(range, &own).into_owned())
+                            })
+                            .or_else(|| {
+                                let range = exported_span(env, capture)?;
+                                let own = exported_text(env, capture)?;
+                                Some(place.range_text(range, &own).into_owned())
+                            })
+                            .or_else(|| {
+                                let (_, own, range) =
+                                    groups.iter().find(|(name, _, _)| name == capture)?;
+                                Some(place.range_text(range.clone(), own).into_owned())
+                            });
+                        text.map_or(Value::Null, Value::String)
+                    }
+                    ProjectionSource::CaptureLine(capture) => capture_range(capture)
+                        .map(|span| {
+                            crate::code_rule_dsl::matcher::file_lines(
+                                &file.source,
+                                crate::code_rule_dsl::lines::Terminators::Newlines,
+                            )
+                            .span(span.start, span.end)
+                            .start_line
+                        })
+                        .map_or(Value::Null, |line| json!(line)),
+                    ProjectionSource::CaptureText(capture) => exported_text(env, capture)
+                        .or_else(|| {
+                            env.get_transformed(capture).map(|bytes| {
+                                <D::Source as Content>::encode_bytes(bytes).into_owned()
+                            })
+                        })
+                        .or_else(|| env.get_match(capture).map(|node| node.text().into_owned()))
+                        .or_else(|| {
+                            capture_range(capture)
+                                .and_then(|range| file.source.get(range).map(str::to_owned))
+                        })
+                        .map_or(Value::Null, Value::String),
+                    ProjectionSource::CaptureStart(capture) => {
+                        capture_range(capture).map_or(Value::Null, |span| json!(span.start))
+                    }
+                    ProjectionSource::CaptureEnd(capture) => {
+                        capture_range(capture).map_or(Value::Null, |span| json!(span.end))
+                    }
+                    ProjectionSource::CaptureKind(capture) => env
                         .get_match(capture)
-                        .map(|node| place.text(node).into_owned())
-                        .or_else(|| {
-                            let nodes = env.get_multiple_matches(capture);
-                            let (first, last) = (nodes.first()?, nodes.last()?);
-                            let range = first.range().start..last.range().end;
-                            let own = tape_doc(first).map_or_else(
-                                || first.text(),
-                                |doc| doc.get_source()[range.clone()].into(),
-                            );
-                            Some(place.range_text(range, &own).into_owned())
+                        .map_or(Value::Null, |node| Value::String(node.kind().into_owned())),
+                    ProjectionSource::Path => Value::String(file.path.clone()),
+                    ProjectionSource::Directory => Value::String(directory.to_owned()),
+                    ProjectionSource::Name => Value::String(name.to_owned()),
+                    ProjectionSource::Stem => Value::String(
+                        name.split_once('.')
+                            .map_or(name, |(stem, _)| stem)
+                            .to_owned(),
+                    ),
+                    ProjectionSource::Module => module
+                        .map(|module| Value::String(module.text()))
+                        .unwrap_or(Value::Null),
+                    ProjectionSource::Package => module
+                        .map(|module| Value::String(module.package_text()))
+                        .unwrap_or(Value::Null),
+                };
+                let value = if let Some((regex, group)) = extract {
+                    value
+                        .as_str()
+                        .and_then(|text| regex.captures(text))
+                        .and_then(|matched| {
+                            matched
+                                .get(*group)
+                                .map(|part| Value::String(part.as_str().to_owned()))
                         })
-                        .or_else(|| {
-                            let range = exported_span(env, capture)?;
-                            let own = exported_text(env, capture)?;
-                            Some(place.range_text(range, &own).into_owned())
-                        })
-                        .or_else(|| {
-                            let (_, own, range) =
-                                groups.iter().find(|(name, _, _)| name == capture)?;
-                            Some(place.range_text(range.clone(), own).into_owned())
-                        });
-                    text.map_or(Value::Null, Value::String)
-                }
-                ProjectionSource::Path => Value::String(file.path.clone()),
-                ProjectionSource::Directory => Value::String(directory.to_owned()),
-                ProjectionSource::Name => Value::String(name.to_owned()),
-                ProjectionSource::Stem => Value::String(
-                    name.split_once('.')
-                        .map_or(name, |(stem, _)| stem)
-                        .to_owned(),
-                ),
-                ProjectionSource::Module => module
-                    .map(|module| Value::String(module.text()))
-                    .unwrap_or(Value::Null),
-                ProjectionSource::Package => module
-                    .map(|module| Value::String(module.package_text()))
-                    .unwrap_or(Value::Null),
-            };
-            (field.clone(), value)
-        })
+                        .unwrap_or(Value::Null)
+                } else {
+                    value
+                };
+                (field.clone(), value)
+            },
+        )
         .collect::<Map<_, _>>();
     Value::Object(fields)
 }
@@ -157,8 +223,23 @@ fn relation(rows: &Rows) -> Relation {
     }
 }
 
+fn derived_relation(
+    query: &FactQuery,
+    rows: &Rows,
+    code_rule: &CompiledCodeRule,
+) -> Result<Relation, crate::code_rule_dsl::query::name_closure::ClosureError> {
+    let mut relation = relation(rows);
+    crate::code_rule_dsl::query::name_closure::derive(
+        &mut relation,
+        &query.closure,
+        code_rule.capabilities.limits.max_visited_nodes,
+    )?;
+    Ok(relation)
+}
+
 /// The witness as the clause reports it: without its projection.
-fn reported(mut witness: Witness) -> Witness {
+fn reported(mut witness: Witness, query: &FactQuery) -> Witness {
+    witness.span = violations::anchored_span(&query.anchor, &witness).0;
     witness.captures.set_projection(None);
     witness
 }
@@ -210,7 +291,18 @@ pub(crate) fn require_each(
         &subject.incomplete,
         "subject evidence in this file is incomplete",
     ));
-    let (subjects, evidences) = (relation(&subject), relation(evidence));
+    let relations = derived_relation(subject_query, &subject, code_rule).and_then(|subject| {
+        derived_relation(evidence_query, evidence, code_rule).map(|evidence| (subject, evidence))
+    });
+    let (subjects, evidences) = match relations {
+        Ok(relations) => relations,
+        Err(error) => {
+            evaluation
+                .failures
+                .push(failure(&clause.id, error.code(), error.message(), None));
+            return evaluation;
+        }
+    };
     let subject_side = (subject_query.alias.as_str(), &subjects);
     let evidence_side = (evidence_query.alias.as_str(), &evidences);
     let (subject_predicate, predicate) = (
@@ -250,7 +342,7 @@ pub(crate) fn require_each(
                     evaluation.violations.push(violation_from_witness(
                         code_rule,
                         clause,
-                        reported(witness),
+                        reported(witness, subject_query),
                     ));
                 }
             }
@@ -300,7 +392,15 @@ pub(crate) fn budget(
         unreachable!("budget checks only");
     };
     let mut evaluation = Evaluation::default();
-    let counted = relation(&rows);
+    let counted = match derived_relation(query, &rows, code_rule) {
+        Ok(relation) => relation,
+        Err(error) => {
+            evaluation
+                .failures
+                .push(failure(&clause.id, error.code(), error.message(), None));
+            return evaluation;
+        }
+    };
     let side = (query.alias.as_str(), &counted);
     let interrupted = crate::code_rule_dsl::budget::matcher_budget_exhausted;
     let answer = match engine {
@@ -360,7 +460,7 @@ pub(crate) fn budget(
             continue;
         };
         evaluation.metrics.witnesses += 1;
-        let mut violation = violation_from_witness(code_rule, clause, reported(witness));
+        let mut violation = violation_from_witness(code_rule, clause, reported(witness, query));
         // A group is identified by its key, not by whichever witness is first today, so its
         // violation keeps its id as usages come and go and never collides with another group's.
         violation["id"] = Value::String(violation_id(

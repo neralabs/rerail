@@ -52,7 +52,7 @@ pub(crate) use exported::{
     WITNESS_NODE, export_text, exported_span, exported_text, is_span_variable,
 };
 pub(crate) use format_args::{FormatArgs, Prepared, Style, missing_fields};
-pub(crate) use layout::{Gap, Layout, LineCount, Neighbour};
+pub(crate) use layout::{Gap, Layout, LineContext, LineCount, Neighbour};
 pub(super) use memo::with_file as with_file_memo;
 pub(super) use nth_child::{NthChild, Position as NthPosition, parse_position};
 #[cfg(test)]
@@ -63,6 +63,7 @@ pub(super) use relation::{FieldRelation, Related, StopBy, stop_rule};
 #[cfg(test)]
 pub(super) use relation::{set_answers_off, set_same_key_off};
 pub(crate) use resolve::SubTables;
+pub(in crate::code_rule_dsl) use resolve::file_path;
 pub(crate) use resolve::{
     FileGates, calls_tables, file_biome_suppressions, file_clippy, file_eslint_directives,
     file_lines, file_module, file_noqa, file_nosec, file_oxlint_directives, file_phpcs,
@@ -120,6 +121,8 @@ pub(super) struct GrammarMatcher {
     pub(super) text: Option<Arc<RequiredText>>,
     /// Whether witnesses outside syntax-error regions stay sound; see `sound_under_errors`.
     pub(super) sound_under_errors: bool,
+    /// Explicit whole-file syntax gate; true admits invalid files and their error regions.
+    pub(super) invalid_syntax: Option<bool>,
     /// Keeps the query's utility rules alive (`AstMatcher::Util` holds only a weak reference)
     /// and lets violation compilation walk them.
     pub(super) utils: Arc<UtilTable>,

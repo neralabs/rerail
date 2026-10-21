@@ -10,9 +10,14 @@ Test support that scores rule packs against the tools they port. It is never pub
   `npm run conformance:languages`, with `-- --check` as CI's gate (`npm run test:conformance`).
   `identifier-rename.ts` is the overfitting guard: a port must score the same when the tests' own identifiers are
   renamed.
+- `data-layer/`: strict native replay of recorded data-layer analyzer calls, plus combined repository timing and parity.
+  See [the first-batch report](../docs/data-layer-port-execution-plan.md), [the second-batch report](../docs/data-layer-batch-two.md), and [the third-batch report](../docs/data-layer-batch-three.md).
 - `recorders/`: the shared ESLint recorder the ECMA packs' upstream generators use.
 - `t1/`: the TypeScript grammar census (tier T1 of the language conformance standard).
 - `engine.ts`: what every harness shares about the engine it scores (the capabilities, and which engine failure codes
   are not failures).
 
 Adding a pack or a port: [docs/language-packs.md](../docs/language-packs.md#start-a-pack).
+
+The [fourth data-layer batch](../docs/data-layer-batch-four.md) contains explicit gap probes.
+Its strict replay fails while those gaps remain; test assertions preserve their exact failure set.

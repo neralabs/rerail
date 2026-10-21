@@ -894,7 +894,7 @@ struct FileScopes {
     failed_within: usize,
     charged: Vec<usize>,
     /// The clauses that paid for a table's usage index, with the table (by address).
-    usage_charged: Vec<(usize, usize)>,
+    usage_charged: Vec<(usize, usize, bool)>,
     /// Whether the file has syntax errors: its bindings are then not all known, so no name is
     /// read as an unshadowed builtin for a value.
     has_errors: bool,
@@ -914,7 +914,7 @@ struct FileScopes {
     structures: HashMap<(usize, Equality), Rc<Option<Vec<Tok>>>>,
     /// Literals parsed so far, by node and grammar (`parse`); `None` is a literal whose value is
     /// not known.
-    parses: HashMap<(usize, Grammar), Option<Arc<SubTree>>>,
+    parses: HashMap<(usize, Grammar, String), Option<Arc<SubTree>>>,
     /// Strings parsed so far, by node, reading and grammar (`formatArgs` over a PHP format that
     /// is no literal); `None` is a parse whose value is not known.
     value_parses: HashMap<(ValueKey, Grammar), Option<Arc<SubTree>>>,
@@ -1081,7 +1081,7 @@ pub(crate) fn file_module() -> Option<Arc<ModulePath>> {
 }
 
 /// The host's path of the file being matched, if it gave one.
-fn file_path() -> Option<Arc<str>> {
+pub(in crate::code_rule_dsl) fn file_path() -> Option<Arc<str>> {
     FILE_SCOPES.with_borrow(|slot| slot.as_ref().and_then(|slot| slot.path.clone()))
 }
 
@@ -1468,11 +1468,11 @@ pub(crate) fn file_sqlfluff(read: impl FnOnce() -> SqlfluffIndex) -> Rc<Sqlfluff
 }
 
 /// A literal parsed earlier in this file: `Some(None)` when its value is not known.
-pub(super) fn memoized_parse(key: &(usize, Grammar)) -> Option<Option<Arc<SubTree>>> {
+pub(super) fn memoized_parse(key: &(usize, Grammar, String)) -> Option<Option<Arc<SubTree>>> {
     FILE_SCOPES.with_borrow(|slot| slot.as_ref().and_then(|slot| slot.parses.get(key).cloned()))
 }
 
-pub(super) fn memoize_parse(key: (usize, Grammar), tree: Option<Arc<SubTree>>) {
+pub(super) fn memoize_parse(key: (usize, Grammar, String), tree: Option<Arc<SubTree>>) {
     FILE_SCOPES.with_borrow_mut(|slot| {
         if let Some(slot) = slot {
             slot.parses.insert(key, tree);
@@ -1607,28 +1607,56 @@ pub(super) fn file_usage<D: Doc>(
     node: &Node<'_, D>,
     table: &Arc<ScopeTable>,
 ) -> Option<Arc<Usage>> {
+    file_binding_index(node, table, false)
+}
+
+pub(super) fn file_declaration_sites<D: Doc>(
+    node: &Node<'_, D>,
+    table: &Arc<ScopeTable>,
+) -> Option<Arc<Usage>> {
+    file_binding_index(node, table, true)
+}
+
+fn file_binding_index<D: Doc>(
+    node: &Node<'_, D>,
+    table: &Arc<ScopeTable>,
+    declarations: bool,
+) -> Option<Arc<Usage>> {
     if UTIL_EXCEEDED.get().is_some() {
         return None;
     }
     let steps = UTIL_STEPS_LEFT.get();
-    let (usage, built) = match table.usage.get() {
+    let cache = if declarations {
+        &table.declaration_sites
+    } else {
+        &table.usage
+    };
+    let build = || {
+        if declarations {
+            Usage::declarations(table, steps, &budget::matcher_budget_exhausted)
+        } else {
+            Usage::build(
+                table,
+                &node.root().root(),
+                steps,
+                &budget::matcher_budget_exhausted,
+            )
+        }
+    };
+    let (usage, built) = match cache.get() {
         Some(usage) => (Arc::clone(usage), false),
-        None => match Usage::build(
-            table,
-            &node.root().root(),
-            steps,
-            &budget::matcher_budget_exhausted,
-        ) {
-            Ok(usage) => (
-                Arc::clone(table.usage.get_or_init(|| Arc::new(usage))),
-                true,
-            ),
+        None => match build() {
+            Ok(usage) => (Arc::clone(cache.get_or_init(|| Arc::new(usage))), true),
             Err(_) => {
                 return exceed();
             }
         },
     };
-    let key = (CURRENT_CLAUSE.get(), Arc::as_ptr(table) as usize);
+    let key = (
+        CURRENT_CLAUSE.get(),
+        Arc::as_ptr(table) as usize,
+        declarations,
+    );
     let charged = FILE_SCOPES.with_borrow_mut(|slot| {
         let Some(slot) = slot else {
             return false;

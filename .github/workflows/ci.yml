@@ -104,6 +104,14 @@ jobs:
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
               - '.cargo/**'
+              - 'scripts/profiling/reachability/**'
+              - 'scripts/profiling/reachability_*.py'
+              - 'scripts/profiling/native_*_*.py'
+              - 'test/scripts/test_reachability.py'
+              - 'test/scripts/test_native_relations.py'
+              - 'test/scripts/test_native_sql_plan.py'
+              - 'scripts/profiling/producer-shape.mjs'
+              - 'test/engine/native/relational-batch.test.ts'
               - 'package.json'
               - '.github/workflows/ci.yml'
               - '.gitattributes'
@@ -166,6 +174,47 @@ jobs:
 
       - name: Run ${{ matrix.name }}
         run: ${{ matrix.run }}
+
+      - name: Check isolated reachability spike
+        if: matrix.task == 'clippy'
+        run: |
+          cargo fmt --manifest-path scripts/profiling/reachability/Cargo.toml -- --check
+          cargo clippy --manifest-path scripts/profiling/reachability/Cargo.toml --locked --target-dir target/reachability-spike -- -D warnings
+
+      - name: Build isolated reachability extension
+        if: matrix.task == 'test'
+        run: cargo build --manifest-path scripts/profiling/reachability/Cargo.toml --release --locked --target-dir target/reachability-spike
+
+      - name: Test SQL and Rust reachability adapters
+        if: matrix.task == 'test'
+        env:
+          RERAIL_REACH_EXTENSION: ${{ github.workspace }}/target/reachability-spike/release/librerail_reachability_spike.so
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          python3 test/scripts/test_reachability.py
+          python3 test/scripts/test_native_relations.py
+          python3 test/scripts/test_native_sql_plan.py
+
+      # The shape gate requires profiling spans and must never silently skip on a production addon.
+      # Keep this debug addon separate from the package's release artifact.
+      - uses: ./.github/actions/node-deps
+        if: matrix.task == 'test'
+
+      - name: Build profiling addon for the producer shape gate
+        if: matrix.task == 'test'
+        run: |
+          cargo build --manifest-path native/Cargo.toml --features code-rule-profile
+          cp target/debug/librerail_engine.so "$RUNNER_TEMP/rerail-producer-shape.node"
+
+      - name: Enforce broad producer execution shape
+        if: matrix.task == 'test'
+        env:
+          RERAIL_ENGINE_PATH: ${{ runner.temp }}/rerail-producer-shape.node
+        run: npm run test:producer-shape
+
+      - name: Test SQL statement capture and deferred explanations
+        if: matrix.task == 'test'
+        run: cargo test --manifest-path scripts/profiling/reachability/Cargo.toml --no-default-features --locked code_rule_dsl::tests
 
   # Builds the package once: dist/ and the release native engine, handed to every test job.
   build:
@@ -314,6 +363,7 @@ jobs:
       - name: Script tests and reference examples
         run: |
           npm run test:scripts
+          npm run test:profiling
           npm run test:reference
 
       # Offline: conformance:languages:check scores every pack's ported rules against its recordings. The

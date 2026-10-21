@@ -718,7 +718,18 @@ impl<'a> Leaf<'a> {
         }
         let mut witnesses = Vec::new();
         match query {
-            Query::Regex { regex, source } => {
+            Query::Regex {
+                regex,
+                source,
+                options,
+            } => {
+                if options
+                    .paths
+                    .as_ref()
+                    .is_some_and(|paths| !paths.matches(&file.path))
+                {
+                    return Ok(FileStep::Skipped);
+                }
                 let haystack = match source {
                     RegexSource::Content => &file.source,
                     RegexSource::Path => &file.path,
@@ -730,15 +741,29 @@ impl<'a> Leaf<'a> {
                         .unwrap_or(Terminators::Eslint),
                 );
                 let span = |start, end| lines.span(start, end);
-                let (matches, complete) = crate::code_rule_dsl::query::regex_matches(
+                let (matches, complete) = crate::code_rule_dsl::query::regex_query_matches(
                     regex,
                     haystack,
+                    options,
                     self.limits.max_witnesses.saturating_add(1),
                 );
-                for range in matches {
+                for matched in matches {
+                    let range = matched.range;
+                    let offset = matched.context.start;
+                    let context = &haystack[matched.context];
+                    let span = |start, end| {
+                        let mut result = span(offset + start, offset + end);
+                        if let Some(line) = matched.line {
+                            result.start_line = line;
+                            result.end_line = line;
+                            result.start_column = start;
+                            result.end_column = end;
+                        }
+                        result
+                    };
                     let (start, end) = (range.start, range.end);
                     let found = regex
-                        .captures_at(haystack, start)
+                        .captures_at(context, start)
                         .expect("a regex match has captures");
                     assert_eq!(found.get(0).expect("whole match").range(), start..end);
                     metrics.witnesses += 1;
@@ -822,7 +847,17 @@ impl<'a> Leaf<'a> {
                 // (`SyntaxErrors::of_doc`): a Blade view reads the template's too.
                 let errors = SyntaxErrors::of_doc(&doc);
                 let target = ast_grep_core::AstGrep::doc(doc);
-                if !errors.is_empty() {
+                if grammar
+                    .invalid_syntax
+                    .is_some_and(|invalid| invalid == errors.is_empty())
+                {
+                    return Ok(FileStep::Read {
+                        witnesses,
+                        partial: None,
+                        decided: false,
+                    });
+                }
+                if !errors.is_empty() && grammar.invalid_syntax.is_none() {
                     // A file the parser did not read is not read by any clause, sound or not.
                     if let SyntaxReading::Unread(detail) = errors.reading(&lines, file.source.len())
                     {
@@ -838,16 +873,20 @@ impl<'a> Leaf<'a> {
                 } else {
                     &errors
                 };
+                // A query gated on its file's syntax (`syntax: valid|invalid`) reads the file
+                // whole: its errors neither gate, fail nor qualify it.
+                let around = grammar.invalid_syntax.is_none();
                 // A file the query's file gates exclude matches nothing, errors or not, as
                 // `run_clause` reads it without them.
-                if !read.is_empty() && !FileGates::new(file, target.root()).admit(grammar) {
+                if around && !read.is_empty() && !FileGates::new(file, target.root()).admit(grammar)
+                {
                     return Ok(FileStep::Read {
                         witnesses,
                         partial: None,
                         decided: false,
                     });
                 }
-                if read.incomplete(grammar) {
+                if around && read.incomplete(grammar) {
                     return Ok(FileStep::Failed(None));
                 }
                 // A file read around syntax errors in any of its documents reports the first
@@ -859,7 +898,7 @@ impl<'a> Leaf<'a> {
                             .flat_map(|guests| guests.iter().map(|guest| guest.doc.clone())),
                     )
                     .map(|doc| SyntaxErrors::of_doc(&doc))
-                    .find(|errors| !errors.is_empty())
+                    .find(|errors| around && !errors.is_empty())
                     .map(|errors| match errors.reading(&lines, file.source.len()) {
                         SyntaxReading::Partial(message) | SyntaxReading::Unread(message) => message,
                     });
@@ -1104,12 +1143,75 @@ enum FileOutcome {
     Limit(UtilLimit),
 }
 
-/// A file's tape, as the workspace stores it, and its line table; `None` where the parser stopped
-/// at a limit before it read the file (Forte's nesting depth or step budget).
-pub(super) fn file_tape(
+#[derive(Clone)]
+struct CachedTape {
+    language: GrammarDialect,
+    source: Arc<String>,
+    doc: crate::code_rule_dsl::tape::TapeDoc,
+    lines: Arc<LineTable>,
+}
+
+#[derive(Default)]
+struct TapeCache {
+    active: bool,
+    entry: Option<CachedTape>,
+}
+
+thread_local! {
+    static EVALUATION_TAPE: RefCell<TapeCache> = RefCell::new(TapeCache::default());
+}
+
+pub(crate) struct TapeCacheSlot(bool);
+
+impl TapeCacheSlot {
+    pub(crate) fn install() -> Self {
+        let outer = EVALUATION_TAPE.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            let outer = !cache.active;
+            cache.active = true;
+            outer
+        });
+        Self(outer)
+    }
+
+    pub(crate) fn seed(
+        language: GrammarDialect,
+        file: &FileInput,
+        image: &crate::code_rule_dsl::tape::FileImage,
+    ) -> Result<()> {
+        let (doc, lines) = restore_file_tape(language, file, image)?;
+        cache_tape(language, file, &doc, &lines);
+        Ok(())
+    }
+}
+
+impl Drop for TapeCacheSlot {
+    fn drop(&mut self) {
+        if self.0 {
+            EVALUATION_TAPE.with(|cache| *cache.borrow_mut() = TapeCache::default());
+        }
+    }
+}
+
+/// A file's tape, as the workspace stores it, and its line table, reused within the current
+/// evaluation; `None` where the parser stopped at a limit before it read the file (Forte's nesting
+/// depth or step budget).
+pub(in crate::code_rule_dsl) fn file_tape(
     language: GrammarDialect,
     file: &FileInput,
 ) -> Result<Option<(crate::code_rule_dsl::tape::TapeDoc, Arc<LineTable>)>> {
+    if let Some(cached) = EVALUATION_TAPE.with(|cache| {
+        cache
+            .borrow()
+            .entry
+            .as_ref()
+            .filter(|cached| {
+                cached.language == language && Arc::ptr_eq(&cached.source, &file.source)
+            })
+            .cloned()
+    }) {
+        return Ok(Some((cached.doc, cached.lines)));
+    }
     use crate::code_rule_dsl::tape;
     let never = || false;
     let tape_grammar = tape::Grammar::new(language).map_err(invalid)?;
@@ -1117,18 +1219,50 @@ pub(super) fn file_tape(
         return Ok(None);
     };
     let image = image.map_err(invalid)?;
+    let (doc, lines) = restore_file_tape(language, file, &image)?;
+    cache_tape(language, file, &doc, &lines);
+    Ok(Some((doc, lines)))
+}
+
+fn cache_tape(
+    language: GrammarDialect,
+    file: &FileInput,
+    doc: &crate::code_rule_dsl::tape::TapeDoc,
+    lines: &Arc<LineTable>,
+) {
+    EVALUATION_TAPE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.active {
+            cache.entry = Some(CachedTape {
+                language,
+                source: Arc::clone(&file.source),
+                doc: doc.clone(),
+                lines: Arc::clone(lines),
+            });
+        }
+    });
+}
+
+fn restore_file_tape(
+    language: GrammarDialect,
+    file: &FileInput,
+    image: &crate::code_rule_dsl::tape::FileImage,
+) -> Result<(crate::code_rule_dsl::tape::TapeDoc, Arc<LineTable>)> {
+    use crate::code_rule_dsl::tape;
+    let never = || false;
+    let tape_grammar = tape::Grammar::new(language).map_err(invalid)?;
     let lines = Arc::new(LineTable::new(&file.source, Terminators::of(language)));
     #[cfg(test)]
     crate::code_rule_dsl::matcher::note_line_table_construction();
     let doc = tape::TapeDoc::restore_with_lines(
         Arc::clone(&file.source),
         tape_grammar,
-        &image,
+        image,
         Arc::clone(&lines),
         &never,
     )
     .map_err(invalid)?;
-    Ok(Some((doc, lines)))
+    Ok((doc, lines))
 }
 
 /// Evaluates one file with its grammar matcher on the file's tape: nodes count towards
@@ -1174,7 +1308,9 @@ fn evaluate_file_clause(
                 }
                 *work = crate::code_rule_dsl::matcher::end_clause().0;
             }
-            if errors.meets(&place.place(matched.get_node())) {
+            if grammar.invalid_syntax != Some(true)
+                && errors.meets(&place.place(matched.get_node()))
+            {
                 return Ok(true);
             }
             let matched_node = matched.get_node();
@@ -1317,4 +1453,30 @@ pub(crate) fn document_matcher<'a>(
             && grammar.language == language
             && applies(grammar, file, source_type)
     })
+}
+
+#[cfg(test)]
+mod tape_cache_tests {
+    use super::*;
+
+    #[test]
+    fn a_scoped_evaluation_reuses_its_tape_and_rejects_an_edited_source() {
+        let language = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+        let mut file = FileInput::new(
+            "a.py".into(),
+            "python".into(),
+            Arc::new("def first(): pass\n".into()),
+            None,
+            None,
+            "test",
+        )
+        .unwrap();
+        let _slot = TapeCacheSlot::install();
+        let (_, first) = file_tape(language, &file).unwrap().unwrap();
+        let (_, same) = file_tape(language, &file).unwrap().unwrap();
+        assert!(Arc::ptr_eq(&first, &same));
+        file.source = Arc::new("def second(): pass\n".into());
+        let (_, edited) = file_tape(language, &file).unwrap().unwrap();
+        assert!(!Arc::ptr_eq(&first, &edited));
+    }
 }

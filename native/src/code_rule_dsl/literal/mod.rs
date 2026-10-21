@@ -6,11 +6,13 @@
 pub(crate) mod annotation;
 pub(crate) mod brace;
 pub(crate) mod eslint_directive;
+mod identifier_words;
 pub(crate) mod offsets;
 pub(crate) mod percent;
 pub(crate) mod php_string;
 pub(crate) mod phpdoc;
 pub(crate) mod printf;
+mod python_fstring;
 pub(crate) mod rust_format;
 pub(crate) mod scanf;
 pub(crate) mod semantic;
@@ -24,6 +26,7 @@ use ast_grep_core::matcher::{Pattern, PatternBuilder, PatternError};
 use ast_grep_core::source::{Content, Doc, Edit, SgNode};
 use ast_grep_core::tree_sitter::StrDoc;
 use offsets::Decoded;
+pub(crate) use python_fstring::parse as parse_python_fstring;
 use std::borrow::Cow;
 use std::ops::Range;
 use std::sync::Arc;
@@ -34,6 +37,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 pub(crate) enum Grammar {
     /// printf-style formats (`percent`).
     Percent,
+    /// ASCII identifier words in decoded Python string text.
+    IdentifierWords,
+    /// Literal and interpolation parts of a Python JoinedStr.
+    PythonFString,
     /// `str.format` templates (`brace`).
     Brace,
     /// String type definitions read as Python expressions (`annotation`); the scope table
@@ -74,6 +81,8 @@ impl Grammar {
     /// Every grammar, in the order error messages list them.
     pub(crate) const ALL: &'static [Grammar] = &[
         Self::Percent,
+        Self::IdentifierWords,
+        Self::PythonFString,
         Self::Brace,
         Self::Annotation,
         Self::EslintDirective,
@@ -93,6 +102,8 @@ impl Grammar {
     /// The grammar a `parse.grammar` name selects.
     pub(crate) fn named(name: &str) -> Option<Self> {
         match name {
+            "identifierWords" => Some(Self::IdentifierWords),
+            "pythonFString" => Some(Self::PythonFString),
             "percentFormat" => Some(Self::Percent),
             "braceFormat" => Some(Self::Brace),
             "annotation" => Some(Self::Annotation),
@@ -109,6 +120,8 @@ impl Grammar {
 
     pub(crate) fn name(self) -> &'static str {
         match self {
+            Self::IdentifierWords => "identifierWords",
+            Self::PythonFString => "pythonFString",
             Self::Percent => "percentFormat",
             Self::Brace => "braceFormat",
             Self::Annotation => "annotation",
@@ -125,6 +138,8 @@ impl Grammar {
     /// The kinds a tree of this grammar has, in id order from 1.
     pub(crate) fn kinds(self) -> &'static [&'static str] {
         match self {
+            Self::IdentifierWords => identifier_words::KINDS,
+            Self::PythonFString => python_fstring::KINDS,
             Self::Percent => percent::KINDS,
             Self::Brace => brace::KINDS,
             // Python's own kinds, which the grammar checks when it compiles the rule.
@@ -142,7 +157,11 @@ impl Grammar {
     /// The host nodes the grammar parses.
     pub(crate) fn literal_host(self) -> LiteralHost {
         match self {
-            Self::Percent | Self::Brace | Self::Annotation => LiteralHost::PythonString,
+            Self::Percent
+            | Self::Brace
+            | Self::Annotation
+            | Self::IdentifierWords
+            | Self::PythonFString => LiteralHost::PythonString,
             Self::EslintDirective => LiteralHost::EcmaComment,
             Self::Printf | Self::Scanf => LiteralHost::PhpString,
             Self::PhpDoc => LiteralHost::PhpComment,
@@ -202,6 +221,9 @@ impl Grammar {
     /// Parses decoded text into a tree root.
     fn parse(self, text: &str) -> PNode {
         match self {
+            Self::IdentifierWords => identifier_words::parse(text),
+            // Parsed from host syntax, not from decoded constant text.
+            Self::PythonFString => PNode::new(self, "template", 0, text.len()),
             Self::Percent => percent::parse(text),
             Self::Brace => brace::parse(text),
             Self::Printf => printf::parse(text),

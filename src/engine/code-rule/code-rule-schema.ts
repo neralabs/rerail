@@ -69,7 +69,7 @@ export const CODE_RULE_FORMAT = "rerail.policy/v1" as const;
 
 export const CODE_RULE_REGEX_SOURCES = ["file.content", "file.path"] as const;
 export type CodeRuleRegexSource = (typeof CODE_RULE_REGEX_SOURCES)[number];
-export const CLAUSE_KINDS = ["forbid", "require_each", "budget", "llm", "define"] as const;
+export const CLAUSE_KINDS = ["forbid", "require_each", "budget", "relational", "llm", "define"] as const;
 export type ClauseKind = (typeof CLAUSE_KINDS)[number];
 export const CODE_RULE_STOP_BY = ["neighbor", "end"] as const;
 export const CODE_RULE_COMPARE_OPS = ["lt", "le", "eq", "ne", "gt", "ge"] as const;
@@ -146,10 +146,12 @@ export const codeRuleViolationSpecSchema = z
 export type CodeRuleAstRule = CodeRuleDslAstRule;
 export type CodeRuleAstRelation = CodeRuleDslAstRelation;
 
-const AST_RULE_KEYS = ["pattern", "kind", "regex", "nthChild", "all", "any", "not", "matches", "inside", "has", "precedes", "follows", "compare", "count", "resolves", "value", "arguments", "binds", "parse", "capture", "formatArgs", "layout", "host", "embedded", "calls"] as const;
+const AST_RULE_KEYS = ["pattern", "kind", "regex", "nthChild", "all", "any", "not", "matches", "inside", "has", "precedes", "follows", "compare", "count", "resolves", "value", "arguments", "binds", "parse", "capture", "formatArgs", "layout", "filePath", "host", "embedded", "calls"] as const;
 /** The grammars `parse` applies and their kinds (the engine's `literal::Grammar`). */
-export const CODE_RULE_PARSE_GRAMMARS = ["percentFormat", "braceFormat", "annotation", "eslintDirective", "printfFormat", "scanfFormat", "phpDoc", "rustFormat"] as const;
+export const CODE_RULE_PARSE_GRAMMARS = ["percentFormat", "braceFormat", "annotation", "eslintDirective", "printfFormat", "scanfFormat", "phpDoc", "rustFormat", "identifierWords", "pythonFString"] as const;
 export const CODE_RULE_PARSE_KINDS: Record<(typeof CODE_RULE_PARSE_GRAMMARS)[number], readonly string[]> = {
+  identifierWords: ["words", "word"],
+  pythonFString: ["template", "literal", "interpolation"],
   percentFormat: ["format", "literal", "placeholder", "mapping_key", "flags", "width", "precision", "star", "length", "conversion", "error"],
   braceFormat: [
     "format",
@@ -761,7 +763,8 @@ const layoutGap = z
   .refine(gap => gap.breaks !== undefined || gap.blank !== undefined, "A gap must count breaks, blank or both.")
   .refine(gap => !gap.to.startsWith("capture.") || (gap.comments === undefined && gap.edge === undefined), "comments and edge choose the neighbouring token or sibling; a capture names its node.");
 export const codeRuleLayoutSchema = z
-  .object({ span: lineCount.optional(), start: lineCount.optional(), before: layoutGap.optional(), after: layoutGap.optional() })
+  .object({ span: lineCount.optional(), start: lineCount.optional(), before: layoutGap.optional(), after: layoutGap.optional(), line: z.string().optional(), previousLine: z.string().optional(),
+    context: z.object({ before: z.number().int().min(0).max(64).optional(), after: z.number().int().min(0).max(64).optional(), through: z.string().optional(), regex: z.string() }).strict().optional() })
   .strict()
   .refine(layout => Object.values(layout).some(value => value !== undefined), "layout must hold span, start, before or after.") as unknown as z.ZodType<CodeRuleDslLayout>;
 
@@ -788,6 +791,7 @@ export const codeRuleAstRuleSchema: z.ZodType<CodeRuleDslAstRule> = z.lazy(() =>
       follows: codeRuleAstRelationSchema.optional(),
       compare: codeRuleCompareSchema.optional(),
       count: codeRuleAstCountSchema.optional(),
+      filePath: z.object({ regex: nonEmptyString.optional(), notRegex: nonEmptyString.optional() }).strict().refine(value => value.regex !== undefined || value.notRegex !== undefined).optional(),
       ...semanticRuleShape({
         resolves: codeRuleResolvesSchema,
         value: codeRuleValueTestSchema,
@@ -824,6 +828,7 @@ export const codeRuleAstRelationSchema: z.ZodType<CodeRuleDslAstRelation> = z.la
       follows: codeRuleAstRelationSchema.optional(),
       compare: codeRuleCompareSchema.optional(),
       count: codeRuleAstCountSchema.optional(),
+      filePath: z.object({ regex: nonEmptyString.optional(), notRegex: nonEmptyString.optional() }).strict().refine(value => value.regex !== undefined || value.notRegex !== undefined).optional(),
       ...semanticRuleShape({
         resolves: codeRuleResolvesSchema,
         value: codeRuleValueTestSchema,
@@ -845,10 +850,21 @@ export const codeRuleAstRelationSchema: z.ZodType<CodeRuleDslAstRelation> = z.la
 export const codeRuleCallsSchema: z.ZodType<CodeRuleDslCalls> = z.lazy(
   () =>
     z
-      .object({ through: z.enum(["sync", "any"]).optional(), chain: metavariableName.optional() })
+      .object({ through: z.enum(["sync", "any"]).optional(), chain: metavariableName.optional(),
+        graph: z.enum(["calls", "references"]).optional(), at: z.enum(["call", "definition"]).optional(),
+        siblingLinks: z.array(z.object({ decorator: nonEmptyString,
+          name: z.object({ replace: nonEmptyString, by: z.string() }).strict() }).strict()).min(1).max(32).optional(),
+        constructorFields: z.object({ fieldToParameter: z.object({ replace: nonEmptyString, by: z.string() }).strict() }).strict().optional() })
       .passthrough()
       .superRefine((calls, context) => {
-        const { through: _through, chain: _chain, ...inner } = calls;
+        if (calls.graph === "references" && calls.at !== "definition") {
+          context.addIssue({ code: "custom", path: ["at"], message: "graph references requires at definition." });
+        }
+        if ((calls.siblingLinks !== undefined || calls.constructorFields !== undefined) && calls.graph !== "references") {
+          const field = calls.siblingLinks !== undefined ? "siblingLinks" : "constructorFields";
+          context.addIssue({ code: "custom", path: [field], message: `${field} requires graph references.` });
+        }
+        const { through: _through, chain: _chain, graph: _graph, at: _at, siblingLinks: _siblingLinks, constructorFields: _constructorFields, ...inner } = calls;
         const parsed = codeRuleAstRuleSchema.safeParse(inner);
         if (!parsed.success) {
           for (const issue of parsed.error.issues) context.addIssue({ ...issue, code: "custom", message: issue.message });
@@ -871,6 +887,7 @@ export const codeRuleParseSchema: z.ZodType<CodeRuleDslParse> = z.lazy(() =>
   z
     .object({
       grammar: z.string(),
+      interpolation: z.string().refine(value => new TextEncoder().encode(value).length <= 1024, "interpolation exceeds 1024 bytes.").optional(),
       pattern: z.union([nonEmptyString, z.object({ context: nonEmptyString, selector: nonEmptyString }).strict()]).optional(),
       kind: nonEmptyString.optional(),
       regex: nonEmptyString.optional(),
@@ -904,7 +921,8 @@ export const codeRuleParseSchema: z.ZodType<CodeRuleDslParse> = z.lazy(() =>
       message: `grammar must be one of ${CODE_RULE_PARSE_GRAMMARS.join(", ")}.`,
       path: ["grammar"],
     })
-    .refine(rule => AST_RULE_KEYS.some(key => rule[key] !== undefined), "parse must hold a rule over the parsed tree.") as unknown as z.ZodType<CodeRuleDslParse>,
+    .refine(rule => rule.interpolation === undefined || rule.grammar === "pythonFString", "interpolation requires pythonFString.")
+    .refine(rule => AST_RULE_KEYS.some(key => key !== "filePath" && rule[key] !== undefined), "parse must hold a rule over the parsed tree.") as unknown as z.ZodType<CodeRuleDslParse>,
 );
 export const codeRuleAstCountSchema: z.ZodType<CodeRuleDslAstCount> = z.lazy(() =>
   z
@@ -933,6 +951,10 @@ export const codeRulePredicateSchema: z.ZodType<CodeRuleDslPredicate> = z.lazy((
     z.object({ not: codeRulePredicateSchema }).strict(),
     z.object({ eq: codeRuleValuePair }).strict(),
     z.object({ ne: codeRuleValuePair }).strict(),
+    z.object({ lt: codeRuleValuePair }).strict(),
+    z.object({ le: codeRuleValuePair }).strict(),
+    z.object({ gt: codeRuleValuePair }).strict(),
+    z.object({ ge: codeRuleValuePair }).strict(),
   ]),
 );
 
@@ -1081,7 +1103,7 @@ function visitFormatArgs(rule: CodeRuleDslAstRule, path: RulePath, parsed: Parse
 
 function visitCalls(rule: CodeRuleDslAstRule, path: RulePath, parsed: ParseGrammar | undefined, issue: RuleIssue, visit: AstRuleVisit): void {
   if (rule.calls === undefined) return;
-  const { through: _through, chain: _chain, ...inner } = rule.calls;
+  const { through: _through, chain: _chain, graph: _graph, at: _at, siblingLinks: _siblingLinks, constructorFields: _constructorFields, ...inner } = rule.calls;
   if (containsCalls(inner)) issue([...path, "calls"], "A calls rule cannot contain calls.");
   visit(inner, [...path, "calls"], parsed);
 }
@@ -1229,13 +1251,28 @@ export const codeRuleQuerySchema: z.ZodType<CodeRuleDslQuery> = z.lazy(() =>
         .object({
           source: z.enum(CODE_RULE_REGEX_SOURCES),
           pattern: nonEmptyString,
+          content: z.object({ include: z.array(nonEmptyString).max(64).optional(), exclude: z.array(nonEmptyString).max(64).optional() }).strict().optional(),
+          include: z.array(nonEmptyString).max(64).optional(),
+          exclude: z.array(nonEmptyString).max(64).optional(),
+          lines: z.object({ include: z.array(nonEmptyString).max(64).optional(), exclude: z.array(nonEmptyString).max(64).optional(), first: z.boolean().optional(),
+            terminators: z.enum(["python", "lf"]).optional(),
+            state: z.object({ initial: nonEmptyString.max(64), emit: z.array(nonEmptyString.max(64)).min(1).max(16),
+              transitions: z.array(z.object({ from: nonEmptyString.max(64), to: nonEmptyString.max(64), pattern: z.string(), skip: z.boolean().optional(),
+                count: z.object({ min: z.number().int().nonnegative().optional(), max: z.number().int().nonnegative().optional(), parity: z.enum(["odd", "even"]).optional() }).strict().optional(),
+              }).strict()).min(1).max(64) }).strict().optional(),
+            indentation: z.object({ excludeUnder: z.string(), reset: z.string(), ignore: z.array(z.string()).max(64) }).strict().optional(),
+          }).strict().optional(),
+          paths: codeRuleScopeSchema.optional(),
         })
         .strict()
+        .refine(query => query.lines === undefined || query.source === "file.content", "lines requires file.content")
+        .refine(query => query.content === undefined || query.source === "file.content", "content requires file.content")
         .optional(),
       ast: z
         .object({
           language: z.enum(CODE_RULE_LANGUAGE_IDS),
           embedded: nonEmptyString.optional(),
+          syntax: z.enum(["valid", "invalid"]).optional(),
           rule: codeRuleAstRuleSchema,
           utils: z.record(utilityId, codeRuleUtilitySchema).optional(),
           constraints: z.record(nonEmptyString, codeRuleAstRuleSchema).optional(),
@@ -1269,7 +1306,7 @@ export const codeRuleQuerySchema: z.ZodType<CodeRuleDslQuery> = z.lazy(() =>
     ) as unknown as z.ZodType<CodeRuleDslQuery>,
 );
 
-const PROJECTION_SOURCE = /^(capture\.[A-Z_][A-Z0-9_]*|file\.(path|directory|name|stem|module|package))$/;
+const PROJECTION_SOURCE = /^(capture\.[A-Z_][A-Z0-9_]*(?:\.(?:startByte|endByte|startLine|kind|text))?|file\.(path|directory|name|stem|module|package))$/;
 
 export const codeRuleEvidenceQuerySchema = z
   .object({
@@ -1282,11 +1319,50 @@ export const codeRuleEvidenceQuerySchema = z
           .optional(),
         query: z.lazy(() => codeRuleQuerySchema).refine(query => "ast" in query, "An evidence query is an ast query."),
         project: z
-          .record(nonEmptyString, z.string().regex(PROJECTION_SOURCE, "expected capture.<NAME> or file.path|directory|name|stem|module|package"))
+          .record(nonEmptyString, z.union([
+            z.string().regex(PROJECTION_SOURCE, "expected capture.<NAME> or file.path|directory|name|stem|module|package"),
+            z.object({ source: z.string().regex(PROJECTION_SOURCE), regex: nonEmptyString,
+              group: z.number().int().nonnegative() }).strict(),
+          ]))
           .refine(project => Object.keys(project).length > 0, "project names at least one field."),
         where: codeRulePredicateSchema.optional(),
+        each: metavariableName.optional(),
+        anchor: nonEmptyString.optional(),
+        closure: z.array(z.object({
+          name: nonEmptyString, seeds: z.array(nonEmptyString).optional(), seed_field: nonEmptyString.optional(),
+          edges: z.object({ from: nonEmptyString, to: nonEmptyString }).strict().optional(),
+          extends: z.array(nonEmptyString).optional(), partition_by: z.array(nonEmptyString).optional(),
+          contains: z.record(nonEmptyString, nonEmptyString),
+        }).strict()).min(1).max(32).optional(),
       })
-      .strict(),
+      .strict()
+      .superRefine((evidence, context) => {
+        const fields = new Set(Object.keys(evidence.project));
+        const outputs = new Set<string>();
+        const stages = new Map<string, string[]>();
+        for (const [index, stage] of (evidence.closure ?? []).entries()) {
+          const issue = (key: string, message: string) => context.addIssue({ code: "custom", path: ["closure", index, key], message });
+          if (stages.has(stage.name)) issue("name", `Duplicate closure set ${stage.name}.`);
+          const partition = stage.partition_by ?? [];
+          for (const dependency of stage.extends ?? []) {
+            const earlier = stages.get(dependency);
+            if (earlier === undefined || JSON.stringify(earlier) !== JSON.stringify(partition)) {
+              issue("extends", `${dependency} must be an earlier set with the same partition_by.`);
+            }
+          }
+          const inputs = [...partition, ...Object.values(stage.contains),
+            ...(stage.seed_field === undefined ? [] : [stage.seed_field]),
+            ...(stage.edges === undefined ? [] : [stage.edges.from, stage.edges.to])];
+          for (const field of inputs) {
+            if (!fields.has(field)) issue("contains", `${field} names no projected field.`);
+          }
+          for (const output of Object.keys(stage.contains)) {
+            if (fields.has(output) || outputs.has(output)) issue("contains", `Output ${output} must be new.`);
+            outputs.add(output);
+          }
+          stages.set(stage.name, partition);
+        }
+      }),
   })
   .strict() as unknown as z.ZodType<CodeRuleDslEvidenceQuery>;
 
@@ -1385,13 +1461,15 @@ function checkViolationAgainstQuery(clause: CodeRuleDslReportingClause, context:
 
 export const codeRuleDefineSchema = z
   .object({
+    report_when: z.object({ count: z.object({ gt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER) }).strict() }).strict().optional(),
+
     language: z.enum(CODE_RULE_LANGUAGE_IDS).optional(),
     utils: z.record(utilityId, codeRuleUtilitySchema).optional(),
     options: z.record(optionName, codeRuleOptionDeclarationSchema).optional(),
     config: z.record(optionName, codeRuleValueSchema).optional(),
   })
   .strict()
-  .refine(define => define.utils !== undefined || define.options !== undefined || define.config !== undefined, "define must hold utils, options or config.")
+  .refine(define => define.utils !== undefined || define.options !== undefined || define.config !== undefined || define.report_when !== undefined, "define must hold utils, options, config or report_when.")
   .refine(define => define.utils === undefined || define.language !== undefined, {
     message: "language is required: utilities compile for one language.",
     path: ["language"],
@@ -1416,6 +1494,28 @@ export const codeRuleClauseSchema = z
       })
       .strict()
       .optional(),
+    relational: z.object({
+      partitionBy: z.enum(["file", "repository"]).optional(),
+      syntax: z.object({ name: nonEmptyString, gate: nonEmptyString, fields: z.array(nonEmptyString).max(32).optional(), columns: z.array(nonEmptyString).max(256).optional(), excludeKinds: z.array(nonEmptyString).max(32).optional(), emptyTextKinds: z.array(nonEmptyString).max(32).optional(), edges: nonEmptyString.optional(), ownership: nonEmptyString.optional(), owners: z.record(nonEmptyString,z.object({kind:nonEmptyString,outermost:z.boolean().optional()}).strict()).optional() }).strict().optional(),
+      locations: z.array(z.string().min(1).max(4096).refine(path => !/[\\:\u0000]/u.test(path) && path.split("/").every(part => part !== "" && part !== "." && part !== ".."),
+        "A declared diagnostic location must be a normalized relative path.")).min(1).max(4096).refine(paths => new Set(paths).size === paths.length, "Declared diagnostic locations must be distinct.").optional(),
+      inputs: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/), codeRuleRelationSchema),
+      stages: z.array(z.union([
+        z.object({ name: nonEmptyString, query: nonEmptyString, indexes: z.array(z.array(nonEmptyString).min(1).max(16)).max(8).optional(),
+          deferred: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/), nonEmptyString).refine(fields => Object.keys(fields).length >= 1 && Object.keys(fields).length <= 32 && new Set(Object.keys(fields).map(s => s.toLowerCase())).size === Object.keys(fields).length, "Deferred columns must contain 1 to 32 distinct fields.").optional(),
+        }).strict(),
+        z.object({ name: nonEmptyString, reachability: z.object({ roots: nonEmptyString, edges: nonEmptyString.optional(), syntax: nonEmptyString.optional(),
+          batchSize: z.number().int().min(1).max(4096).optional(),
+          graph: z.enum(["directed", "forest"]).optional(),
+        }).strict().refine(s => s.syntax === undefined ? s.edges !== undefined : s.edges === undefined && s.graph === undefined, "Reachability requires either edges or syntax.") }).strict(),
+      ])).max(64).optional(),
+      references: z.object({ language: z.literal("python"),
+        siblingLinks: z.array(z.object({ decorator: nonEmptyString, name: z.object({ replace: nonEmptyString, by: z.string() }).strict() }).strict()).min(1).max(32).optional(),
+        constructorFields: z.object({ fieldToParameter: z.object({ replace: nonEmptyString, by: z.string() }).strict() }).strict().optional(),
+      }).strict().optional(),
+      query: nonEmptyString, key: z.array(nonEmptyString).min(1).max(16).optional(), code: nonEmptyString.optional(),
+    }).strict().refine(plan => plan.partitionBy !== "file" || (plan.references === undefined && plan.locations === undefined),
+      "File partitions cannot declare references or diagnostic locations.").optional(),
     llm: z.unknown().optional(),
     define: codeRuleDefineSchema.optional(),
   })
@@ -1602,6 +1702,9 @@ export const codeRuleResolvedRuleSchema = z
   .strict()
   .superRefine((rule, context) => {
     const ids = new Set<string>();
+    if (rule.clauses.filter(clause => clause.define?.report_when !== undefined).length > 1) {
+      context.addIssue({ code: "custom", path: ["clauses"], message: "report_when must be declared once per document." });
+    }
     for (const [index, clause] of rule.clauses.entries()) {
       if (ids.has(clause.id)) {
         context.addIssue({ code: "custom", path: ["clauses", index, "id"], message: `Duplicate clause id: ${clause.id}.` });

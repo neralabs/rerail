@@ -1,6 +1,8 @@
 use super::AstMatcher;
 use super::binding::{match_binding_nodes, match_occurrence};
-use super::resolve::{file_source_type, file_table, file_usage, table_reading};
+use super::resolve::{
+    file_declaration_sites, file_source_type, file_table, file_usage, table_reading,
+};
 use super::util::{THREE_VALUED, UNKNOWN};
 use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
@@ -365,6 +367,12 @@ pub(crate) struct Binds {
 }
 
 impl Binds {
+    pub(super) fn declaration_only(&self) -> bool {
+        Family::of(self.language) == Family::Python
+            && !self.filter.reads_usage()
+            && self.redefines.is_none()
+            && self.occurrence.is_none()
+    }
     /// The sub-rules, the shadowed binding's included, which may bind captures.
     pub(crate) fn sub_rules(&self) -> impl Iterator<Item = &AstMatcher> {
         let redefines = self.redefines.as_deref();
@@ -527,7 +535,11 @@ impl Binds {
             self.language,
             table_reading(self.options.as_deref(), self.python.as_deref()),
         )?;
-        let usage = file_usage(node, &table)?;
+        let usage = if self.declaration_only() {
+            file_declaration_sites(node, &table)?
+        } else {
+            file_usage(node, &table)?
+        };
         let range = node.range();
         Some(NameSite {
             table,

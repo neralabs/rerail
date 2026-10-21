@@ -154,6 +154,19 @@ fn run_census() {
                     &mut lowered,
                     &mut matchers,
                 ),
+                // A relational clause's stages run in its own SQLite session
+                // (`relational`): only its inputs' producers are the engine's.
+                ClauseKind::Relational(plan) => {
+                    for (_, producer) in &plan.inputs {
+                        query(
+                            &producer.ast.query,
+                            producer.each.as_deref(),
+                            &mut found,
+                            &mut lowered,
+                            &mut matchers,
+                        );
+                    }
+                }
                 ClauseKind::Llm => found.push("llm".to_owned()),
             }
             if let ClauseKind::Forbid(forbid) = &clause.kind

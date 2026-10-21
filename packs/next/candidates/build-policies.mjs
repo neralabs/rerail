@@ -156,7 +156,7 @@ function policy(rule, description, checks, { candidate = false } = {}) {
 
 // ---- rules ---------------------------------------------------------------------------------------------------------
 
-policy("no-img-element", "an <img> opening element with attributes, not a direct child of <picture>, unless the file is an app-dir metadata image route (the path relative to the ESLint cwd matches ^(src/)?app/ and /opengraph-image|twitter-image|icon.ext).", [
+policy("no-img-element", "an <img> opening element with attributes, not a direct child of <picture>, unless the file is an app-dir metadata image route (the path relative to the ESLint cwd matches ^(src/)?app/ and /opengraph-image|twitter-image|icon.ext). The message is upstream's with more added (NER-1946): what `<Image />` needs (width and height or fill; a matching images.remotePatterns entry for a remote src) and the eslint-disable comment that keeps `<img>`.", [
   {
     id: "upstream",
     ast: {
@@ -204,7 +204,7 @@ policy("no-img-element", "an <img> opening element with attributes, not a direct
         },
       },
     },
-    message: `Using \`<img>\` could result in slower LCP and higher bandwidth. Consider using \`<Image />\` from \`next/image\` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: ${DOCS}/no-img-element`,
+    message: `Using \`<img>\` could result in slower LCP and higher bandwidth. Consider using \`<Image />\` from \`next/image\` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. \`<Image />\` needs \`width\` and \`height\` (or \`fill\`) unless \`src\` is a static import, and a remote \`src\` needs a matching \`images.remotePatterns\` entry in next.config. To keep \`<img>\`, e.g. for images from arbitrary hosts, put \`// eslint-disable-next-line @next/next/no-img-element -- <reason>\` on the line above (as \`{/* ... */}\` among JSX children). See: ${DOCS}/no-img-element`,
   },
 ]);
 

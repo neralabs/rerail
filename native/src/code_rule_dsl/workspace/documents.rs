@@ -45,10 +45,11 @@ impl FileVersion {
 
 /// A document the contract loaded: exactly the source and documents of one file version.
 pub(super) struct Document {
+    pub(super) syntax: std::sync::OnceLock<Arc<crate::code_rule_dsl::relational::syntax::Facts>>,
     pub(super) source: Arc<String>,
     pub(super) image: tape::FileImage,
     language: GrammarDialect,
-    bytes: usize,
+    bytes: std::sync::atomic::AtomicUsize,
 }
 
 /// Resident documents, bounded in bytes. A load beyond the bound evicts the least recently used
@@ -97,6 +98,20 @@ impl DocumentCache {
         self.used = 0;
     }
 
+    pub(super) fn account_syntax(&mut self, version: &FileVersion) {
+        if let Some((_, document)) = self.entries.get(version)
+            && let Some(facts) = document.syntax.get()
+        {
+            let bytes =
+                document.source.len() + document.image.estimated_bytes() + facts.estimated_bytes();
+            let previous = document
+                .bytes
+                .swap(bytes, std::sync::atomic::Ordering::Relaxed);
+            self.used = self.used.saturating_sub(previous) + bytes;
+        }
+        self.shrink();
+    }
+
     pub(super) fn resident_bytes(&self) -> usize {
         self.used
     }
@@ -112,9 +127,9 @@ impl DocumentCache {
 
     fn insert(&mut self, version: FileVersion, document: Arc<Document>) {
         self.clock += 1;
-        self.used += document.bytes;
+        self.used += document.bytes.load(std::sync::atomic::Ordering::Relaxed);
         if let Some((_, previous)) = self.entries.insert(version, (self.clock, document)) {
-            self.used -= previous.bytes;
+            self.used -= previous.bytes.load(std::sync::atomic::Ordering::Relaxed);
         }
         self.shrink();
     }
@@ -130,7 +145,7 @@ impl DocumentCache {
                 break;
             };
             if let Some((_, document)) = self.entries.remove(&oldest) {
-                self.used -= document.bytes;
+                self.used -= document.bytes.load(std::sync::atomic::Ordering::Relaxed);
                 self.loads.evicted += 1;
             }
         }
@@ -236,6 +251,45 @@ pub(super) fn current_version(state: &WorkspaceState, path: &str) -> Option<File
 
 /// The exact current version of `path`, loaded from the resident copy, the document cache, the
 /// store, or a reparse of the stored source.
+pub(super) fn source(state: &mut WorkspaceState, path: &str) -> Result<Arc<String>> {
+    let version = current_version(state, path)
+        .ok_or_else(|| invalid(format!("{path} is not a file of this workspace")))?;
+    if let Some(document) = state.documents.get(&version) {
+        return Ok(Arc::clone(&document.source));
+    }
+    if let Some(file) = state.files.get(path).filter(|file| {
+        FileVersion::of(file) == version
+            && !file.results_only
+            && (file.stored.is_none() || !file.input.source.is_empty())
+    }) {
+        return Ok(Arc::clone(&file.input.source));
+    }
+    if let Some(source) = released_source(state, path, &version) {
+        return Ok(source);
+    }
+    let storage = state
+        .storage
+        .as_ref()
+        .ok_or_else(|| invalid(format!("{path} has no available source")))?;
+    let stored = prefetch(&storage.store, &[version.source])?;
+    let objects = stored
+        .objects
+        .get(&version.source)
+        .ok_or_else(|| invalid(format!("{path}'s current source is not in the store")))?;
+    let bytes = storage
+        .store
+        .get_source(objects.source)
+        .map_err(|e| invalid(e.to_string()))?;
+    if HashKey::sha256(&bytes) != version.source {
+        return Err(invalid(format!(
+            "{path}'s stored source is not its current version"
+        )));
+    }
+    Ok(Arc::new(
+        String::from_utf8(bytes).map_err(|_| invalid(format!("{path} is not UTF-8")))?,
+    ))
+}
+
 pub(super) fn load(state: &mut WorkspaceState, path: &str) -> Result<(FileVersion, Arc<Document>)> {
     let version = current_version(state, path)
         .ok_or_else(|| invalid(format!("{path} is not a file of this workspace")))?;
@@ -304,7 +358,8 @@ pub(super) fn load(state: &mut WorkspaceState, path: &str) -> Result<(FileVersio
         (source, image)
     };
     let document = Arc::new(Document {
-        bytes: source.len() + image.estimated_bytes(),
+        syntax: std::sync::OnceLock::new(),
+        bytes: std::sync::atomic::AtomicUsize::new(source.len() + image.estimated_bytes()),
         source,
         image,
         language,

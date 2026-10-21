@@ -1,0 +1,253 @@
+{
+  "format": "rerail.data-layer-port-plan/v1",
+  "source_commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "unit": "LinterConfig check, including all its diagnostic clauses and policy behavior",
+  "batch_size": 10,
+  "status": "Batches 1\u20136 have candidate ports with passing recorded source-detection parity; batches 7\u201315 remain planned.",
+  "batches": [
+    {
+      "id": 1,
+      "focus": "Local syntax, text behavior, paths, bindings, and suppressions",
+      "checks": [
+        "removed_compat_surfaces",
+        "versioned_lifecycle_legacy_surfaces",
+        "no_api_root_imports",
+        "backend_type_strings",
+        "hasattr_async",
+        "no_source_inspection",
+        "serverplan_name_inference",
+        "no_blanket_grammar_bypass",
+        "serverplan_grammar_surface",
+        "permission_error"
+      ],
+      "status": "candidate-ports",
+      "evidence": "batch-01-evidence.json"
+    },
+    {
+      "id": 2,
+      "focus": "Annotations, local aliases, async context, and typed receiver requirements",
+      "checks": [
+        "dynamic_module_loading",
+        "forwardref",
+        "unresolved_forward_refs",
+        "classvar_check",
+        "type_safety_patterns",
+        "conn_or_txn_union",
+        "async_executor",
+        "async_patterns",
+        "async_sync_boundary",
+        "admin_async_purity"
+      ],
+      "status": "candidate-ports",
+      "evidence": "batch-02-evidence.json"
+    },
+    {
+      "id": 3,
+      "focus": "Scope ownership, value provenance, callbacks, effects, and caches",
+      "checks": [
+        "plan_scope_side_effects",
+        "plan_scope_ownership",
+        "transaction_closures",
+        "transaction_callback_wrappers",
+        "transaction_patterns",
+        "lazy_result_usage",
+        "swallowed_exceptions",
+        "error_handling",
+        "module_level_caches",
+        "connection_caches"
+      ],
+      "status": "candidate-ports",
+      "evidence": "batch-03-evidence.json"
+    },
+    {
+      "id": 4,
+      "focus": "SQL grammar construction and rendering, including Rust sources",
+      "checks": [
+        "render_fstrings",
+        "render_raw_strings",
+        "regex_sql_parsing",
+        "sql_grammar_escape_hatches",
+        "grammar_render_methods",
+        "grammar_str_params",
+        "grammar_callable_constructors",
+        "grammar_fragment_usage",
+        "grammar_allowlist_burndown",
+        "rust_sql_grammar_boundary"
+      ],
+      "status": "candidate-ports",
+      "evidence": "batch-04-evidence.json"
+    },
+    {
+      "id": 5,
+      "focus": "Declarations, exports, inheritance, signatures, and repository dependencies",
+      "checks": [
+        "missing_async_pairs",
+        "sync_async_signatures",
+        "async_sync_delegation",
+        "public_api_triples",
+        "data_layer_facade_purity",
+        "data_layer_compat_aliases",
+        "layer_violations",
+        "backend_coupling",
+        "internal_dead_code",
+        "imperative_private_functions"
+      ],
+      "status": "candidate-ports",
+      "evidence": "batch-05-evidence.json"
+    },
+    {
+      "id": 6,
+      "focus": "ServerPlan structure, dispatch, and execution authority",
+      "checks": [
+        "serverplan_bypass",
+        "serverplan_steps",
+        "serverplan_state_tripwires",
+        "serverplan_dispatch_architecture",
+        "serverplan_quality",
+        "serverplan_target_architecture",
+        "execution_authority_bypass",
+        "impl_direct_execution",
+        "raw_execute_regression",
+        "legacy_execution_surfaces"
+      ],
+      "status": "candidate-ports",
+      "evidence": "batch-06-evidence.json"
+    },
+    {
+      "id": 7,
+      "focus": "Publication, post-operation ownership, and declared contracts",
+      "checks": [
+        "post_op_side_effects",
+        "post_op_no_internal_dispatch",
+        "executor_publication_repairs",
+        "history_serverplan_projection",
+        "revision_ancestry_invariants",
+        "versioned_merged_identity",
+        "publication_registry_writes",
+        "declared_fact_interrogation",
+        "grammar_mutation_invalidation",
+        "unknown_contract_defaults"
+      ]
+    },
+    {
+      "id": 8,
+      "focus": "Pure lazy execution, adapters, and runtime authority",
+      "checks": [
+        "eager_resolve",
+        "lazy_architecture",
+        "pure_lazy_runtime_purity",
+        "cached_pure_lazy_allowlist",
+        "lazy_sql_surface",
+        "plan_helpers_allowlist",
+        "legacy_callback_quarantine",
+        "readthrough_authority_architecture",
+        "authentication_plan_purity",
+        "lazy_adapter_ownership"
+      ]
+    },
+    {
+      "id": 9,
+      "focus": "Connection services, schema contracts, and bootstrap behavior",
+      "checks": [
+        "connection_mode_split",
+        "connection_structural_boundaries",
+        "connection_service_architecture",
+        "schema_architecture",
+        "schema_bootstrap_contracts",
+        "bootstrap_engine_invariants",
+        "bootstrap_lazy_sql",
+        "bootstrap_eager_resolve",
+        "bootstrap_cache_health",
+        "plan_composition_architecture"
+      ]
+    },
+    {
+      "id": 10,
+      "focus": "Graph plans, optimizer contracts, matching, and indexing",
+      "checks": [
+        "graph_lazy_sql_plan",
+        "bounded_composed_graph_paths",
+        "graphql_plan_ownership",
+        "plan_optimizer_v2",
+        "conditional_architecture",
+        "schema_introspection_data_paths",
+        "matching_architecture",
+        "hnsw_architecture",
+        "embedding_vector_orchestration",
+        "generated_index_sources"
+      ]
+    },
+    {
+      "id": 11,
+      "focus": "Permissions, grants, provider storage, and API boundaries",
+      "checks": [
+        "unforgeable_grants",
+        "permission_context_system_flag",
+        "system_session_scope",
+        "system_grant_bypass",
+        "provider_storage_permissions",
+        "security_patterns",
+        "notification_lifecycle",
+        "auto_api_plan_boundaries",
+        "auto_api_route_descriptions",
+        "rowid_comparisons"
+      ]
+    },
+    {
+      "id": 12,
+      "focus": "Performance assertions, types, and operational contracts",
+      "checks": [
+        "rtt_assertion_integrity",
+        "rtt_counting_workarounds",
+        "route_guardrail_policy",
+        "hot_path_reflection",
+        "admin_tools",
+        "txn_required_methods",
+        "expression_owner_propagation",
+        "tstring_deps",
+        "broad_type_surfaces",
+        "broad_type_surfaces_ratchet"
+      ]
+    },
+    {
+      "id": 13,
+      "focus": "Runner governance, documentation coverage, and repository budgets",
+      "checks": [
+        "linter_enforcement",
+        "standalone_linter_entrypoints",
+        "architecture_rule_docs",
+        "ignore_counts",
+        "test_budget",
+        "migration_progress",
+        "permission_test_classification",
+        "permission_test_expansion",
+        "mandatory_imperative_tripwire",
+        "file_length"
+      ]
+    },
+    {
+      "id": 14,
+      "focus": "Identity contracts, remaining legacy surfaces, and policy artifacts",
+      "checks": [
+        "explicit_semantic_ids",
+        "function_level_imports",
+        "markdown_docs",
+        "noqa_sec_ratchet",
+        "pending_pipeline_effect_kinds",
+        "polymorphic_tripwires",
+        "polymorphic_type_id_authority",
+        "serverref_purity",
+        "serverref_sql_lowering",
+        "versioned_table_name_manipulation"
+      ]
+    },
+    {
+      "id": 15,
+      "focus": "Final two checks, preserving metric and source-disabled behavior",
+      "checks": [
+        "grammar_class_survey",
+        "tstring_syntax"
+      ]
+    }
+  ]
+}

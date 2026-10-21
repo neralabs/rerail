@@ -901,7 +901,7 @@ pub(crate) struct TextCondition {
 }
 
 impl TextCondition {
-    fn holds(&self, text: &str) -> bool {
+    pub(crate) fn holds(&self, text: &str) -> bool {
         self.regex.as_ref().is_none_or(|regex| regex.is_match(text))
             && self
                 .not_regex

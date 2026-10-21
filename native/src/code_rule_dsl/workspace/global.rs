@@ -53,7 +53,7 @@ pub(super) fn compile_query_plan(
 }
 
 /// One file's evidence for a synthetic clause.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub(super) struct Partition {
     pub(super) witnesses: Vec<Witness>,
     /// The static message of the clause's failure in the file: its witnesses there are unknown.
@@ -83,6 +83,8 @@ pub(super) fn compile_relation_producer(
     clause.violation = evidence::producer_violation(template, relation, side);
     clause.kind = ClauseKind::Forbid(ast.query.clone());
     clause.synthetic = true;
+    clause.projected_only =
+        matches!(&template.kind, ClauseKind::Relational(plan) if !plan.per_file);
     code_rule.clauses.push(clause);
     id
 }
@@ -108,17 +110,26 @@ pub(super) fn record_evidence(state: &mut WorkspaceState, path: &str, file: &Fil
     for id in ids {
         let witnesses = file.witnesses.get(&id).cloned().unwrap_or_default();
         let failure = file.failures.get(&id).map(|&(_, message)| message);
+        let syntax = match &state.code_rules[id.0].clauses[id.1].kind {
+            ClauseKind::Forbid(Query::Ast { matchers, .. })
+                if crate::code_rule_dsl::eval::grammar_matcher(matchers, &file.input)
+                    .is_some_and(|grammar| grammar.invalid_syntax.is_some()) =>
+            {
+                None
+            }
+            _ => file.syntax.clone(),
+        };
         let partitions = state.evidence.entry(id).or_default();
-        if failure.is_some() || file.syntax.is_some() || !witnesses.is_empty() {
-            partitions.insert(
-                path.to_owned(),
-                Partition {
-                    witnesses,
-                    failure,
-                    syntax: file.syntax.clone(),
-                },
-            );
-            state.dirty_globals.insert(id.0);
+        if failure.is_some() || syntax.is_some() || !witnesses.is_empty() {
+            let partition = Partition {
+                witnesses,
+                failure,
+                syntax,
+            };
+            if partitions.get(path) != Some(&partition) {
+                partitions.insert(path.to_owned(), partition);
+                state.dirty_globals.insert(id.0);
+            }
         } else if partitions.remove(path).is_some() {
             state.dirty_globals.insert(id.0);
         }
@@ -132,6 +143,13 @@ pub(super) fn forget_evidence(state: &mut WorkspaceState, path: &str) {
         if partitions.remove(path).is_some() {
             state.dirty_globals.insert(id.0);
         }
+    }
+    // Lazy source reads can change while every projected metadata row stays equal,
+    // including a source with no witnesses. Invalidate those repository scopes.
+    for (index, clauses) in &state.globals {
+        if state.code_rules[*index].scope.matches(path) && clauses.iter().any(|clause| {
+            matches!(&clause.kind, ClauseKind::Relational(plan) if plan.reads_source && !plan.per_file)
+        }) { state.dirty_globals.insert(*index); }
     }
 }
 
@@ -158,6 +176,7 @@ fn evaluate_relations(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
     producers: &[ClauseId],
+    snapshot: &Snapshot,
 ) -> Evaluation {
     match (&clause.kind, producers) {
         (ClauseKind::RequireEach { subject, evidence }, &[subject_id, evidence_id]) => {
@@ -176,7 +195,16 @@ fn evaluate_relations(
             relation_rows(state, id, query),
             state.engine.engine,
         ),
-        _ => unreachable!("relation plans are compiled for require_each and budget"),
+        (ClauseKind::Relational(plan), ids) => {
+            let rows = plan
+                .inputs
+                .iter()
+                .zip(ids)
+                .map(|((_, input), id)| relation_rows(state, *id, input))
+                .collect();
+            crate::code_rule_dsl::relational::evaluate(code_rule, clause, plan, rows, snapshot)
+        }
+        _ => unreachable!("relation plans are compiled for relation clauses"),
     }
 }
 
@@ -321,13 +349,23 @@ fn evaluate_plan<'s>(
 }
 
 pub(super) fn evaluate_global(
-    state: &WorkspaceState,
+    state: &mut WorkspaceState,
     index: usize,
     snapshot: &Snapshot,
+    mut batched: BTreeMap<String, Evaluation>,
 ) -> Result<Evaluation> {
-    let code_rule = &state.code_rules[index];
+    let _syntax = crate::code_rule_dsl::relational::syntax::Pool::install();
+    let resident = std::sync::Arc::clone(&state.code_rules[index]);
+    let code_rule = resident.as_ref();
+    let _graph = state.crossfile.evaluation_slot();
     let mut evaluation = Evaluation::default();
-    for clause in &state.globals[&index] {
+    for clause in &state.globals[&index].clone() {
+        if let Some(mut result) = batched.remove(&clause.id) {
+            evaluation.violations.append(&mut result.violations);
+            evaluation.failures.append(&mut result.failures);
+            evaluation.metrics.merge(result.metrics);
+            continue;
+        }
         if let Some(plan) = state.query_plans.get(&(index, clause.id.clone())) {
             let mut partial = BTreeMap::new();
             let result = evaluate_plan(plan, state, code_rule, &mut partial)?;
@@ -373,8 +411,54 @@ pub(super) fn evaluate_global(
                     );
                 }
             }
-        } else if let Some(producers) = state.relation_plans.get(&(index, clause.id.clone())) {
-            let mut result = evaluate_relations(state, code_rule, clause, producers);
+        } else if let Some(producers) = state
+            .relation_plans
+            .get(&(index, clause.id.clone()))
+            .cloned()
+        {
+            let source_snapshot = if matches!(&clause.kind,ClauseKind::Relational(plan) if plan.reads_source)
+            {
+                let paths = state
+                    .files
+                    .keys()
+                    .chain(state.evicted_inputs.keys())
+                    .filter(|path| code_rule.scope.matches(path))
+                    .cloned()
+                    .collect::<BTreeSet<_>>();
+                if paths.len() > code_rule.capabilities.limits.max_files {
+                    return Err(invalid("relational source snapshot exceeds maxFiles"));
+                }
+                let mut files = Vec::with_capacity(paths.len());
+                for path in paths {
+                    if crate::code_rule_dsl::budget::step_budget_exhausted() {
+                        return Err(invalid("interrupted: relational source load"));
+                    }
+                    let mut input = state
+                        .files
+                        .get(&path)
+                        .map(|file| file.input.clone())
+                        .or_else(|| state.evicted_inputs.get(&path).cloned())
+                        .ok_or_else(|| invalid("relational source was removed"))?;
+                    input.source = super::documents::source(state, &path)?;
+                    if input.source.len() > code_rule.capabilities.limits.max_source_bytes {
+                        return Err(invalid("relational source snapshot exceeds maxSourceBytes"));
+                    }
+                    files.push(input);
+                }
+                Some(Snapshot {
+                    revision: snapshot.revision,
+                    files,
+                })
+            } else {
+                None
+            };
+            let mut result = evaluate_relations(
+                state,
+                code_rule,
+                clause,
+                &producers,
+                source_snapshot.as_ref().unwrap_or(snapshot),
+            );
             evaluation.violations.append(&mut result.violations);
             evaluation.failures.append(&mut result.failures);
             evaluation.metrics.witnesses += result.metrics.witnesses;
@@ -393,4 +477,248 @@ pub(super) fn evaluate_global(
         }
     }
     Ok(evaluation)
+}
+
+/// Collect every dirty relational partition before advancing any SQL consumer.
+pub(super) fn evaluate_batched_relations(
+    state: &mut WorkspaceState,
+    indices: &BTreeSet<usize>,
+    snapshot: &Snapshot,
+    closed: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<BTreeMap<usize, BTreeMap<String, Evaluation>>> {
+    use crate::code_rule_dsl::{
+        budget::Context,
+        relational::{self, Job},
+    };
+    let _syntax = crate::code_rule_dsl::relational::syntax::Pool::install();
+    let _graph = state.crossfile.evaluation_slot();
+    let catalog = indices
+        .iter()
+        .map(|&index| {
+            (
+                index,
+                std::sync::Arc::clone(&state.code_rules[index]),
+                state.globals[&index].clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    #[cfg(feature = "code-rule-profile")]
+    let mut preparation = crate::code_rule_dsl::profile::trace::Span::start(
+        "input-preparation",
+        "queued-relational-inputs",
+    );
+    let mut jobs = Vec::new();
+    let mut keys = Vec::new();
+    let mut results = BTreeMap::new();
+    for (index, code_rule, clauses) in &catalog {
+        let index = *index;
+        let results = results
+            .entry(index)
+            .or_insert_with(BTreeMap::<String, Evaluation>::new);
+        for clause in clauses {
+            let ClauseKind::Relational(plan) = &clause.kind else {
+                continue;
+            };
+            results.entry(clause.id.clone()).or_default();
+            let producers = state.relation_plans[&(index, clause.id.clone())].clone();
+            if plan.per_file {
+                let paths = producers
+                    .iter()
+                    .flat_map(|id| {
+                        state
+                            .evidence
+                            .get(id)
+                            .into_iter()
+                            .flat_map(|r| r.keys().cloned())
+                    })
+                    .collect::<BTreeSet<_>>();
+                state
+                    .file_relation_results
+                    .retain(|(owner, name, path), _| {
+                        *owner != index || name != &clause.id || paths.contains(path)
+                    });
+                for path in paths {
+                    let key = (index, clause.id.clone(), path.clone());
+                    let version = super::documents::current_version(state, &path)
+                        .ok_or_else(|| invalid("relational source version unavailable"))?;
+                    if let Some((cached, evaluation)) = state
+                        .file_relation_results
+                        .get(&key)
+                        .filter(|(cached, _)| cached == &version)
+                    {
+                        let _ = cached;
+                        let result = results.get_mut(&clause.id).unwrap();
+                        result
+                            .violations
+                            .extend(evaluation.violations.iter().cloned());
+                        result.failures.extend(evaluation.failures.iter().cloned());
+                        result.metrics.witnesses += evaluation.metrics.witnesses;
+                        continue;
+                    }
+                    let mut input = state
+                        .files
+                        .get(&path)
+                        .map(|f| f.input.clone())
+                        .or_else(|| state.evicted_inputs.get(&path).cloned())
+                        .ok_or_else(|| invalid("relational source removed"))?;
+                    let mut budget =
+                        Context::work(closed, super::file_work_budget(input.source.len()));
+                    let mut facts_for_job = Vec::new();
+                    let rows = budget.run(|| -> Result<Vec<evidence::Rows>> {
+                        let (_, document) = super::documents::load(state, &path)?;
+                        input.source = std::sync::Arc::clone(&document.source);
+                        let _tapes = crate::code_rule_dsl::eval::TapeCacheSlot::install();
+                        if let Some(language) = crate::code_rule_dsl::eval::file_language(&input) {
+                            crate::code_rule_dsl::eval::TapeCacheSlot::seed(
+                                language,
+                                &input,
+                                &document.image,
+                            )?;
+                        }
+                        if plan.syntax.is_some() {
+                            let facts = match document.syntax.get() {
+                                Some(f) => std::sync::Arc::clone(f),
+                                None => {
+                                    let facts =
+                                        crate::code_rule_dsl::relational::syntax::Pool::get(
+                                            &input,
+                                        )?;
+                                    let _ = document.syntax.set(std::sync::Arc::clone(&facts));
+                                    facts
+                                }
+                            };
+                            facts_for_job.push((path.clone(), std::sync::Arc::clone(&facts)));
+                            crate::code_rule_dsl::relational::syntax::Pool::seed(&input, facts);
+                            state.documents.account_syntax(&version);
+                        }
+                        let snapshot = Snapshot {
+                            revision: snapshot.revision,
+                            files: vec![input.clone()],
+                        };
+                        let mut metrics = crate::code_rule_dsl::model::Metrics::default();
+                        crate::code_rule_dsl::eval::relational_rows(
+                            code_rule,
+                            clause,
+                            plan,
+                            &snapshot,
+                            &mut metrics,
+                            state.engine.engine,
+                        )
+                    })?;
+                    jobs.push(Job {
+                        code_rule,
+                        clause,
+                        rows,
+                        facts: facts_for_job,
+                        snapshot: Snapshot {
+                            revision: snapshot.revision,
+                            files: vec![input],
+                        },
+                        budget,
+                    });
+                    keys.push((index, clause.id.clone(), Some((key, version, path))));
+                }
+            } else {
+                let mut files = Vec::new();
+                if plan.reads_source {
+                    let paths = state
+                        .files
+                        .keys()
+                        .chain(state.evicted_inputs.keys())
+                        .filter(|p| code_rule.scope.matches(p))
+                        .cloned()
+                        .collect::<BTreeSet<_>>();
+                    if paths.len() > code_rule.capabilities.limits.max_files {
+                        return Err(invalid("relational source snapshot exceeds maxFiles"));
+                    }
+                    for path in paths {
+                        let mut input = state
+                            .files
+                            .get(&path)
+                            .map(|f| f.input.clone())
+                            .or_else(|| state.evicted_inputs.get(&path).cloned())
+                            .ok_or_else(|| invalid("relational source removed"))?;
+                        input.source = super::documents::source(state, &path)?;
+                        if input.source.len() > code_rule.capabilities.limits.max_source_bytes {
+                            return Err(invalid(
+                                "relational source snapshot exceeds maxSourceBytes",
+                            ));
+                        }
+                        files.push(input);
+                    }
+                } else {
+                    files = snapshot.files.clone();
+                }
+                let rows = plan
+                    .inputs
+                    .iter()
+                    .zip(&producers)
+                    .map(|((_, input), id)| relation_rows(state, *id, input))
+                    .collect();
+                jobs.push(Job {
+                    code_rule,
+                    clause,
+                    rows,
+                    facts: Vec::new(),
+                    snapshot: Snapshot {
+                        revision: snapshot.revision,
+                        files,
+                    },
+                    budget: Context::work(closed, super::CLAUSE_WORK_BUDGET),
+                });
+                keys.push((index, clause.id.clone(), None));
+            }
+        }
+    }
+    #[cfg(feature = "code-rule-profile")]
+    {
+        preparation.detail(|| {
+            let mut memory = super::memory::census::WitnessMemory::default();
+            let mut syntax_seen = std::collections::HashSet::new();
+            let mut source_seen = std::collections::HashSet::new();
+            let mut syntax_bytes = 0usize;
+            let mut source_bytes = 0usize;
+            let mut by_clause = BTreeMap::<_, (usize, usize)>::new();
+            for job in &jobs {
+                for (_, facts) in &job.facts {
+                    if syntax_seen.insert(std::sync::Arc::as_ptr(facts) as usize) {
+                        syntax_bytes += facts.estimated_bytes();
+                    }
+                }
+                for file in &job.snapshot.files {
+                    if source_seen.insert(std::sync::Arc::as_ptr(&file.source) as usize) {
+                        source_bytes += file.source.capacity();
+                    }
+                }
+                let counts = by_clause.entry((&job.code_rule.id, &job.clause.id)).or_default();
+                counts.0 += 1;
+                for rows in &job.rows {
+                    counts.1 += rows.witnesses.len();
+                    for witness in &rows.witnesses { memory.visit(witness); }
+                }
+            }
+            serde_json::json!({"jobs": jobs.len(), "ownership": memory,
+                "suppliedSyntaxVersions": syntax_seen.len(), "suppliedSyntaxBytesEstimate": syntax_bytes,
+                "snapshotSourceBytesUnique": source_bytes,
+                "byClause": by_clause.into_iter().map(|((rule, clause), (jobs, rows))|
+                    serde_json::json!({"rule": rule, "clause": clause, "jobs": jobs, "rows": rows}))
+                    .collect::<Vec<_>>(),
+                "accounting": "Inputs coexist before SQL admission. Referenced Arc payloads can also belong to the workspace/document cache; do not sum these categories as exclusive RSS. Syntax size uses the existing cache estimate. Census work is included in this diagnostic span."})
+        });
+        drop(preparation);
+    }
+    for ((index, name, key), evaluation) in keys.into_iter().zip(relational::evaluate_batch(jobs)) {
+        if let Some((key, version, _path)) = key
+            && evaluation.failures.is_empty()
+        {
+            state
+                .file_relation_results
+                .insert(key, (version, evaluation.clone()));
+        }
+        let result = results.get_mut(&index).unwrap().get_mut(&name).unwrap();
+        result.violations.extend(evaluation.violations);
+        result.failures.extend(evaluation.failures);
+        result.metrics.merge(evaluation.metrics);
+    }
+    Ok(results)
 }
