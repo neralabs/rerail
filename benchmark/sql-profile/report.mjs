@@ -1,6 +1,8 @@
+import { createHash } from "node:crypto";
 import { createReadStream, readFileSync, readdirSync, openSync, closeSync, writeSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
+import { actionableSummary, summaryMarkdown } from "./summary.mjs";
 
 export const thresholds = Object.freeze({ highVmPerRow: 1000, minimumVm: 100_000, emptyVm: 10_000,
   repeatedRuns: 100, smallCpuNs: 1_000_000, expansion: 10, expandedRows: 1000, indexBuilds: 10,
@@ -110,12 +112,22 @@ export async function buildReport(rawDirectory, outputDirectory, workload = {}) 
   const report = { version: 1, workload, thresholds, eventCount, sessions: files.length, summary,
     accounting: "Ranked CPU uses SQL CPU plus operator CPU excluding child SQL. SQL spans exclude preparation; operator spans include preparation. Parsing and other pipeline phases outside these spans are not attributed. Inclusive operator times overlap SQL. Aggregate wall time sums worker spans, not workload latency. Profiling callback and serialization overhead affect timings. EXPLAIN uses unbound NULL parameters after execution. Query plans describe SQLite choices, not actual loop counts. Frame counters cover frame tables; terminal internals are included in SQL time but have no callback breakdown. Rows are returned, changed, or published rows; shared rows are not copies. Summed row counts include operator and SQL observations of the same rows. Threshold flags are review candidates, not correctness failures.",
     contexts: [...contexts.values()].sort((a, b) => b.selfCpuNs - a.selfCpuNs), queries };
+  return writeReport(report, outputDirectory);
+}
+
+/** Regenerates presentation and priorities without rerunning or rewriting the execution trace. */
+export function writeReport(report, outputDirectory) {
+  report.actionableSummary = actionableSummary(report);
+  const hash = path => createHash("sha256").update(readFileSync(path)).digest("hex");
+  report.analysis = { version: 1, reporterSha256: hash(new URL(import.meta.url)),
+    summarySha256: hash(new URL("./summary.mjs", import.meta.url)) };
+  writeFileSync(join(outputDirectory, "summary.md"), summaryMarkdown(report));
   writeFileSync(join(outputDirectory, "profile.json"), JSON.stringify(report, null, 2) + "\n");
-  const lines = ["# SQL workload profile", "", `Output parity: ${workload.results?.parity ?? "unavailable"}.`, "", report.accounting, "",
-    `Events: ${eventCount}. Sessions: ${files.length}. Accounted CPU: ${ms(summary.selfCpuNs)} ms.`, "",
+  const lines = [summaryMarkdown(report), "", "# Complete query catalogue", "", `Output parity: ${report.workload?.results?.parity ?? "unavailable"}.`, "", report.accounting, "",
+    `Events: ${report.eventCount}. Sessions: ${report.sessions}. Accounted CPU: ${ms(report.summary.selfCpuNs)} ms.`, "",
     "| Query | Kind | Self CPU ms | Runs | Rows | VM steps | Flags |", "|---|---|---:|---:|---:|---:|---|"];
-  for (const q of queries) lines.push(`| Q${q.id} | ${q.kind} | ${ms(q.selfCpuNs)} | ${q.runs} | ${q.rows + q.changes} | ${q.vmSteps} | ${q.flags.map(f => f.code).join(", ")} |`);
-  for (const q of queries) {
+  for (const q of report.queries) lines.push(`| Q${q.id} | ${q.kind} | ${ms(q.selfCpuNs)} | ${q.runs} | ${q.rows + q.changes} | ${q.vmSteps} | ${q.flags.map(f => f.code).join(", ")} |`);
+  for (const q of report.queries) {
     lines.push("", `## Q${q.id}`, "", `Contexts: ${q.contexts.join(", ")}.`, "", "```sql", q.sql, "```", "");
     for (const flag of q.flags) lines.push(`- **${flag.code} (${flag.certainty})**: ${JSON.stringify(flag.evidence)}. ${flag.action}`);
     if (q.kind === "sql") lines.push("", "```json", JSON.stringify(q.plans.map(p => p.plan), null, 2), "```");
@@ -128,14 +140,21 @@ export async function buildReport(rawDirectory, outputDirectory, workload = {}) 
 function html(report) {
   const payload = JSON.stringify(report).replaceAll("<", "\\u003c").replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
   return `<!doctype html><html lang="en"><meta charset="utf-8"><title>SQL workload profile</title>
-<style>body{font:14px system-ui;margin:24px;color:#17202a}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:8px;border-bottom:1px solid #ddd}th{cursor:pointer}tr:hover{background:#eef5ff}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f6f8;padding:12px}.flag{color:#934500}input{padding:8px;width:70%}#detail{border-top:2px solid #aaa;margin-top:24px}button{margin:8px;padding:6px}</style>
-<h1>SQL workload profile</h1><p id="summary"></p><p id="accounting"></p><input id="filter" aria-label="Filter queries" placeholder="Filter SQL, scope, or flag"><button id="flagged">Flagged only</button><table><thead><tr><th data-sort="id">Query</th><th data-sort="selfCpuNs">Self CPU ms ↓</th><th data-sort="runs">Runs</th><th data-sort="rows">Rows</th><th data-sort="vmSteps">VM steps</th><th>Flags</th></tr></thead><tbody id="rows"></tbody></table><section id="detail"></section>
+<style>body{font:14px system-ui;margin:24px;color:#17202a}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:8px;border-bottom:1px solid #ddd}th{cursor:pointer}tr:hover{background:#eef5ff}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f6f8;padding:12px}.flag{color:#934500}input{padding:8px;width:70%}#detail{border-top:2px solid #aaa;margin-top:24px}button{margin:8px;padding:6px}.action{border:1px solid #ccd4de;border-radius:8px;padding:12px;margin:12px 0}.cost{font-weight:600}.muted{color:#52606d}#priorities table{margin:12px 0}details{margin:12px 0}</style>
+<h1>SQL workload profile</h1><p id="summary"></p><section id="priorities"></section><details><summary>Measurement limits</summary><p id="accounting"></p></details><h2>All queries</h2><input id="filter" aria-label="Filter queries" placeholder="Filter SQL, scope, or flag"><button id="flagged">Flagged only</button><table><thead><tr><th data-sort="id">Query</th><th data-sort="selfCpuNs">Self CPU ms ↓</th><th data-sort="runs">Runs</th><th data-sort="rows">Rows</th><th data-sort="vmSteps">VM steps</th><th>Flags</th></tr></thead><tbody id="rows"></tbody></table><section id="detail"></section>
 <script type="application/json" id="data">${payload}</script><script>
 const report=JSON.parse(document.getElementById('data').textContent);let sort='selfCpuNs',direction=-1,flagged=false;
 const el=id=>document.getElementById(id),ms=n=>(n/1e6).toFixed(3),text=(tag,value)=>{const e=document.createElement(tag);e.textContent=value;return e};
 el('summary').textContent=report.eventCount+' events · '+report.sessions+' sessions · '+ms(report.summary.selfCpuNs)+' ms accounted CPU · output parity: '+(report.workload.results?.parity??'unavailable');el('accounting').textContent=report.accounting;
 function detail(q){const d=el('detail');d.replaceChildren(text('h2','Q'+q.id+' · '+q.kind),text('p',q.contexts.join(', ')),text('pre',q.sql));for(const f of q.flags)d.append(text('p',f.code+' ('+f.certainty+'): '+JSON.stringify(f.evidence)+' '+f.action));d.append(text('h3','Metrics'),text('pre',JSON.stringify({...q,sql:undefined,plans:undefined,bytecode:undefined,plan:undefined},null,2)));if(q.kind==='sql')d.append(text('h3','EXPLAIN QUERY PLAN and bytecode'),text('pre',JSON.stringify(q.plans,null,2)));d.scrollIntoView({block:'start'});}
 function render(){const filter=el('filter').value.toLowerCase();el('rows').replaceChildren();for(const q of [...report.queries].filter(q=>(!flagged||q.flags.length)&&JSON.stringify([q.sql,q.contexts,q.flags]).toLowerCase().includes(filter)).sort((a,b)=>direction*(a[sort]-b[sort]))){const r=document.createElement('tr');for(const value of ['Q'+q.id+' '+q.kind,ms(q.selfCpuNs),q.runs,q.rows+q.changes,q.vmSteps,q.flags.map(f=>f.code).join(', ')])r.append(text('td',value));r.onclick=()=>detail(q);el('rows').append(r);}}
+const a=report.actionableSummary,p=el('priorities'),fmt=n=>n.toLocaleString('en-US',{maximumFractionDigits:n>0&&n<1?3:1});
+p.append(text('p',a.nextStep),text('p',a.budget.interpretation),text('h2','Where recorded CPU goes'));
+const costs=document.createElement('table');for(const c of a.costBreakdown){const row=document.createElement('tr');for(const v of [c.label,fmt(c.cpuMs)+' ms',fmt(c.measuredCpuPercent)+'%',fmt(c.executions)+' executions'])row.append(text('td',v));costs.append(row);}p.append(costs,text('h2','Priority actions'),text('p',a.interpretation));
+if(!a.actions.length)p.append(text('p','No action group reaches both 10 ms and 1% of recorded CPU. Use a larger representative capture.'));
+for(const action of a.actions){const card=text('article','');card.className='action';card.append(text('h3',action.rank+'. '+action.title),text('p',fmt(action.cpuMs)+' ms · '+fmt(action.measuredCpuPercent)+'% of recorded CPU · '+fmt(action.executions)+' executions'),text('p','Evidence: '+action.certainty+'. '+action.reason),text('p','Next change: '+action.change),text('p','Code: '+action.source),text('p','Check: '+action.verify));for(const id of action.representativeQueryIds){const button=text('button','Q'+id);button.onclick=()=>detail(report.queries.find(q=>q.id===id));card.append(button);}p.append(card);}
+p.append(text('h2','Root-input calls'),text('p',fmt(a.rootInput.executions)+' calls · '+fmt(a.rootInput.sqlExecutionPercent)+'% of SQL executions · '+fmt(a.rootInput.measuredCpuPercent)+'% of recorded CPU'),text('p',a.rootInput.explanation),text('p','Next change: '+a.rootInput.nextChange));
+p.append(text('p',a.quality.expectedSetupExplainFailures+' expected setup explanation failures · '+a.quality.unexpectedExplainFailures+' unexpected explanation failures · '+a.quality.incompleteOperations+' incomplete operations'));
 el('filter').oninput=render;el('flagged').onclick=()=>{flagged=!flagged;el('flagged').textContent=flagged?'Show all':'Flagged only';render()};document.querySelectorAll('[data-sort]').forEach(e=>e.onclick=()=>{direction=sort===e.dataset.sort?-direction:-1;sort=e.dataset.sort;render()});render();
 </script></html>`;
 }

@@ -53,7 +53,8 @@ A performance flag does not change the exit status.
 
 | File | Contents |
 |---|---|
-| `profile.html` | Searchable query table, CPU ranking, flags, SQL, plans, and bytecode |
+| `summary.md` | Priority actions, measured cost, code locations, and validation steps |
+| `profile.html` | Priority actions, CPU breakdown, searchable queries, plans, and bytecode |
 | `profile.json` | Complete query metrics, clause metrics, flags, thresholds, and workload provenance |
 | `profile.md` | Query ranking and details for text review |
 | `trace.json` | Execution timeline with query text, context, counters, and row observations |
@@ -62,6 +63,28 @@ A performance flag does not change the exit status.
 | `workload.json` | Configuration, input hashes, addon hash, environment, and output comparison |
 | `native.json`, `sql.json` | Workload results and engine reports |
 | `native-outcomes.json`, `sql-outcomes.json` | Complete normalized results for the output comparison |
+
+The console and HTML report start with five priority actions.
+Each action includes its measured cost, evidence, code location, proposed change, representative queries, and validation steps.
+Actions use exclusive CPU costs and assign each query to one action group.
+Their costs describe queries to investigate and do not predict savings.
+A CPU breakdown includes input loading, native operations, setup, and rule execution.
+
+The summary also groups structurally similar SQL across generated table names.
+This grouping preserves quoted text and repeated-table relationships.
+It does not establish semantic equivalence.
+Expected setup explanation failures remain separate from unexpected failures.
+An action group must reach both 10 ms and 1% of recorded CPU.
+Low-cost flags do not displace expensive runtime queries in the priorities.
+
+To update an existing report, run:
+
+```sh
+npm run bench:sql-profile:summary -- /existing/profile/directory
+```
+
+This command updates the reports without running the workload or rewriting its timeline.
+Capture hashes remain unchanged, and the analysis records the updated report implementation hashes.
 
 The HTML report sorts by CPU cost and filters by SQL text, clause, or flag.
 A query row opens its metrics, flags, plans, and bytecode.
@@ -142,3 +165,20 @@ The directory receives raw catalogues and execution streams from SQL engine sess
 A batch checkpoint flushes events and explains new SQL before the session can leave its worker.
 The command requires a new directory to prevent stale traces from entering a report.
 The full trace can be large because it preserves every repeated statement.
+
+## Why selected roots create many input calls
+
+The anchor index selects candidate node IDs for each clause and file.
+`select_roots` returns these IDs in Rust slices.
+`Session::run_batch` copies each `(run, file, node)` tuple into the `roots` table through `INSERT_ROOT`.
+The same node can be a candidate for many clauses, so memberships accumulate across clauses and files.
+These memberships are candidates rather than findings.
+
+The batch already uses one transaction and a cached prepared statement.
+These mechanisms avoid repeated commits and preparation, but the loader still calls SQLite once for each tuple.
+The old statement profile recorded generated rule statements and omitted these input calls.
+The complete profile includes them and reports their share of SQL calls and recorded CPU.
+
+The proposed change exposes the existing selected-root slices through a virtual input relation.
+It must preserve run/file isolation, duplicate handling, and the difference between all roots and an empty selection.
+An unprofiled benchmark must establish the benefit because short calls are sensitive to profiling overhead.

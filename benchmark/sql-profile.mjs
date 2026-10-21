@@ -6,6 +6,7 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildReport } from "./sql-profile/report.mjs";
+import { summaryMarkdown } from "./sql-profile/summary.mjs";
 
 const [configArg, outputArg] = process.argv.slice(2);
 if (!configArg || !outputArg || process.argv.length !== 4) {
@@ -24,6 +25,7 @@ const sha256 = path => createHash("sha256").update(readFileSync(path)).digest("h
 const workload = { configPath, config,
   profilerDriverSha256: sha256(fileURLToPath(import.meta.url)),
   reporterSha256: sha256(fileURLToPath(new URL("./sql-profile/report.mjs", import.meta.url))),
+  summarySha256: sha256(fileURLToPath(new URL("./sql-profile/summary.mjs", import.meta.url))),
   addonSha256: sha256(config.addon), runnerSha256: sha256(runner),
   capabilitiesSha256: sha256(config.capabilities),
   policies: config.policies.map(path => ({ path, sha256: sha256(path) })),
@@ -67,8 +69,7 @@ workload.results = { native, sql, error: failure,
   parity: !failure && native.digest === sql.digest && native.counts.failures === 0 && sql.counts.failures === 0 };
 writeFileSync(join(output, "workload.json"), JSON.stringify(workload, null, 2) + "\n");
 const report = await buildReport(raw, output, workload);
-console.log(JSON.stringify({ output, parity: workload.results.parity, events: report.eventCount, queries: report.queries.length,
-  accountedCpuMs: report.summary.selfCpuNs / 1e6,
-  top: report.queries.slice(0, 10).map(q => ({ id: q.id, kind: q.kind, selfCpuMs: q.selfCpuNs / 1e6, flags: q.flags.map(f => f.code) })) }, null, 2));
+console.log(summaryMarkdown(report));
+console.log(`Reports: ${output}/summary.md and ${output}/profile.html`);
 if (failure) console.error(failure);
 if (!workload.results.parity) process.exitCode = 1;

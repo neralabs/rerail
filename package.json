@@ -98,6 +98,7 @@
     "test:native": "cargo test --manifest-path Cargo.toml --workspace",
     "test:code-rule-dsl-runtime": "vitest run test/engine/native/native-code-rule-dsl-runtime.test.ts",
     "bench:sql-profile": "node benchmark/sql-profile.mjs",
+    "bench:sql-profile:summary": "node benchmark/sql-profile/summarize.mjs",
     "bench:code-rule-dsl": "node --import tsx scripts/dsl/code-rule-dsl-bench.ts",
     "test:integration:built": "npm run build:test-host && vitest run --dir integration",
     "test:integration:code-rule-runtime": "vitest run integration/code-rule-runtime.test.ts",
