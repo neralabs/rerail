@@ -14,10 +14,11 @@ name: Port readiness
 # code, the package files or the workflows; a tool-pack it leaves out keeps main's verdict. Pushes to main and the
 # nightly judge every tool-pack.
 #
-# Every run saves its results, pull requests included. GitHub scopes a pull request's cache to that pull request, so
-# main never reads one: a push to main reads only what main's own pushes and the nightly saved, and the nightly
-# judges every rule uncached. A pull request can therefore hand itself verdicts its own code computed, but it can edit the gate code
-# that decides them just as easily, so this opens no route it did not already have.
+# Every run saves its results, pull requests included, except a leg that recorded its tool-pack itself: the recorder
+# ran upstream's code and unlocked Composer packages, so that leg saves no cache. GitHub scopes a pull request's cache
+# to that pull request, so main never reads one: a push to main reads only what main's own pushes and the nightly
+# saved, and the nightly judges every rule uncached. A pull request can therefore hand itself verdicts its own code
+# computed, but it can edit the gate code that decides them just as easily, so this opens no route it did not already have.
 
 on:
   workflow_call:
@@ -185,10 +186,14 @@ jobs:
       # A fork records against the upstream its base's gates.yaml pins, as port-readiness-record.yml does. Its
       # repository, commit, runtime and test paths decide which code the recorder runs and whose tests it records, so a
       # fork that changed them would have this leg record answers of the fork's choosing and match the lock it
-      # committed. Only `popularity`, `known_gaps`, `real_code_gaps` and comments may differ. The recorder, the gate code
-      # it shares and the PHP action decide the answers just as much, so a fork may not change those either: a
-      # maintainer records such a pull request with port-readiness-record.yml. A branch here is not checked, since
-      # whoever can push one can already change this workflow.
+      # committed. Only `popularity`, `known_gaps`, `real_code_gaps` and comments may differ. The code the recorder runs
+      # decides the answers just as much, so a fork may not change that either: the recorder, the gate code and the
+      # engine modules it imports (src/engine, for PACKAGE_ROOT; cache.test.ts holds the list to the recorder's import
+      # graph), package.json, whose script starts it and whose dependencies it imports, package-lock.json, which locks
+      # them, and the PHP action. A maintainer records such a pull request with port-readiness-record.yml, which runs the
+      # base branch's recorder. A fork that touches only packs/ still records itself. This guard is no defence against a
+      # pull request that edits this workflow: a pull_request run takes the workflow from the pull request, fork or not,
+      # so the change to .github/ is what review has to catch.
       - name: Refuse a fork's change to the upstream or the recorder it is recorded with
         if: >-
           steps.fetch.outputs.missing == 'true' && github.event_name == 'pull_request' &&
@@ -214,7 +219,7 @@ jobs:
             echo "::error::this pull request comes from a fork and changes $manifest beyond popularity, known_gaps and real_code_gaps, and the release holds no recording for it: land that change on the base branch first, then record"
             exit 1
           fi
-          recorder=(conformance/recorders/port-readiness conformance/port-readiness .github/actions/php)
+          recorder=(conformance/recorders/port-readiness conformance/port-readiness src/engine package.json package-lock.json .github/actions/php)
           if ! git diff --quiet "$BASE_SHA" HEAD -- "${recorder[@]}"; then
             echo "::error::this pull request comes from a fork, changes the recorder (${recorder[*]}), and the release holds no recording for $PACK/$TOOL: a maintainer must record it with port-readiness-record.yml"
             exit 1
@@ -319,9 +324,11 @@ jobs:
 
       # Pull requests restore main's corpus (by exact key, or by prefix when the pull request changes a pin) and never
       # save their own: it would duplicate main's unchanged corpora (hundreds of MB) into the pull request's own cache
-      # scope, where only its own later runs could use it.
+      # scope, where only its own later runs could use it. A leg that recorded its tool-pack saves no cache at all,
+      # whatever the event: the recorder ran upstream's code and the Composer packages it resolved, unlocked, which could
+      # have rewritten anything under .rerail/, and on main the save would land where every pull request restores from.
       - name: Save the corpus and upstream's test files
-        if: ${{ always() && github.event_name != 'pull_request' }}
+        if: ${{ always() && github.event_name != 'pull_request' && steps.fetch.outputs.missing != 'true' }}
         uses: actions/cache/save@v6
         with:
           path: |
@@ -331,9 +338,10 @@ jobs:
         continue-on-error: true
 
       # Pull request runs save theirs too: GitHub keeps them in the pull request's own cache scope, which main and
-      # every other branch cannot read, so a second push reuses only the rules this pull request has not touched.
+      # every other branch cannot read, so a second push reuses only the rules this pull request has not touched. Not
+      # after the leg recorded its tool-pack, as above.
       - name: Save the rule results
-        if: ${{ always() }}
+        if: ${{ always() && steps.fetch.outputs.missing != 'true' }}
         uses: actions/cache/save@v6
         with:
           path: .rerail/port-readiness/results

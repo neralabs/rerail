@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,6 +42,21 @@ export function filesUnder(directory: string, predicate: (path: string) => boole
 /** A digest of every file under a directory (that `keep` accepts), by relative path and content. */
 export function treeDigest(directory: string, keep: (path: string) => boolean = () => true): string {
   return sha256(filesUnder(directory, keep).map((path) => `${relative(directory, path)}\0${sha256(readFileSync(path))}`).join("\n"));
+}
+
+/**
+ * `text` with this machine's directories taken out of every path under them, so what upstream says about a file (a
+ * message naming the scratch copy it analysed, or a PHP error naming a vendor file of the runtime) reads the same on
+ * every machine and a recording made on one matches a lock made on another. Each directory is taken as given and
+ * resolved through its symlinks (macOS's /var is /private/var), the longest first, so a directory inside another (the
+ * scratch directory inside the cache root) leaves no part of itself behind.
+ */
+export function withoutMachinePaths(text: string, directories: readonly string[]): string {
+  const prefixes = [...new Set(directories.flatMap((directory) => {
+    const given = resolve(directory);
+    return existsSync(given) ? [given, realpathSync(given)] : [given];
+  }))].sort((a, b) => b.length - a.length);
+  return prefixes.reduce((stripped, prefix) => stripped.replaceAll(`${prefix}/`, ""), text);
 }
 
 export interface UpstreamCheckout {

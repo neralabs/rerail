@@ -13,7 +13,13 @@ export const TLINT_SPAN_PARTS: SpanParts = { endLine: false, endCol: false };
  */
 export function tlintLine(source: string, byteOffset: number): number {
   const prefix = Buffer.from(source, "utf8").subarray(0, byteOffset).toString("utf8");
-  return prefix.match(/\r\n|\r|\n/gu)?.length ?? 0;
+  // The `\r` lookahead reads `source`: an offset between `\r` and `\n` cuts the prefix there, and `\r\n` is one break.
+  let line = 0;
+  for (let index = 0; index < prefix.length; index += 1) {
+    const char = prefix[index];
+    if (char === "\n" || (char === "\r" && source[index + 1] !== "\n")) line += 1;
+  }
+  return line;
 }
 
 /** An engine byte span of `source` in tlint's coordinates: its start line, and nothing else, as tlint reports no more. */

@@ -20,7 +20,8 @@ upstream:
   # `core_validators`, which ValidatorServiceProvider merges under `blade.validation` and adds to every BladeValidator
   # (`php artisan blade:validate`, Document::withCoreValidators), each loaded with that file's `options` for it ("The
   # validators in this list will be added to BladeValidator instances automatically"). That is the only configuration
-  # upstream ships, and all four ported validators are in the list, so each is `recommended` with it and ships on.
+  # upstream ships, and all four ported validators are in the list, so each is `recommended` with it and starts on once
+  # shipped.
   #
   # How the adapter applies it (decisions for the team; they hold for every stillat/blade-parser pack):
   # - Gate 5 runs each validator as its test runs it (Document::fromText(<template>)->addValidator(<validator>)

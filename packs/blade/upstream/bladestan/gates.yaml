@@ -23,8 +23,8 @@ upstream:
   # PHPStan level the project runs at. PHPStan recommends none of its levels over the others, and the one it runs
   # without one is level 0 (phpstan.org/user-guide/rule-levels, "The default level is 0"), as php/phpstan reads it.
   # Level 0 registers DefinedVariableRule (variable.undefined), PrintfParametersRule (argument.sprintf) and
-  # DuplicateKeysInLiteralArraysRule (array.duplicateKey): those three documents are `recommended` and ship on. The
-  # other five ship off: IfConstantConditionRule (if.alwaysTrue, if.alwaysFalse) and
+  # DuplicateKeysInLiteralArraysRule (array.duplicateKey): those three documents are `recommended` and start on once
+  # shipped. The other five start off once shipped: IfConstantConditionRule (if.alwaysTrue, if.alwaysFalse) and
   # StrictComparisonOfDifferentTypesRule (identical.alwaysTrue) are level 4's, RandomIntParametersRule (argument.type)
   # level 5's and MissingFunctionReturnTypehintRule (missingType.return) level 6's.
   #

@@ -9,7 +9,7 @@ import { upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js
 import { psalmSpan, PSALM_SPAN_PARTS } from "../../../port-readiness/span-units/psalm.js";
 import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../port-readiness/types.js";
 import { createPhpToolkit, phpRegex, type PhpLiterals } from "../languages/php.js";
-import { checkoutUpstream, composerRuntime, filesUnder, treeDigest } from "../runtimes.js";
+import { checkoutUpstream, composerRuntime, filesUnder, treeDigest, withoutMachinePaths } from "../runtimes.js";
 
 /**
  * The Psalm adapter. Expected answers come from running the pinned Psalm itself, as its command line
@@ -165,12 +165,13 @@ export async function createPsalmAdapter(pack: PackManifest, names: string[], ca
       await writeFile(join(directory, "psalm.xml"), config);
       const argv = runtime.command(psalm, `--config=${join(directory, "psalm.xml")}`, `--root=${directory}`, "--no-cache", "--output-format=json", "--no-progress", "--monochrome", "--threads=1", ...(phpVersion === null ? [] : [`--php-version=${phpVersion}`]));
       const result = await runner.run(argv, { cwd: directory });
+      const machine = [directory, upstream.directory, runtime.directory, cacheRoot];
       // Psalm exits 2 when it reports an error and 0 when it reports none; anything else is a failure to run.
       if (result.exitCode !== 0 && result.exitCode !== 2) {
-        throw new Error(`psalm exited ${result.exitCode}:\n${(result.stderr.trim() || result.stdout.trim()).split("\n").slice(-20).join("\n").replaceAll(`${directory}/`, "")}`);
+        throw new Error(`psalm exited ${result.exitCode}:\n${withoutMachinePaths((result.stderr.trim() || result.stdout.trim()).split("\n").slice(-20).join("\n"), machine)}`);
       }
-      // The temporary directory is no part of the answer: the recording must read the same on every machine.
-      return (JSON.parse(result.stdout) as Issue[]).map((issue) => ({ ...issue, message: issue.message.replaceAll(`${directory}/`, ""), file_name: issue.file_name.split(sep).join("/") }));
+      // This machine's directories are no part of the answer: the recording must read the same on every machine.
+      return (JSON.parse(result.stdout) as Issue[]).map((issue) => ({ ...issue, message: withoutMachinePaths(issue.message, machine), file_name: issue.file_name.split(sep).join("/") }));
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

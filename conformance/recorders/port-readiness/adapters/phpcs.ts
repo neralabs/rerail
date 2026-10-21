@@ -9,7 +9,7 @@ import { upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js
 import { messageSpan, phpcsSpan, PHPCS_SPAN_PARTS } from "../../../port-readiness/span-units/phpcs.js";
 import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../port-readiness/types.js";
 import { createPhpToolkit, phpRegex, type PhpLiterals } from "../languages/php.js";
-import { checkoutUpstream, composerRuntime, filesUnder, treeDigest } from "../runtimes.js";
+import { checkoutUpstream, composerRuntime, filesUnder, treeDigest, withoutMachinePaths } from "../runtimes.js";
 
 /**
  * The PHP_CodeSniffer adapter. Expected answers come from running the pinned PHP_CodeSniffer itself on upstream's own
@@ -238,7 +238,7 @@ export async function createPhpcsAdapter(pack: PackManifest, names: string[], ca
         const internal = asRecommended.internal[path] ?? asTested.internal[path];
         const skipped = facts.sniffs[own]!.skipped
           ? `upstream's unit test ${fromCheckout(facts.sniffs[own]!.testClass!)} skips it on PHP ${facts.php}`
-          : internal === undefined ? null : `upstream could not analyse it: ${internal.replaceAll(`${upstream.directory}/`, "")}`;
+          : internal === undefined ? null : `upstream could not analyse it: ${withoutMachinePaths(internal, [upstream.directory, runtime.directory, cacheRoot])}`;
         return {
           fixture,
           variant: own === name ? "." : fromCheckout(facts.sniffs[own]!.testClass ?? path),
@@ -272,8 +272,8 @@ export async function createPhpcsAdapter(pack: PackManifest, names: string[], ca
         const result = files.length === 0 ? { messages: {}, internal: {} } : await ask<LintResult>({ op: "lint", groups, files: paths.map((path) => ({ path })) });
         return files.map((file, index) => {
           const internal = result.internal[paths[index]!];
-          // The temporary directory is no part of the answer: the recording must read the same on every machine.
-          if (internal !== undefined) return { file, excluded: `upstream could not analyse it: ${internal.replaceAll(`${directory}/`, "")}`, findings: new Map() };
+          // This machine's directories are no part of the answer: the recording must read the same on every machine.
+          if (internal !== undefined) return { file, excluded: `upstream could not analyse it: ${withoutMachinePaths(internal, [directory, upstream.directory, runtime.directory, cacheRoot])}`, findings: new Map() };
           return { file, excluded: null, findings: new Map(ruleNames.map((name) => [name, findingsOf(result, paths[index]!, name)])) };
         });
       } finally {

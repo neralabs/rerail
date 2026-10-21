@@ -168,11 +168,13 @@ jobs:
         if: matrix.pack == 'php' || matrix.pack == 'blade'
         uses: ./.github/actions/php
 
-      # The recorder's own cache, so a run on main warms what the next maintainer recording reads. The paths are
+      # The recorder's own cache, restored so a night reuses what port-readiness-record.yml saved. The paths are
       # port-readiness-record.yml's exactly, which GitHub requires for one to restore what the other saved. `recordings/*`
       # rather than `recordings`, so the negation drops upload/: the cache archives each path the glob lists, recursively.
+      # Restored only, never saved: what this job would add to it is what the recorder installed and ran, upstream's code
+      # and unlocked Composer packages among it, and a save after that would hand main's scope whatever that code wrote.
       - name: Restore the upstream runtimes, checkouts, corpus and recordings
-        uses: actions/cache@v6
+        uses: actions/cache/restore@v6
         with:
           path: |
             .rerail/port-readiness/runtimes

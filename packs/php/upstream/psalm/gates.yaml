@@ -31,7 +31,7 @@ upstream:
   # - UnusedVariable (ERROR_LEVEL -2) is a feature-specific issue, reported at every level once unused variables are
   #   sought. findUnusedCode="true" seeks them (Config::loadFromXML sets find_unused_variables from findUnusedCode;
   #   docs/running_psalm/configuration.md: "including unused variables"), so `init` needs no
-  #   findUnusedVariablesAndParams. Both documents are `recommended` and ship on.
+  #   findUnusedVariablesAndParams. Both documents are `recommended` and start on once shipped.
   #
   # How the adapter applies it (decisions for the team; they hold for every Psalm pack):
   # - Gate 5 runs Psalm's command line (`vendor/bin/psalm --output-format=json --no-cache --threads=1`) with `init` on

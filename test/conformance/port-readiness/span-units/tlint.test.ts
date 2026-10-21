@@ -13,6 +13,9 @@ test("an engine span is a tlint position: its line alone, lines split at \\r\\n,
   assert.deepEqual(tlintSpan(SOURCE, echo, echo + 6), lintSpan({ line: 3 }));
   assert.deepEqual(tlintSpan(SOURCE, dd, dd + 7), lintSpan({ line: 4 }));
   assert.deepEqual(lintSpan({ line: 3 }), { startLine: 2, startCol: null, endLine: null, endCol: null });
+  // An offset between the `\r` and `\n` of line 1's CRLF is still on line 1.
+  const crlf = Buffer.byteLength(SOURCE.slice(0, SOURCE.indexOf("\r\n") + 1), "utf8");
+  assert.deepEqual(tlintSpan(SOURCE, crlf, crlf), lintSpan({ line: 1 }));
   // tlint reports no column and no end, so none is compared.
   assert.deepEqual(TLINT_SPAN_PARTS, { endLine: false, endCol: false });
 });

@@ -177,7 +177,11 @@ reproducibly. That holds only while the binary is their build, so a binary older
 The test-only sources are every file a `#[cfg(test)] mod` declaration reaches, which is how the engine keeps its oracle
 tests beside the code they check.
 
-In CI every run saves its results, pull requests included. GitHub scopes a pull request's cache to that pull request,
+In CI every run saves its results, pull requests included, except a gate leg that recorded its tool-pack itself: the
+recorder ran upstream's code and unlocked Composer packages, which could have rewritten anything under `.rerail/`, so
+that leg saves neither its results nor the corpus. The PHP build and the LFS objects are saved by an explicit step
+straight after they are made, before any recorder runs, and the nightly's recording check restores the recorder's
+cache without saving it. GitHub scopes a pull request's cache to that pull request,
 so main never reads one: a push to main reads only what main's own pushes and the nightly saved. A pull request can
 hand itself verdicts its own code computed, which it could already do by editing the gate code that decides them.
 
@@ -262,9 +266,14 @@ path: a leg that fetches records nothing.
 A fork's pull request records against the upstream its base pins, as `port-readiness-record.yml` does: the leg
 refuses a fork's change to `gates.yaml`'s repository, commit, runtime or tests (only `popularity`, `known_gaps`,
 `real_code_gaps` and comments may differ), since CI would otherwise run the upstream the fork chose and match the lock
-the fork committed. It refuses a fork's change to the recorder for the same reason (`conformance/recorders/port-readiness`,
-`conformance/port-readiness` and `.github/actions/php`): a maintainer records such a pull request with
-`port-readiness-record.yml`, which runs the base branch's recorder. And because the recordings are not in the diff, the leg writes the per-rule summary the record
+the fork committed. It refuses a fork's change to the code the recorder runs for the same reason:
+`conformance/recorders/port-readiness`, `conformance/port-readiness`, `src/engine` (which the recorder imports for
+`PACKAGE_ROOT`), `package.json` and `package-lock.json` (the script that starts it, and the npm packages it imports)
+and `.github/actions/php`. `cache.test.ts` checks that list against what a bundle of the recorder loads. A maintainer
+records such a pull request with `port-readiness-record.yml`, which runs the base branch's recorder; a fork that touches
+only `packs/` still records itself. The guard is no defence against a pull request that edits the workflow, since a
+`pull_request` run takes the workflow from the pull request: reviewing a change to `.github/` is. And because the
+recordings are not in the diff, the leg writes the per-rule summary the record
 workflow posts (`--changes`, below), against the recording the base's lock names (a first recording when the base has
 none), into its job summary and its report artifact.
 

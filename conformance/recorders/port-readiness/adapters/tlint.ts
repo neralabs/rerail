@@ -10,7 +10,7 @@ import { lintSpan, tlintSpan, TLINT_SPAN_PARTS } from "../../../port-readiness/s
 import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../port-readiness/types.js";
 import { createBladeToolkit } from "../languages/blade.js";
 import { phpRegex, type PhpLiterals } from "../languages/php.js";
-import { checkoutUpstream, composerRuntime, filesUnder, treeDigest } from "../runtimes.js";
+import { checkoutUpstream, composerRuntime, filesUnder, treeDigest, withoutMachinePaths } from "../runtimes.js";
 
 /**
  * The tlint adapter. Expected answers come from running the pinned tlint itself on the templates upstream's own linter
@@ -109,7 +109,7 @@ export async function createTlintAdapter(pack: PackManifest, names: string[], ca
     const test = fromCheckout(fact.test);
     return fact.tests.flatMap((method) => {
       const failed = method.assertions.filter((assertion) => !assertion.ok).map((assertion) => assertion.assertion);
-      if (method.error !== null) disagreements.push(`${test}::${method.test} throws ${method.error}`);
+      if (method.error !== null) disagreements.push(`${test}::${method.test} throws ${withoutMachinePaths(method.error, [upstream.directory, runtime.directory, cacheRoot])}`);
       else if (method.assertions.length === 0) disagreements.push(`${test}::${method.test} asserts nothing`);
       else if (failed.length > 0) disagreements.push(`${test}::${method.test} fails ${failed.join(", ")}`);
       // A method that threw before handing its linter a template has no case; its disagreement above is reported.
@@ -188,8 +188,11 @@ export async function createTlintAdapter(pack: PackManifest, names: string[], ca
         await writeFile(join(directory, file.path), file.source);
       }));
       // Linted by relative path from the directory, as `tlint lint` lints a project's files: the path a linter's
-      // appliesToPath reads and every message are the file's own, never this machine's.
-      return await ask<LintResult>({ op: "lint", cwd: directory, groups, files: files.map((file) => file.path) });
+      // appliesToPath reads and every message are the file's own. A message tlint or PHP wrote about a file it could
+      // not analyse may still name this machine's directories (a TypeError names the vendor file it was called in).
+      const result = await ask<LintResult>({ op: "lint", cwd: directory, groups, files: files.map((file) => file.path) });
+      const machine = [directory, upstream.directory, runtime.directory, cacheRoot];
+      return { ...result, internal: Object.fromEntries(Object.entries(result.internal).map(([path, message]) => [path, withoutMachinePaths(message, machine)])) };
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

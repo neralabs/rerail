@@ -9,7 +9,7 @@ import { bladeParserSpan, BLADE_PARSER_SPAN_PARTS, validationSpan } from "../../
 import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../port-readiness/types.js";
 import { createBladeToolkit } from "../languages/blade.js";
 import { phpRegex, type PhpLiterals } from "../languages/php.js";
-import { checkoutUpstream, filesUnder, treeDigest } from "../runtimes.js";
+import { checkoutUpstream, filesUnder, treeDigest, withoutMachinePaths } from "../runtimes.js";
 
 /**
  * The stillat/blade-parser adapter. Expected answers come from running the pinned stillat/blade-parser itself on the
@@ -75,6 +75,12 @@ export async function createBladeParserAdapter(pack: PackManifest, names: string
   const ask = async <T>(request: object): Promise<T> =>
     JSON.parse(await runChecked(runner, runtime.command(DRIVER, runtime.directory), { input: JSON.stringify(request), cwd: cacheRoot })) as T;
   const facts = await ask<Facts>({ op: "facts", validators: names, checkout: upstream.directory });
+  /** The driver's lint, with this machine's directories taken out of what it says it could not parse, so the recording reads the same on every machine. */
+  const lint = async (request: object): Promise<LintResult> => {
+    const result = await ask<LintResult>({ op: "lint", ...request });
+    const machine = [upstream.directory, runtime.directory, cacheRoot];
+    return { ...result, errors: Object.fromEntries(Object.entries(result.errors).map(([path, error]) => [path, withoutMachinePaths(error, machine)])) };
+  };
   const fromCheckout = (path: string) => relative(upstream.directory, path).split(sep).join("/");
   const ported = Object.keys(facts.validators).sort();
 
@@ -101,8 +107,7 @@ export async function createBladeParserAdapter(pack: PackManifest, names: string
   const fixtureOf = (template: Template) => `${template.test}#${template.number}`;
 
   // The templates, linted as the default configuration loads each validator (as its test constructs one it does not list).
-  const configured = await ask<LintResult>({
-    op: "lint",
+  const configured = await lint({
     validators: ported.map((validator) => ({ name: validator, options: facts.validators[validator]!.options })),
     files: templates.map((template) => ({ path: fixtureOf(template), source: template.source })),
   });
@@ -278,7 +283,7 @@ export async function createBladeParserAdapter(pack: PackManifest, names: string
     async lintCorpus(files, ruleNames) {
       const validators = ruleNames.filter((name) => facts.validators[name] !== undefined).map((name) => ({ name, options: facts.validators[name]!.options }));
       const keyOf = (index: number) => `${files[index]!.task}/${files[index]!.path}`;
-      const result = files.length === 0 ? { findings: {}, errors: {} } : await ask<LintResult>({ op: "lint", validators, files: files.map((file, index) => ({ path: keyOf(index), source: file.source })) });
+      const result = files.length === 0 ? { findings: {}, errors: {} } : await lint({ validators, files: files.map((file, index) => ({ path: keyOf(index), source: file.source })) });
       return files.map((file, index) => {
         const error = result.errors[keyOf(index)];
         if (error !== undefined) return { file, excluded: `upstream could not analyse it: ${error}`, findings: new Map() };

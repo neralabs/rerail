@@ -20,7 +20,11 @@ export const BLADE_PARSER_SPAN_PARTS: SpanParts = { endLine: false, endCol: fals
  */
 export function bladeParserPosition(source: string, byteOffset: number): { line: number; column: number } {
   const text = Buffer.from(source.replace(/\r\n?/gu, "\n"), "utf8");
-  const offset = [...Buffer.from(source, "utf8").subarray(0, byteOffset).toString("utf8").replace(/\r\n?/gu, "\n")].length;
+  const prefix = Buffer.from(source, "utf8").subarray(0, byteOffset).toString("utf8");
+  // The `\r` lookahead reads `source`: an offset between `\r` and `\n` cuts the prefix after a `\r` that `\r\n`'s
+  // normalization drops, so it counts no character.
+  const cutCrlf = prefix.endsWith("\r") && source[prefix.length] === "\n";
+  const offset = [...prefix.replace(/\r\n?/gu, "\n")].length - (cutCrlf ? 1 : 0);
   // The `\n`s' byte offsets in the normalized template, each with the column upstream's table gives it.
   const newlines: { index: number; char: number }[] = [];
   let previous: number | null = null;

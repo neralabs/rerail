@@ -10,7 +10,7 @@ import { bladestanSpan, templateLineSpan, BLADESTAN_SPAN_PARTS } from "../../../
 import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../port-readiness/types.js";
 import { createBladeToolkit } from "../languages/blade.js";
 import { phpRegex, type PhpLiterals } from "../languages/php.js";
-import { checkoutUpstream, composerRuntime, filesUnder, PHP_INI, treeDigest } from "../runtimes.js";
+import { checkoutUpstream, composerRuntime, filesUnder, PHP_INI, treeDigest, withoutMachinePaths } from "../runtimes.js";
 
 /**
  * The Bladestan adapter. Bladestan runs PHPStan's rules over the PHP a template compiles to, where PHP code renders the
@@ -105,9 +105,7 @@ export async function createBladestanAdapter(pack: PackManifest, names: string[]
       await prepare(directory);
       const command = [runtime.php, ...PHP_INI, "-d", "register_argc_argv=1", DRIVER, runtime.directory];
       const output = await runChecked(runner, command, { input: JSON.stringify(request(directory)), cwd: directory, env: { ...process.env, TMPDIR: join(directory, "tmp") } });
-      const machinePaths = [...new Set([directory, upstream.directory, runtime.directory, cacheRoot].flatMap((path) => [resolve(path), realpathSync(path)]))]
-        .sort((a, b) => b.length - a.length);
-      return JSON.parse(machinePaths.reduce((text, path) => text.replaceAll(`${path}/`, ""), output)) as T;
+      return JSON.parse(withoutMachinePaths(output, [directory, upstream.directory, runtime.directory, cacheRoot])) as T;
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

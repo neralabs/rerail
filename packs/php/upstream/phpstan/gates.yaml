@@ -27,9 +27,10 @@ upstream:
   # src/Command/CommandHelper.php's DEFAULT_LEVEL), the same reading as PHP_CodeSniffer's PSR12 and Bandit's and Ruff's
   # `default`. Level 0 registers DefinedVariableRule (variable.undefined, its "Undefined variable" message alone, since
   # checkMaybeUndefinedVariables is off), PrintfParametersRule (argument.sprintf, argument.sscanf) and
-  # DuplicateKeysInLiteralArraysRule (array.duplicateKey): those four documents are `recommended` and ship on. The other
-  # four ship off: IfConstantConditionRule (if.alwaysTrue, if.alwaysFalse) is level 4's, RandomIntParametersRule
-  # (argument.type) level 5's and MissingFunctionReturnTypehintRule (missingType.return) level 6's.
+  # DuplicateKeysInLiteralArraysRule (array.duplicateKey): those four documents are `recommended` and start on once
+  # shipped. The other four start off once shipped: IfConstantConditionRule (if.alwaysTrue, if.alwaysFalse) is level
+  # 4's, RandomIntParametersRule (argument.type) level 5's and MissingFunctionReturnTypehintRule (missingType.return)
+  # level 6's.
   #
   # How the adapter applies it (decisions for the team; they hold for every PHPStan pack):
   # - Gate 5 runs PHPStan's command line on upstream's own rule test data: each RuleTestCase method's analysed files

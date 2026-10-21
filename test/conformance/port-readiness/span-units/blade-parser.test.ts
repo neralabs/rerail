@@ -29,6 +29,10 @@ test("an engine span is a stillat/blade-parser position: the start line and colu
     const start = Buffer.byteLength(template.slice(0, template.indexOf("@")), "utf8");
     assert.deepEqual(bladeParserSpan(template, start, start + 3), validationSpan({ line, column }), JSON.stringify(template));
   }
+  // An offset between the `\r` and `\n` of a CRLF is where `\r\n`'s normalization leaves it: the end of its line, as
+  // the offset before the `\r` is.
+  assert.deepEqual(bladeParserSpan("a\r\n@dd(1)", 2, 2), bladeParserSpan("a\r\n@dd(1)", 1, 1));
+  assert.deepEqual(bladeParserSpan("a\r\n@dd(1)", 2, 2), validationSpan({ line: 1, column: 2 }));
   assert.deepEqual(validationSpan({ line: 2, column: 3 }), { startLine: 1, startCol: 2, endLine: null, endCol: null });
   // A finding is compared by its start: the rules anchor a point.
   assert.deepEqual(BLADE_PARSER_SPAN_PARTS, { endLine: false, endCol: false });

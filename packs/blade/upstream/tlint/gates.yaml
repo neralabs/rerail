@@ -18,7 +18,7 @@ upstream:
   # default configuration is \"tighten\" flavored" (readme, Linting Configuration; src/Config.php falls back to
   # TightenPreset when tlint.json names none). Both are recommendations, the default first: the Laravel preset is
   # "intended to match the conventions agreed upon by the Laravel framework contributors". The Tighten preset turns on
-  # all five ported lints, so each is `recommended` with it and ships on; none takes an option.
+  # all five ported lints, so each is `recommended` with it and starts on once shipped; none takes an option.
   #
   # How the adapter applies it (decisions for the team; they hold for every tlint pack):
   # - Gate 5 runs each lint with that preset as `tlint lint <file>` runs a file (LintCommand::lintFile: every linter of

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "vitest";
@@ -11,7 +11,7 @@ import { gatesCorpusSchema, gatesRecordingSchema, recordingText, spanOf } from "
 import { readCachedRecording, recordingLockSchema, recordingLockText, writeCachedRecording } from "../../../conformance/port-readiness/recording/store.js";
 import type { PackAdapter, UpstreamFile } from "../../../conformance/port-readiness/types.js";
 import { CASE_LAYOUTS, committedSources, CONTEXT_FILES, diffRecording, notCopiedPrefixes, recordToolPack, withUpstreamRows, writeRecording, type AdapterFactory } from "../../../conformance/recorders/port-readiness/record.js";
-import { extensionList, RUNTIMES_DIRECTORY, runtimePinDigests, unpinnedComposerDependencies, unpinnedNpmDependencies, unpinnedPythonDependencies } from "../../../conformance/recorders/port-readiness/runtimes.js";
+import { extensionList, RUNTIMES_DIRECTORY, runtimePinDigests, unpinnedComposerDependencies, unpinnedNpmDependencies, unpinnedPythonDependencies, withoutMachinePaths } from "../../../conformance/recorders/port-readiness/runtimes.js";
 import { PACKAGE_ROOT } from "../../../src/engine/index.js";
 
 const MANIFEST = `adapter: bandit
@@ -304,6 +304,26 @@ test("PHP's extensions are read from `php -m` as extensions.txt lists them: head
   // The committed list is already in that form, so a byte-identical `php -n -m` is what pinnedPhp accepts.
   const committed = readFileSync(join(RUNTIMES_DIRECTORY, "php", "extensions.txt"), "utf8");
   assert.equal(committed, `${extensionList(committed).join("\n")}\n`);
+});
+
+test("an upstream message names no directory of this machine's: each as given and resolved, the deepest first", () => {
+  const root = mkdtempSync(join(tmpdir(), "rerail-machine-paths-"));
+  try {
+    const cache = join(root, "cache");
+    const scratch = join(cache, "tmp", "tlint-abc");
+    mkdirSync(scratch, { recursive: true });
+    const real = realpathSync(scratch);
+    const message = `TypeError: f(): Argument #1 called in ${cache}/runtimes/tlint/vendor/a.php on line 3, for ${scratch}/x.blade.php and ${real}/y.blade.php`;
+    assert.equal(
+      withoutMachinePaths(message, [scratch, cache]),
+      "TypeError: f(): Argument #1 called in runtimes/tlint/vendor/a.php on line 3, for x.blade.php and y.blade.php",
+    );
+    // A directory already removed is still taken out as given.
+    rmSync(scratch, { recursive: true });
+    assert.equal(withoutMachinePaths(`${scratch}/x.blade.php`, [scratch, cache]), "x.blade.php");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("PHP_CodeSniffer's unit test files are committed as fixtures/<standard>/<category>/<file>.php, as generate.py copied them", () => {

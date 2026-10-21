@@ -26,7 +26,8 @@ upstream:
   # The other standards are not recommendations: Generic "is not designed to be used to check code" (its ruleset's
   # description) and is where most ported sniffs live, Squiz, PEAR and Zend are their authors' house styles (Zend's
   # says it is out of date), and PSR1 and PSR2 are what PSR12 extends and replaces. Only Generic.PHP.LowerCaseConstant
-  # is in PSR12, with its default properties, so the other seven documents are not `recommended` and ship off.
+  # is in PSR12, with its default properties, so the other seven documents are not `recommended` and start off once
+  # shipped.
   #
   # How the adapter applies it (decisions for the team; they hold for every PHP_CodeSniffer pack):
   # - Gate 5 runs each sniff as upstream's unit tests run it (tests/Standards/AbstractSniffTestCase.php: a ruleset of
