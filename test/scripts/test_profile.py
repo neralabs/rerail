@@ -36,6 +36,8 @@ class ProfileTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "modes do not match"): compare(before, after)
         after = copy.deepcopy(before); after["sampleModules"] = ["*"]
         with self.assertRaisesRegex(ValueError, "sampleModules"): compare(before, after)
+        after = copy.deepcopy(before); after["sqlProfile"] = True
+        with self.assertRaisesRegex(ValueError, "sqlProfile"): compare(before, after)
         after = copy.deepcopy(before); after["parity"]["falseNegatives"] = ["miss"]
         with self.assertRaisesRegex(ValueError, "passing parity"): compare(before, after)
         after = copy.deepcopy(before)
@@ -178,6 +180,23 @@ Total number in stack (recursive counted multiple, when >=5):
                 self.assertEqual(json.loads((output / "stdout.log").read_text()), expected)
                 report = json.loads((output / "profile.json").read_text())
                 self.assertEqual([str(report["insertBatch"]), "1" if report["sharedInputIndex"] else None], expected)
+
+    def test_sql_capture_requires_instrumented_execution_and_clears_inherited_capture(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for enabled in [False, True]:
+                output = root / str(enabled)
+                result = subprocess.run([sys.executable, str(PROFILING / "run.py"), "--output", str(output),
+                    "--deadline", "5", "--trace", "off", *(["--sql-profile"] if enabled else []), "--", sys.executable,
+                    "-c", "import json,os;print(json.dumps(os.getenv('RERAIL_SQL_PROFILE_DIR')))"],
+                    env={**os.environ, "RERAIL_SQL_PROFILE_DIR": str(root / "inherited")}, capture_output=True, timeout=8)
+                self.assertEqual(result.returncode, 1 if enabled else 0, result.stderr)
+                self.assertEqual(json.loads((output / "stdout.log").read_text()), str((output / "sql" / "raw").resolve()) if enabled else None)
+                report = json.loads((output / "profile.json").read_text())
+                self.assertEqual(report["sqlProfile"], enabled)
+                if enabled:
+                    self.assertIn("sqlProfileError", report)
+                    self.assertIn("No SQL sessions", (output / "sql-report.log").read_text())
 
 
 if __name__ == "__main__":

@@ -212,6 +212,10 @@ jobs:
           RERAIL_ENGINE_PATH: ${{ runner.temp }}/rerail-producer-shape.node
         run: npm run test:producer-shape
 
+      - name: Test SQL statement capture and deferred explanations
+        if: matrix.task == 'test'
+        run: cargo test --manifest-path scripts/profiling/reachability/Cargo.toml --no-default-features --locked code_rule_dsl::tests
+
   # Builds the package once: dist/ and the release native engine, handed to every test job.
   build:
     name: Build

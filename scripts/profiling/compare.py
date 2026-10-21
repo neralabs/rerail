@@ -9,8 +9,8 @@ def compare(baseline, experiment, allow_policy_changes=False, allow_engine_chang
     before, after = baseline["parity"], experiment["parity"]
     if set(baseline.get("sampleModules", ["rerail_engine"])) != set(experiment.get("sampleModules", ["rerail_engine"])):
         raise ValueError("Profiler modes do not match: sampleModules")
-    for key in ["trace", "external", "queryPlans"]:
-        if baseline.get(key) != experiment.get(key):
+    for key in ["trace", "external", "queryPlans", "sqlProfile"]:
+        if baseline.get(key, False) != experiment.get(key, False):
             raise ValueError(f"Profiling modes do not match: {key}")
     if before.get("measuredPhases") != after.get("measuredPhases"):
         raise ValueError("Measured phases do not match")
