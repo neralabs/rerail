@@ -83,7 +83,7 @@
       "violation": {
         "anchor": "capture.E",
         "code": "@next/next/no-typos",
-        "message": "Rename this export to the getStaticProps, getStaticPaths or getServerSideProps it misspells; Next.js ignores the typo.",
+        "message": "A data-fetching export may be a typo of getStaticProps, getStaticPaths or getServerSideProps.",
         "suppress": {
           "eslint": {
             "rules": [

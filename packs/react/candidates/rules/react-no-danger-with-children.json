@@ -229,7 +229,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/no-danger-with-children",
-        "message": "Remove either the children or dangerouslySetInnerHTML from this element; React throws when both are set.",
+        "message": "Only set one of `children` or `props.dangerouslySetInnerHTML`",
         "suppress": {
           "eslint": {
             "rules": [
@@ -362,7 +362,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/no-danger-with-children",
-        "message": "Remove either the children or dangerouslySetInnerHTML from this element; React throws when both are set.",
+        "message": "Only set one of `children` or `props.dangerouslySetInnerHTML`",
         "suppress": {
           "eslint": {
             "rules": [
@@ -543,7 +543,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/no-danger-with-children",
-        "message": "Remove either the children or dangerouslySetInnerHTML from this element; React throws when both are set.",
+        "message": "Only set one of `children` or `props.dangerouslySetInnerHTML`",
         "suppress": {
           "eslint": {
             "rules": [

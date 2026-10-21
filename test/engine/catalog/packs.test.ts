@@ -372,17 +372,13 @@ describe("validatePack", () => {
       { text: ["rules/pass-statement.json: has no description"] },
     ],
     [
-      "a message of two sentences, without a period, that names Rerail",
+      "a message that names Rerail, whatever its form",
       directory => editJson(join(directory, "rules", "pass-statement.json"), document => ({
         ...document,
         clauses: (document.clauses as { violation: object }[]).map(clause => ({ ...clause, violation: { ...clause.violation, message: "Rerail found a pass. Remove it" } })),
       })),
       {
-        text: [
-          "rules/pass-statement.json: message does not end with a period: Rerail found a pass. Remove it",
-          "rules/pass-statement.json: message is more than one sentence: Rerail found a pass. Remove it",
-          "rules/pass-statement.json: message names Rerail or steering: Rerail found a pass. Remove it",
-        ],
+        text: ["rules/pass-statement.json: message names Rerail or steering: Rerail found a pass. Remove it"],
       },
     ],
   ];

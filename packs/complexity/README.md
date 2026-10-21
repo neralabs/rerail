@@ -15,8 +15,8 @@ Every document has `mode: "steer"`: a rule that runs steers the agent and never 
 
 A function's cyclomatic complexity is 1 plus its decision points. A function fails when that exceeds 6, so 7 or more.
 The finding spans the whole function, so under the `ai-output` scope only functions an edit touched are reported, and
-the message carries the number: `Split this function into smaller ones or simplify its branching; its cyclomatic
-complexity is 7 (limit 6).` (code `CYCLOMATIC_COMPLEXITY`). The number comes from the count's `as`/`offset` binding: the rule
+the message carries the number: `Cyclomatic complexity 7 (limit 6). Split this function into smaller ones or simplify
+its branching.` (code `CYCLOMATIC_COMPLEXITY`). The number comes from the count's `as`/`offset` binding: the rule
 counts decision points with `count.has` (`stopBy` the function boundary, so a nested function is not entered), binds
 the count plus 1 as `$CCN`, and fires at `min: 6` decisions.
 

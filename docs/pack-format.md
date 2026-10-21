@@ -299,8 +299,8 @@ Precisely:
    Fixture packs elsewhere are not published, so no list names them; `listed: true` checks the list for them too.
 8. Every rule document's text, shipped and candidate (not probes), meets the parts of the [rule text](#rule-text)
    criteria a machine can check (`textFailures`). The description is present, one sentence ending in a period, at most
-   200 characters, with no backticks. Each message, and each text a message an option chooses can be, is one sentence
-   ending in a period, at most 140 characters, and doesn't shout (NEVER, MUST, ALWAYS) or name Rerail or steering.
+   200 characters, with no backticks. Each message, and each text a message an option chooses can be, is at most 140
+   characters and doesn't shout (NEVER, MUST, ALWAYS) or name Rerail or steering; its form is left to review.
    Neither names an upstream tool outside quoted text (`'…'` or `` `…` ``). The rest of the criteria are for review.
 
 **Languages not supported yet.** A pack may hold code rules for a language core's

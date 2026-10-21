@@ -105,7 +105,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/no-mixed-requires",
-        "message": "Move this require() into its own declaration, separate from the other variables.",
+        "message": "Do not mix 'require' and other declarations.",
         "suppress": {
           "eslint": {
             "rules": [

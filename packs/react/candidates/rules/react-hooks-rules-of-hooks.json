@@ -1689,7 +1689,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react-hooks/rules-of-hooks",
-        "message": "Move this hook call out of the loop to the top level of the component or custom hook.",
+        "message": "React Hook may be executed more than once. Possibly because it is called in a loop.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1781,7 +1781,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react-hooks/rules-of-hooks",
-        "message": "Move this hook call out of the async function into a synchronous component or custom hook.",
+        "message": "React Hook cannot be called in an async function.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1911,7 +1911,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react-hooks/rules-of-hooks",
-        "message": "Call this useEffectEvent function only from an effect or another effect event in the same component.",
+        "message": "A function created with React Hook \"useEffectEvent\" can only be called from Effects and Effect Events in the same component.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -1998,7 +1998,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react-hooks/rules-of-hooks",
-        "message": "Call this useEffectEvent function inside an effect in this component instead of passing it elsewhere.",
+        "message": "React Hook \"useEffectEvent\" can only be called at the top level of your component. It cannot be passed down.",
         "suppress": {
           "eslint": {
             "rules": [

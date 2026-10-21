@@ -176,7 +176,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "if.alwaysFalse",
-        "message": "Fix this always-false condition so it can pass, or remove the if block as dead code.",
+        "message": "If condition is always false.",
         "suppress": {
           "phpstan": {
             "identifiers": [

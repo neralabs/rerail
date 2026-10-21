@@ -70,7 +70,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/void-dom-elements-no-children",
-        "message": "Remove the children from this void element and make it self-closing; img, br, input and other void elements cannot hold content.",
+        "message": "Void DOM element cannot receive children.",
         "suppress": {
           "eslint": {
             "rules": [

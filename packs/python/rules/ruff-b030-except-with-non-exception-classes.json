@@ -392,7 +392,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B030",
-        "message": "Replace this except type with an exception class or a tuple of exception classes.",
+        "message": "`except` handlers should only be exception classes or tuples of exception classes",
         "suppress": {
           "noqa": {
             "codes": [

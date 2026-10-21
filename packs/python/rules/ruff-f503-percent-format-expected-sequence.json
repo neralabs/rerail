@@ -113,7 +113,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F503",
-        "message": "Pass a tuple to this %-format string; its positional placeholders need a sequence, not a dict.",
+        "message": "`%`-format string expected sequence but got mapping",
         "suppress": {
           "noqa": {
             "codes": [

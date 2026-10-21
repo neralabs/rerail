@@ -113,7 +113,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F502",
-        "message": "Pass a dict to this %-format string; its %(key) placeholders need a mapping, not a sequence.",
+        "message": "`%`-format string expected mapping but got sequence",
         "suppress": {
           "noqa": {
             "codes": [

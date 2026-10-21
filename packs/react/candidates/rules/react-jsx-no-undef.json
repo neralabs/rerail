@@ -95,7 +95,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/jsx-no-undef",
-        "message": "Import or declare `$NAME` in this file before using it in JSX.",
+        "message": "'$NAME' is not defined.",
         "suppress": {
           "eslint": {
             "rules": [

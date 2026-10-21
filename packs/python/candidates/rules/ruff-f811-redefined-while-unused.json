@@ -634,7 +634,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F811",
-        "message": "Remove the earlier, unused definition of `$N`, or rename one of the two.",
+        "message": "Redefinition of unused `$N`",
         "suppress": {
           "noqa": {
             "codes": [

@@ -111,7 +111,7 @@
       "violation": {
         "code": "B307",
         "anchor": "witness.span",
-        "message": "Replace this eval call with ast.literal_eval if you only parse literals, or with explicit code otherwise.",
+        "message": "This eval call executes supplied text as Python code and may be unsafe. Use ast.literal_eval when only Python literals need to be parsed.",
         "suppress": {
           "nosec": {
             "codes": [

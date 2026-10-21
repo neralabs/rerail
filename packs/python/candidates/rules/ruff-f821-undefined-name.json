@@ -189,7 +189,7 @@
       "violation": {
         "anchor": "capture.N",
         "code": "F821",
-        "message": "Define or import `$N` before using it here.",
+        "message": "Undefined name `$N`",
         "each": "N",
         "suppress": {
           "noqa": {

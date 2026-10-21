@@ -26,7 +26,7 @@
           }
         }
       },
-      "violation": { "anchor": "witness.span", "code": "default-param-last", "message": "Move this defaulted parameter after the required ones, or give the parameters after it defaults too.", "suppress": { "eslint": { "rules": ["default-param-last"] }, "oxlint": { "rules": ["default-param-last"] }, "biome": { "rules": ["lint/style/useDefaultParameterLast"] } } }
+      "violation": { "anchor": "witness.span", "code": "default-param-last", "message": "Default parameters should be last.", "suppress": { "eslint": { "rules": ["default-param-last"] }, "oxlint": { "rules": ["default-param-last"] }, "biome": { "rules": ["lint/style/useDefaultParameterLast"] } } }
     }
   ]
 }

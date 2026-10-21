@@ -279,7 +279,7 @@
       "violation": {
         "anchor": "capture.CMP",
         "code": "E721",
-        "message": "Use isinstance() for this type check, or `is` / `is not` to compare exact types, instead of `==` or `!=`.",
+        "message": "Use `is` and `is not` for type comparisons, or `isinstance()` for isinstance checks",
         "suppress": {
           "noqa": {
             "codes": [

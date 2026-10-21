@@ -38,7 +38,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "Generic.PHP.LowerCaseConstant",
-        "message": "Write this constant in lowercase as true, false or null.",
+        "message": "TRUE, FALSE and NULL must be lowercase",
         "suppress": {
           "phpcs": {
             "sniffs": [

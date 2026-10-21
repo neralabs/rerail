@@ -406,7 +406,7 @@ def prefer_node_protocol_doc(builtins):
     def first_argument_of(call):
         return {"nthChild": FIRST, "inside": {"kind": "arguments", "inside": {"field": "arguments", **call}}}
 
-    message = "Add the node: prefix to this built-in module name, as in node:fs."
+    message = "Prefer `node:<module>` over `<module>`."
     # isEnablingThisRule: the configured Node range must be a subset of supportedRangeForEsm, and for require also of
     # supportedRangeForCjs, which lies inside it (so the require gate is that range alone); getBuiltinModule is ungated.
     esm = {"package": {"nodeVersion": {"subsetOf": "^12.20.0 || >=14.13.1"}}}
@@ -463,7 +463,7 @@ def syntax_docs():
     docs.append(policy("n-no-mixed-requires", "n/no-mixed-requires", DESCRIPTIONS["n-no-mixed-requires"], [
         {"id": "upstream", "ast": {"utils": require_init, "rule": {"any": [{"kind": "variable_declaration"}, {"kind": "lexical_declaration"}], "all": [
             {"has": {"kind": "variable_declarator", "has": {"field": "value", "matches": "require-init"}}},
-            {"has": {"kind": "variable_declarator", "not": {"has": {"field": "value", "matches": "require-init"}}}}]}}, "message": "Move this require() into its own declaration, separate from the other variables."}]))
+            {"has": {"kind": "variable_declarator", "not": {"has": {"field": "value", "matches": "require-init"}}}}]}}, "message": "Do not mix 'require' and other declarations."}]))
 
     docs.append(policy("n-exports-style", "n/exports-style", DESCRIPTIONS["n-exports-style"], [
         {"id": "upstream", "ast": {"languageOptions": FILE_LO, "rule": {"any": [{"kind": "identifier"}, {"kind": "shorthand_property_identifier"}], "regex": "^exports$", "resolves": {"global": ["exports"]}}}, "message": "Replace this bare exports with module.exports."}]))
@@ -478,7 +478,7 @@ def syntax_docs():
         {"id": "function", "ast": {"utils": {"first-err": first_err}, "rule": {"any": [
             {"any": [{"kind": k} for k in fn_kinds], "has": {"field": "parameters", "has": {"nthChild": FIRST, "matches": "first-err"}}},
             {"kind": "arrow_function", "has": {"field": "parameter", **err_id}},
-            {"kind": "formal_parameters", "inside": {"kind": "method_definition", "field": "parameters"}, "has": {"nthChild": FIRST, "matches": "first-err"}}]}}, "message": "Handle this callback's error parameter, for example by returning or passing the error on when it is set."}]))
+            {"kind": "formal_parameters", "inside": {"kind": "method_definition", "field": "parameters"}, "has": {"nthChild": FIRST, "matches": "first-err"}}]}}, "message": "Expected error to be handled."}]))
 
     cannot_be_error = {"any": [
         {"any": [{"kind": "string"}, {"kind": "number"}, {"kind": "true"}, {"kind": "false"}, {"kind": "regex"}, {"kind": "array"}, {"kind": "object"}, {"kind": "template_string"}]},
@@ -506,7 +506,7 @@ def syntax_docs():
             {"has": {"field": "function", "kind": "identifier", "regex": "^(?:callback|cb|next)$"}},
             {"not": {"inside": {"stopBy": stop, "any": [{"kind": "return_statement"}, {"kind": "arrow_function"}]}}},
             {"not": ok_last}, {"not": ok_before_return},
-            {"inside": {"stopBy": "end", **any_func}}]}}, "message": "Return right after this callback call, as in return callback(err), so the function stops and it can't fire twice."}]))
+            {"inside": {"stopBy": "end", **any_func}}]}}, "message": "Expected return with your callback function."}]))
     return docs
 
 

@@ -115,7 +115,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B033",
-        "message": "Remove the duplicate `$V` from this set literal.",
+        "message": "Sets should not contain duplicate item `$V`",
         "suppress": {
           "noqa": {
             "codes": [

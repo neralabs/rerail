@@ -99,7 +99,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B602",
-        "message": "Pass the command as a list of arguments and drop shell=True; running it through a shell allows command injection.",
+        "message": "subprocess with shell=True runs the command through the shell. Pass a list of arguments without shell=True.",
         "suppress": {
           "nosec": {
             "codes": [

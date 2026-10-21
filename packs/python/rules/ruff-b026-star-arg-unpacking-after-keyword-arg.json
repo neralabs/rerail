@@ -43,7 +43,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B026",
-        "message": "Move this star-argument unpacking before the keyword arguments in the call.",
+        "message": "Star-arg unpacking after a keyword argument is strongly discouraged",
         "suppress": {
           "noqa": {
             "codes": [

@@ -514,7 +514,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM116",
-        "message": "Replace this `if`/`elif` chain of literal comparisons with a dictionary lookup that maps each literal to its value.",
+        "message": "Use a dictionary instead of consecutive `if` statements",
         "suppress": {
           "noqa": {
             "codes": [

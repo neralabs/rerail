@@ -34,7 +34,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F523",
-        "message": "Remove the positional arguments that no placeholder in this str.format() string uses.",
+        "message": "`.format` call has unused arguments",
         "suppress": {
           "noqa": {
             "codes": [

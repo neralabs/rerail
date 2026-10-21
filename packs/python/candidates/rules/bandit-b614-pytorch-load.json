@@ -77,7 +77,7 @@
       "violation": {
         "code": "B614",
         "anchor": "capture.F",
-        "message": "Pass weights_only=True to this load, or load from safetensors; a full load unpickles the file and can run arbitrary code.",
+        "message": "PyTorch loading permits unsafe deserialization; pass weights_only=True or use safetensors.",
         "suppress": {
           "nosec": {
             "codes": [

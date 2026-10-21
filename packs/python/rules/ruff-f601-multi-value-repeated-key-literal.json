@@ -201,7 +201,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F601",
-        "message": "Remove or merge the repeated key `$KEY` in this dict; the later value silently overwrites the earlier one.",
+        "message": "Dictionary key literal `$KEY` repeated",
         "suppress": {
           "noqa": {
             "codes": [

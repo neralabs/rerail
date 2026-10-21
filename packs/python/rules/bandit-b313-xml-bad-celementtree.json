@@ -36,7 +36,7 @@
       "violation": {
         "code": "B313",
         "anchor": "witness.span",
-        "message": "Parse this XML with defusedxml.ElementTree instead of xml.etree.cElementTree.",
+        "message": "Using xml.etree.cElementTree to parse untrusted XML may permit XML attacks; use defusedxml.",
         "suppress": {
           "nosec": {
             "codes": [

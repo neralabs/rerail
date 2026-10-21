@@ -81,7 +81,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/self-closing-comp",
-        "message": "Replace this empty opening and closing tag pair with a self-closing tag.",
+        "message": "Empty components are self-closing",
         "suppress": {
           "eslint": {
             "rules": [

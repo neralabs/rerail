@@ -277,7 +277,7 @@
    "violation": {
     "anchor": "capture.PROP",
     "code": "no-extra-bind",
-    "message": "Remove this .bind() call; the function is an arrow or never uses this, so binding changes nothing.",
+    "message": "The function binding is unnecessary.",
     "fix": "$OBJ",
     "suppress": {
      "eslint": {
@@ -563,7 +563,7 @@
    "violation": {
     "anchor": "capture.PROP",
     "code": "no-extra-bind",
-    "message": "Remove this .bind() call; the function is an arrow or never uses this, so binding changes nothing.",
+    "message": "The function binding is unnecessary.",
     "fix": "($OBJ)",
     "suppress": {
      "eslint": {
@@ -880,7 +880,7 @@
    "violation": {
     "anchor": "capture.PROP",
     "code": "no-extra-bind",
-    "message": "Remove this .bind() call; the function is an arrow or never uses this, so binding changes nothing.",
+    "message": "The function binding is unnecessary.",
     "suppress": {
      "eslint": {
       "rules": [

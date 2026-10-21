@@ -383,7 +383,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@next/next/inline-script-id",
-        "message": "Add a unique id prop to this next/script component with inline content; Next.js needs it to track the script.",
+        "message": "`next/script` components with inline content must specify an `id` attribute. See: https://nextjs.org/docs/messages/inline-script-id",
         "suppress": {
           "eslint": {
             "rules": [

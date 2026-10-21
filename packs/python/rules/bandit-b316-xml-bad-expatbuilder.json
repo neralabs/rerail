@@ -34,7 +34,7 @@
       "violation": {
         "code": "B316",
         "anchor": "witness.span",
-        "message": "Parse this XML with defusedxml.expatbuilder instead of xml.dom.expatbuilder.",
+        "message": "Using xml.dom.expatbuilder to parse untrusted XML may permit XML attacks; use defusedxml.",
         "suppress": {
           "nosec": {
             "codes": [

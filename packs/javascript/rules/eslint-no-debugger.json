@@ -31,7 +31,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-debugger",
-        "message": "Remove this debugger statement.",
+        "message": "Unexpected 'debugger' statement.",
         "suppress": {
           "eslint": {
             "rules": [

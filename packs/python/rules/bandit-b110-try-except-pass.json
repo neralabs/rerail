@@ -95,7 +95,7 @@
       "violation": {
         "code": "B110",
         "anchor": "witness.span",
-        "message": "Log or handle this exception instead of passing, or catch only the specific exception you expect.",
+        "message": "This exception is silently discarded with pass. Handle or log it, or catch a specific expected exception when suppression is intentional.",
         "suppress": {
           "nosec": {
             "codes": [

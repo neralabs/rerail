@@ -185,7 +185,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC105",
-    "message": "Await this `$CALLEE` call; without await it only creates a coroutine that never runs.",
+    "message": "Call to `$CALLEE` is not immediately awaited",
     "suppress": {
       "noqa": {
         "codes": [

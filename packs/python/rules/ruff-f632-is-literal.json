@@ -217,7 +217,7 @@
       "violation": {
         "anchor": "capture.C",
         "code": "F632",
-        "message": "Replace `is` with `==` (or `is not` with `!=`) in this comparison against a literal.",
+        "message": "Use `==` to compare constant literals",
         "each": "O",
         "suppress": {
           "noqa": {

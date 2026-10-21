@@ -41,7 +41,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/no-children-prop",
-        "message": "Move this children prop's value between the element's opening and closing tags.",
+        "message": "Do not pass children as props. Instead, nest children between the opening and closing tags.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -232,7 +232,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/no-children-prop",
-        "message": "Pass these children as extra arguments to createElement instead of a children prop.",
+        "message": "Do not pass children as props. Instead, pass them as additional arguments to React.createElement.",
         "suppress": {
           "eslint": {
             "rules": [

@@ -34,7 +34,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F402",
-        "message": "Rename this loop variable so it doesn't overwrite the imported `$NAME`.",
+        "message": "Import `$NAME` shadowed by loop variable",
         "suppress": {
           "noqa": {
             "codes": [

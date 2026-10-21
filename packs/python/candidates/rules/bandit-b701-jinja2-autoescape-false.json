@@ -68,7 +68,7 @@
       "violation": {
         "code": "B701",
         "anchor": "witness.span",
-        "message": "Pass autoescape=True or autoescape=select_autoescape() to this Jinja2 Environment; without it rendered templates are open to XSS.",
+        "message": "Jinja autoescaping is disabled or unsafe; use autoescape=True or jinja2.select_autoescape().",
         "suppress": {
           "nosec": {
             "codes": [
@@ -149,7 +149,7 @@
       "violation": {
         "code": "B701",
         "anchor": "witness.span",
-        "message": "Set autoescape=True or autoescape=select_autoescape() on this Jinja2 Environment; with escaping off templates are open to XSS.",
+        "message": "Jinja autoescaping is disabled or unsafe; use autoescape=True or jinja2.select_autoescape().",
         "suppress": {
           "nosec": {
             "codes": [
@@ -228,7 +228,7 @@
       "violation": {
         "code": "B701",
         "anchor": "witness.span",
-        "message": "Pass jinja2.select_autoescape() as autoescape instead of this call, whose result may turn escaping off and open templates to XSS.",
+        "message": "Jinja autoescaping is disabled or unsafe; use autoescape=True or jinja2.select_autoescape().",
         "suppress": {
           "nosec": {
             "codes": [

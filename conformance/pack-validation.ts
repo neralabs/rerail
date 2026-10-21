@@ -449,8 +449,8 @@ function messageTexts(message: unknown): string[] {
 /**
  * Check 8 (text): a rule document's description and violation messages meet the rule text criteria a machine can
  * check. A description is one sentence ending in a period, at most DESCRIPTION_CHARS, with no backticks and no tool
- * name; a message is one sentence ending in a period, at most MESSAGE_CHARS, naming no tool, Rerail or steering, and
- * not shouting.
+ * name; a message is at most MESSAGE_CHARS, naming no tool, Rerail or steering, and not shouting. A message's form (one
+ * sentence, a final period) is left to review: an upstream message the rewrite gained nothing over is kept as written.
  */
 export function textFailures(file: string, text: string): string[] {
   let document: unknown;
@@ -460,17 +460,17 @@ export function textFailures(file: string, text: string): string[] {
     return []; // Check 1 reports a document that does not parse.
   }
   const failures: string[] = [];
-  const sentence = (what: string, value: string, limit: number): void => {
+  const sentence = (what: string, value: string, limit: number, form: boolean): void => {
     const plain = value.replace(QUOTED, "''").replace(ABBREVIATION, "");
     if (value.length > limit) failures.push(`${file}: ${what} is ${value.length} characters, over ${limit}: ${value}`);
-    if (!value.endsWith(".")) failures.push(`${file}: ${what} does not end with a period: ${value}`);
-    if (SENTENCE_BREAK.test(plain)) failures.push(`${file}: ${what} is more than one sentence: ${value}`);
+    if (form && !value.endsWith(".")) failures.push(`${file}: ${what} does not end with a period: ${value}`);
+    if (form && SENTENCE_BREAK.test(plain)) failures.push(`${file}: ${what} is more than one sentence: ${value}`);
     if (TOOL_NAMES.test(plain)) failures.push(`${file}: ${what} names an upstream tool: ${value}`);
   };
   const description = (document as { description?: unknown }).description;
   if (typeof description !== "string" || description.trim() === "") failures.push(`${file}: has no description`);
   else {
-    sentence("description", description, DESCRIPTION_CHARS);
+    sentence("description", description, DESCRIPTION_CHARS, true);
     if (description.includes("`")) failures.push(`${file}: description holds code (backticks): ${description}`);
   }
   const seen = new Set<string>();
@@ -482,7 +482,7 @@ export function textFailures(file: string, text: string): string[] {
         else for (const message of messageTexts(inner)) {
           if (seen.has(message)) continue;
           seen.add(message);
-          sentence("message", message, MESSAGE_CHARS);
+          sentence("message", message, MESSAGE_CHARS, false);
           if (/\b(?:rerail|steer)/iu.test(message.replace(QUOTED, "''"))) failures.push(`${file}: message names Rerail or steering: ${message}`);
           if (/\b(?:NEVER|MUST|ALWAYS)\b/u.test(message)) failures.push(`${file}: message shouts: ${message}`);
         }

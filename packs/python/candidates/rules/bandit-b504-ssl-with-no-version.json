@@ -50,7 +50,7 @@
       "violation": {
         "code": "B504",
         "anchor": "capture.F",
-        "message": "Pass an explicit ssl_version to this ssl.wrap_socket call, such as ssl.PROTOCOL_TLSv1_2; the default may negotiate an insecure protocol.",
+        "message": "ssl.wrap_socket called without an explicit ssl_version",
         "suppress": {
           "nosec": {
             "codes": [

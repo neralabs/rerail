@@ -289,7 +289,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM102",
-        "message": "Merge this `if` and the `if` nested inside it into one `if` whose conditions are joined with `and`.",
+        "message": "Use a single `if` statement instead of nested `if` statements",
         "suppress": {
           "noqa": {
             "codes": [

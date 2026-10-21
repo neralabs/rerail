@@ -43,7 +43,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F622",
-        "message": "Keep only one starred name in this unpacking target.",
+        "message": "Two starred expressions in assignment",
         "suppress": {
           "noqa": {
             "codes": [

@@ -250,7 +250,7 @@
       "violation": {
         "anchor": "capture.ROOT",
         "code": "SIM221",
-        "message": "Replace `$A or not $A` with `True`, or fix the condition if you meant to test something else.",
+        "message": "Use `True` instead of `$A or not $A`",
         "each": "N",
         "suppress": {
           "noqa": {

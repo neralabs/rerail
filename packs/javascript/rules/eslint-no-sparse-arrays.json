@@ -35,7 +35,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-sparse-arrays",
-        "message": "Remove the extra comma, or write undefined explicitly if this hole is intended.",
+        "message": "Unexpected comma in middle of array.",
         "suppress": {
           "eslint": {
             "rules": [

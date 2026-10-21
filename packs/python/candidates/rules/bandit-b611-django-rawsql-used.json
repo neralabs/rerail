@@ -55,7 +55,7 @@
       "violation": {
         "code": "B611",
         "anchor": "witness.span",
-        "message": "Pass a constant SQL string to RawSQL and supply values through params; building the SQL dynamically opens it to SQL injection.",
+        "message": "RawSQL received a nonconstant SQL expression; use a constant query with parameter binding.",
         "suppress": {
           "nosec": {
             "codes": [

@@ -47,7 +47,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F706",
-        "message": "Move this `return` into a function body, or remove it.",
+        "message": "`return` statement outside of a function/method",
         "suppress": {
           "noqa": {
             "codes": [

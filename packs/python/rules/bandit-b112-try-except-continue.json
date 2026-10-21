@@ -95,7 +95,7 @@
       "violation": {
         "code": "B112",
         "anchor": "witness.span",
-        "message": "Log or handle this exception before continuing, or catch only the specific exception you expect.",
+        "message": "This exception is silently discarded by continuing the loop. Handle or log it, or catch a specific expected exception before continuing.",
         "suppress": {
           "nosec": {
             "codes": [

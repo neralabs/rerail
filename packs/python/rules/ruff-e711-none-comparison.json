@@ -185,7 +185,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "E711",
-        "message": "Compare with None using `is` or `is not` instead of `==` or `!=`.",
+        "message": "Comparison to `None` should be `cond is None`",
         "suppress": {
           "noqa": {
             "codes": [

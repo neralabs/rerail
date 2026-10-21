@@ -168,7 +168,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B025",
-        "message": "Remove the repeated `$E` from this handler; an earlier handler in the same try already catches it.",
+        "message": "try-except block with duplicate exception `$E`",
         "suppress": {
           "noqa": {
             "codes": [

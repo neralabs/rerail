@@ -24,7 +24,7 @@ const capabilities = readFileSync(join(CODE_RULE_DIRECTORY, "capabilities.json")
 const runtime = loadNativeBinding().CodeRuleDslRuntime;
 
 const LIMIT = 6;
-const message = (ccn: number) => `Split this function into smaller ones or simplify its branching; its cyclomatic complexity is ${ccn} (limit ${LIMIT}).`;
+const message = (ccn: number) => `Cyclomatic complexity ${ccn} (limit ${LIMIT}). Split this function into smaller ones or simplify its branching.`;
 const RULES = {
   python: "complexity-cyclomatic-python",
   typescript: "complexity-cyclomatic-typescript",

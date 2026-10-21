@@ -415,7 +415,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B905",
-        "message": "Pass strict=True to this zip() call, or strict=False if truncating to the shortest input is intended.",
+        "message": "`zip()` without an explicit `strict=` parameter",
         "suppress": {
           "noqa": {
             "codes": [

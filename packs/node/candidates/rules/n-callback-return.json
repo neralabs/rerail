@@ -256,7 +256,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "n/callback-return",
-        "message": "Return right after this callback call, as in return callback(err), so the function stops and it can't fire twice.",
+        "message": "Expected return with your callback function.",
         "suppress": {
           "eslint": {
             "rules": [

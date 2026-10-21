@@ -28,7 +28,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "NoJsonDirective",
-        "message": "Replace this @json directive with escaped {{ }} output or an explicit json_encode() call."
+        "message": "Use blade `{{ $model }}` auto escaping for models, and double quotes via json_encode over @json blade directive."
       }
     }
   ]

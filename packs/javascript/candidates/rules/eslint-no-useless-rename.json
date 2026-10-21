@@ -180,7 +180,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-useless-rename",
-        "message": "Drop the rename and write $VT once in this destructuring pattern.",
+        "message": "Destructuring assignment $VT unnecessarily renamed.",
         "fix": "$VAL",
         "suppress": {
           "eslint": {
@@ -246,7 +246,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-useless-rename",
-        "message": "Drop the rename and write $VT once in this destructuring pattern.",
+        "message": "Destructuring assignment $VT unnecessarily renamed.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -308,7 +308,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-useless-rename",
-        "message": "Drop the rename and write $VT once in this import.",
+        "message": "Import $VT unnecessarily renamed.",
         "fix": "$V",
         "suppress": {
           "eslint": {
@@ -374,7 +374,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-useless-rename",
-        "message": "Drop the rename and write $VT once in this import.",
+        "message": "Import $VT unnecessarily renamed.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -436,7 +436,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-useless-rename",
-        "message": "Drop the rename and write $KT once in this export.",
+        "message": "Export $KT unnecessarily renamed.",
         "fix": "$K",
         "suppress": {
           "eslint": {
@@ -502,7 +502,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-useless-rename",
-        "message": "Drop the rename and write $KT once in this export.",
+        "message": "Export $KT unnecessarily renamed.",
         "suppress": {
           "eslint": {
             "rules": [

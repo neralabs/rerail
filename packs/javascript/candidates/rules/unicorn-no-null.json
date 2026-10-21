@@ -74,7 +74,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "unicorn/no-null",
-        "message": "Replace this null with undefined.",
+        "message": "Use undefined instead of null.",
         "suppress": {
           "eslint": {
             "rules": [

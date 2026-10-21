@@ -206,7 +206,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "use-isnan",
-        "message": "Replace switch (NaN) with if statements that test each value with Number.isNaN().",
+        "message": "'switch(NaN)' can never match a case clause. Use Number.isNaN instead of the switch.",
         "suppress": {
           "eslint": {
             "rules": [
@@ -251,7 +251,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "use-isnan",
-        "message": "Replace case NaN with a Number.isNaN() check before the switch.",
+        "message": "'case NaN' can never match. Use Number.isNaN before the switch.",
         "suppress": {
           "eslint": {
             "rules": [

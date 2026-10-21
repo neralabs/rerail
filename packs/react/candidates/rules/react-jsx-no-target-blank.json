@@ -507,7 +507,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "react/jsx-no-target-blank",
-        "message": "Add rel=\"noreferrer\" to this target=\"_blank\" link so the opened page cannot reach back through window.opener.",
+        "message": "Using target=\"_blank\" without rel=\"noreferrer\" (which implies rel=\"noopener\") is a security risk in older browsers",
         "suppress": {
           "eslint": {
             "rules": [

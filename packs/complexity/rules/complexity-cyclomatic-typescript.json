@@ -117,7 +117,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "CYCLOMATIC_COMPLEXITY",
-        "message": "Split this function into smaller ones or simplify its branching; its cyclomatic complexity is $CCN (limit 6)."
+        "message": "Cyclomatic complexity $CCN (limit 6). Split this function into smaller ones or simplify its branching."
       }
     }
   ]

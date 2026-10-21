@@ -156,7 +156,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "SIM118",
-        "message": "Drop the `.keys()` call and use the dict directly, as in `key in d` or `for key in d`.",
+        "message": "Use `key in dict` instead of `key in dict.keys()`",
         "suppress": {
           "noqa": {
             "codes": [

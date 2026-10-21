@@ -54,7 +54,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "SpacesAroundBladeRenderContent",
-        "message": "Put exactly one space inside each delimiter of this echo, as in {{ value }} or {!! value !!}."
+        "message": "Spaces around blade rendered content: `{{1 + 1}}` -> `{{ 1 + 1 }}`"
       }
     }
   ]

@@ -37,7 +37,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F842",
-        "message": "Remove the annotation-only declaration of `$N`; it is never assigned or read.",
+        "message": "Local variable `$N` is annotated but never used",
         "suppress": {
           "noqa": {
             "codes": [

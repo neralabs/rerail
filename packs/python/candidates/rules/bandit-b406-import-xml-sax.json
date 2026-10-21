@@ -59,7 +59,7 @@
       "violation": {
         "code": "B406",
         "anchor": "witness.span",
-        "message": "Parse this XML with defusedxml.sax instead of xml.sax; the standard parser is open to XML entity attacks.",
+        "message": "xml.sax parsing may be vulnerable to XML attacks; use defusedxml or defuse the standard library.",
         "suppress": {
           "nosec": {
             "codes": [

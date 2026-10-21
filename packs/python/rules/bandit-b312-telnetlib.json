@@ -33,7 +33,7 @@
       "violation": {
         "code": "B312",
         "anchor": "witness.span",
-        "message": "Replace this Telnet connection with SSH or another encrypted protocol; Telnet sends credentials in clear text.",
+        "message": "Telnet is insecure; use SSH or another encrypted protocol.",
         "suppress": {
           "nosec": {
             "codes": [

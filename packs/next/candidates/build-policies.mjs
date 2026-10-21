@@ -211,7 +211,7 @@ policy("no-head-element", "Use the Head component from next/head instead of a ra
   {
     id: "upstream",
     ast: { file: { path: { notRegex: "app/" } }, rule: { all: [OPEN, named("head")] } },
-    message: `Replace this head element with the Head component imported from next/head.`,
+    message: `Do not use \`<head>\` element. Use \`<Head />\` from \`next/head\` instead. See: https://nextjs.org/docs/messages/no-head-element`,
   },
 // The port readiness gates no longer score the plugin's invalid[1], JSX at pages/index.ts that upstream's own parser rejects.
 ]);
@@ -263,7 +263,7 @@ policy("google-font-preconnect", "Mark links to Google's font file host (fonts.g
         all: [OPEN, named("link"), hasAttribute("href", literalString({ startsWith: "https://fonts.gstatic.com" })), { not: hasAttribute("rel", literalString({ eq: "preconnect" })) }],
       },
     },
-    message: `Set rel="preconnect" on this fonts.gstatic.com link so the browser opens the font connection early.`,
+    message: `\`rel="preconnect"\` is missing from Google Font. See: https://nextjs.org/docs/messages/google-font-preconnect`,
   },
 ]);
 
@@ -322,7 +322,7 @@ policy("no-unwanted-polyfillio", "Don't load polyfills from polyfill.io for feat
         ],
       },
     },
-    message: `Remove the features Next.js already polyfills from this polyfill.io URL, or drop the script if none remain.`,
+    message: `No duplicate polyfills from Polyfill.io are allowed. See: https://nextjs.org/docs/messages/no-unwanted-polyfillio`,
   },
 ]);
 
@@ -332,7 +332,7 @@ policy("no-assign-module-variable", "Don't declare a variable named module in Ne
     ast: {
       rule: { any: [{ kind: "lexical_declaration" }, { kind: "variable_declaration" }], has: { kind: "variable_declarator", has: { field: "name", kind: "identifier", regex: "^module$" } } },
     },
-    message: `Rename this module variable, for example to mod; declaring module shadows the object Node.js and the bundler rely on.`,
+    message: `Do not assign to the variable \`module\`. See: https://nextjs.org/docs/messages/no-assign-module-variable`,
   },
 ]);
 
@@ -415,7 +415,7 @@ policy("inline-script-id", "Give every next/script component with inline content
         ],
       },
     },
-    message: `Add a unique id prop to this next/script component with inline content; Next.js needs it to track the script.`,
+    message: `\`next/script\` components with inline content must specify an \`id\` attribute. See: https://nextjs.org/docs/messages/inline-script-id`,
   },
 ]);
 
@@ -496,7 +496,7 @@ policy("no-duplicate-head", "Keep a single Head element in a custom Next.js Docu
         ],
       },
     },
-    message: `Remove this extra Head and move its children into the Document's single Head element.`,
+    message: `Do not include multiple instances of \`<Head/>\`. See: https://nextjs.org/docs/messages/no-duplicate-head`,
   },
 ]);
 
@@ -533,7 +533,7 @@ policy("no-typos", "Spell getStaticProps, getStaticPaths and getServerSideProps 
       },
     },
     anchor: "capture.E",
-    message: `Rename this export to the getStaticProps, getStaticPaths or getServerSideProps it misspells; Next.js ignores the typo.`,
+    message: `A data-fetching export may be a typo of getStaticProps, getStaticPaths or getServerSideProps.`,
   },
 ]);
 

@@ -119,7 +119,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@next/next/google-font-preconnect",
-        "message": "Set rel=\"preconnect\" on this fonts.gstatic.com link so the browser opens the font connection early.",
+        "message": "`rel=\"preconnect\"` is missing from Google Font. See: https://nextjs.org/docs/messages/google-font-preconnect",
         "suppress": {
           "eslint": {
             "rules": [

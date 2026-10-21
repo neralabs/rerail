@@ -54,7 +54,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@next/next/no-head-element",
-        "message": "Replace this head element with the Head component imported from next/head.",
+        "message": "Do not use `<head>` element. Use `<Head />` from `next/head` instead. See: https://nextjs.org/docs/messages/no-head-element",
         "suppress": {
           "eslint": {
             "rules": [
