@@ -1172,6 +1172,78 @@ fn directory_reuse_restores_results_and_evidence_on_a_second_workspace() {
     second.close();
 }
 
+/// Under a `calls` code rule, a completed directory restores its Python files but for their
+/// consumers, which run after the closure under the stamp this workspace gives them: a callee
+/// changed outside the directory changes their result, and changed back restores it, each time
+/// as a cold index of the same commit finds.
+#[test]
+fn a_reused_directory_restores_calls_files_but_for_their_consumers() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    const HANDLER: &str =
+        "from app.util import pause\n\nasync def handler():\n    pause()\n    print(1)\n";
+    const SLEEPS: &str = "import time\n\ndef pause():\n    time.sleep(1)\n";
+    const IDLE: &str = "import time\n\ndef pause():\n    pass\n";
+    let code_rule = compile(
+        "restored-calls",
+        json!([
+            { "id": "blocking",
+              "violation": { "anchor": "witness.span", "code": "BLOCKING", "message": "blocking" },
+              "forbid": { "ast": { "language": "python", "rule": {
+                  "kind": "function_definition", "regex": "^async ",
+                  "has": { "stopBy": { "kind": "function_definition" }, "kind": "call",
+                      "calls": { "through": "sync", "has": {
+                          "stopBy": { "kind": "function_definition" }, "kind": "call",
+                          "has": { "field": "function",
+                              "resolves": { "import": ["time.sleep"] } } } } } } } } },
+            { "id": "print",
+              "violation": { "anchor": "witness.span", "code": "PRINT", "message": "print" },
+              "forbid": { "ast": { "language": "python",
+                  "rule": { "pattern": "print($A)" } } } }
+        ]),
+    );
+    let directory = committed_repository(
+        "restored-calls",
+        &[
+            ("app/__init__.py", b""),
+            ("app/api/__init__.py", b""),
+            ("app/api/handler.py", HANDLER.as_bytes()),
+            ("app/util.py", SLEEPS.as_bytes()),
+        ],
+    );
+    let root = directory.0.join("repo");
+    let index = |store: PathBuf| {
+        let mut workspace = storage_workspace(&root, store);
+        workspace.add_code_rule(&code_rule, None).unwrap();
+        let indexed = index_workspace(&workspace);
+        let violations = located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES));
+        workspace.completion_task().compute().unwrap();
+        workspace.close();
+        (indexed, violations)
+    };
+    let (_, first) = index(directory.store());
+    assert!(first.iter().any(|found| found.1 == "blocking"), "{first:?}");
+    // Idle: only app/api/ is a completed tree; back to sleeping: the first commit's tree again,
+    // so the whole checkout is.
+    for (round, util, restored, read) in [("idle", IDLE, 2, 2), ("sleeps", SLEEPS, 4, 0)] {
+        std::fs::write(root.join("app/util.py"), util).unwrap();
+        commit(&root, round);
+        let (indexed, violations) = index(directory.store());
+        let cold_directory = TempDir::new(&format!("restored-calls-cold-{round}"));
+        let (_, cold) = index(cold_directory.store());
+        assert_eq!(violations, cold, "{round}: {indexed}");
+        assert_eq!(
+            violations.iter().any(|found| found.1 == "blocking"),
+            util == SLEEPS,
+            "{round}: {violations:?}"
+        );
+        assert_eq!(
+            (&indexed["restoredFiles"], &indexed["readFiles"]),
+            (&json!(restored), &json!(read)),
+            "{round}: {indexed}"
+        );
+    }
+}
+
 /// A completed first index of a repository holding `edited` and the clean `lib/b.py`, then
 /// `hide` edits `edited` to print in a way Git status may not report, then a second index on
 /// the same store: its index response and violations.

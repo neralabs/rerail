@@ -135,10 +135,46 @@ impl CrossFileScheduler {
         consumer.map(|consumer| (Arc::clone(&consumer.view), Arc::clone(&consumer.summary)))
     }
 
-    /// Whether `input` must run as a job rather than be restored from complete results: the
-    /// `calls` adapter records each Python, PHP and Blade file's summary as its job restores or
-    /// evaluates it.
-    pub(super) fn needs_job(state: &WorkspaceState, input: &FileInput) -> bool {
+    /// Readies `file`, which the index restores from a completed directory instead of running a
+    /// job, for the `calls` adapter, as a job readies a file whose results the store holds: a
+    /// Python, PHP or Blade file gets its stored call summary, and its consumers leave its
+    /// candidates, to run after the closure under the stamp it gives the file. A consumer's
+    /// result depends on other files, so a directory never answers it; every other clause's
+    /// depends on the file alone. Returns the consumers taken, or `None` when the store holds no
+    /// summary of the file: only a job can record one.
+    pub(super) fn defer_restored(
+        state: &WorkspaceState,
+        file: &mut FileState,
+        persisted: &[StoredLocalResult],
+        code_rules: &[Arc<CompiledCodeRule>],
+    ) -> Option<Vec<ClauseId>> {
+        if !Self::summarizes_file(state, &file.input) {
+            return Some(Vec::new());
+        }
+        calls_state::restore_summary(file, persisted);
+        file.crossfile.summary.as_ref()?;
+        Some(state.crossfile.calls.defer(file, code_rules))
+    }
+
+    /// Records a file `defer_restored` readied, as phase A records a job's: its summary and
+    /// seeds, and, when it has consumers, that they await a stamp.
+    pub(super) fn record_restored(
+        state: &mut WorkspaceState,
+        path: &str,
+        file: &FileState,
+        consumers: &[ClauseId],
+    ) {
+        if Self::summarizes_file(state, &file.input) {
+            state
+                .crossfile
+                .calls
+                .record(path, file, (!consumers.is_empty()).then_some(consumers));
+        }
+    }
+
+    /// Whether the `calls` adapter records `input`'s summary: it is active, and the file is
+    /// Python, PHP or Blade.
+    fn summarizes_file(state: &WorkspaceState, input: &FileInput) -> bool {
         state.crossfile.calls.active()
             && file_language(input).is_some_and(crate::code_rule_dsl::calls::summarizes)
     }
