@@ -9,6 +9,7 @@ use super::nearest::NearestTable;
 use super::nodes::{NodeFacts, NodeTable};
 use super::plan::{SlotKind, Statement, Unsupported};
 use super::rec::{self, RecStore};
+use super::roots::{RootTable, Roots};
 use super::shapes::{
     Block, Bound, Draft, DraftBlock, DraftEach, DraftStep, Instance, Kind, Root, ShapeCensus,
     ShapeMaker, Shapes, Step,
@@ -212,15 +213,21 @@ impl Batch {
     }
 }
 
-/// Where a connection's virtual tables find the batch being evaluated.
+/// Where a connection's virtual tables find the batch being evaluated, and its selected roots
+/// (`roots`).
 #[derive(Default)]
 pub(in crate::code_rule_dsl) struct BatchSlot {
     current: RwLock<Option<Arc<Batch>>>,
+    roots: RwLock<Arc<Roots>>,
 }
 
 impl BatchSlot {
     pub(super) fn current(&self) -> Option<Arc<Batch>> {
         self.current.read().clone()
+    }
+
+    pub(super) fn roots(&self) -> Arc<Roots> {
+        Arc::clone(&self.roots.read())
     }
 }
 
@@ -232,6 +239,7 @@ const PROGRAM_MODULE: Module<'static, super::terminals::ProgramTable> =
     Module::eponymous_only_module();
 const FACT_MODULE: Module<'static, FactTable> = Module::eponymous_only_module();
 const NEAREST_MODULE: Module<'static, NearestTable> = Module::eponymous_only_module();
+const ROOT_MODULE: Module<'static, RootTable> = Module::eponymous_only_module();
 
 /// An in-memory connection whose virtual tables read `slot`'s batch, with `emit::PSEUDO_KEY`:
 /// each call a key of a recursion's pseudo-node no call on the connection returned before.
@@ -243,6 +251,7 @@ fn connect(slot: &Arc<BatchSlot>) -> Result<Connection, SqlError> {
     connection.create_module(c"program_match", &PROGRAM_MODULE, Some(Arc::clone(slot)))?;
     connection.create_module(c"fact", &FACT_MODULE, Some(Arc::clone(slot)))?;
     connection.create_module(c"nearest", &NEAREST_MODULE, Some(Arc::clone(slot)))?;
+    connection.create_module(c"roots", &ROOT_MODULE, Some(Arc::clone(slot)))?;
     let issued = std::sync::atomic::AtomicI64::new(0);
     connection.create_scalar_function(
         emit::PSEUDO_KEY_FUNCTION,
@@ -1950,15 +1959,13 @@ fn run_id(stage: Option<usize>, clause: usize) -> i64 {
 }
 
 const CLEAR_RUNS: &str = "DELETE FROM runs";
-const CLEAR_ROOTS: &str = "DELETE FROM roots";
 const INSERT_RUN: &str = "INSERT INTO runs(run, file) VALUES (?1, ?2)";
-const INSERT_ROOT: &str = "INSERT OR IGNORE INTO roots(run, file, node) VALUES (?1, ?2, ?3)";
 /// Returns the temporary database's free pages to the allocator: a batch's B-tree rows, emptied
 /// when their clause ends, leave their pages free (`auto_vacuum = INCREMENTAL`), and an
 /// in-memory database keeps free pages allocated until a vacuum truncates them.
 const FREE_PAGES: &str = "PRAGMA temp.incremental_vacuum";
 /// The statements every batch runs besides its stages' and clauses'.
-const BATCH_STATEMENTS: usize = 5;
+const BATCH_STATEMENTS: usize = 3;
 /// The most statements a session's cache holds; the least recently run is finalized when a new
 /// one is prepared past it. A statement holds 5 KiB on average. On workspace 01 with the Tempo and
 /// data-layer policies each of the four sessions runs about 19k distinct texts (395 MiB held
@@ -1968,8 +1975,9 @@ const BATCH_STATEMENTS: usize = 5;
 const STATEMENT_CACHE: usize = 2048;
 
 /// A connection running one compiled program's batches (`Plan`). A session starts with only the
-/// tables of the batch's own rows, `runs` and `roots`: the files and roots a statement's root
-/// frame reads, under the statement's run id. A stage's or clause's tables are made on its first
+/// table of the batch's own whole files, `runs`, and reads its selected roots through `roots`
+/// (`BatchSlot::roots`): the files and roots a statement's root frame reads, under the
+/// statement's run id. A stage's or clause's tables are made on its first
 /// run (`activate`), and its statements prepared on their first execution, into a cache sized
 /// for the distinct texts of the stages and clauses that ran, up to `STATEMENT_CACHE`. The
 /// session keeps them across batches: a batch empties its tables (`frames`: the frame tables'
@@ -2022,9 +2030,7 @@ impl Session {
         connection.execute_batch(
             "PRAGMA temp_store = MEMORY; PRAGMA temp.auto_vacuum = INCREMENTAL; \
              CREATE TEMP TABLE runs(run INTEGER NOT NULL, file INTEGER NOT NULL, \
-             PRIMARY KEY (run, file)) WITHOUT ROWID; \
-             CREATE TEMP TABLE roots(run INTEGER NOT NULL, file INTEGER NOT NULL, \
-             node INTEGER NOT NULL, PRIMARY KEY (run, file, node)) WITHOUT ROWID;",
+             PRIMARY KEY (run, file)) WITHOUT ROWID;",
         )?;
         connection.set_prepared_statement_cache_capacity(BATCH_STATEMENTS);
         // Every B-tree of the plan (an enumeration's), before any statement is prepared: a
@@ -2261,6 +2267,7 @@ impl Session {
         );
         drop(scopes);
         *self.slot.current.write() = None;
+        *self.slot.roots.write() = Arc::default();
         if result.is_err() {
             // The frames are emptied below, as after every batch.
             for (table, made) in self.plan.tables.iter().zip(&self.made) {
@@ -2279,9 +2286,7 @@ impl Session {
                     }
                 }
             }
-            for clear in [CLEAR_RUNS, CLEAR_ROOTS] {
-                self.connection.execute(clear, [])?;
-            }
+            self.connection.execute(CLEAR_RUNS, [])?;
             self.counts.reset();
         }
         self.frames.release();
@@ -2300,6 +2305,7 @@ impl Session {
     ) -> Result<Vec<Vec<Vec<SqlMatch>>>, SqlError> {
         let Self {
             connection,
+            slot,
             plan,
             stats,
             frames,
@@ -2325,12 +2331,20 @@ impl Session {
         clause_times.clear();
         let inputs = Started::now();
         connection.prepare_cached(CLEAR_RUNS)?.execute([])?;
-        connection.prepare_cached(CLEAR_ROOTS)?.execute([])?;
+        // The selected roots, read in place (`roots`).
+        *slot.roots.write() = Arc::new(Roots::of(
+            runs.iter()
+                .flat_map(|run| {
+                    let id = run_id(None, run.statement);
+                    run.files
+                        .iter()
+                        .filter_map(move |(file, roots)| Some((id, *file, Arc::clone(roots.as_ref()?))))
+                }),
+        ));
         // Each stage runs over the whole files of the clauses that read it, directly or not.
         let mut stage_files: Vec<Vec<usize>> = stages.iter().map(|_| Vec::new()).collect();
         {
             let mut insert_run = connection.prepare_cached(INSERT_RUN)?;
-            let mut insert_root = connection.prepare_cached(INSERT_ROOT)?;
             for run in runs.iter().filter(|run| !run.files.is_empty()) {
                 // A statement's kind codes are its dialect's: it runs on documents of that
                 // dialect only (each document holds one language), so a kind filter or posting
@@ -2343,19 +2357,8 @@ impl Session {
                 );
                 let id = run_id(None, run.statement);
                 for (file, roots) in &run.files {
-                    match roots {
-                        None => {
-                            insert_run.execute(rusqlite::params![id, *file as i64])?;
-                        }
-                        Some(roots) => {
-                            for root in roots.iter() {
-                                insert_root.execute(rusqlite::params![
-                                    id,
-                                    *file as i64,
-                                    i64::from(*root)
-                                ])?;
-                            }
-                        }
+                    if roots.is_none() {
+                        insert_run.execute(rusqlite::params![id, *file as i64])?;
                     }
                 }
                 let mut reads = plan
