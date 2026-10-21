@@ -751,6 +751,61 @@ impl FrameStore {
         self.frames.lock().get(name).map(|shared| shared.get().len)
     }
 
+    /// Publish an aggregate's completed input batch, with no nested SQL. Experiments register
+    /// a separate immutable handle for each terminal demand before preparing the query.
+    #[cfg(test)]
+    pub(super) fn publish_spike_rows(&self, name: &str, rows: &[Vec<Value>]) -> Result<()> {
+        let shared = self
+            .frames
+            .lock()
+            .get(name)
+            .cloned()
+            .ok_or_else(|| Error::ModuleError(format!("unknown spike demand handle {name}")))?;
+        let frame = shared.get();
+        if frame.len != 0 || rows.iter().any(|row| row.len() != frame.columns.len()) {
+            return Err(Error::ModuleError(format!(
+                "spike relation {name}: {} existing rows, {} columns, incoming width {:?}",
+                frame.len,
+                frame.columns.len(),
+                rows.first().map(Vec::len)
+            )));
+        }
+        let key = match frame.key {
+            Key::Rowid(column) => Some(column),
+            _ => None,
+        };
+        let mut keys = std::collections::HashSet::new();
+        if let Some(key) = key
+            && rows
+                .iter()
+                .any(|row| !matches!(row.get(key),Some(Value::Integer(k)) if keys.insert(*k)))
+        {
+            return Err(Error::ModuleError(
+                "spike relation keys must be unique integers".into(),
+            ));
+        }
+        let live = self.live.fetch_add(rows.len(), Atomic::Relaxed) + rows.len();
+        if live > BUDGET {
+            self.live.fetch_sub(rows.len(), Atomic::Relaxed);
+            return Err(Error::ModuleError("spike demand budget".into()));
+        }
+        self.peak.fetch_max(live, Atomic::Relaxed);
+        // SAFETY: publication has its own handle, never a source CTE's handle. The scalar
+        // aggregate completes before the dependent terminal opens its reader. No cursor can
+        // read this handle before that dependency, and the aggregate publishes it only once.
+        let frame = unsafe { shared.get_mut() };
+        for (index, values) in rows.iter().enumerate() {
+            for (column, value) in frame.columns.iter_mut().zip(values) {
+                column.push(index, value.into());
+            }
+        }
+        frame.len = rows.len();
+        frame.ascending = false;
+        frame.dense = false;
+        frame.largest = keys.into_iter().max().unwrap_or(0);
+        Ok(())
+    }
+
     /// Frees what emptied frames keep beyond `RETAIN` rows: a large batch does not keep its
     /// memory for the batches after it.
     pub(super) fn trim(&self) {

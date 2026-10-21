@@ -2,6 +2,10 @@
 
 Status: experiment on branch `Moti-Velz/sql-set-composition`. The native grammar matcher is the production engine and the parity oracle.
 
+The current compiler investigation targets one SQL execution across all selected files and rules in a call.
+The frame scheduler described below does not meet that target.
+See [the whole-call compiler spikes](sql-whole-call-compiler-spikes.md) for executable alternatives, data-layer prior art, and measured limits.
+
 ## Goal
 
 Lower every code-rule expression to set operations in SQLite. Native code runs only behind virtual tables, as **terminals executed once per batch of files**. It never runs once per joined row. The experiment succeeds when, on the nera-data-layer benchmark (12 policies, 5,725 files, limits lifted):

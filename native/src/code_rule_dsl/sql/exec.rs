@@ -236,6 +236,52 @@ fn connect(slot: &Arc<BatchSlot>) -> Result<Connection, SqlError> {
     Ok(connection)
 }
 
+/// Whole-call compiler experiments reuse the real terminal modules without entering the
+/// statement scheduler. The callback owns the only connection and runs on one thread.
+#[cfg(test)]
+pub(super) fn with_terminals<T>(
+    docs: Vec<(TapeDoc, FileContext)>,
+    terminals: Vec<Terminal>,
+    body: impl FnOnce(&Connection, &Arc<Batch>, &Arc<FrameStore>) -> T,
+) -> T {
+    let batch = Batch::new(docs, terminals);
+    let slot = Arc::new(BatchSlot::default());
+    *slot.current.write() = Some(Arc::clone(&batch));
+    let connection = connect(&slot).expect("connects");
+    let _scopes = BatchScopes::begin();
+    struct FactTiming;
+    impl Drop for FactTiming {
+        fn drop(&mut self) {
+            let _ = take_fact_time();
+        }
+    }
+    let _timing = FactTiming;
+    let _ = take_fact_time();
+    body(&connection, &batch, &slot.frames)
+}
+
+/// Reuse one connection and compiled terminals across immutable whole-call snapshots.
+#[cfg(test)]
+pub(super) fn with_call_batches(
+    batches: Vec<Vec<(TapeDoc, FileContext)>>,
+    terminals: Vec<Terminal>,
+    mut body: impl FnMut(&Connection, &Arc<Batch>, &Arc<FrameStore>),
+) {
+    let slot = Arc::new(BatchSlot::default());
+    let connection = connect(&slot).expect("connects");
+    let program = Arc::new(Program { terminals });
+    for docs in batches {
+        let batch = Batch::of(docs, Arc::clone(&program));
+        *slot.current.write() = Some(Arc::clone(&batch));
+        let scopes = BatchScopes::begin();
+        let _ = take_fact_time();
+        body(&connection, &batch, &slot.frames);
+        let _ = take_fact_time();
+        drop(scopes);
+        *slot.current.write() = None;
+    }
+}
+
 /// `body` with a connection over a batch of `docs` (no terminals), for tests of the `node` table.
 #[cfg(test)]
 pub(super) fn with_nodes<T>(docs: Vec<TapeDoc>, body: impl FnOnce(&Connection, &Batch) -> T) -> T {

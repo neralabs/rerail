@@ -110,6 +110,12 @@ const ANSWER: &str = "
     ORDER BY 1, 2, 3
 ";
 
+/// Compose the existing decision expression with symbolic input relations in compiler spikes.
+#[cfg(test)]
+pub(super) fn expression() -> &'static str {
+    ANSWER
+}
+
 thread_local! {
     /// This thread's connection, its tables created once.
     static CONNECTION: RefCell<Option<Connection>> = const { RefCell::new(None) };

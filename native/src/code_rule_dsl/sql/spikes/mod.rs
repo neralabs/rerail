@@ -6,6 +6,7 @@ mod frontier;
 mod packed;
 mod sharing;
 mod views;
+mod whole_call;
 
 use std::time::Instant;
 

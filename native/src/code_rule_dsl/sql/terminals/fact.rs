@@ -465,13 +465,16 @@ const COL_TERM: c_int = 0;
 const COL_EK: c_int = 1;
 const COL_UNK: c_int = 2;
 const COL_NK: c_int = 3 + FACT_COLUMNS as c_int;
+#[cfg(test)]
+const COL_FRAME: c_int = COL_NK + 1;
 
 static SCHEMA: LazyLock<std::ffi::CString> = LazyLock::new(|| {
     let values = (0..FACT_COLUMNS)
         .map(|index| format!(", v{index}"))
         .collect::<String>();
+    let extra = if cfg!(test) { ", frame HIDDEN" } else { "" };
     std::ffi::CString::new(format!(
-        "CREATE TABLE x(term HIDDEN, ek, unk{values}, nk HIDDEN)"
+        "CREATE TABLE x(term HIDDEN, ek, unk{values}, nk HIDDEN{extra})"
     ))
     .expect("no NUL")
 });
@@ -509,6 +512,8 @@ unsafe impl<'vtab> VTab<'vtab> for FactTable {
         let mut term = None;
         let mut ek = None;
         let mut nk = None;
+        #[cfg(test)]
+        let mut frame = None;
         for (index, constraint) in info.constraints().enumerate() {
             if !constraint.is_usable()
                 || constraint.operator() != IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ
@@ -524,6 +529,10 @@ unsafe impl<'vtab> VTab<'vtab> for FactTable {
                 }
                 COL_EK => {
                     ek.get_or_insert(index);
+                }
+                #[cfg(test)]
+                COL_FRAME => {
+                    frame.get_or_insert(index);
                 }
                 _ => {}
             }
@@ -541,6 +550,18 @@ unsafe impl<'vtab> VTab<'vtab> for FactTable {
             usage.set_omit(true);
         }
         info.set_idx_num((if list { 3 } else { 1 }) | if nk.is_some() { 4 } else { 0 });
+        #[cfg(test)]
+        if let Some(frame) = frame {
+            if nk.is_some() {
+                return Err(Error::ModuleError(
+                    "fact spike: frame and packed node keys cannot be combined".into(),
+                ));
+            }
+            let mut usage = info.constraint_usage(frame);
+            usage.set_argv_index(3);
+            usage.set_omit(true);
+            info.set_idx_num((if list { 3 } else { 1 }) | 8);
+        }
         info.set_estimated_cost(100.0);
         info.set_estimated_rows(100);
         Ok(true)
@@ -590,42 +611,48 @@ unsafe impl VTabCursor for FactCursor<'_> {
             return Err(Error::ModuleError(format!("fact: no fact term {term_id}")));
         };
         let started = Started::now();
-        self.rows = if idx_num & 4 != 0 {
-            if !term.reads.is_empty() {
-                return Err(Error::ModuleError(
-                    "fact: packed keys require no capture reads".into(),
-                ));
-            }
-            let mut keys = BTreeSet::new();
-            if idx_num & 2 != 0 {
-                let mut items = args.in_values(1)?;
-                while let Some(item) = items.next()? {
-                    keys.extend(integer(item));
-                }
-            } else {
-                keys.extend(integer(ValueRef::from(&args.get::<Value>(1)?)));
-            }
-            let mut inputs: Inputs = BTreeMap::new();
-            for key in keys {
-                inputs
-                    .entry((key >> 32) as u32 as usize)
-                    .or_default()
-                    .push((Value::Integer(key), key as u32, Vec::new()));
-            }
-            evaluate_inputs(&batch, term, inputs)?
-        } else {
-            let mut keys = BTreeSet::new();
-            if idx_num & 2 != 0 {
-                let mut items = args.in_values(1)?;
-                while let Some(item) = items.next()? {
-                    if let ValueRef::Text(text) = item {
-                        keys.insert(String::from_utf8_lossy(text).into_owned());
+        self.rows = match idx_num {
+            #[cfg(test)]
+            n if n & 8 != 0 => published_inputs(&self.slot, &batch, term, idx_num, args)?,
+            _ => {
+                if idx_num & 4 != 0 {
+                    if !term.reads.is_empty() {
+                        return Err(Error::ModuleError(
+                            "fact: packed keys require no capture reads".into(),
+                        ));
                     }
+                    let mut keys = BTreeSet::new();
+                    if idx_num & 2 != 0 {
+                        let mut items = args.in_values(1)?;
+                        while let Some(item) = items.next()? {
+                            keys.extend(integer(item));
+                        }
+                    } else {
+                        keys.extend(integer(ValueRef::from(&args.get::<Value>(1)?)));
+                    }
+                    let mut inputs: Inputs = BTreeMap::new();
+                    for key in keys {
+                        inputs
+                            .entry((key >> 32) as u32 as usize)
+                            .or_default()
+                            .push((Value::Integer(key), key as u32, Vec::new()));
+                    }
+                    evaluate_inputs(&batch, term, inputs)?
+                } else {
+                    let mut keys = BTreeSet::new();
+                    if idx_num & 2 != 0 {
+                        let mut items = args.in_values(1)?;
+                        while let Some(item) = items.next()? {
+                            if let ValueRef::Text(text) = item {
+                                keys.insert(String::from_utf8_lossy(text).into_owned());
+                            }
+                        }
+                    } else if let Value::Text(text) = args.get::<Value>(1)? {
+                        keys.insert(text);
+                    }
+                    evaluate(&batch, term, keys)?
                 }
-            } else if let Value::Text(text) = args.get::<Value>(1)? {
-                keys.insert(text);
             }
-            evaluate(&batch, term, keys)?
         };
         FACT_TIME.set(FACT_TIME.get().plus(started.elapsed()));
         #[cfg(test)]
@@ -663,4 +690,79 @@ unsafe impl VTabCursor for FactCursor<'_> {
     fn rowid(&self) -> Result<i64> {
         Ok(self.pos as i64)
     }
+}
+
+/// Integer terminal keys and typed input publication, only in compiler experiments. Native
+/// environment reconstruction still uses the existing scalar decoder; no composite key is built.
+#[cfg(test)]
+fn published_inputs(
+    slot: &BatchSlot,
+    batch: &Arc<Batch>,
+    term: &FactTerm,
+    idx: c_int,
+    args: &Filters<'_>,
+) -> Result<Vec<FactRow>> {
+    let descriptor = args.get::<String>(2)?;
+    let width = term
+        .reads
+        .iter()
+        .map(|(_, kind)| match kind {
+            SlotKind::List => 4,
+            SlotKind::Text => 2,
+            _ => 1,
+        })
+        .sum::<usize>();
+    if descriptor.split(',').count() != width + 1 {
+        return Err(Error::ModuleError(
+            "typed fact spike: input schema width differs from capture reads".into(),
+        ));
+    }
+    let mut keys = Vec::new();
+    if idx & 2 != 0 {
+        let mut list = args.in_values(1)?;
+        while let Some(value) = list.next()? {
+            keys.extend(integer(value));
+        }
+    } else {
+        keys.extend(integer(ValueRef::from(&args.get::<Value>(1)?)));
+    }
+    keys.sort_unstable();
+    keys.dedup();
+    let mut inputs: Inputs = BTreeMap::new();
+    let mut unsupported = false;
+    slot.frames
+        .pattern_inputs(&descriptor, &keys, |key, file, node, values| {
+            let mut columns = Vec::new();
+            let mut at = 0usize;
+            for (_, kind) in &term.reads {
+                let value = |i: usize| values.get(at + i).copied().flatten();
+                match kind {
+                    SlotKind::Node | SlotKind::Count => {
+                        columns.push(value(0).map_or(String::new(), |v| v.to_string()));
+                        at += 1;
+                    }
+                    SlotKind::List => {
+                        columns.push(match (value(0), value(1)) {
+                            (Some(a), Some(b)) => format!("{a}:{b}"),
+                            _ => String::new(),
+                        });
+                        at += 4;
+                    }
+                    SlotKind::Text => {
+                        unsupported = true;
+                        return;
+                    }
+                }
+            }
+            inputs
+                .entry(file as usize)
+                .or_default()
+                .push((Value::Integer(key), node, columns));
+        })?;
+    if unsupported {
+        return Err(Error::ModuleError(
+            "typed fact spike: text/range reads need typed string columns".into(),
+        ));
+    }
+    evaluate_inputs(batch, term, inputs)
 }

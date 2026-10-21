@@ -1,5 +1,9 @@
 # SQL compiler work reduction
 
+This document describes improvements to the existing frame compiler.
+The next architecture targets one statement across a complete call.
+See [the whole-call compiler spikes](sql-whole-call-compiler-spikes.md) for that design and its current coverage.
+
 The measured compiler still spends hundreds of millions of VM steps on a small input.
 This design changes the work that emission requests from SQLite.
 The SQL engine uses one compiler configuration in production and diagnostic builds.
