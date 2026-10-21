@@ -7,6 +7,7 @@ import { resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildReport } from "./sql-profile/report.mjs";
 import { summaryMarkdown } from "./sql-profile/summary.mjs";
+import { requireExecutionBudget } from "./sql-profile/execution-budget.mjs";
 
 const [configArg, outputArg] = process.argv.slice(2);
 if (!configArg || !outputArg || process.argv.length !== 4) {
@@ -73,3 +74,5 @@ console.log(summaryMarkdown(report));
 console.log(`Reports: ${output}/summary.md and ${output}/profile.html`);
 if (failure) console.error(failure);
 if (!workload.results.parity) process.exitCode = 1;
+// A correct result above 100 actual executions is still a failed compiler acceptance run.
+requireExecutionBudget(report);

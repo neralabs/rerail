@@ -30,6 +30,7 @@
 //! witness budget applied by a running sum.
 
 use super::SqlError;
+use super::exec::AuxiliaryConnection;
 use crate::code_rule_dsl::query::select_when::{Answer, LeafRow, Leaves, Plan, Unknown};
 use rusqlite::Connection;
 use std::cell::RefCell;
@@ -118,7 +119,7 @@ pub(super) fn expression() -> &'static str {
 
 thread_local! {
     /// This thread's connection, its tables created once.
-    static CONNECTION: RefCell<Option<Connection>> = const { RefCell::new(None) };
+    static CONNECTION: RefCell<Option<AuxiliaryConnection>> = const { RefCell::new(None) };
 }
 
 fn with_connection<T>(
@@ -127,11 +128,14 @@ fn with_connection<T>(
     CONNECTION.with(|slot| {
         let mut slot = slot.borrow_mut();
         if slot.is_none() {
-            let connection = Connection::open_in_memory()?;
+            let connection = AuxiliaryConnection::new("select-when")?;
             connection.execute_batch(SCHEMA)?;
             *slot = Some(connection);
         }
-        body(slot.as_ref().expect("connected"))
+        let connection = slot.as_ref().expect("connected");
+        let result = body(connection);
+        connection.checkpoint()?;
+        result
     })
 }
 

@@ -34,6 +34,7 @@
 //! Every predicate shape is lowered exactly; nothing is refused.
 
 use super::SqlError;
+use super::exec::AuxiliaryConnection;
 use crate::code_rule_dsl::query::crossfile::{Group, Interrupted, Relation, Requirement};
 use rusqlite::Connection;
 use rusqlite::types::Value as SqlValue;
@@ -60,7 +61,7 @@ const CLEAR: &str = "DELETE FROM cf_row; DELETE FROM cf_value;";
 
 thread_local! {
     /// This thread's connection, its tables created once.
-    static CONNECTION: RefCell<Option<Connection>> = const { RefCell::new(None) };
+    static CONNECTION: RefCell<Option<AuxiliaryConnection>> = const { RefCell::new(None) };
 }
 
 fn with_connection<T>(
@@ -69,12 +70,15 @@ fn with_connection<T>(
     CONNECTION.with(|slot| {
         let mut slot = slot.borrow_mut();
         if slot.is_none() {
-            let connection = Connection::open_in_memory()?;
+            let connection = AuxiliaryConnection::new("crossfile")?;
             connection.execute_batch(SCHEMA)?;
             connection.set_prepared_statement_cache_capacity(64);
             *slot = Some(connection);
         }
-        body(slot.as_ref().expect("connected"))
+        let connection = slot.as_ref().expect("connected");
+        let result = body(connection);
+        connection.checkpoint()?;
+        result
     })
 }
 

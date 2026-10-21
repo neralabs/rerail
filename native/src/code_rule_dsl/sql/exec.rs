@@ -249,6 +249,45 @@ fn connect(slot: &Arc<BatchSlot>) -> Result<Connection, SqlError> {
     Ok(connection)
 }
 
+/// Policy-composition connections participate in the same job trace as AST sessions.
+/// Declare the observer first so it drops before the connection on every exit.
+pub(super) struct AuxiliaryConnection {
+    #[cfg(any(test, feature = "unbounded-work"))]
+    profiling: Option<Box<super::profiling::Profiler>>,
+    connection: Connection,
+}
+
+impl AuxiliaryConnection {
+    pub fn new(source: &'static str) -> rusqlite::Result<Self> {
+        let connection = Connection::open_in_memory()?;
+        #[cfg(any(test, feature = "unbounded-work"))]
+        // SAFETY: the observer drops before this connection, including constructor errors.
+        let profiling = unsafe { super::profiling::Profiler::configured_for(&connection, source) }?;
+        #[cfg(not(any(test, feature = "unbounded-work")))]
+        let _ = source;
+        Ok(Self {
+            #[cfg(any(test, feature = "unbounded-work"))]
+            profiling,
+            connection,
+        })
+    }
+
+    pub fn checkpoint(&self) -> rusqlite::Result<()> {
+        #[cfg(any(test, feature = "unbounded-work"))]
+        if let Some(profiling) = &self.profiling {
+            profiling.checkpoint(&self.connection)?;
+        }
+        Ok(())
+    }
+}
+
+impl std::ops::Deref for AuxiliaryConnection {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        &self.connection
+    }
+}
+
 /// Whole-call compiler experiments reuse the real terminal modules without entering the
 /// statement scheduler. The callback owns the only connection and runs on one thread.
 #[cfg(test)]

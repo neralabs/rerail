@@ -8,6 +8,69 @@ import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { actionableSummary, sqlShape } from "../../benchmark/sql-profile/summary.mjs";
 import { buildReport, flags } from "../../benchmark/sql-profile/report.mjs";
+import { executionBudget, requireExecutionBudget, sqlCategory } from "../../benchmark/sql-profile/execution-budget.mjs";
+
+const capturedJob = (counts = [25, 25, 25, 25]) => ({
+  sessions: counts.length,
+  queries: [{ kind: "sql", sql: "SELECT 1", runs: counts.reduce((sum, n) => sum + n, 0) }],
+  executionCoverage: counts.map((n, i) => ({session:`worker-${i}`,pid:42,source:"ast-session",
+    fromSessionStart:true,started:n,completed:n,running:0,observed:n})),
+  workload: { results: { parity: true,
+    sql: { engine:"sql",digest:"complete-output",files:32,counts:{failures:0},report:{sessions:{count:counts.length}} },
+    native: { engine:"native",digest:"complete-output",files:32,counts:{failures:0} },
+  } },
+});
+
+test("100 is a fixed whole-job budget, not a per-worker or per-batch allowance", () => {
+  assert.equal(requireExecutionBudget(capturedJob()).observed, 100);
+  assert.throws(() => requireExecutionBudget(capturedJob([25,25,25,26])), /101\/100; budget-exceeded/);
+  assert.throws(() => requireExecutionBudget(capturedJob([100,100,100,100])), /400\/100/);
+  const report = capturedJob([101]);
+  report.limit = 1000; report.workload.config = { executionBudget: 1000, batchSize: 1 };
+  assert.equal(executionBudget(report).accepted, false);
+});
+
+test("setup, cleanup and helper SQL consume the budget; native spans do not count twice", () => {
+  const report = capturedJob([99]);
+  report.queries = [
+    {kind:"sql",sql:"CREATE TEMP TABLE f(k)",runs:40},
+    {kind:"sql",sql:"PRAGMA temp_store=MEMORY",runs:1},
+    {kind:"sql",sql:"BEGIN",runs:1},
+    {kind:"sql",sql:"COMMIT",runs:1},
+    {kind:"sql",sql:"DELETE FROM f",runs:56},
+    {kind:"operator",sql:"native publication",runs:50000},
+  ];
+  assert.deepEqual(requireExecutionBudget(report).categories, {setup:41,transaction:2,matchingAndCleanup:56});
+  report.sessions++;
+  report.executionCoverage.push({session:"select-when",pid:42,source:"select-when",
+    fromSessionStart:true,started:2,completed:2,running:0,observed:2});
+  report.queries.push({kind:"sql",sql:"INSERT INTO sw_row VALUES (?)",runs:2});
+  assert.throws(() => requireExecutionBudget(report), /101\/100/);
+  assert.equal(sqlCategory("-- comment\n/* another */ CREATE TABLE f(k)"), "setup");
+});
+
+test("small or empty counts fail without complete trace coverage and complete native parity", () => {
+  const cases = [
+    report => { delete report.executionCoverage; },
+    report => { report.executionCoverage[0].started++; },
+    report => { report.executionCoverage[0].observed--; },
+    report => { report.executionCoverage[0].running = 1; },
+    report => { report.executionCoverage[0].fromSessionStart = false; },
+    report => { report.executionCoverage[0].source = "untraced"; },
+    report => { report.executionCoverage[0].pid = 999; },
+    report => { report.workload.results.parity = false; },
+    report => { report.workload.results.sql.digest = "missing-captures"; },
+    report => { report.workload.results.sql.files = 0; },
+    report => { report.workload.results.sql.counts.failures = 1; },
+    report => { report.queries.push({kind:"operator",incomplete:1}); },
+    report => { report.queries[0].runs = -1; },
+    report => { report.queries = []; },
+  ];
+  for (const mutate of cases) {
+    const report = capturedJob([1,1]); mutate(report);
+    assert.throws(() => requireExecutionBudget(report), /invalid-capture/, mutate.toString());
+  }
+});
 
 const query = overrides => ({ kind: "sql", plan: [], bytecode: [], rows: 0, changes: 0, runs: 1, vmSteps: 0,
   cpuNs: 0, fullscanSteps: 0, autoIndexRows: 0, frameIndexBuilds: 0, frameScans: 0, frameNext: 0, ...overrides });

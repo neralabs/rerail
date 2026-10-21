@@ -115,6 +115,8 @@ struct State {
     sql_time: Timing,
     error: Option<String>,
     events: usize,
+    sql_started: usize,
+    sql_completed: usize,
     enabled: bool,
     writer: Option<BufWriter<File>>,
 }
@@ -151,6 +153,7 @@ pub(super) struct Profiler {
     database: *mut ffi::sqlite3,
     state: RefCell<State>,
     stem: PathBuf,
+    source: &'static str,
 }
 
 // SAFETY: rusqlite's Connection may move between workers. Its callback is invoked synchronously
@@ -163,10 +166,24 @@ impl Profiler {
     pub(super) unsafe fn configured(
         connection: &Connection,
     ) -> rusqlite::Result<Option<Box<Self>>> {
+        // SAFETY: forwarded from this method's caller.
+        unsafe { Self::configured_for(connection, "ast-session") }
+    }
+
+    /// # Safety
+    /// The returned profiler must be dropped before its connection closes.
+    pub(super) unsafe fn configured_for(
+        connection: &Connection,
+        source: &'static str,
+    ) -> rusqlite::Result<Option<Box<Self>>> {
         DIRECTORY
             .as_ref()
             // SAFETY: forwarded from the caller; Session owns the callback and connection.
-            .map(|path| unsafe { Self::new(connection, path) })
+            .map(|path| {
+                let mut profiler = unsafe { Self::new(connection, path) }?;
+                profiler.source = source;
+                Ok(profiler)
+            })
             .transpose()
     }
 
@@ -189,6 +206,7 @@ impl Profiler {
                 ..State::default()
             }),
             stem,
+            source: "ast-session",
         });
         let _ = *ORIGIN;
         // SAFETY: SQLite retains the stable Box address until Drop unregisters this callback.
@@ -271,7 +289,9 @@ impl Profiler {
         let data = json!({"version":1,"pid":std::process::id(),"events":state.events,
             "clock":"process monotonic nanoseconds","cpuClock":if cfg!(unix) {"thread CPU"} else {"unavailable"},
             "writtenAtUnixMs":SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis(),
-            "queries":state.queries,"relationalBatches":state.relational});
+            "queries":state.queries,"relationalBatches":state.relational,
+            "executionCoverage":{"source":self.source,"fromSessionStart":true,"started":state.sql_started,
+                "completed":state.sql_completed,"running":state.running.len()}});
         let file = File::create(self.stem.with_extension("json")).map_err(io_error)?;
         let mut writer = BufWriter::new(file);
         serde_json::to_writer(&mut writer, &data)
@@ -389,6 +409,7 @@ unsafe extern "C" fn trace(
                 }
                 let sql = unsafe { CStr::from_ptr(sql) }.to_string_lossy();
                 let query = state.query(&sql, "sql");
+                state.sql_started += 1;
                 let context = state.context.clone();
                 let counters = STATUSES.map(|status| unsafe {
                     i64::from(ffi::sqlite3_stmt_status(pointer, status, 0))
@@ -418,6 +439,7 @@ unsafe extern "C" fn trace(
                 let Some(running) = state.running.remove(&key) else {
                     return;
                 };
+                state.sql_completed += 1;
                 ACTIVE.set(ACTIVE.get().saturating_sub(1));
                 let elapsed = running.started.elapsed();
                 state.sql_time.add(elapsed);
@@ -504,6 +526,11 @@ mod tests {
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
         let queries = catalogue["queries"].as_array().unwrap();
+        // execute_batch counts each SQL body, and cached executions each count again.
+        // The diagnostic EXPLAIN statements do not consume the workload's budget.
+        assert_eq!(catalogue["executionCoverage"]["started"], 8);
+        assert_eq!(catalogue["executionCoverage"]["completed"], 8);
+        assert_eq!(catalogue["executionCoverage"]["running"], 0);
         for query in queries.iter().filter(|q| q["kind"] == "sql") {
             if query["sql"].as_str().unwrap().starts_with("CREATE TABLE") {
                 // Deferred EXPLAIN cannot recreate a table that now exists. Retain the reason.

@@ -196,6 +196,16 @@ export function summaryMarkdown(report) {
     `Recorded CPU: **${fmt(summary.budget.measuredCpuMs)} ms**. Profiled apply CPU: **${summary.budget.profiledApplyCpuMs === null ? "unavailable" : fmt(summary.budget.profiledApplyCpuMs) + " ms"}**.`,
     "", summary.budget.interpretation, "", "## Where recorded CPU goes", "",
     "| Work | CPU ms | Recorded CPU | Executions |", "|---|---:|---:|---:|"];
+  if (report.executionBudget) {
+    const budget = report.executionBudget;
+    lines.splice(2, 0, `SQL execution acceptance: **${budget.status}: ${fmt(budget.observed)} / ${budget.limit}**.`, "",
+      budget.scope, "", budget.enforcement, "",
+      `Job SQL: ${fmt(budget.categories.setup)} setup, ${fmt(budget.categories.transaction)} transaction, and ${fmt(budget.categories.matchingAndCleanup)} matching/cleanup executions.`, "",
+      ...(budget.observed > budget.limit ? ["Compiler acceptance fails regardless of CPU time. Remove per-rule and per-demand statement scheduling before tuning individual joins.", ""] : []),
+      ...(budget.firstOverBudget ? [`First execution over budget: Q${budget.firstOverBudget.query} in ${budget.firstOverBudget.session}.`, "",
+        "```sql", budget.firstOverBudget.sql.slice(0, 512), "```", ""] : []),
+      ...budget.problems.flatMap(problem => [problem, ""]));
+  }
   for (const cost of summary.costBreakdown) lines.push(`| ${cost.label} | ${fmt(cost.cpuMs)} | ${fmt(cost.measuredCpuPercent)}% | ${fmt(cost.executions)} |`);
   lines.push("", summary.budget.frameIndexCpuMs === null
     ? "Frame index construction was not timed in this capture. Re-run with the current profiler to isolate this cost."

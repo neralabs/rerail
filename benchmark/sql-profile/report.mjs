@@ -3,6 +3,7 @@ import { createReadStream, readFileSync, readdirSync, openSync, closeSync, write
 import { createInterface } from "node:readline";
 import { join } from "node:path";
 import { actionableSummary, summaryMarkdown } from "./summary.mjs";
+import { executionBudget, JOB_SQL_EXECUTION_LIMIT } from "./execution-budget.mjs";
 
 export const thresholds = Object.freeze({ highVmPerRow: 1000, minimumVm: 100_000, emptyVm: 10_000,
   repeatedRuns: 100, smallCpuNs: 1_000_000, expansion: 10, expandedRows: 1000, indexBuilds: 10,
@@ -45,6 +46,7 @@ export async function buildReport(rawDirectory, outputDirectory, workload = {}) 
   const queries = [];
   const contexts = new Map();
   const relationalStages = new Map();
+  const executionCoverage = [], firstExecutions = [];
   const clauseNames = new Map((workload.results?.sql?.report?.profile?.clauses ?? []).map(clause => [clause.statement, clause]));
   const trace = openSync(join(outputDirectory, "trace.json"), "w");
   writeSync(trace, '{"displayTimeUnit":"ms","traceEvents":[');
@@ -83,12 +85,21 @@ export async function buildReport(rawDirectory, outputDirectory, workload = {}) 
         return [query.id, combined];
       }));
       let localEvents = 0;
+      let localSql = 0;
       for await (const line of createInterface({ input: createReadStream(join(rawDirectory, name.replace(/\.json$/, ".jsonl"))), crlfDelay: Infinity })) {
         if (!line) continue;
         const event = JSON.parse(line);
         const query = local.get(event.query);
         if (!query) throw new Error(`Missing query ${event.query} in ${name}`);
         eventCount++; localEvents++;
+        if (event.kind !== query.kind) throw new Error(`Trace kind mismatch in ${name}`);
+        if (event.kind === "sql") {
+          localSql++;
+          // Only the first 101 per session can contain the job's execution 101.
+          if (localSql <= JOB_SQL_EXECUTION_LIMIT + 1) firstExecutions.push({
+            startNs: event.startNs, session: name, query: query.id, sql: query.sql,
+          });
+        }
         query.runs++;
         for (const key of fields.slice(1, 8)) query[key] += event[key] ?? 0;
         counterFields.forEach((key, i) => { query[key] += event.counters?.[i] ?? 0; });
@@ -114,6 +125,7 @@ export async function buildReport(rawDirectory, outputDirectory, workload = {}) 
         writeSync(trace, (first ? "" : ",") + JSON.stringify(traceEvent)); first = false;
       }
       if (localEvents !== catalogue.events) throw new Error(`Incomplete trace ${name}: ${localEvents}/${catalogue.events} events`);
+      executionCoverage.push({ session: name, pid: catalogue.pid, ...catalogue.executionCoverage, observed: localSql });
     }
     writeSync(trace, "]}");
   } finally { closeSync(trace); }
@@ -125,7 +137,9 @@ export async function buildReport(rawDirectory, outputDirectory, workload = {}) 
   }
   queries.sort((a, b) => b.selfCpuNs - a.selfCpuNs || a.id - b.id);
   const summary = Object.fromEntries(fields.map(key => [key, queries.reduce((n, q) => n + (key === "cpuNs" || key === "wallNs" ? (q.kind === "sql" ? q[key] : 0) : q[key]), 0)]));
+  firstExecutions.sort((a, b) => a.startNs - b.startNs || a.session.localeCompare(b.session));
   const report = { version: 1, workload, thresholds, eventCount, sessions: files.length, summary,
+    executionCoverage, firstOverBudget: firstExecutions[JOB_SQL_EXECUTION_LIMIT] ?? null,
     accounting: "Ranked CPU uses SQL CPU plus operator CPU excluding child SQL. SQL spans exclude preparation; operator spans include preparation. Parsing and other pipeline phases outside these spans are not attributed. Inclusive operator times overlap SQL. Aggregate wall time sums worker spans, not workload latency. Profiling callback and serialization overhead affect timings. EXPLAIN uses unbound NULL parameters after execution. Query plans describe SQLite choices, not actual loop counts. Frame counters cover frame tables; terminal internals are included in SQL time but have no callback breakdown. Rows are returned, changed, or published rows; shared rows are not copies. Summed row counts include operator and SQL observations of the same rows. Threshold flags are review candidates, not correctness failures.",
     relationalStages: [...relationalStages.values()].sort((a, b) => b.cpuNs - a.cpuNs),
     contexts: [...contexts.values()].sort((a, b) => b.selfCpuNs - a.selfCpuNs), queries };
@@ -134,11 +148,17 @@ export async function buildReport(rawDirectory, outputDirectory, workload = {}) 
 
 /** Regenerates presentation and priorities without rerunning or rewriting the execution trace. */
 export function writeReport(report, outputDirectory) {
+  report.executionBudget = executionBudget(report);
   report.actionableSummary = actionableSummary(report);
+  if (report.executionBudget.status === "budget-exceeded") {
+    report.actionableSummary.nextStep = "Meet the complete-job SQL execution budget before CPU tuning. Preserve complete native output parity.";
+  }
   const hash = path => createHash("sha256").update(readFileSync(path)).digest("hex");
   report.analysis = { version: 1, reporterSha256: hash(new URL(import.meta.url)),
+    executionBudgetSha256: hash(new URL("./execution-budget.mjs", import.meta.url)),
     summarySha256: hash(new URL("./summary.mjs", import.meta.url)) };
   writeFileSync(join(outputDirectory, "summary.md"), summaryMarkdown(report));
+  writeFileSync(join(outputDirectory, "execution-budget.json"), JSON.stringify(report.executionBudget, null, 2) + "\n");
   writeFileSync(join(outputDirectory, "profile.json"), JSON.stringify(report, null, 2) + "\n");
   const lines = [summaryMarkdown(report), "", "# Complete query catalogue", "", `Output parity: ${report.workload?.results?.parity ?? "unavailable"}.`, "", report.accounting, "",
     `Events: ${report.eventCount}. Sessions: ${report.sessions}. Accounted CPU: ${ms(report.summary.selfCpuNs)} ms.`, "",
@@ -163,6 +183,7 @@ function html(report) {
 const report=JSON.parse(document.getElementById('data').textContent);let sort='selfCpuNs',direction=-1,flagged=false;
 const el=id=>document.getElementById(id),ms=n=>(n/1e6).toFixed(3),text=(tag,value)=>{const e=document.createElement(tag);e.textContent=value;return e};
 el('summary').textContent=report.eventCount+' events · '+report.sessions+' sessions · '+ms(report.summary.selfCpuNs)+' ms accounted CPU · output parity: '+(report.workload.results?.parity??'unavailable');el('accounting').textContent=report.accounting;
+if(report.executionBudget){const b=report.executionBudget;el('summary').prepend(text('strong','SQL job budget: '+b.status+' ('+b.observed+'/'+b.limit+'). '));}
 function detail(q){const d=el('detail');d.replaceChildren(text('h2','Q'+q.id+' · '+q.kind),text('p',q.contexts.join(', ')),text('pre',q.sql));for(const f of q.flags)d.append(text('p',f.code+' ('+f.certainty+'): '+JSON.stringify(f.evidence)+' '+f.action));d.append(text('h3','Metrics'),text('pre',JSON.stringify({...q,sql:undefined,plans:undefined,bytecode:undefined,plan:undefined},null,2)));if(q.kind==='sql')d.append(text('h3','EXPLAIN QUERY PLAN and bytecode'),text('pre',JSON.stringify(q.plans,null,2)));d.scrollIntoView({block:'start'});}
 function render(){const filter=el('filter').value.toLowerCase();el('rows').replaceChildren();for(const q of [...report.queries].filter(q=>(!flagged||q.flags.length)&&JSON.stringify([q.sql,q.contexts,q.flags]).toLowerCase().includes(filter)).sort((a,b)=>direction*(a[sort]-b[sort]))){const r=document.createElement('tr');for(const value of ['Q'+q.id+' '+q.kind,ms(q.selfCpuNs),q.runs,q.rows+q.changes,q.vmSteps,q.flags.map(f=>f.code).join(', ')])r.append(text('td',value));r.onclick=()=>detail(q);el('rows').append(r);}}
 const a=report.actionableSummary,p=el('priorities'),fmt=n=>n.toLocaleString('en-US',{maximumFractionDigits:n>0&&n<1?3:1});

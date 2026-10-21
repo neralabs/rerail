@@ -1367,3 +1367,167 @@ node benchmark/sql-set-tuning.mjs /tmp/rerail-engine-integration-20261021/defaul
 node benchmark/sql-set-tuning.mjs /tmp/rerail-engine-integration-20261021/positive-sweep-32.json
 node benchmark/sql-set-tuning.mjs /tmp/rerail-engine-integration-20261021/positive-sweep-138.json
 ```
+
+## Hard job budget: establish the failure before further compiler changes — 2026-10-21
+
+The previous integration achieves component fusion, not whole-job fusion.
+Its statement count does not meet the requested architecture.
+The new acceptance limit is **100 actual SQL executions for one complete cold job**.
+That limit covers every worker and includes setup, DDL, transactions, matching, and cleanup.
+Changing batch size does not reset the limit.
+
+`benchmark/sql-profile.mjs` now rejects a job above that fixed limit, even when its output matches native.
+This is an acceptance test after complete execution.
+It does not interrupt matching at execution 101.
+Completing the run preserves the full output check and the trace needed to explain the failure.
+The gate has no budget override.
+
+The counter uses actual traced SQL bodies.
+One `execute_batch` with 200 statements consumes 200 executions.
+Repeated executions of one prepared statement each count.
+Native publication spans do not duplicate their enclosing SQL execution.
+The profiler's own EXPLAIN statements are diagnostics outside the workload budget.
+
+### Coverage correction
+
+The earlier 42,495 count covers AST sessions only.
+An audit found separate connections for `select_when` and cross-file policy composition.
+Those connections did not participate in the earlier trace.
+The previous number is therefore a lower bound for the complete SQL job.
+
+Both auxiliary connection families now install their observer before schema setup.
+Their traces use the same process clock and enter the same job total.
+Each catalogue records statement starts, completions, outstanding executions, and its connection family.
+The acceptance gate checks these counts against the raw trace.
+It also checks AST session coverage against the workspace report.
+
+A missing trace, unfinished operation, inconsistent count, or output mismatch prevents acceptance.
+Historical traces without the new coverage counters cannot establish a passing result.
+Their observed counts can still establish that the job exceeds 100.
+The catalogue benchmark uses an in-memory workspace, without content-store connections.
+
+### Required SQL shape and allocation
+
+The compiler must plan the entire job before it allocates worker batches or SQL statement phases.
+The following allocation is a design target, not a measured passing implementation.
+It assumes four workers and at most one file partition per worker.
+Additional partitions must consume the same job allocation.
+
+| Work | Job allocation | Required shape |
+|---|---:|---|
+| Session configuration | 4 | At most one configuration statement per worker. |
+| Matching | 64 | At most 16 statement phases per worker, shared across files and clauses. |
+| Policy composition | 16 | Shared relations and tagged outputs, rather than a SQL call per policy and file. |
+| Transactions or remaining setup | 8 | Bounded setup independent of rule count. |
+| Reserve | 8 | Explicit spare capacity, never a new per-batch allowance. |
+| Total | 100 | One allocation for the complete job. |
+
+Frame and terminal registration already use SQLite's C API without SQL schema writes.
+The new compiler must extend that property to demand and frontier state.
+Their current mutable B-trees require thousands of schema and cleanup statements.
+Immutable input relations and typed publication handles can cross statement boundaries without per-row INSERT or SQL DELETE.
+Buffer release remains a native storage operation, without rule evaluation or nested SQL.
+
+One program must return tagged results for all clauses in a worker partition.
+A phase ends only at a compiler-selected resource boundary.
+It must not end because the next rule, utility demand, candidate, or file needs attention.
+The physical planner must check its total phase allocation before execution.
+A plan outside that allocation must fail acceptance instead of silently using the old scheduler.
+
+The typed intermediate representation needs these contracts before physical SQL generation:
+
+| Logical operation | SQL representation and proof obligation |
+|---|---|
+| Shared acyclic utility | A relation keyed by unit, file, node, and only the bindings it reads. Separate caller rows restore caller-specific output. |
+| Ordered walk | Candidate ordinals and first-event selection inside SQL. Unreached candidates must not expose failures or utility reads. |
+| Demand or frontier | Typed key and answer relations inside the program. No host loop that executes SQL for each round. |
+| Recursive component | A component-level recursive CTE with proved key transitions, capture state, termination checks, and reached-read semantics. |
+| Enumeration | All findings or exclusion state inside a bounded program, preserving ordering and duplicate suppression. |
+| Policy composition | Leaf outcomes grouped by policy and file, followed by shared decision SQL. No auxiliary table loader per evaluation. |
+| Capture storage | Typed live columns in intermediate relations. Serialize captures only at an output boundary. |
+
+The existing specialized witness compiler proves one recursive shape.
+It does not prove arbitrary demanded-key recursion, negative recursive reads, or capture-bearing recursive calls.
+Those remaining contracts need executable SQL examples and differential tests before integration.
+The previous JSON continuation machine is not a performance solution.
+Moving its control loop inside one SQL execution only meets the statement-count dimension.
+
+The compiler must preserve the logical operations instead of recovering them from mutable frame SQL.
+Otherwise the adapter inherits the same demand rounds, frame restoration, and cleanup that caused this failure.
+Statement count, complete output parity, SQL work, CPU, and memory remain separate checks.
+A count below 100 alone does not establish an efficient engine.
+
+### Measured red acceptance cases
+
+The frozen addon contains the coverage changes and the same matching compiler as `507b5ebb`.
+Its SHA-256 is `0c62cf7c13551ce52c80835ffaddfbdfed81f29e70f0e84672fc9f187f917e71`.
+All three runs use a four-worker pool and compare complete outcomes against native.
+
+| 32-file workload | Setup | Transactions | Matching and cleanup | Job total | Limit | Acceptance exit |
+|---|---:|---:|---:|---:|---:|---:|
+| Full catalogue, batch size 2 | 9,904 | 32 | 32,559 | 42,495 | 100 | 1 |
+| Full catalogue, default batch size 64 | 9,904 | 8 | 13,649 | 23,561 | 100 | 1 |
+| Specialized positive recursive policy | 2 | 8 | 4 | 14 | 100 | 0 |
+
+Both catalogue runs preserve all 33 findings.
+The control preserves all 1,478 findings.
+All captures, failures, and blind files match native.
+Each trace has equal start, completion, and observed counts, with no outstanding executions or coverage problems.
+Both catalogue runs use four cold AST sessions.
+The faster control reuses two sessions across its four worker batches.
+
+The first catalogue run fails with this actual message:
+
+```text
+Error: SQL job execution budget FAILED: 42495/100; budget-exceeded.
+```
+
+Its execution 101 is already schema setup:
+
+```sql
+CREATE TEMP TABLE IF NOT EXISTS c138_d2(id INTEGER PRIMARY KEY, file, node, dirty INTEGER DEFAULT 1);
+```
+
+At default batching, execution 101 is an index declaration:
+
+```sql
+CREATE INDEX IF NOT EXISTS c138_d7_at ON c138_d7(file, node);
+```
+
+The setup count alone exceeds the entire job allocation by almost a factor of 100.
+Larger file batches reduce repeated matching calls, but leave that setup count unchanged.
+This proves that batch tuning cannot make the current catalogue plan meet the budget.
+
+These catalogue and control workloads do not use the auxiliary connection families.
+Their complete counts therefore equal the AST-session counts.
+A separate profiled differential fixture exercises both auxiliary families.
+It records 75 AST executions, 157 `select_when` executions, and 69 cross-file executions.
+Their coverage counters agree with every raw SQL event.
+This fixture tests observer coverage, rather than acceptance of the catalogue workload.
+
+The artifact directory is `/tmp/rerail-sql-budget-20261021`.
+Each run retains the full profile, native and SQL outcomes, source identities, and `execution-budget.json`.
+The `.exit` files record the acceptance process status.
+The journal preserves the measured totals because the temporary artifacts are local.
+
+The red case reproduces with this command in the current workspace:
+
+```sh
+DYLD_LIBRARY_PATH=/tmp/ner-1562-node-libs RERAIL_BENCH_WORKERS=4 \
+  node benchmark/sql-profile.mjs /tmp/rerail-sql-budget-20261021/catalogue-32.json \
+  /tmp/rerail-sql-budget-20261021/catalogue-32-red-repeat
+```
+
+The library path uses the existing local shim for Homebrew Node's missing `libsimdjson.33.dylib`.
+It does not change the SQL addon.
+The profile runner requires a fresh output directory and returns exit code 1 for this workload.
+
+The gate tests pass at exactly 100 executions and fail at 101 across multiple workers.
+They also reject missing coverage, unfinished operations, mismatched outcomes, and a budget override in workload configuration.
+The Rust observer regression proves that cached executions and individual statements within `execute_batch` count separately.
+The profiling and SQL-shape scripts pass all 16 tests.
+The complete code-rule suite passes 1,481 tests, with 44 ignored and no failures.
+Both ordinary and profiling builds pass library Clippy.
+
+The current compiler remains a failing implementation under this acceptance test.
+No SQL generation change in this step claims to meet the 100-execution requirement.
