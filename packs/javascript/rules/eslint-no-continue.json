@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-continue",
-  "revision": 1,
+  "revision": 3,
   "mode": "steer",
-  "description": "Port of ESLint's `no-continue` rule (https://eslint.org/docs/latest/rules/no-continue). Reports every `continue` statement.",
+  "description": "Avoid continue statements in loops; restructure the loop with a condition instead.",
   "scope": {
     "include": [
       "**/*"
@@ -24,7 +24,24 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-continue",
-        "message": "Unexpected use of continue statement."
+        "message": "Replace this continue with an if that wraps the rest of the loop body.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-continue"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-continue"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/noContinue"
+            ]
+          }
+        }
       }
     }
   ]

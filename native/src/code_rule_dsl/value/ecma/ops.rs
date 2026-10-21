@@ -3,10 +3,12 @@
 //! with a Number, a BigInt divided by zero) or that needs an array's or an object's conversion
 //! (`[1] + 1`) is `Unknown`.
 
+use crate::code_rule_dsl::language::Family;
+
 use crate::code_rule_dsl::value::key::{
     number_to_string, string_to_bigint, string_to_number, to_int32, to_uint32,
 };
-use crate::code_rule_dsl::value::{BigInt, Lang, MAX_STRING_BYTES, Value};
+use crate::code_rule_dsl::value::{BigInt, MAX_STRING_BYTES, Value};
 use std::cmp::Ordering;
 
 fn primitive(value: &Value) -> bool {
@@ -81,7 +83,7 @@ pub(crate) fn unary(operator: &str, operand: &Value) -> Value {
         "void" => return Value::Undefined,
         "!" => {
             return operand
-                .truthy(Lang::Js)
+                .truthy(Family::Ecma)
                 .map_or(Value::Unknown, |truthy| Value::Bool(!truthy));
         }
         "typeof" => return type_of(operand).map_or(Value::Unknown, utf16),
@@ -216,7 +218,7 @@ fn shift_left(left: i128, right: i128) -> Option<i128> {
 fn strict_equals(left: &Value, right: &Value) -> Option<bool> {
     match (left, right) {
         (Value::Float(left), Value::Float(right)) => Some(left == right),
-        _ => left.equals(right, Lang::Js),
+        _ => left.equals(right, Family::Ecma),
     }
 }
 

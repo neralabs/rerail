@@ -580,6 +580,20 @@ fn typescript_var_hoists_and_let_is_block_scoped() {
 }
 
 #[test]
+fn javascript_using_declarations_are_block_scoped() {
+    check(
+        GrammarDialect::JavaScript,
+        "for (await using res = open(); ;) { res.close(); }\nres;\n{ using sub = open(); sub; }\nsub;\n",
+        &[
+            ("res", 1, Local),
+            ("res", 2, Global),
+            ("sub", 1, Local),
+            ("sub", 2, Global),
+        ],
+    );
+}
+
+#[test]
 fn typescript_blocks_are_scopes_only_from_es2015() {
     // eslint-scope nests block and switch scopes only for ecmaVersion 6 and later; a catch
     // clause is a scope either way.
@@ -736,6 +750,21 @@ fn typescript_declare_global_does_not_shadow() {
     typescript(
         "declare module \"m\" { const inner: number; }\ninner;\ndeclare const outer: number;\nouter;\n",
         &[("inner", 1, Global), ("outer", 1, Local)],
+    );
+}
+
+/// `global { }` inside `declare module "m"` is the same global augmentation as `declare global { }`:
+/// `global` binds no name, nor do the declarations in its body (NER-1875).
+#[test]
+fn typescript_global_augmentation_without_declare_does_not_shadow() {
+    typescript(
+        "declare module \"m\" {\n  global {\n    interface Window { foo: string }\n    var gg: number;\n    \
+         let w: Window;\n    gg;\n  }\n  global;\n}\n",
+        &[
+            ("Window", 1, Global),
+            ("gg", 1, Global),
+            ("global", 1, Global),
+        ],
     );
 }
 
@@ -1147,7 +1176,10 @@ fn source_range(table: &ScopeTable, reference: &Reference) -> std::ops::Range<us
             .annotations
             .iter()
             .find(|annotation| annotation.tree.offset() == offset)
-            .and_then(|annotation| annotation.tree.host_span(range.clone()))
+            .and_then(|annotation| {
+                crate::code_rule_dsl::origin::Origin::of_range(&*annotation.tree, range.clone())
+                    .map(|ranges| ranges.primary())
+            })
         else {
             break;
         };

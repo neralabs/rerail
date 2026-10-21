@@ -12,6 +12,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import type { CheckoutOwner, CheckoutOwners } from "../catalog/checkout-owner.js";
 import { languageFor, NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
 import type {
+  AuditorCloseOptions,
   CodeRuleEdit,
   CodeRuleEditBatch,
   CodeRuleAuditor,
@@ -22,6 +23,7 @@ import type {
 } from "./code-rule.js";
 import type { CheckoutCatalogs, CheckoutEligibility } from "./code-rule-dsl-catalog.js";
 import type { AuditRecorder, AuditMode } from "../audit/audit.js";
+import { DEFAULT_AUDIT_SETTINGS } from "../audit/audit-control-schema.js";
 
 export interface CheckoutCodeRuleRouterOptions {
   /** The session's folder, physical; edit and audit paths are relative to it. */
@@ -34,6 +36,10 @@ export interface CheckoutCodeRuleRouterOptions {
   readonly audits: AuditRecorder;
   readonly scope?: Required<AuditSettings>["scope"];
   readonly mode?: AuditMode;
+  /** Where each lane's enforcer writes its timing lines; none are written without it. */
+  readonly timingLog?: (line: string) => void;
+  /** Every lane leaves out what Git ignores in its checkout (`NativeCodeRuleEnforcer`'s option); off by default. */
+  readonly followGitignore?: boolean;
 }
 
 interface Lane {
@@ -63,7 +69,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   constructor(options: CheckoutCodeRuleRouterOptions) {
     this.#options = options;
     this.#sessionRoot = resolve(options.sessionRoot);
-    this.#settings = { scope: options.scope ?? "touched-files", mode: options.mode ?? "steer" };
+    this.#settings = { scope: options.scope ?? DEFAULT_AUDIT_SETTINGS.scope, mode: options.mode ?? DEFAULT_AUDIT_SETTINGS.mode };
   }
 
   /** Interrupts the session's earlier runs once, then opens the starting checkout's lane. */
@@ -106,6 +112,12 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     if (languageFor(path) === undefined) return false;
     const routed = this.#route(path);
     return routed !== undefined && routed.lane.enforcer.acceptsPath(routed.path);
+  }
+
+  /** Whether the checkout that owns `path` ignores it; a path no lane owns is never ignored here, only not accepted. */
+  ignoresPath(path: string, directory: boolean): boolean {
+    const routed = this.#route(path);
+    return routed !== undefined && routed.lane.enforcer.ignoresPath(routed.path, directory);
   }
 
   sourceRoot(path: string): string | undefined {
@@ -173,19 +185,19 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     return auditIds;
   }
 
-  interrupt(): void {
+  interrupt(options?: AuditorCloseOptions): void {
     if (this.#closing) return;
     this.#closing = true;
-    for (const lane of this.#lanes.values()) lane.enforcer.interrupt();
+    for (const lane of this.#lanes.values()) lane.enforcer.interrupt(options);
   }
 
-  async close(): Promise<void> {
-    this.interrupt();
+  async close(options?: AuditorCloseOptions): Promise<void> {
+    this.interrupt(options);
     const lanes = [...this.#lanes.values()];
     this.#lanes.clear();
     await Promise.all(lanes.map(async lane => {
       await lane.opening.catch(() => undefined);
-      await lane.enforcer.close();
+      await lane.enforcer.close(options);
     }));
   }
 
@@ -203,7 +215,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     const lane = this.#lane(root);
     if (lane === undefined) return;
     await lane.opening;
-    if (audit !== undefined && !audit.claim(root)) return;
+    if (audit !== undefined && !audit.claim(root, lane.enforcer.catalogRevision())) return;
     const report = await lane.enforcer.auditRepository(sessionId, mode);
     audit?.finish(root, report.auditId);
     if (report.auditId !== undefined) auditIds.push(report.auditId);
@@ -282,6 +294,8 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
         steerDelivery: this.#options.steerDelivery,
         audits: this.#options.audits,
         ...this.#settings,
+        ...(this.#options.timingLog === undefined ? {} : { timingLog: this.#options.timingLog }),
+        followGitignore: this.#options.followGitignore ?? false,
         presentPath: path => relative(this.#sessionRoot, join(root, path)).split(sep).join("/"),
         nestedCheckouts: () => this.#nestedCheckoutsOf(root),
       });

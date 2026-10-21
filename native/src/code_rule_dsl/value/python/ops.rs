@@ -2,8 +2,10 @@
 //! (division by zero, a type error, an `OverflowError`) or build an `int` past `MAX_INT_BITS` is
 //! `Unknown`.
 
+use crate::code_rule_dsl::language::Family;
+
 use crate::code_rule_dsl::value::{
-    BigInt, Lang, MAX_ELEMENTS, MAX_INT_BITS, MAX_STRING_BYTES, Value, int_to_float,
+    BigInt, MAX_ELEMENTS, MAX_INT_BITS, MAX_STRING_BYTES, Value, int_to_float,
 };
 use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
@@ -46,7 +48,7 @@ fn as_complex(num: &Num) -> Option<(f64, f64)> {
 pub(crate) fn unary(operator: &str, operand: &Value) -> Value {
     if operator == "not" {
         return operand
-            .truthy(Lang::Python)
+            .truthy(Family::Python)
             .map_or(Value::Unknown, |truthy| Value::Bool(!truthy));
     }
     match (operator, num(operand)) {
@@ -327,10 +329,10 @@ fn sequence(operator: &str, left: &Value, right: &Value) -> Value {
 /// One comparison of a chain: `None` when it is not known or would raise.
 pub(crate) fn compare(operator: &str, left: &Value, right: &Value) -> Option<bool> {
     match operator {
-        "==" => left.equals(right, Lang::Python),
-        "!=" => left.equals(right, Lang::Python).map(|equal| !equal),
+        "==" => left.equals(right, Family::Python),
+        "!=" => left.equals(right, Family::Python).map(|equal| !equal),
         "<" | "<=" | ">" | ">=" => {
-            let Some(order) = left.order(right, Lang::Python)? else {
+            let Some(order) = left.order(right, Family::Python)? else {
                 // A NaN makes an ordering False; types that do not order raise TypeError.
                 let real = |value: &Value| {
                     matches!(value, Value::Bool(_) | Value::Int(_) | Value::Float(_))
@@ -364,7 +366,7 @@ fn contains(container: &Value, item: &Value) -> Option<bool> {
         (Value::Tuple(elements), item) => {
             let mut result = Some(false);
             for element in elements {
-                match item.equals(element, Lang::Python) {
+                match item.equals(element, Family::Python) {
                     Some(true) => return Some(true),
                     Some(false) => {}
                     None => result = None,

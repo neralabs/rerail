@@ -3,7 +3,7 @@
   "id": "bandit-b508-snmp-insecure-version",
   "revision": 1,
   "mode": "steer",
-  "description": "Resolve pysnmp.hlapi.CommunityData and flag mpModel equal to integer 0 or 1.",
+  "description": "Use SNMPv3 instead of SNMPv1 or v2c in pysnmp CommunityData; the older versions send community strings in clear text.",
   "scope": {
     "include": [
       "**/*.py"
@@ -61,7 +61,7 @@
       "violation": {
         "code": "B508",
         "anchor": "capture.F",
-        "message": "CommunityData uses insecure SNMP version via mpModel 0 or 1",
+        "message": "Switch to SNMPv3 with UsmUserData instead of this CommunityData; mpModel 0 or 1 sends the community string in clear text.",
         "suppress": {
           "nosec": {
             "codes": [

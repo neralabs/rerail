@@ -16,10 +16,17 @@
 //
 // Source type is what Node itself uses for the file: `.mjs`/`.mts` module, `.cjs`/`.cts` commonjs, otherwise the
 // nearest package.json's `type` ("module" → module, anything else → commonjs). Globals: `globals.node` (globals
-// 17.13.0), ecmaVersion latest; TypeScript extensions use @typescript-eslint/parser. The fixtures carry their own
-// package.json (ours, see fixturePackageJson) so they do not inherit the enclosing repository's `"type": "module"`:
-// it states upstream RuleTester's default (commonjs) and the engines of the package the upstream tests run in.
-// An upstream case whose tester or case sets sourceType module is written as `.mjs` (`.mts` for TypeScript).
+// 17.13.0), where an ES module has none of CommonJS's wrapper names (require, module, exports, __dirname,
+// __filename), as the plugin's own flat/mixed-esm-and-cjs config gives each file flat/recommended-script or
+// flat/recommended-module (lib/configs/recommended-module.js turns those names off); ecmaVersion latest; TypeScript
+// extensions use @typescript-eslint/parser. The fixtures carry their own package.json (ours, see
+// fixturePackageJson) so they do not inherit the enclosing repository's `"type": "module"`: it states upstream
+// RuleTester's default (commonjs) and the engines of the package the upstream tests run in. An upstream case whose
+// tester or case sets sourceType module is written as `.mjs` (`.mts` for TypeScript), unless its code has no module
+// syntax and reads a CommonJS wrapper name: upstream's RuleTester declares `globals.node`, those names included, in
+// every case, so such a case is written as CommonJS (`.js`/`.ts`), the only module system where Node defines them.
+// Each fixture's recording unit is the fixture and its nearest package.json (the one the plugin and Node read for
+// it), so Rerail reads the same manifest: its `type`, `bin` and `engines`.
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
@@ -64,6 +71,9 @@ export const RULES = [
 ];
 const RULE_IDS = RULES.map(rule => `n/${rule}`);
 
+/** The bindings Node's CommonJS module wrapper gives a file; an ES module has none of them. */
+const COMMONJS_WRAPPER_NAMES = ["require", "module", "exports", "__dirname", "__filename"];
+
 /** Ours: the fixtures' nearest package.json. Upstream's RuleTester defaults to commonjs and runs inside eslint-plugin-n. */
 const fixturePackageJson = { private: true, description: "Rerail (not upstream): the eslint-plugin-n fixtures are CommonJS, as upstream's RuleTester default, and inherit the upstream package's engines.", type: "commonjs", engines: { node: "^20.19.0 || ^22.13.0 || >=24" } };
 
@@ -90,6 +100,12 @@ export function nodeSourceType(file) {
   return JSON.parse(readFileSync(manifest, "utf8")).type === "module" ? "module" : "commonjs";
 }
 
+/** A fixture's recording unit: the fixture (relative to `fixtures`) and its nearest package.json, sorted. */
+function fixtureUnit(fixtures, path) {
+  const manifest = relative(fixtures, nearest(dirname(join(fixtures, path)), "package.json")).split(sep).join("/");
+  return [path, manifest].sort();
+}
+
 const TYPESCRIPT = [".ts", ".mts", ".cts", ".tsx"];
 
 /**
@@ -103,8 +119,14 @@ function typescriptProgram(typescript, cwd, files) {
   return typescript.createProgram(roots, { noEmit: true, noResolve: true, skipLibCheck: true, allowJs: false, jsx: typescript.JsxEmit.Preserve, target: typescript.ScriptTarget.ESNext });
 }
 
+/** The globals of a file Node runs as `sourceType`: an ES module's lack CommonJS's wrapper names (flat/recommended-module). */
+function nodeGlobals(sourceType, tools) {
+  if (sourceType !== "module") return tools.globals.node;
+  return { ...tools.globals.node, ...Object.fromEntries(COMMONJS_WRAPPER_NAMES.map(name => [name, "off"])) };
+}
+
 function config(sourceType, tools, program) {
-  const languageOptions = { ecmaVersion: "latest", sourceType, globals: tools.globals.node };
+  const languageOptions = { ecmaVersion: "latest", sourceType, globals: nodeGlobals(sourceType, tools) };
   return [
     { files: ["**/*.js", "**/*.mjs", "**/*.cjs", "**/*.jsx"], languageOptions: { ...languageOptions, parserOptions: { ecmaFeatures: { jsx: true } } } },
     { files: ["**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx"], languageOptions: { ...languageOptions, parser: tools.typescriptParser, parserOptions: program === undefined ? {} : { programs: [program] } } },
@@ -166,11 +188,32 @@ function isTypeScript(run, item) {
   return run.typescript || item.languageOptions?.parser !== undefined;
 }
 
+/**
+ * Whether a case upstream runs as a module reads a CommonJS wrapper name, which upstream's RuleTester declares in
+ * every case (`globals.node`), and has no module syntax (it parses as CommonJS): Node runs such code only as CommonJS.
+ */
+function readsCommonjsWrapper(tools, code, typescript) {
+  const { Linter } = tools.eslint;
+  const linter = new Linter({ configType: "flat" });
+  const file = typescript ? "case.ts" : "case.js";
+  const languageOptions = { ecmaVersion: "latest", ...(typescript ? { parser: tools.typescriptParser } : {}) };
+  const parses = linter.verify(code, [{ files: ["**"], languageOptions: { ...languageOptions, sourceType: "commonjs" } }], file);
+  if (parses.some(message => message.fatal)) return false;
+  let reads = false;
+  const probe = { rules: { wrapper: { create: context => ({ "Program:exit"() {
+    const globalScope = context.sourceCode.scopeManager.globalScope;
+    reads = COMMONJS_WRAPPER_NAMES.some(name => (globalScope.set.get(name)?.references.length ?? 0) > 0);
+  } }) } } };
+  linter.verify(code, [{ files: ["**"], languageOptions: { ...languageOptions, sourceType: "module", globals: tools.globals.node }, plugins: { probe }, rules: { "probe/wrapper": "error" } }], file);
+  return reads;
+}
+
 /** The fixture path (relative to fixtures/) of one case, and the upstream fixture package.json files it needs. */
-function casePath(upstream, rule, kind, index, run, item) {
+function casePath(tools, upstream, rule, kind, index, run, item) {
   const base = `${rule}/${kind}-${String(index).padStart(3, "0")}`;
-  const sourceType = item.languageOptions?.sourceType ?? run.languageOptions.sourceType;
   const typescript = isTypeScript(run, item);
+  const tester = item.languageOptions?.sourceType ?? run.languageOptions.sourceType;
+  const sourceType = tester === "module" && readsCommonjsWrapper(tools, item.code, typescript) ? "commonjs" : tester;
   const filename = item.filename;
   // TsRuleTester's virtual file-N.ts names carry nothing; upstream fixture paths are kept below the case directory.
   if (typeof filename === "string" && !(run.typescript && /^file-\d+\.ts$/u.test(filename))) {
@@ -192,7 +235,7 @@ function casePath(upstream, rule, kind, index, run, item) {
   return { path: `${base}${extension}`, manifests: [], sourceType };
 }
 
-async function extract(upstream) {
+async function extract(upstream, tools) {
   copyTests(upstream);
   const { captured } = await import(STUB);
   const cases = [];
@@ -213,7 +256,7 @@ async function extract(upstream) {
             return;
           }
           const index = ++counters[kind];
-          const where = casePath(upstream, rule, kind, index, run, item);
+          const where = casePath(tools, upstream, rule, kind, index, run, item);
           const errors = kind === "valid" ? 0 : typeof item.errors === "number" ? item.errors : item.errors.length;
           cases.push({
             rule,
@@ -270,7 +313,7 @@ function writeLicenses(upstream, cases, manifests) {
 
 Upstream: [eslint-community/eslint-plugin-n](${UPSTREAM_REPOSITORY}/tree/${UPSTREAM_COMMIT}) at tag \`v${VERSION}\` (commit \`${UPSTREAM_COMMIT}\`). License: MIT (Copyright (c) 2015 Toru Nagashima); [\`LICENSE\`](LICENSE) is the upstream license file, copied verbatim at that tag.
 
-The files listed below are the upstream rule tests of the rules the Node pack records (\`conformance.json\`, \`upstream/${TOOL}/generate.mjs\`), the upstream test data they read, and one file per test case holding that case's \`code\` verbatim; they remain under eslint-plugin-n's license. One listed file is Rerail's and says so in its row: \`upstream/${TOOL}/fixtures/package.json\` (the fixtures' source type and engines), listed because it sits among the copied fixtures. Every other file in this pack is Rerail's, under the Apache License 2.0 (the pack's \`LICENSE\`): the rule documents in \`rules/\` and \`candidates/\`, the recorder \`upstream/${TOOL}/generate.mjs\`, \`upstream/${TOOL}/stub-test-helpers.js\` (stands in for upstream's \`tests/test-helpers.js\` and only captures cases), and the \`*.expected.json\` recordings written by running eslint-plugin-n.
+The files listed below are the upstream rule tests of the rules the Node pack records (\`conformance.json\`, \`upstream/${TOOL}/generate.mjs\`), the upstream test data they read, and one file per test case holding that case's \`code\` verbatim; they remain under eslint-plugin-n's license. One listed file is Rerail's and says so in its row: \`upstream/${TOOL}/fixtures/package.json\` (the fixtures' source type and engines), listed because it sits among the copied fixtures. Every other file in this pack is Rerail's. The rule documents in \`rules/\` and \`candidates/rules/\` are Rerail's re-implementations of eslint-plugin-n's rules, published under the pack's licence expression, \`Apache-2.0 AND MIT\`, as \`REUSE.toml\` annotates them. The rest is under the Apache License 2.0 (the pack's \`LICENSE\`): the recorder \`upstream/${TOOL}/generate.mjs\`, \`upstream/${TOOL}/stub-test-helpers.js\` (stands in for upstream's \`tests/test-helpers.js\` and only captures cases), and the \`*.expected.json\` recordings written by running eslint-plugin-n.
 
 Paths are relative to the pack directory, \`packs/node/\`.
 
@@ -305,14 +348,14 @@ async function main() {
   const tools = await loadTools(toolsDirectory);
   installHooks(toolsDirectory);
 
-  const { cases, skippedUpstream } = await extract(upstream);
+  const { cases, skippedUpstream } = await extract(upstream, tools);
   const manifests = writeFixtures(upstream, cases);
   const fixtures = join(HERE, "fixtures");
   const fixtureRun = await record(tools, fixtures, cases.map(entry => entry.path));
   const dropped = new Map(fixtureRun.skipped.map(entry => [entry.path, entry.reason]));
   const kept = cases.filter(entry => !dropped.has(entry.path));
   for (const path of dropped.keys()) rmSync(join(fixtures, path));
-  writeRecording(join(HERE, "fixtures.expected.json"), TOOL, VERSION, { kind: "fixtures", origin: `${UPSTREAM_REPOSITORY}@${UPSTREAM_COMMIT}`, rules: RULE_IDS, files: kept.map(entry => entry.path).sort() }, fixtureRun.findings);
+  writeRecording(join(HERE, "fixtures.expected.json"), TOOL, VERSION, { kind: "fixtures", origin: `${UPSTREAM_REPOSITORY}@${UPSTREAM_COMMIT}`, rules: RULE_IDS, files: kept.map(entry => entry.path).sort().map(path => fixtureUnit(fixtures, path)) }, fixtureRun.findings);
   writeLicenses(upstream, kept, manifests);
 
   const mismatches = [];

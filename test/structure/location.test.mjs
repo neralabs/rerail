@@ -20,10 +20,10 @@ describe("#1 pack.json location", () => {
         "packs/php/pack.json": "{}",
         "fixtures/packs/valid/pack.json": "{}",
         "packs/next/candidates/pack.json": "{}",
-        "test/fixtures/packs/vue/pack.json": "{}",
+        "test/fixtures/packs/exemplar/pack.json": "{}",
       }),
     );
-    expect(paths(result)).toEqual(["packs/next/candidates/pack.json", "test/fixtures/packs/vue/pack.json"]);
+    expect(paths(result)).toEqual(["packs/next/candidates/pack.json", "test/fixtures/packs/exemplar/pack.json"]);
   });
 });
 
@@ -284,5 +284,66 @@ SPDX-License-Identifier = "Apache-2.0"
     });
     expect(packLicences(memoryRepo(files("closest"))).findings).toEqual([]);
     expect(paths(packLicences(memoryRepo(files("override"))))).toEqual(["packs/php/rules/a.json"]);
+  });
+
+  describe("files an UPSTREAM.md lists as copied", () => {
+    const record = (rows) => `# tool 1.0\n\nUpstream: tool 1.0. License: MIT\n\n| File | Upstream path | Copy |\n|---|---|---|\n${rows}`;
+    const copied = (annotation) => ({
+      "REUSE.toml": reuse(annotation),
+      "packs/py/licenses/tool/UPSTREAM.md": record(
+        "| `upstream/tool/fixtures/a.py` | `tests/a.py` | verbatim |\n|`upstream/tool/fixtures/package.json`|none|Rerail's own, not copied|\n",
+      ),
+      "packs/py/upstream/tool/fixtures/a.py": "x = 1\n",
+      "packs/py/upstream/tool/fixtures/package.json": "{}\n",
+    });
+
+    it("fails a copied file the catch-all annotation covers, and skips a row whose upstream path is none", () => {
+      expect(packLicences(memoryRepo(copied(""))).findings).toEqual([
+        {
+          path: "packs/py/upstream/tool/fixtures/a.py",
+          message: "REUSE resolves Apache-2.0; packs/py/licenses/tool/UPSTREAM.md lists it as copied under MIT",
+        },
+      ]);
+    });
+
+    it("fails an upstream licence whose only copyright holder is Rerail", () => {
+      const annotation = `
+[[annotations]]
+path = "packs/py/upstream/tool/fixtures/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Nera Software Inc."
+SPDX-License-Identifier = "MIT"
+`;
+      expect(packLicences(memoryRepo(copied(annotation))).findings).toEqual([
+        {
+          path: "packs/py/upstream/tool/fixtures/a.py",
+          message: "REUSE names only Nera Software Inc. as its copyright holder; packs/py/licenses/tool/UPSTREAM.md lists it as copied",
+        },
+      ]);
+    });
+
+    it("accepts the upstream's licence with the upstream's holder", () => {
+      const annotation = `
+[[annotations]]
+path = ["packs/py/upstream/tool/fixtures/a.py"]
+precedence = "override"
+SPDX-FileCopyrightText = ["2022 Tool Authors", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
+`;
+      const result = packLicences(memoryRepo(copied(annotation)));
+      expect(result.findings).toEqual([]);
+      expect(result.actual).toBe("100% (1/1)");
+    });
+
+    it("accepts a dual-licensed upstream whose expression names the recorded licence", () => {
+      const annotation = `
+[[annotations]]
+path = "packs/py/upstream/tool/fixtures/**"
+precedence = "override"
+SPDX-FileCopyrightText = "The Tool Contributors"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+`;
+      expect(packLicences(memoryRepo(copied(annotation))).findings).toEqual([]);
+    });
   });
 });

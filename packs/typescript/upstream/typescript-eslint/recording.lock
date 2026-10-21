@@ -1,0 +1,33 @@
+{
+  "format": "rerail.port-readiness-recording-lock/v1",
+  "tool": "typescript-eslint",
+  "release": "port-readiness-recordings",
+  "pins": {
+    "repository": "https://github.com/typescript-eslint/typescript-eslint",
+    "commit": "23d38ceeb8fb1237f55cb62fc2b54419e1fa1ed7",
+    "version": "8.70.1",
+    "runtime": "typescript-eslint-8.70.1"
+  },
+  "runtimes": {
+    "parsers": {
+      "package.json": "7e2c4e80a014d18963a273819f6213adfb2da9d594e334c6696bec1f3a3a5fb3"
+    },
+    "typescript-eslint-8.70.1": {
+      "package.json": "2e9dae127d9609a02aaf3b2504e1e77f5c23ef196f6cdabc7d320d5086b347e4"
+    }
+  },
+  "files": {
+    "recording.json": {
+      "sha256": "28b5f08f7884daaf0b357558020a45a7bec0f7b8338f3b1d5de5f0f093ecd511",
+      "size": 11077560,
+      "format": "rerail.port-readiness-recording/v2",
+      "asset": "typescript-typescript-eslint-recording-28b5f08f7884daaf0b357558020a45a7bec0f7b8338f3b1d5de5f0f093ecd511.json.gz"
+    },
+    "corpus.json": {
+      "sha256": "088123c863438f28b622e5f664ac3fd6b2a0da0c7d25633d64a81f054f464447",
+      "size": 1291738,
+      "format": "rerail.port-readiness-corpus/v2",
+      "asset": "typescript-typescript-eslint-corpus-088123c863438f28b622e5f664ac3fd6b2a0da0c7d25633d64a81f054f464447.json.gz"
+    }
+  }
+}

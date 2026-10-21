@@ -1,0 +1,1 @@
+import pkg = require('../packages/package.json');

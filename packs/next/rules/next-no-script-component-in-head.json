@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "next-no-script-component-in-head",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-script-component-in-head: a <Head> element with a direct <Script> element child, in a file that imports next/head.",
+  "description": "Place next/script Script components outside Head from next/head; scripts inside Head are not loaded as intended.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -88,11 +88,16 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@next/next/no-script-component-in-head",
-        "message": "`next/script` should not be used in `next/head` component. Move `<Script />` outside of `<Head>` instead. See: https://nextjs.org/docs/messages/no-script-component-in-head",
+        "message": "Move this Script component outside the Head from next/head; Script places the tag itself.",
         "suppress": {
           "eslint": {
             "rules": [
               "@next/next/no-script-component-in-head"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-script-component-in-head"
             ]
           }
         }

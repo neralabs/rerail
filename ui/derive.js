@@ -15,8 +15,26 @@ export const categoryLabel = category => CATEGORY_LABEL[category] ?? "";
 export const folderText = folder => (folder === "" ? "Whole repository" : folder);
 
 /**
- * What decided a rule's on or mode, in words (`Decider` from the API). `checkoutPath` is the page's own
- * checkout, which reads as "this worktree".
+ * Whether the rule runs: switched on, and its options apply to its document. A rule whose stored options no longer
+ * apply (`configError`) is left out of the compiled set, so it is not counted as on.
+ */
+export const isRunning = stored => stored.enabled && !stored.configError;
+
+/**
+ * The rule panel's On row: on or off with what decided it, each folder its own when they disagree; then, for a rule
+ * switched on somewhere whose options don't apply, that it runs nowhere and why.
+ */
+export function onText(stored, checkoutPath) {
+  const switched = stored.mixed
+    ? stored.folderStates.map(state => `${state.on ? "On" : "Off"} in ${folderText(state.folder)}`).join(", ")
+    : `${stored.enabled ? "On" : "Off"} · ${deciderText(stored.onSource, checkoutPath)}`;
+  const stopped = stored.configError && stored.folderStates.some(state => state.on);
+  return stopped ? `${switched} · not running: ${stored.configError}` : switched;
+}
+
+/**
+ * What decided a rule's on, mode, suppressions or an option, in words (`Decider` from the API). `checkoutPath` is the
+ * page's own checkout, which reads as "this worktree".
  */
 export function deciderText(decider, checkoutPath) {
   const at = "folder" in decider && decider.folder !== "" ? ` at ${decider.folder}` : "";
@@ -64,7 +82,82 @@ export const MODE_PLAIN = {
   block: "Rerail stops the coding agent before it acts.",
 };
 
-export const kindLabel = stored => (stored.kind === "conversation" ? "Conversation rule" : "File rule");
+export const SUPPRESSIONS_LABEL = { honour: "Honoured", ignore: "Ignored" };
+
+/**
+ * Whether linter suppression comments (`// eslint-disable-next-line`, `# noqa`) silence the rule, and what decided
+ * it; each folder its own when the folders the rule is added at disagree.
+ */
+export function suppressionsText(stored, checkoutPath) {
+  const states = stored.folderStates;
+  if (states.some(state => state.suppressions !== states[0].suppressions)) {
+    return states.map(state => `${SUPPRESSIONS_LABEL[state.suppressions] ?? state.suppressions} in ${folderText(state.folder)}`).join(", ");
+  }
+  return `${SUPPRESSIONS_LABEL[stored.suppressions] ?? stored.suppressions} · ${deciderText(stored.suppressionsSource, checkoutPath)}`;
+}
+
+/** What the suppression comments switch sets: honour once every folder ignores them, else ignore. */
+export const nextSuppressions = stored => (stored.folderStates.every(state => state.suppressions === "ignore") ? "honour" : "ignore");
+
+/**
+ * Whether a setting on `target` ("rule" or "pack"), written as `owner` ("repository" or "checkout", this worktree being
+ * `checkoutPath`) at the folder `state` is added at, would decide that folder's suppressions. It mirrors the
+ * resolver's precedence: this worktree, then the worktrees containing it, then the repository; at one owner the deeper
+ * folder; at one owner and folder the rule's own setting before its pack's. Neither a pack's starting value nor a
+ * rule's default holds it off.
+ */
+export function settingDecides(state, target, owner, checkoutPath) {
+  const source = state.suppressionsSource;
+  if (source?.by !== "checkout" && source?.by !== "repository") return true;
+  // Lower outranks: this worktree, a worktree containing it, the repository.
+  const ownerRank = owner === "repository" ? 2 : 0;
+  const sourceRank = source.by === "repository" ? 2 : source.checkoutPath === checkoutPath ? 0 : 1;
+  if (ownerRank !== sourceRank) return ownerRank < sourceRank;
+  if (state.folder.length !== source.folder.length) return state.folder.length > source.folder.length;
+  return target === "rule" || source.target === "pack";
+}
+
+/** Whether pack `packId`'s setting would decide `state`'s suppressions: only where the pack added the rule. */
+export function packSettingDecides(state, packId, owner, checkoutPath) {
+  return state.source?.kind === "pack" && state.source.id === packId && settingDecides(state, "pack", owner, checkoutPath);
+}
+
+/** Whether a stored rule is in pack `packId` here: the pack added it at one of its folders. */
+export const inPack = (rule, packId) => rule.folderStates.some(state => state.source?.kind === "pack" && state.source.id === packId);
+
+/**
+ * How pack `packId`'s rules here treat suppression comments, from each rule's own value, and what the pack's switch
+ * (written as `owner` from the worktree `checkoutPath`) sets: honour once every folder of its rules it decides ignores
+ * them, else ignore. A folder the pack did not add the rule at, or a setting outranking the pack's decides, counts in
+ * the text but not in the switch, which does not change it.
+ */
+export function packSuppressions(rules, packId, owner, checkoutPath) {
+  const ignoring = rules.filter(r => r.folderStates.some(state => state.suppressions === "ignore")).length;
+  const text = ignoring === 0 ? "honoured by its rules"
+    : ignoring === rules.length ? "ignored by its rules"
+    : `ignored by ${ignoring} of its ${rules.length} rules`;
+  const decided = rules.flatMap(rule => rule.folderStates.filter(state => packSettingDecides(state, packId, owner, checkoutPath)));
+  return { text, next: decided.length > 0 && decided.every(state => state.suppressions === "ignore") ? "honour" : "ignore" };
+}
+
+/**
+ * The rule's configured options as `name: value`, each with what decided it, and why they don't apply when they
+ * don't; `null` when none is configured.
+ */
+export function optionsText(stored, checkoutPath) {
+  const options = Object.entries(stored.config ?? {});
+  if (options.length === 0) return null;
+  const text = options.map(([name, value]) => {
+    const decider = stored.configSource?.[name];
+    return `${name}: ${JSON.stringify(value)}${decider === undefined ? "" : ` · ${deciderText(decider, checkoutPath)}`}`;
+  }).join(", ");
+  return stored.configError ? `${text} · does not apply: ${stored.configError}` : text;
+}
+
+/** Conversation rules are in internal testing (README.md, Internal testing): Rerail 0.1.0 releases code rules only. */
+export const INTERNAL_TESTING = "Internal testing";
+export const isInternalTesting = stored => stored.kind === "conversation";
+export const kindLabel = stored => (isInternalTesting(stored) ? `Conversation rule · ${INTERNAL_TESTING}` : "File rule");
 
 /** What a conversation rule samples, as the scope sentence names it. */
 function sampleSubject(source) {
@@ -116,7 +209,7 @@ export function technical(stored) {
     const tokens = rule.sample.minimumTokens ? ` · ≥${rule.sample.minimumTokens} tokens` : "";
     return {
       rows: [
-        ["Kind", "Conversation rule"],
+        ["Kind", kindLabel(stored)],
         ["Match", `${rule.match.operator ?? "pattern"}${rule.match.threshold === undefined ? "" : ` ${rule.match.threshold}`}`],
         ["Sample", `${rule.sample.source} · ${rule.sample.boundary}${tokens}`],
         ["Repeat", repeatText(rule.repeat)],

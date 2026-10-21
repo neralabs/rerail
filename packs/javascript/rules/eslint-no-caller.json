@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-caller",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "Port of ESLint's `no-caller` rule (https://eslint.org/docs/latest/rules/no-caller). Reports `arguments.callee` and `arguments.caller` (object through parentheses).",
+  "description": "Don't use arguments.callee or arguments.caller; they are deprecated and throw in strict mode.",
   "scope": {
     "include": [
       "**/*"
@@ -44,7 +44,19 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-caller",
-        "message": "Avoid arguments.$PROP."
+        "message": "Replace arguments.$PROP with a reference to the function by name or an explicit parameter.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-caller"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-caller"
+            ]
+          }
+        }
       }
     }
   ]

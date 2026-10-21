@@ -3,7 +3,7 @@
   "id": "bandit-b319-xml-bad-pulldom",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect unsafe xml.dom.pulldom parsing calls",
+  "description": "Use defusedxml instead of xml.dom.pulldom to parse XML; the standard parser is open to entity-expansion and other XML attacks on untrusted input.",
   "scope": {
     "include": [
       "**/*.py"

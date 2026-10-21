@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "next-no-styled-jsx-in-document",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-styled-jsx-in-document: a <style> opening element with a `jsx` attribute in a file whose path, between its first and second `pages`, names a document.",
+  "description": "Don't use styled-jsx style tags in pages/_document; the custom Document does not support them.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -67,11 +67,16 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@next/next/no-styled-jsx-in-document",
-        "message": "`styled-jsx` should not be used in `pages/_document.js`. See: https://nextjs.org/docs/messages/no-styled-jsx-in-document",
+        "message": "Move these styled-jsx styles out of pages/_document into a global stylesheet imported in pages/_app.",
         "suppress": {
           "eslint": {
             "rules": [
               "@next/next/no-styled-jsx-in-document"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-styled-jsx-in-document"
             ]
           }
         }

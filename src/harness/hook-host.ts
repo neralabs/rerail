@@ -1,11 +1,11 @@
 import { join } from "node:path";
-import type { AdapterSession, RerailEventLoop, RerailHost } from "../engine/adapter-contract.js";
+import type { AdapterEvent, AdapterSession, RerailEventLoop, RerailHost } from "../engine/adapter-contract.js";
 import { bundledModelPath } from "../engine/package-root.js";
 import { readRepositoryState } from "../presentation/session-presentation.js";
 import { isRerailStarted } from "../runtime/repository-start.js";
 import { RerailRuntime } from "../runtime/runtime.js";
 import { ingestEngineEvent } from "../runtime/engine-service.js";
-import { daemonEngineSocket } from "../runtime/daemon-control.js";
+import { daemonEngineSocket, runningDaemonEngineSocket } from "../runtime/daemon-control.js";
 import {
   bindSteerReceipt,
   withSessionLock,
@@ -67,11 +67,32 @@ export interface HookOptions {
   embedder?: SemanticEmbedder;
 }
 
-/** Runs a normal package hook against the engine service, or an explicit local test runtime. */
+/** No Rerail daemon could be reached: none answered and none could start, or its socket refused the hook. */
+export class DaemonUnreachableError extends Error {
+  override readonly name = "DaemonUnreachableError";
+}
+
+/** Socket errors that mean no daemon listens there, as against a daemon that answered with a failure. */
+const NO_LISTENER = new Set(["ENOENT", "ECONNREFUSED"]);
+
+function unreachable(error: unknown): unknown {
+  const code = error instanceof Error && "code" in error ? error.code : undefined;
+  return typeof code === "string" && NO_LISTENER.has(code)
+    ? new DaemonUnreachableError(error instanceof Error ? error.message : String(error), { cause: error })
+    : error;
+}
+
+/**
+ * Runs a normal package hook against the engine service, or an explicit local test runtime. Only the hook that starts
+ * a session (`startsSession`) may start the daemon; any other hook finds none running and answers `{}` at once, so a
+ * daemon that is down never stalls a tool call or shows as a hook error (design N11). A daemon that cannot be reached
+ * throws `DaemonUnreachableError`, so a coding agent without a footer can say so.
+ */
 export async function runHostHook(
   host: HookHost,
   workspace: string,
   sessionId: string,
+  startsSession: boolean,
   options: HookOptions,
   handle: (runtime: RerailEventLoop, storageRoot: string) => Promise<HookOutput>,
 ): Promise<HookOutput> {
@@ -81,15 +102,25 @@ export async function runHostHook(
     const session: AdapterSession = { host, sessionId, cwd: workspace };
 
     if (options.embedder === undefined) {
-      const socketPath = options.kernelSocketPath ?? process.env.RERAIL_ENGINE_SOCKET
-        ?? await daemonEngineSocket(true);
+      let socketPath: string | undefined;
+      try {
+        socketPath = options.kernelSocketPath ?? process.env.RERAIL_ENGINE_SOCKET
+          ?? (startsSession ? await daemonEngineSocket(true) : await runningDaemonEngineSocket());
+      } catch (error) {
+        throw new DaemonUnreachableError(error instanceof Error ? error.message : String(error), { cause: error });
+      }
+      if (socketPath === undefined) return {};
       const configuration = {
         storageRoot,
         databasePath,
         modelPath: options.modelPath ?? process.env.RERAIL_MODEL_PATH ?? bundledModelPath(),
         workspaceRoot: workspace,
       };
-      const output = await handle({ ingest: event => ingestEngineEvent(socketPath, event, configuration) }, storageRoot);
+      const enginePath = socketPath;
+      const ingest = (event: AdapterEvent) => ingestEngineEvent(enginePath, event, configuration).catch((error: unknown) => {
+        throw unreachable(error);
+      });
+      const output = await handle({ ingest }, storageRoot);
       return bindSteerReceipt(output, recordLocalReceipt(session, databasePath));
     }
     const runtime = new RerailRuntime({

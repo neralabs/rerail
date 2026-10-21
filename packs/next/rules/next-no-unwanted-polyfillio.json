@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "next-no-unwanted-polyfillio",
-  "revision": 1,
+  "revision": 3,
   "mode": "steer",
-  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-unwanted-polyfillio: a <script> (or the first local name an import from next/script binds) with a plain string src on a polyfill.io host whose first features parameter lists a feature Next.js already polyfills.",
+  "description": "Don't load polyfills from polyfill.io for features Next.js already polyfills; they duplicate code and add page weight.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -182,6 +182,16 @@
           "eslint": {
             "rules": [
               "@next/next/no-unwanted-polyfillio"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unwanted-polyfillio"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/performance/noUnwantedPolyfillio"
             ]
           }
         }

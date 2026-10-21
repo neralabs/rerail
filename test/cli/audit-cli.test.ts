@@ -11,11 +11,13 @@ import {
   codeRuleSchema,
   SqliteAuditControlStore,
   auditRequestSchema,
+  defaultRerailDatabasePath,
 } from "../../src/engine/index.js";
 import {
   RerailRuntime,
   type RerailRuntimeOptions,
   isRerailStarted,
+  SqliteSessionStore,
   workspaceStartState,
 } from "../../src/runtime/index.js";
 import { runAuditCommand } from "../../src/cli/audit-cli.js";
@@ -81,6 +83,7 @@ describe("rerail scan and settings CLI", () => {
     registerHostCommands({ registerCommand(name, command) { commands.set(name, command); }, sendUserMessage() {} }, {
       packageRoot: resolve("."),
       cwd: () => root,
+      sessionId: () => "omp-s1",
       reattach: async () => { reattached += 1; },
     });
     const asked: string[] = [];
@@ -97,6 +100,8 @@ describe("rerail scan and settings CLI", () => {
     expect(workspaceStartState(root)).toBe("stopped");
 
     // Where the repository is not set up, start runs the set-up, which asks before reading; closing the question changes nothing.
+    // Rerail may read sessions on this computer already (set-up's one approval; `setup-json.test.ts` asks it).
+    await writeFile(join(process.env.RERAIL_HOME!, "consent.json"), JSON.stringify({ sessions: { approvedAt: "2026-10-16T00:00:00.000Z" } }));
     await commands.get("rerail-start")!.handler("", { ui });
     expect(asked).toEqual([`You’re working in ${name}. Can Rerail read it to pick the rule packs that look right?`]);
     expect(notices.at(-1)).toBe(SETUP_CANCELLED);
@@ -105,12 +110,23 @@ describe("rerail scan and settings CLI", () => {
     await startRerail(root, { lane: "agent", say: () => {} }, { answer: "start", environment: fakeSetupEnvironment() });
     expect(isRerailStarted(root)).toBe(true);
 
+    // `/rerail-stop` names this session to the launcher, so the reply names the rule that steered it.
+    const store = new SqliteSessionStore(defaultRerailDatabasePath());
+    const session = { host: "omp" as const, sessionId: "omp-s1", cwd: root };
+    try {
+      store.openSession(session);
+      store.recordSteer(session, "receipt-1", [NO_PRINT.id]);
+    } finally {
+      store.close();
+    }
     await commands.get("rerail-stop")!.handler("", { ui });
     expect(isRerailStarted(root)).toBe(false);
     expect(notices.at(-1)).toBe([
       `○ Rerail is stopped in ${name}. No rules run here, and nothing is logged.`,
       "  Start it again with /rerail-start.",
-      "  To turn off only one rule instead, say “turn that rule off”.",
+      "",
+      "  Rerail steered this session on one rule, test:no-print.",
+      "  To turn off only that rule, say “turn that rule off”.",
     ].join("\n"));
 
     await commands.get("rerail-start")!.handler("", { ui });
@@ -130,7 +146,7 @@ describe("rerail scan and settings CLI", () => {
       auditGeneratedEdits: async () => ({ revision: 0, disposition: "continue", violations: [], failures: [] }),
       // The diagnostic is claimed and finished per checkout through the audit hooks, as the router does.
       audit: async (sessionId, input) => {
-        if (input.audit !== undefined && !input.audit.claim(options.workspaceRoot)) return [];
+        if (input.audit !== undefined && !input.audit.claim(options.workspaceRoot, "test-catalog")) return [];
         automaticAuditRequests.push({ sessionId, scope: input.scope, mode: input.mode });
         const auditId = options.audits.start({
           sessionId,
@@ -165,7 +181,7 @@ describe("rerail scan and settings CLI", () => {
     });
     expect(automaticAuditRequests).toEqual([{ sessionId: "s1", scope: "repository", mode: "log" }]);
     expect(await (await fetch(new URL("/api/sessions/s2/audit-settings", daemon.url))).json()).toMatchObject({
-      settings: { scope: "touched-files", mode: "steer" },
+      settings: { scope: "ai-output", mode: "steer" },
       repositoryAudit: { status: "completed" },
       repositoryAuditRecord: { sessionId: "s1", scope: "repository", mode: "log" },
     });
@@ -188,6 +204,20 @@ describe("rerail scan and settings CLI", () => {
     ]) });
     const settings = auditControlsResponseSchema.parse(await (await fetch(new URL("/api/sessions/s1/audit-settings", daemon.url))).json());
     expect(settings.settings.mode).toBe("steer");
+  });
+
+  it("saves the steer strategy for the session's checkout and keeps the other settings", async () => {
+    const { home } = await fixture();
+    let output = "";
+    expect(await runAuditCommand("settings", ["--session", "s1", "--steer-strategy", "rewind"], {
+      home, stdout: { write: text => { output += text; return true; } },
+    })).toBe(0);
+    expect(output).toMatch(/^Ongoing settings for .+: ai-output\/steer, steer strategy rewind \(/u);
+    output = "";
+    expect(await runAuditCommand("settings", ["--session", "s1", "--mode", "log", "--json"], {
+      home, stdout: { write: text => { output += text; return true; } },
+    })).toBe(0);
+    expect(auditControlsResponseSchema.parse(JSON.parse(output)).settings).toEqual({ scope: "ai-output", mode: "log", steerStrategy: "rewind" });
   });
 
   it("reports an empty Git diff without starting an audit", async () => {
@@ -222,6 +252,107 @@ describe("rerail scan and settings CLI", () => {
       home, stdout: { write: text => { output += text; return true; } },
     })).toBe(0);
     expect(auditRequestSchema.parse(JSON.parse(output))).toMatchObject({ status: "completed" });
+  });
+
+  it("completes a repository scan whose only gap is a file every rule ran out of work on, and names that file", async () => {
+    // Each integer compares itself with every one before it: quadratic, past the clause's allowance on a list of
+    // 20,000, while a short list finishes.
+    const COSTLY = codeRuleSchema.parse({
+      format: "rerail.policy/v1", id: "test:costly", revision: 1, mode: "log",
+      scope: { include: ["api/**/*.py"], exclude: [] },
+      clauses: [{
+        id: "costly",
+        violation: { code: "LEAST", anchor: "witness.span", message: "least so far" },
+        forbid: { ast: { language: "python", rule: {
+          kind: "integer", pattern: "$A",
+          not: { follows: { stopBy: "end", kind: "integer", pattern: "$B", compare: { left: "A", op: "le", right: "B" } } },
+        } } },
+      }],
+    });
+    const { root, home, daemon } = await fixture(options => new NativeCodeRuleEnforcer(testCodeRuleCatalog([COSTLY]), options));
+    await writeFile(join(root, "api/generated.py"), `x = [${Array.from({ length: 20_000 }, (_, index) => index).join(", ")}]\n`);
+    await writeFile(join(root, "api/noisy.py"), "x = [1]\n");
+    execFileSync("git", ["add", "api"], { cwd: root });
+    execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-m", "generated"], { cwd: root });
+    let output = "";
+    expect(await runAuditCommand("scan", ["--session", "s1", "--scope", "repository", "--wait", "--json"], {
+      home, stdout: { write: text => { output += text; return true; } },
+    })).toBe(0);
+    const request = auditRequestSchema.parse(JSON.parse(output));
+    expect(request).toMatchObject({ status: "completed", error: null });
+    const { audits } = await (await fetch(new URL(`/api/audits?auditId=${request.auditIds[0]}`, daemon.url))).json();
+    expect(audits).toEqual([expect.objectContaining({
+      status: "completed",
+      blindFiles: ["api/generated.py"],
+      blindFileCount: 1,
+      failures: [expect.objectContaining({ path: "api/generated.py", code: "budget-exceeded", blind: "budget" })],
+    })]);
+    // The other files are read: the baseline's and the one added beside the generated file.
+    expect(new Set(audits[0].violations.map((violation: { path: string }) => violation.path))).toEqual(new Set(["api/clean.py", "api/noisy.py"]));
+  }, 30_000);
+
+  it("fails a repository scan where a rule finds more than it may report on a file, which is no coverage gap", async () => {
+    const { root, home, daemon, runtime } = await fixture();
+    // The session's first walk is done before the writes, so it audits neither file on its own: the scan stays the
+    // session's latest audit.
+    await runtime.codeRulesOpened("s1");
+    await runtime.ingest({ kind: "turn-end", eventId: "baseline", sessionId: "s1", text: "" });
+    // More matches than the engine's 10,000-witness budget: an output cap, not running out of work.
+    await writeFile(join(root, "api/generated.py"), "print(1)\n".repeat(10_001));
+    await writeFile(join(root, "api/noisy.py"), "print('checked')\n");
+    execFileSync("git", ["add", "api"], { cwd: root });
+    execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-m", "generated"], { cwd: root });
+    let output = "";
+    expect(await runAuditCommand("scan", ["--session", "s1", "--scope", "repository", "--wait", "--json"], {
+      home, stdout: { write: text => { output += text; return true; } },
+    })).toBe(1);
+    const request = auditRequestSchema.parse(JSON.parse(output));
+    const { audits } = await (await fetch(new URL(`/api/audits?auditId=${request.auditIds[0]}`, daemon.url))).json();
+    expect(audits).toEqual([expect.objectContaining({
+      status: "failed",
+      blindFiles: [],
+      blindFileCount: 0,
+      failures: [expect.objectContaining({ path: "api/generated.py", code: "witness-limit" })],
+      violations: [expect.objectContaining({ path: "api/noisy.py", code: "PRINT" })],
+    })]);
+    expect(audits[0].failures[0]).not.toHaveProperty("blind");
+    const session = await (await fetch(new URL("/api/sessions/s1", daemon.url))).json();
+    expect(session.audit).toMatchObject({ status: "failed", gapCount: 0, outOfWorkRuleCount: 0 });
+  });
+
+  it("keeps how many failures a scan had past the 20 it lists, and reports them with the session", async () => {
+    // An AST rule on files with syntax errors fails on each (`source-partial`), while the regex rule reads them, so
+    // no file is blind: 25 files read in part, five past the list's 20. The session's own audit of them fails on them;
+    // a repository scan lists them and completes.
+    const PRINT_CALL = codeRuleSchema.parse({
+      format: "rerail.policy/v1", id: "test:print-call", revision: 1, mode: "log",
+      scope: { include: ["api/**/*.py"], exclude: [] },
+      clauses: [{
+        id: "print-call",
+        violation: { code: "PRINT_CALL", anchor: "witness.span", message: "Use logging" },
+        forbid: { ast: { language: "python", rule: { pattern: "print($$$ARGS)" } } },
+      }],
+    });
+    const { root, home, daemon } = await fixture(options => new NativeCodeRuleEnforcer(testCodeRuleCatalog([NO_PRINT, PRINT_CALL]), options));
+    await Promise.all(Array.from({ length: 25 }, (_, index) =>
+      writeFile(join(root, `api/broken-${String(index).padStart(2, "0")}.py`), "value = 1\ndef (\n")));
+    execFileSync("git", ["add", "api"], { cwd: root });
+    execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-m", "broken"], { cwd: root });
+    // The session audits the 25 edits on its own; the scan must come after them to be the session's latest audit.
+    await vi.waitFor(async () => {
+      const { audits } = await (await fetch(new URL("/api/audits?sessionId=s1", daemon.url))).json();
+      expect(audits[0]).toMatchObject({ scope: "ai-output", status: "failed", failureCount: 25 });
+    }, { timeout: 20_000, interval: 50 });
+    let output = "";
+    expect(await runAuditCommand("scan", ["--session", "s1", "--scope", "repository", "--wait", "--json"], {
+      home, stdout: { write: text => { output += text; return true; } },
+    })).toBe(0);
+    const request = auditRequestSchema.parse(JSON.parse(output));
+    const { audits } = await (await fetch(new URL(`/api/audits?auditId=${request.auditIds[0]}`, daemon.url))).json();
+    expect(audits).toEqual([expect.objectContaining({ status: "completed", failureCount: 25, unlistedFailureCount: 5 })]);
+    expect(audits[0].failures).toHaveLength(20);
+    const session = await (await fetch(new URL("/api/sessions/s1", daemon.url))).json();
+    expect(session.audit).toMatchObject({ status: "completed", failureCount: 25, unlistedFailureCount: 5 });
   });
 
   it("applies saved log mode to new edits while an explicit audit is still running", async () => {
@@ -262,7 +393,7 @@ describe("rerail scan and settings CLI", () => {
       expect(delivered).toEqual([]);
       expect(await (await fetch(new URL("/api/audits?sessionId=s1", daemon.url))).json()).toMatchObject({
         audits: expect.arrayContaining([expect.objectContaining({
-          scope: "touched-files", mode: "log", violations: expect.arrayContaining([expect.objectContaining({ code: "PRINT" })]),
+          scope: "ai-output", mode: "log", violations: expect.arrayContaining([expect.objectContaining({ code: "PRINT" })]),
         })]),
       });
     } finally {
@@ -275,5 +406,12 @@ describe("rerail scan and settings CLI", () => {
 
   it("requires a session instead of guessing the latest one", async () => {
     await expect(runAuditCommand("scan", [], { home: "/unused" })).rejects.toThrow("--session is required");
+  });
+
+  it("refuses a steer strategy it does not know before reaching Rerail", async () => {
+    await expect(runAuditCommand("settings", ["--session", "s1", "--steer-strategy", "undo"], { home: "/unused" }))
+      .rejects.toThrow("--steer-strategy must be message, rewind, or subagent");
+    await expect(runAuditCommand("settings", ["--session", "s1", "--steer-strategy"], { home: "/unused" }))
+      .rejects.toThrow("--steer-strategy requires a value");
   });
 });

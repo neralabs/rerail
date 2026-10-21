@@ -1,0 +1,124 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "n-no-mixed-requires",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Keep require() declarations separate from other variable declarations instead of mixing them in one statement.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "utils": {
+            "require-init": {
+              "not": {
+                "has": {
+                  "kind": "optional_chain"
+                }
+              },
+              "any": [
+                {
+                  "kind": "call_expression",
+                  "not": {
+                    "has": {
+                      "field": "arguments",
+                      "kind": "template_string"
+                    }
+                  },
+                  "has": {
+                    "field": "function",
+                    "kind": "identifier",
+                    "regex": "^require$"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "member_expression"
+                    },
+                    {
+                      "kind": "subscript_expression"
+                    }
+                  ],
+                  "has": {
+                    "field": "object",
+                    "matches": "require-init"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "require-init"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "variable_declaration"
+              },
+              {
+                "kind": "lexical_declaration"
+              }
+            ],
+            "all": [
+              {
+                "has": {
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "value",
+                    "matches": "require-init"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "kind": "variable_declarator",
+                  "not": {
+                    "has": {
+                      "field": "value",
+                      "matches": "require-init"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/no-mixed-requires",
+        "message": "Do not mix 'require' and other declarations.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/no-mixed-requires"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-mixed-requires"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

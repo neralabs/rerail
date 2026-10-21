@@ -1,0 +1,64 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "n-exports-style",
+  "revision": 3,
+  "mode": "steer",
+  "description": "Use module.exports instead of the bare exports shortcut in CommonJS files, for one consistent export style.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {},
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "shorthand_property_identifier"
+              }
+            ],
+            "regex": "^exports$",
+            "resolves": {
+              "global": [
+                "exports"
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/exports-style",
+        "message": "Replace this bare exports with module.exports.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/exports-style"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "exports-style"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -10,13 +10,27 @@
 //! of the token after it. Then, as `LocalIgnoresProcessor::process`, each identifier listed for a
 //! line ignores one error there: the first error with that identifier spends it.
 
-use super::php_comment_end;
 use super::psalm::{doc_comment, pcre_space};
+use super::{names, php_comment_end};
+use crate::code_rule_dsl::json::{object, reject_unknown};
 use crate::code_rule_dsl::lines::LineTable;
 use ast_grep_core::{Doc, Node};
+use serde_json::Value;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Range;
+
+/// `phpstan.identifiers`: PHPStan diagnostic identifiers a local ignore must name.
+pub(super) fn spec(phpstan: &Value, at: &str) -> napi::Result<Vec<String>> {
+    reject_unknown(object(phpstan, at)?, &["identifiers"], at)?;
+    names(
+        phpstan.get("identifiers"),
+        &format!("{at}/identifiers"),
+        phpstan_identifier,
+        "PHPStan identifiers",
+        "a PHPStan identifier (letters or digits, with internal dots)",
+    )
+}
 
 const IGNORE: &str = "@phpstan-ignore";
 const IGNORE_LINE: &str = "@phpstan-ignore-line";
@@ -49,11 +63,24 @@ impl PhpstanIndex {
         // The end of the token being passed: tree-sitter splits a string, and may split an open
         // tag, into nodes.
         let mut within = 0;
+        // The end of the last token passed: the PHP view blanks a mid-file `?>`, the inline HTML
+        // after it and the open tag that ends it, so a `?>` between two tokens is PHP's.
+        let mut token_end = 0;
         // Where the inline HTML being passed starts, and the open tag that ends it.
         let mut html = Some(0);
         let mut open = open_tag(source, 0);
         for node in root.dfs() {
             let range = node.range();
+            if html.is_none()
+                && range.start > token_end
+                && let Some(at) = source[token_end..range.start].find("?>")
+            {
+                let close = token_end + at;
+                index.token(lines.line(close), &mut previous, &mut pending);
+                let from = after_close_tag(source, close + 2);
+                html = Some(from);
+                open = open_tag(source, from);
+            }
             if let Some(from) = html {
                 let Some(tag) = open.clone().filter(|tag| range.start >= tag.start) else {
                     continue;
@@ -64,6 +91,7 @@ impl PhpstanIndex {
                 index.token(lines.line(tag.start), &mut previous, &mut pending);
                 html = None;
                 within = tag.end;
+                token_end = tag.end;
             }
             if range.start < within {
                 continue;
@@ -71,6 +99,7 @@ impl PhpstanIndex {
             if node.kind() == "comment" {
                 let text = &source[range.start..php_comment_end(source, &range)];
                 index.comment(text, lines.line(range.start), previous, &mut pending);
+                token_end = range.end;
                 continue;
             }
             if constant_string(&node) {
@@ -79,17 +108,15 @@ impl PhpstanIndex {
                 continue;
             }
             index.token(lines.line(range.start), &mut previous, &mut pending);
-            if matches!(&*node.kind(), "?>" | "php_end_tag") {
-                // `T_CLOSE_TAG` takes one line break after it.
-                let rest = &source[range.end..];
-                let newline = if rest.starts_with("\r\n") {
-                    2
-                } else {
-                    usize::from(rest.starts_with(['\r', '\n']))
-                };
-                let from = range.end + newline;
+            token_end = range.end;
+            // The view writes the `;` a `?>` implies over its `?`.
+            if matches!(&*node.kind(), "?>" | "php_end_tag")
+                || (&*node.kind() == ";" && source[range.start..].starts_with("?>"))
+            {
+                let from = after_close_tag(source, range.start + 2);
                 html = Some(from);
                 open = open_tag(source, from);
+                token_end = from;
             }
         }
         if let Some(from) = html {
@@ -227,6 +254,16 @@ impl PhpstanIndex {
         };
         left.remove(spent);
         true
+    }
+}
+
+/// Where inline HTML starts after a `?>` ending at `end`: `T_CLOSE_TAG` takes one line break.
+fn after_close_tag(source: &str, end: usize) -> usize {
+    let rest = &source[end..];
+    end + if rest.starts_with("\r\n") {
+        2
+    } else {
+        usize::from(rest.starts_with(['\r', '\n']))
     }
 }
 
@@ -424,9 +461,9 @@ pub(crate) fn phpstan_identifier(identifier: &str) -> bool {
 mod tests {
     use super::PhpstanIndex;
     use crate::code_rule_dsl::language::GrammarDialect;
+    use crate::code_rule_dsl::language::adapter::ast_grep;
     use crate::code_rule_dsl::lines::{LineTable, Terminators};
     use crate::code_rule_dsl::oracle;
-    use ast_grep_core::tree_sitter::LanguageExt;
     use serde_json::Value;
 
     const ORACLE: &str = oracle!("php/suppress/phpstan.expected.json");
@@ -460,7 +497,9 @@ mod tests {
             ),
             ("tokens.php", oracle!("php/suppress/phpstan/tokens.php")),
         ] {
-            let root = GrammarDialect::Php.ast_grep(source);
+            // The tree the engine reads: the PHP view's (inline HTML and mid-file tags blanked),
+            // its texts the file's.
+            let root = ast_grep(GrammarDialect::Php, source);
             let lines = LineTable::new(source, Terminators::Newlines);
             let index = PhpstanIndex::read(&root.root(), source, &lines);
             // One PHPStan run's errors are one kind: they spend the same listed identifiers.

@@ -3,7 +3,7 @@
   "id": "react-button-has-type",
   "revision": 1,
   "mode": "steer",
-  "description": "eslint-plugin-react 7.37.5 react/button-has-type (button, submit and reset allowed): a `<button>` without a `type` attribute (jsx-ast-utils getProp, case-insensitive) or whose first `type` value is not a literal button/submit/reset (each leaf of a conditional is checked; a non-literal leaf is reported at itself); the same for `React.createElement('button', props)` (isCreateElement, default pragma).",
+  "description": "Give every button an explicit type of button, submit or reset; a button without one submits its form by default.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -542,6 +542,12 @@
                 "matches": "type-attribute"
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -553,6 +559,16 @@
           "eslint": {
             "rules": [
               "react/button-has-type"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "button-has-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
             ]
           }
         }
@@ -630,17 +646,33 @@
                 }
               ]
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
       "violation": {
         "anchor": "witness.start",
         "code": "react/button-has-type",
-        "message": "Invalid value for button type attribute",
+        "message": "Set this button type to \"button\", \"submit\" or \"reset\".",
         "suppress": {
           "eslint": {
             "rules": [
               "react/button-has-type"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "button-has-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
             ]
           }
         }
@@ -680,17 +712,33 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
       "violation": {
         "anchor": "witness.start",
         "code": "react/button-has-type",
-        "message": "Invalid value for button type attribute",
+        "message": "Set this button type to \"button\", \"submit\" or \"reset\".",
         "suppress": {
           "eslint": {
             "rules": [
               "react/button-has-type"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "button-has-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
             ]
           }
         }
@@ -730,6 +778,12 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -741,6 +795,16 @@
           "eslint": {
             "rules": [
               "react/button-has-type"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "button-has-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
             ]
           }
         }
@@ -780,17 +844,33 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
       "violation": {
         "anchor": "witness.start",
         "code": "react/button-has-type",
-        "message": "Invalid value for button type attribute",
+        "message": "Change this ternary branch to \"button\", \"submit\" or \"reset\".",
         "suppress": {
           "eslint": {
             "rules": [
               "react/button-has-type"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "button-has-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
             ]
           }
         }
@@ -830,6 +910,12 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -841,6 +927,16 @@
           "eslint": {
             "rules": [
               "react/button-has-type"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "button-has-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
             ]
           }
         }
@@ -880,17 +976,33 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
       "violation": {
         "anchor": "witness.start",
         "code": "react/button-has-type",
-        "message": "Invalid value for button type attribute",
+        "message": "Change this ternary branch to \"button\", \"submit\" or \"reset\".",
         "suppress": {
           "eslint": {
             "rules": [
               "react/button-has-type"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "button-has-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
             ]
           }
         }
@@ -930,6 +1042,12 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -941,6 +1059,16 @@
           "eslint": {
             "rules": [
               "react/button-has-type"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "button-has-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
             ]
           }
         }
@@ -986,6 +1114,12 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -997,6 +1131,16 @@
           "eslint": {
             "rules": [
               "react/button-has-type"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "button-has-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
             ]
           }
         }
@@ -1024,17 +1168,33 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
       "violation": {
         "anchor": "witness.start",
         "code": "react/button-has-type",
-        "message": "Invalid value for button type attribute",
+        "message": "Set this button type to \"button\", \"submit\" or \"reset\".",
         "suppress": {
           "eslint": {
             "rules": [
               "react/button-has-type"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "button-has-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
             ]
           }
         }
@@ -1062,6 +1222,12 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -1073,6 +1239,16 @@
           "eslint": {
             "rules": [
               "react/button-has-type"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "button-has-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
             ]
           }
         }
@@ -1100,17 +1276,33 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
       "violation": {
         "anchor": "witness.start",
         "code": "react/button-has-type",
-        "message": "Invalid value for button type attribute",
+        "message": "Change this ternary branch to \"button\", \"submit\" or \"reset\".",
         "suppress": {
           "eslint": {
             "rules": [
               "react/button-has-type"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "button-has-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
             ]
           }
         }
@@ -1138,6 +1330,12 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -1149,6 +1347,16 @@
           "eslint": {
             "rules": [
               "react/button-has-type"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "button-has-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
             ]
           }
         }
@@ -1176,17 +1384,33 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
       "violation": {
         "anchor": "witness.start",
         "code": "react/button-has-type",
-        "message": "Invalid value for button type attribute",
+        "message": "Change this ternary branch to \"button\", \"submit\" or \"reset\".",
         "suppress": {
           "eslint": {
             "rules": [
               "react/button-has-type"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "button-has-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
             ]
           }
         }
@@ -1214,6 +1438,12 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -1225,6 +1455,16 @@
           "eslint": {
             "rules": [
               "react/button-has-type"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "button-has-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
             ]
           }
         }
@@ -1250,17 +1490,33 @@
                 }
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
       "violation": {
         "anchor": "capture.LEAF",
         "code": "react/button-has-type",
-        "message": "The button type attribute must be specified by a static string or a trivial ternary expression",
+        "message": "Replace the shorthand `$LEAF` with type: \"button\", \"submit\" or \"reset\" so the button type is a literal.",
         "suppress": {
           "eslint": {
             "rules": [
               "react/button-has-type"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "button-has-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/a11y/useButtonType"
             ]
           }
         }

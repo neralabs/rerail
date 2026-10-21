@@ -1,6 +1,6 @@
 import { inArray, sql, type SQL } from "drizzle-orm";
 import { blob, check, index, integer, primaryKey, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
-import { ADAPTER_CAPABILITIES, type RerailHost } from "../adapter-contract.js";
+import { ADAPTER_CAPABILITIES, type RerailHost, type SteerStrategy } from "../adapter-contract.js";
 import type { CodeRuleViolation } from "../code-rule/code-rule.js";
 import {
   AUDIT_MODES,
@@ -13,7 +13,13 @@ import {
   type AuditRuleProvenance,
 } from "../audit/audit.js";
 import { CODE_RULE_FORMAT, type CodeRuleClause, type CodeRuleScope } from "../code-rule/code-rule-schema.js";
-import { RULE_SETTING_OWNER_KINDS, RULE_SETTING_TARGET_KINDS, RULE_SOURCE_KINDS } from "../catalog/repository-model.js";
+import {
+  RULE_SETTING_OWNER_KINDS,
+  RULE_SETTING_TARGET_KINDS,
+  RULE_SOURCE_KINDS,
+  RULE_SUPPRESSIONS,
+  type RuleConfig,
+} from "../catalog/repository-model.js";
 import { RULE_MODES } from "../catalog/rule-mode.js";
 import type { ConversationRule } from "../catalog/rule-schema.js";
 import type { RuleDocument } from "../catalog/rule-store.js";
@@ -24,20 +30,10 @@ import type { RuleDocument } from "../catalog/rule-store.js";
  * resolved for a repository before evaluation.
  *
  * These Drizzle tables are the schema. `schema-sql.ts` is generated from them
- * (`npm run generate:schema`) and applied verbatim when a database is opened.
- * `database.ts` stamps `PRAGMA user_version` with `RERAIL_SCHEMA_VERSION`.
+ * (`npm run generate:schema`) and applied verbatim when a database is opened. A change to the shape of an
+ * existing table also needs a step in `migrations.ts`, which brings existing files to it and owns the
+ * schema version `database.ts` stamps in `PRAGMA user_version`.
  */
-/**
- * The schema version written by this Rerail build. A Rerail refuses a database stamped with a
- * newer version. Until the first release the version stays 1 and the tables are edited in place;
- * the DDL only creates what is missing, so a database created by an earlier development build
- * keeps its old tables and has to be moved aside. From the first release on, new tables and
- * indexes need no bump: the DDL is idempotent and older builds ignore what they do not know. A
- * change an older build would misread, or one SQLite cannot apply idempotently, raises it.
- * Some development builds stamped their files 2 before the version went back to 1, so the first
- * raise goes to 3: such a file then stays refused instead of being read as current.
- */
-export const RERAIL_SCHEMA_VERSION = 1 as const;
 
 export const RULE_KINDS = ["code", "conversation"] as const;
 export type RuleKind = (typeof RULE_KINDS)[number];
@@ -158,7 +154,8 @@ export const ruleCatalogIdentities = sqliteTable(
  * A repository Rerail knows on this machine. The key is `remote:<host>/<path>` from the normalised
  * `origin` (or sole) remote, else `clone:<clone id>`; `aliases_json` lists other keys that resolve here.
  * `configured_at` null means Not set up, so nothing runs; `started` is the default every checkout follows, and null
- * means nobody started or stopped the repository yet (off).
+ * means nobody started or stopped the repository yet (off). `follow_gitignore` leaves files Git ignores out of every
+ * audit of the repository's checkouts; a session reads it when it opens.
  */
 export const repositories = sqliteTable(
   "repositories",
@@ -168,6 +165,7 @@ export const repositories = sqliteTable(
     aliases: text("aliases_json", { mode: "json" }).$type<string[]>().notNull().default(sql`'[]'`),
     configuredAt: integer("configured_at"),
     started: integer("started", { mode: "boolean" }),
+    followGitignore: integer("follow_gitignore", { mode: "boolean" }).notNull().default(true),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -225,8 +223,9 @@ export const ruleAttachments = sqliteTable(
 );
 
 /**
- * `on` / `mode` for a rule or a whole pack, owned by a repository (`owner_id` = repository key) or a checkout
- * (`owner_id` = checkout path), optionally for one folder. A null field defers to the next owner.
+ * `on` / `mode` / `suppressions` / `config_json` for a rule or a whole pack, owned by a repository (`owner_id` =
+ * repository key) or a checkout (`owner_id` = checkout path), optionally for one folder. A null field defers to the
+ * next owner. `config_json` (option values of a rule by Rerail) is set only on rule targets.
  */
 export const ruleSettings = sqliteTable(
   "rule_settings",
@@ -238,6 +237,8 @@ export const ruleSettings = sqliteTable(
     targetId: text("target_id").notNull(),
     on: integer("on", { mode: "boolean" }),
     mode: text("mode", { enum: RULE_MODES }),
+    suppressions: text("suppressions", { enum: RULE_SUPPRESSIONS }),
+    config: text("config_json", { mode: "json" }).$type<RuleConfig>(),
     updatedAt: integer("updated_at").notNull(),
   },
   table => [
@@ -245,7 +246,14 @@ export const ruleSettings = sqliteTable(
     check("rule_settings_owner_kind", sql`${table.ownerKind} IN (${sql.raw(inList(RULE_SETTING_OWNER_KINDS))})`),
     check("rule_settings_target_kind", sql`${table.targetKind} IN (${sql.raw(inList(RULE_SETTING_TARGET_KINDS))})`),
     check("rule_settings_mode", sql`${table.mode} IS NULL OR ${table.mode} IN (${sql.raw(inList(RULE_MODES))})`),
-    check("rule_settings_value", sql`${table.on} IS NOT NULL OR ${table.mode} IS NOT NULL`),
+    check(
+      "rule_settings_suppressions",
+      sql`${table.suppressions} IS NULL OR ${table.suppressions} IN (${sql.raw(inList(RULE_SUPPRESSIONS))})`,
+    ),
+    check(
+      "rule_settings_value",
+      sql`${table.on} IS NOT NULL OR ${table.mode} IS NOT NULL OR ${table.suppressions} IS NOT NULL OR ${table.config} IS NOT NULL`,
+    ),
   ],
 );
 
@@ -386,9 +394,131 @@ export const auditResultPages = sqliteTable(
   ],
 );
 
+/*
+ * Audit history in the shape the dashboard reads it. `audits` stays the record; these tables are derived from it by
+ * the triggers in `audit-history.ts`, so every writer keeps them current, an older Rerail sharing the file included,
+ * and history reads never expand an audit's JSON. Nothing writes them directly.
+ */
+
+/**
+ * One row per distinct violation an audit reported: `(rule_id, violation_key)` once per audit, at the `ordinal` of
+ * its first copy in `audits.violations_json`, where its payload stays. `logged`: some copy was recorded in Log mode.
+ */
+export const auditViolations = sqliteTable(
+  "audit_violations",
+  {
+    auditId: text("audit_id").notNull(),
+    ordinal: integer("ordinal").notNull(),
+    sessionId: text("session_id").notNull(),
+    startedAt: integer("started_at").notNull(),
+    ruleId: text("rule_id"),
+    violationKey: text("violation_key").notNull(),
+    logged: integer("logged", { mode: "boolean" }).notNull(),
+  },
+  table => [
+    primaryKey({ columns: [table.auditId, table.ordinal] }),
+    index("audit_violations_session_started").on(table.sessionId, table.startedAt),
+    index("audit_violations_started").on(table.startedAt),
+    index("audit_violations_rule_started").on(table.ruleId, table.startedAt),
+    // An append looks up the audit's own rows by (rule, key).
+    index("audit_violations_audit_key").on(table.auditId, table.ruleId, table.violationKey),
+    // The rollup's maxima: a key's latest sighting, and its latest in Log mode, each one index probe.
+    index("audit_violations_key").on(table.sessionId, table.ruleId, table.violationKey, table.startedAt),
+    index("audit_violations_key_logged").on(table.sessionId, table.ruleId, table.violationKey, table.startedAt).where(sql`${table.logged} = 1`),
+  ],
+);
+
+/**
+ * Per session, rule and violation key: the latest audit start that reported it, and the latest that reported it in
+ * Log mode. A range `[since, now)` holds the violation exactly when `last_seen_at >= since`.
+ */
+export const ruleViolationRollup = sqliteTable(
+  "rule_violation_rollup",
+  {
+    sessionId: text("session_id").notNull(),
+    ruleId: text("rule_id").notNull(),
+    violationKey: text("violation_key").notNull(),
+    lastSeenAt: integer("last_seen_at").notNull(),
+    lastLoggedAt: integer("last_logged_at"),
+  },
+  table => [
+    primaryKey({ columns: [table.sessionId, table.ruleId, table.violationKey] }),
+    index("rule_violation_rollup_last_seen").on(table.lastSeenAt),
+  ],
+);
+
+/** Each distinct `audits.rule_revisions_json`: audits mostly share a handful, so "audits that compiled rule X" is a join. */
+export const auditRuleSets = sqliteTable("audit_rule_sets", {
+  ruleSetId: integer("rule_set_id").primaryKey(),
+  ruleRevisionsJson: text("rule_revisions_json").notNull().unique(),
+});
+
+/** The rule ids of one rule set. */
+export const auditRuleSetRules = sqliteTable(
+  "audit_rule_set_rules",
+  {
+    ruleSetId: integer("rule_set_id").notNull(),
+    ruleId: text("rule_id").notNull(),
+  },
+  table => [primaryKey({ columns: [table.ruleSetId, table.ruleId] })],
+);
+
+/** The rule set each audit compiled. */
+export const auditRuleSetUses = sqliteTable(
+  "audit_rule_set_uses",
+  {
+    auditId: text("audit_id").primaryKey(),
+    sessionId: text("session_id").notNull(),
+    startedAt: integer("started_at").notNull(),
+    ruleSetId: integer("rule_set_id").notNull(),
+  },
+  table => [
+    index("audit_rule_set_uses_session_started").on(table.sessionId, table.startedAt, table.ruleSetId),
+    index("audit_rule_set_uses_started").on(table.startedAt, table.ruleSetId),
+  ],
+);
+
+/**
+ * Scratch rows for one update of an audit's violations: the update trigger computes the audit's `audit_violations`
+ * rows here, then changes only the rows that differ, so a running scan's cumulative `progress` writes cost their new
+ * violations rather than all of them. Empty outside that trigger.
+ */
+export const auditViolationsStaging = sqliteTable(
+  "audit_violations_staging",
+  {
+    auditId: text("audit_id").notNull(),
+    ordinal: integer("ordinal").notNull(),
+    sessionId: text("session_id").notNull(),
+    startedAt: integer("started_at").notNull(),
+    ruleId: text("rule_id"),
+    violationKey: text("violation_key").notNull(),
+    logged: integer("logged", { mode: "boolean" }).notNull(),
+  },
+  table => [primaryKey({ columns: [table.auditId, table.ordinal] })],
+);
+
+/** The derived audit history keyed by session: the triggers on `audits` clear it along with the audits it came from. */
+export const DERIVED_AUDIT_HISTORY_TABLES = [auditViolations, auditViolationsStaging, ruleViolationRollup, auditRuleSetUses] as const;
+
+/**
+ * How many failures an audit had beyond those `audits.failures_json` lists, which holds at most 20 per-file failures
+ * besides those always listed; a row only for an audit that had more. A table of its own rather than a column of
+ * `audits`: the DDL creates it in a database an earlier build made, which keeps its `audits` table as it was.
+ */
+export const auditUnlistedFailures = sqliteTable(
+  "audit_unlisted_failures",
+  {
+    auditId: text("audit_id")
+      .primaryKey()
+      .references(() => audits.auditId, { onDelete: "cascade" }),
+    count: integer("count").notNull(),
+  },
+  table => [check("audit_unlisted_failures_count", sql`${table.count} > 0`)],
+);
 export const auditSettings = sqliteTable("audit_settings", {
   workspaceRoot: text("workspace_root").primaryKey(),
-  settings: text("settings_json", { mode: "json" }).$type<{ scope: AuditScope; mode: AuditMode }>().notNull(),
+  // `steerStrategy` is absent from rows saved before it existed; they read as `message`.
+  settings: text("settings_json", { mode: "json" }).$type<{ scope: AuditScope; mode: AuditMode; steerStrategy?: SteerStrategy }>().notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
 
@@ -443,6 +573,12 @@ export const policySessionOwners = sqliteTable("policy_session_owners", {
   updatedAt: integer("updated_at").notNull(),
 });
 
+/** The `migrations.ts` steps a file has run, by id. */
+export const schemaMigrations = sqliteTable("schema_migrations", {
+  id: text("id").primaryKey(),
+  appliedAt: integer("applied_at").notNull(),
+});
+
 /**
  * The ids of the sessions recorded under any of `repositoryIds` (a repository key, its aliases and the
  * clone ids of its checkouts), as a subquery for `session_id IN (...)`; `ended` narrows it to sessions
@@ -458,7 +594,7 @@ export function sessionsOfRepository(repositoryIds: string | readonly string[], 
 
 /**
  * Session history `rerail reset` deletes for every session of the repository, running or not.
- * `audit_result_pages` cascades with `audits`; `sessions` and `policy_session_owners`
+ * `audit_result_pages` and `audit_unlisted_failures` cascade with `audits`; `sessions` and `policy_session_owners`
  * lose only ended sessions, so running ones keep recording.
  */
 export const SESSION_HISTORY_TABLES = [events, workLinks, audits, auditRequests, repositoryAudits] as const;

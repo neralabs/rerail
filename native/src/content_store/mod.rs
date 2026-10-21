@@ -20,12 +20,19 @@ mod tests;
 mod workspaces;
 
 pub(crate) use compression::compress;
+pub(crate) use connection::BusyRetries;
+pub(crate) use connection::OperationDeadline;
 pub use schema::STORE_FILE_NAME;
 
 #[cfg(test)]
+pub(crate) use connection::{
+    BUSY_ATTEMPT_HOOK, BUSY_DEADLINE_OVERRIDE, BUSY_TIMEOUT_OVERRIDE, BUSY_WAIT_HOOK,
+    operation_waited,
+};
+#[cfg(test)]
 pub(crate) use snapshots::AFTER_GIT_TREE_TRANSACTION;
 
-use connection::ThreadConnection;
+use connection::{ThreadConnection, retry_busy};
 use read_cache::{CachedBacking, DecompressedReadCache};
 use results::LocalResultCache;
 use rusqlite::{Connection, OpenFlags};
@@ -199,7 +206,14 @@ pub enum StoreError {
     Io(std::io::Error),
     Invalid(String),
     Corrupt(String),
+    /// Another writer holds the store. A write's attempts are retried until the write deadline
+    /// (`connection::retry_busy`; one deadline for all the writes of an `OperationDeadline`), so
+    /// a write returns it only once that passed. The store is a cache, so a caller may proceed
+    /// without it.
     Busy,
+    /// A row a publication had resolved vanished before the publication used it, under a
+    /// concurrent collection. Never a reason to proceed without the store.
+    Vanished(&'static str),
 }
 
 impl fmt::Display for StoreError {
@@ -210,6 +224,10 @@ impl fmt::Display for StoreError {
             Self::Invalid(message) => write!(formatter, "invalid content store input: {message}"),
             Self::Corrupt(message) => write!(formatter, "corrupt content store: {message}"),
             Self::Busy => formatter.write_str("content store writer is busy"),
+            Self::Vanished(row) => write!(
+                formatter,
+                "content store {row} vanished under a concurrent collection"
+            ),
         }
     }
 }
@@ -237,7 +255,7 @@ impl From<std::io::Error> for StoreError {
 
 pub type StoreResult<T> = std::result::Result<T, StoreError>;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct SourceId(i64);
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct TapeId(i64);
@@ -245,7 +263,8 @@ pub struct TapeId(i64);
 /// A stored tape whose search index is not built yet, with what building it reads.
 pub(crate) struct UnindexedTape {
     pub tape: TapeId,
-    /// The workspace's grammar id (`workspace::grammar_id`).
+    /// The workspace's grammar id (`workspace::grammar_id`, or a derived document's
+    /// `workspace::document_grammar_id`).
     pub grammar: i64,
     pub source: Vec<u8>,
     /// The decoded tape image.
@@ -347,6 +366,44 @@ pub struct TapePayload<'a> {
     pub grammar_version: i64,
     pub tape_format_version: i64,
     pub bytes: &'a [u8],
+    /// The documents derived from this tape's (`file_documents`), in ordinal order from 1: each
+    /// is stored as a source and a tape of its own, with this tape's grammar version and format,
+    /// in the transaction that stores this tape. Empty for a single-language file.
+    pub documents: &'a [DocumentPayload<'a>],
+}
+
+/// A document derived from a file's primary one, published with the primary's tape.
+#[derive(Clone, Copy, Debug)]
+pub struct DocumentPayload<'a> {
+    /// The document it was derived from: 0 the primary, `i` the `i`-th derived one.
+    pub parent_ordinal: i64,
+    /// What the document is to the file (`tape::DocumentRole::code`); never 0, the primary's.
+    pub role_id: i64,
+    /// The embedding that built it (`tape::via_code`).
+    pub via_id: i64,
+    /// Its text, stored as an ordinary source.
+    pub source: &'a [u8],
+    /// Its tape's grammar id: unique to derived documents (`workspace::document_grammar_id`).
+    pub grammar_id: i64,
+    pub tape: &'a [u8],
+    pub source_map: &'a [u8],
+    pub host_errors: &'a [u8],
+}
+
+/// A `file_documents` row: a document derived from a stored primary tape. `source` and
+/// `grammar_id` are its tape row's, `None` where that row is missing: the document is then not
+/// stored, and the file is not either.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StoredDocument {
+    pub ordinal: i64,
+    pub parent_ordinal: i64,
+    pub role_id: i64,
+    pub via_id: i64,
+    pub tape: TapeId,
+    pub source: Option<SourceId>,
+    pub grammar_id: Option<i64>,
+    pub source_map: Vec<u8>,
+    pub host_errors: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -491,24 +548,10 @@ impl ContentStore {
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
         let mut connection = Connection::open_with_flags(path, flags)?;
-        connection.set_prepared_statement_cache_capacity(128);
-        connection.busy_timeout(Duration::from_millis(250))?;
-        let mut initialized = false;
-        for attempt in 0..20 {
-            match Self::initialize(&mut connection) {
-                Ok(()) => {
-                    initialized = true;
-                    break;
-                }
-                Err(StoreError::Busy) if attempt < 19 => {
-                    std::thread::sleep(Duration::from_millis(25));
-                }
-                Err(error) => return Err(error),
-            }
-        }
-        if !initialized {
-            return Err(StoreError::Busy);
-        }
+        // Only creating or migrating the schema takes the write lock (`initialize`).
+        retry_busy(&mut BusyRetries::default(), || {
+            Self::initialize(&mut connection)
+        })?;
         Ok(Self {
             database_path: path.to_path_buf(),
             connection: ThreadConnection {

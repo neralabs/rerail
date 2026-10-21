@@ -55,20 +55,20 @@ A **coding-agent host**, also called a harness, is the application running the a
 Example:
 
 ```text
-Rerail | 185 rules | steered 3×
+R E R A I L ● 185 rules · steered 3×
 ```
 
 Each segment has a specific purpose:
 
 | Segment | Meaning | Destination |
 | --- | --- | --- |
-| `Rerail` | Entry point to this session’s Rerail context | Exact current session |
-| `185 rules` | Effective rule coverage configured for this session | Rules page in the same project database |
-| `steered 3×` | Three successful deliveries of guidance to the agent | Exact current session |
+| `R E R A I L` | Entry point to this session’s Rerail context | Exact current session |
+| `● 185 rules` | Rerail is on; effective rule coverage configured for this session | Rules page in the same project database |
+| `steered 3×` | Rules named in successful deliveries of guidance to the agent, one per line the person saw | Exact current session |
 
-Only the `Rerail` label uses the brand colour. Raw URLs do not need to occupy the status line. Link activation depends on the terminal’s hyperlink support.
+The six letters are Rerail’s mark without its ray, each in its own colour; the state mark takes its state’s colour, and nothing else is coloured. Raw URLs do not need to occupy the status line. Link activation depends on the terminal’s hyperlink support.
 
-The row can append a short state such as `checking…`, `evaluation failed`, or an unavailable indicator. Detailed violations stay in the explicit detail view and dashboard.
+The row is static. It can append a short state such as `engine unavailable`, `audit failed`, or an unavailable indicator. Detailed violations stay in the explicit detail view and dashboard.
 
 ### What the numbers do—and do not—mean
 
@@ -164,7 +164,7 @@ Presentation preferences live in the project’s SQLite database. Separate SQLit
 - **Historical counts have limits.** Missing tracking history cannot establish a complete steer total. A crash between guidance delivery and recording its receipt can undercount activity.
 - **A “live” session label is not a process heartbeat.** Missing session-end information can leave a recorded session labelled live after its process exits.
 - **Native security remains in force.** Codex may require hook trust and approval for the local read. Its CLI must be available separately; Rerail does not install coding-agent applications.
-- **Startup readiness is not immediate shell reconciliation.** Discovery stays in the background for startup, path-aware edits and opaque-tool starts; a command tool's result waits for a discovery pass, anchored to a filesystem-clock reading taken before the walk, that reports shell writes as uncaptured changes rather than baselining them. Deletions are reported only for sources the baseline already observed. OMP/Pi's direct awaited hook has no local timer; one-shot hook transport retains a 30-second deadline. That cold reconciliation boundary requires measurement against the deadline, not an assumption of bounded latency.
+- **Startup readiness is not immediate shell reconciliation.** Discovery stays in the background for startup, path-aware edits and opaque-tool starts; a command tool's result or a turn end waits up to 10 seconds for a discovery pass, anchored to a filesystem-clock reading taken before the walk, that reports shell writes as uncaptured changes rather than baselining them. A pass that runs longer reports what it finds at a later boundary, and the session's history records a `source-discovery-pending` event for the boundary that answered without it. Deletions are reported only for sources the baseline already observed.
 - **No new analytics or performance SLA.** The validation below establishes exercised behavior, not a fleet-wide reliability, latency, or adoption guarantee.
 
 ## 9. Verification and release readiness

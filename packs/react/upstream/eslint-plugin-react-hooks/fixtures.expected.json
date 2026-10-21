@@ -434,7 +434,16 @@
    "exhaustive-deps/invalid-188.tsx",
    "exhaustive-deps/invalid-189.tsx",
    "exhaustive-deps/invalid-190.tsx",
-   "exhaustive-deps/invalid-191.tsx"
+   "exhaustive-deps/invalid-191.tsx",
+   [
+    "rules-of-hooks/rerail-vue-package/package.json",
+    "rules-of-hooks/rerail-vue-package/src/use-field.js"
+   ],
+   "rules-of-hooks/rerail-jsx-import-source-emotion.jsx",
+   [
+    "rules-of-hooks/rerail-emotion-jsx-pragma/package.json",
+    "rules-of-hooks/rerail-emotion-jsx-pragma/src/banner.jsx"
+   ]
   ]
  },
  "findings": [
@@ -2435,6 +2444,24 @@
    "path": "rules-of-hooks/invalid-066.jsx",
    "line": 15,
    "column": 21
+  },
+  {
+   "rule": "react-hooks/rules-of-hooks",
+   "path": "rules-of-hooks/rerail-emotion-jsx-pragma/src/banner.jsx",
+   "line": 7,
+   "column": 20
+  },
+  {
+   "rule": "react-hooks/rules-of-hooks",
+   "path": "rules-of-hooks/rerail-jsx-import-source-emotion.jsx",
+   "line": 6,
+   "column": 21
+  },
+  {
+   "rule": "react-hooks/rules-of-hooks",
+   "path": "rules-of-hooks/rerail-vue-package/src/use-field.js",
+   "line": 5,
+   "column": 12
   },
   {
    "rule": "react-hooks/rules-of-hooks",

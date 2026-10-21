@@ -19,8 +19,9 @@ const pointSchema = z.object({ path: z.string(), line: z.number().int().positive
 
 /**
  * Files a clause unsound under syntax errors skipped (`source-incomplete`, "file has syntax errors") where the grammar
- * reports a syntax error, each at its first one (the engine's line and column). Attributed to T1, not counted as
- * engine failures; upstream findings in them stay FNs.
+ * reports a syntax error, and files no AST clause read because their error regions cover half of them or more
+ * (`source-incomplete`, "file did not parse: …"), each at its first error (the engine's line and column). Attributed to
+ * T1, not counted as engine failures; upstream findings in them stay FNs.
  */
 const syntaxErrorFilesSchema = z.object({
   count: z.number().int().nonnegative(),

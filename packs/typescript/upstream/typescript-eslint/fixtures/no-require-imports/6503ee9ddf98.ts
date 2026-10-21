@@ -1,0 +1,1 @@
+const pkg = require('./package.jsonc');

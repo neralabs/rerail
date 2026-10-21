@@ -2,7 +2,8 @@ use super::calls::{SeedScope, TermId, Through};
 use super::json::invalid;
 use super::matcher::{GrammarMatcher, Transform};
 use super::module_path::ModulePath;
-use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::language::{GrammarDialect, PackageType};
+use crate::code_rule_dsl::package_manifest::Manifest;
 use ast_grep_core::replacer::TemplateFix;
 use globset::GlobSet;
 use napi::Result;
@@ -12,6 +13,20 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// The failure code of an output cap: a clause found more witnesses (or regex matches) than
+/// `maxWitnesses` lets it report. Apart from `budget-exceeded`, which is running out of work: the
+/// clause did read the file, so the file is not blind and the failure is not a coverage gap.
+pub(super) const WITNESS_LIMIT: &str = "witness-limit";
+/// The failure code of a clause the file's work stopped, not its own: the file's shared work
+/// (parsing, its tape, its anchor index) ran out before the clause ran, or the clauses before it
+/// spent the file's clause-work ceiling. Apart from `budget-exceeded` (the clause ran out of its
+/// own allowance): it depends on the other rules, so no rule is told to simplify itself for it.
+pub(super) const FILE_BUDGET_EXCEEDED: &str = "file-budget-exceeded";
+/// The failure code of a clause skipped because the file is past the rule's input limits
+/// (`maxSourceBytes`, or `maxFiles` of 0): it never ran on the file, and a rule's configured limit
+/// is no work it ran out of, so this fails the audit and is no coverage gap.
+pub(super) const INPUT_LIMIT: &str = "input-limit";
+
 #[derive(Clone)]
 pub(super) struct Limits {
     pub(super) max_ast_pattern_bytes: usize,
@@ -19,7 +34,21 @@ pub(super) struct Limits {
     pub(super) max_regex_pattern_bytes: usize,
     pub(super) max_source_bytes: usize,
     pub(super) max_visited_nodes: usize,
+    /// `maxVisitsPerNode` (optional, 0 without it): in the indexed workspace a file's node and
+    /// utility visits are allowed this many per node of the file when that is more than
+    /// `max_visited_nodes`, so a rule that reads each node a bounded number of times finishes on
+    /// a file of any size (`visits_for`).
+    pub(super) max_visits_per_node: usize,
     pub(super) max_witnesses: usize,
+}
+
+impl Limits {
+    /// The node and utility visits a file of `nodes` nodes allows: `max_visited_nodes`, or
+    /// `max_visits_per_node` per node where that is more.
+    pub(super) fn visits_for(&self, nodes: usize) -> usize {
+        self.max_visited_nodes
+            .max(nodes.saturating_mul(self.max_visits_per_node))
+    }
 }
 
 #[derive(Clone)]
@@ -52,14 +81,27 @@ impl CodeRuleScope {
     pub(super) fn mode_at(&self, path: &str) -> Option<RuleMode> {
         placed(self.placement.as_deref()?, path)?.mode
     }
+
+    /// Whether a linter's suppression comment at `path` silences the code rule's violations there:
+    /// what the placement entry deciding `path` says, and `true` when the code rule is not placed
+    /// or no entry contains `path`.
+    pub(super) fn honours_suppressions_at(&self, path: &str) -> bool {
+        self.placement
+            .as_deref()
+            .and_then(|placement| placed(placement, path))
+            .is_none_or(|entry| entry.honour_suppressions)
+    }
 }
 
 /// One folder of a placement. `folder` is relative to the checkout root in POSIX form (`""` is the
-/// whole checkout); `mode` is `None` where the code rule is off.
+/// whole checkout); `mode` is `None` where the code rule is off; `honour_suppressions` is whether a
+/// linter's suppression comment (`// eslint-disable-next-line`, `# noqa`, ...) silences a violation
+/// in the folder, as the violation's `suppress` names it.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct PlacementEntry {
     pub(super) folder: String,
     pub(super) mode: Option<RuleMode>,
+    pub(super) honour_suppressions: bool,
 }
 
 /// A placement's entries, sorted by folder, no folder twice.
@@ -101,6 +143,15 @@ pub(super) struct ViolationSpec {
     pub(super) fix_range: Option<String>,
     /// `suppress`: the other linter's suppression comments this violation honours.
     pub(super) suppress: Option<super::suppress::Suppress>,
+    /// The code rule id a `rerail-ignore` comment names to silence this violation's witnesses,
+    /// whatever `suppress` and the `suppressions` setting; `None` where the witnesses report
+    /// nothing (an `exists` leaf, a `calls` seed, a `require_each`'s evidence): a comment silences
+    /// a reported violation, never removes a fact another file's violation reads.
+    pub(super) ignored_by: Option<Arc<str>>,
+    /// A covered witness is kept and marked (`Witness::ignored`) rather than dropped: a `budget`'s
+    /// rows, counted whatever the comments, whose violation a comment silences only at the row
+    /// it is reported at.
+    pub(super) ignore_marks: bool,
     /// The query's `transform` where one of its sources is a regex group of the witness, computed
     /// again with each witness's groups.
     pub(super) group_transform: Option<Arc<Transform>>,
@@ -439,6 +490,24 @@ impl Query {
             Query::Regex { .. } => Vec::new(),
         }
     }
+
+    /// Whether an AST query here reads `file.package.serverGraph`, so the files' manifests need
+    /// their package's server graph.
+    pub(super) fn reads_server_graph(&self) -> bool {
+        match self {
+            Query::Ast { matchers, .. } => matchers.iter().any(|matcher| {
+                matcher.file.as_ref().is_some_and(|file| {
+                    file.manifest
+                        .as_ref()
+                        .is_some_and(|package| package.server_graph.is_some())
+                })
+            }),
+            Query::SelectWhen { select, exists } => {
+                select.reads_server_graph() || exists.reads_server_graph()
+            }
+            Query::Regex { .. } => false,
+        }
+    }
 }
 
 /// A `calls` term: its inner rule as a seed query over definitions, and what chains pass through.
@@ -558,6 +627,20 @@ pub(super) struct CompiledCodeRule {
     pub(super) capabilities: Capabilities,
 }
 
+impl CompiledCodeRule {
+    /// Whether any clause reads `file.package.serverGraph` (`Query::reads_server_graph`).
+    pub(super) fn reads_server_graph(&self) -> bool {
+        self.clauses.iter().any(|clause| match &clause.kind {
+            ClauseKind::Forbid(query) => query.reads_server_graph(),
+            ClauseKind::RequireEach { subject, evidence } => {
+                subject.ast.query.reads_server_graph() || evidence.ast.query.reads_server_graph()
+            }
+            ClauseKind::Budget { query, .. } => query.ast.query.reads_server_graph(),
+            ClauseKind::Llm => false,
+        })
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct FileInput {
     pub(super) path: String,
@@ -565,18 +648,23 @@ pub(super) struct FileInput {
     pub(super) source: Arc<String>,
     /// A Python file's module path: the host's (`module`), else the file's stem.
     pub(super) module: Option<Arc<ModulePath>>,
+    /// An ECMA file's nearest `package.json` (`package`); `None` without one.
+    pub(super) package: Option<Arc<Manifest>>,
 }
 
 impl FileInput {
     /// `module` is the module path a host derived for a Python file (Ruff's package walk): a
     /// dotted string, or a list of names when one keeps a dot (`["json.d", "__init__"]`). Without
     /// it a Python file is named by its stem, as Ruff names a file outside any package; a file set
-    /// that holds package markers derives it first (`python_module_in`).
+    /// that holds package markers derives it first (`python_module_in`). `package` is the ECMA
+    /// file's nearest `package.json` (`Manifest::from_wire`, `Manifests`); without it the file
+    /// has none.
     pub(super) fn new(
         path: String,
         language: String,
         source: Arc<String>,
         module: Option<&Value>,
+        package: Option<Arc<Manifest>>,
         at: &str,
     ) -> Result<Self> {
         let module = match module {
@@ -595,7 +683,13 @@ impl FileInput {
             language,
             source,
             module: module.map(Arc::new),
+            package,
         })
+    }
+
+    /// The `type` of the file's nearest `package.json`, which decides a `.js` file's module system.
+    pub(super) fn package_type(&self) -> Option<PackageType> {
+        self.package.as_deref().map(Manifest::package_type)
     }
 }
 
@@ -692,6 +786,8 @@ pub(super) struct Metrics {
     pub(super) ast_matcher_calls: usize,
     pub(super) storage_retries: usize,
     pub(super) storage_retry_wait_nanoseconds: u64,
+    pub(super) storage_unpublished_files: usize,
+    pub(super) storage_released_files: usize,
     pub(super) storage_transaction_nanoseconds: u64,
     pub(super) storage_object_transaction_nanoseconds: u64,
     pub(super) storage_relationship_transaction_nanoseconds: u64,
@@ -727,6 +823,8 @@ impl Metrics {
         self.ast_matcher_calls += other.ast_matcher_calls;
         self.storage_retries += other.storage_retries;
         self.storage_retry_wait_nanoseconds += other.storage_retry_wait_nanoseconds;
+        self.storage_unpublished_files += other.storage_unpublished_files;
+        self.storage_released_files += other.storage_released_files;
         self.storage_transaction_nanoseconds += other.storage_transaction_nanoseconds;
         self.storage_object_transaction_nanoseconds += other.storage_object_transaction_nanoseconds;
         self.storage_relationship_transaction_nanoseconds +=

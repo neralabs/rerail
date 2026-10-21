@@ -1,0 +1,49 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "phpcs-generic-php-forbidden-functions",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use count() instead of its alias sizeof(), and don't call delete(); stick to the canonical PHP functions.",
+  "scope": {
+    "include": [
+      "**/*.php"
+    ],
+    "exclude": [
+      "**/*.blade.php"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "kind": "function_call_expression",
+            "has": {
+              "field": "function",
+              "resolves": {
+                "import": [
+                  "sizeof",
+                  "delete"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "Generic.PHP.ForbiddenFunctions",
+        "message": "Replace sizeof() with count(), or replace delete() with unset() or unlink(), whichever was meant.",
+        "suppress": {
+          "phpcs": {
+            "sniffs": [
+              "Generic.PHP.ForbiddenFunctions.Found"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

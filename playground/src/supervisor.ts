@@ -31,7 +31,7 @@ import {
   codeRuleSchema,
   defaultRerailDatabasePath,
   libraryRuleRecordSchema,
-  loadBundledCatalog,
+  loadRuleCatalog,
   openRerailDatabase,
   parseConversationRule,
   recordCheckout,
@@ -159,7 +159,7 @@ async function daemonRuleList(path: string, failure: string): Promise<unknown[]>
 }
 /**
  * The rule picker reads through the supervisor so the browser stays on one origin: every By Rerail rule, then every
- * rule created by you, each parsed by the daemon's own schema. A By Rerail rule changes only with the bundle. A rule
+ * rule created by you, each parsed by the daemon's own schema. A By Rerail rule changes only with the rule catalog. A rule
  * created by you wins over a By Rerail rule with its id, as it does in a repository, so each id names one rule.
  */
 async function readRules(): Promise<PlaygroundRuleList> {
@@ -283,9 +283,9 @@ function activateSandboxRule(current: PlaygroundRuleSnapshot, sandbox: Sandbox):
   // The sandbox's repository runs this one rule: a By Rerail rule by reference, a rule created by you from the library.
   const database = openRerailDatabase(defaultRerailDatabasePath(sandbox.env));
   try {
-    const bundle = loadBundledCatalog();
+    const ruleCatalog = loadRuleCatalog();
     const { repositoryKey } = recordCheckout(database, sandbox.cwd);
-    if (current.source === "library") upsertLibraryRule(database, bundle, document.rule, document.kind);
+    if (current.source === "library") upsertLibraryRule(database, ruleCatalog, document.rule, document.kind);
     const sourceKind = current.source === "library" ? "library_rule" as const : "rerail_rule" as const;
     setUpRepository(database, repositoryKey, { packs: [], rules: [{ sourceKind, sourceId: document.rule.id, folder: "" }] });
     setRepositoryStarted(database, repositoryKey, true);

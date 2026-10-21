@@ -5,7 +5,7 @@
 use super::super::CodeRuleDslRuntime;
 use super::super::matcher::UtilLimit;
 use super::api::{CodeRuleDslWorkspace, WorkspaceApplyTask};
-use super::index::{WorkspaceIndexTask, repository_module};
+use super::index::{WorkspaceIndexTask, repository_module, repository_package};
 use super::ingest::{BINARY_REQUEST_MAGIC, PACKAGE_CONTEXT_PATH_VISITS};
 use super::persisted::{decode_local_result, encode_local_result};
 use super::storage::{StorageContext, storage_context_in};
@@ -300,6 +300,159 @@ fn hosts_and_repository_ingestion_share_one_python_module_derivation() {
     assert_eq!(repository_module("loose/x.py"), None);
 }
 
+#[test]
+fn hosts_repository_ingestion_and_file_sets_share_one_package_derivation() {
+    let directory = TempDir::new("package-facts");
+    let root = directory.0.join("repo");
+    let oversized = format!(
+        "{{\"type\":\"module\",\"description\":\"{}\"}}",
+        "x".repeat(1024 * 1024)
+    );
+    let root_manifest = r#"{ "name": "root", "type": "esm", "bin": { "a": "./bin/../cli.js", "b": "/abs.js", "c": "../out.js" },
+        "engines": { "node": "not a range" }, "devEngines": { "runtime": [{ "name": "bun" }, { "name": "node", "version": "^20.9" }] },
+        "dependencies": { "react": "19" }, "devDependencies": { "vitest": "4" } }"#;
+    let files = [
+        ("package.json", root_manifest),
+        ("a.js", ""),
+        (
+            "esm/package.json",
+            r#"{ "type": "module", "bin": "x.js", "engines": { "node": ">=22" } }"#,
+        ),
+        ("esm/deep/a.js", ""),
+        (
+            "esm/cjs/package.json",
+            r#"{ "type": "commonjs", "peerDependencies": { "vue": "3" } }"#,
+        ),
+        ("esm/cjs/a.js", ""),
+        ("broken/package.json", "{ \"type\": \"module\""),
+        ("broken/a.js", ""),
+        ("large/package.json", oversized.as_str()),
+        ("large/a.js", ""),
+        ("linked/a.js", ""),
+        ("sub/a.js", ""),
+    ];
+    for (path, source) in files {
+        let file = root.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, source).unwrap();
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(
+        root.join("esm/package.json"),
+        root.join("linked/package.json"),
+    )
+    .unwrap();
+    git(&root, &["init", "-q"]);
+    git(&root, &["add", "."]);
+    git(
+        &root,
+        &[
+            "-c",
+            "user.name=rerail",
+            "-c",
+            "user.email=rerail@example.invalid",
+            "commit",
+            "-q",
+            "-m",
+            "fixture",
+        ],
+    );
+    // What a host sends: `packageFacts`, in the shape of the wire's `package`.
+    let host_as = |root: &std::path::Path, path: &str, label: &str| {
+        super::super::package_facts(
+            label.to_owned(),
+            root.join(path).to_string_lossy().into_owned(),
+            root.to_string_lossy().into_owned(),
+        )
+        .map(|facts| {
+            let mut wire = json!({ "folder": facts.folder, "type": facts.package_type });
+            if !facts.bin.is_empty() {
+                wire["bin"] = json!(facts.bin);
+            }
+            if let Some(version) = facts.node_version {
+                wire["nodeVersion"] = json!(version);
+            }
+            if !facts.dependencies.is_empty() {
+                wire["dependencies"] = json!(facts.dependencies);
+            }
+            wire
+        })
+    };
+    let host = |root: &std::path::Path, path: &str| host_as(root, path, "javascript");
+    let repository = git_workspace::discover(&root).unwrap();
+    let mut manifests = crate::code_rule_dsl::package_manifest::Manifests::new(root.clone());
+    let mut indexed = |path: &str, language: &str| {
+        repository_package(&mut manifests, &repository, path, language)
+            .map(|manifest| manifest.to_wire())
+    };
+    // A workspace or snapshot holding the same texts (the symlink is not one of its entries).
+    let entries = files
+        .iter()
+        .filter_map(|(path, source)| {
+            let directory = crate::code_rule_dsl::package_manifest::manifest_directory(path)?;
+            Some((
+                directory,
+                StdArc::new(crate::code_rule_dsl::package_manifest::Manifest::parse(
+                    directory.to_owned(),
+                    source.as_bytes(),
+                )),
+            ))
+        })
+        .collect::<HashMap<_, _>>();
+    let in_file_set = |path: &str| {
+        crate::code_rule_dsl::package_manifest::manifest_in(path, |directory| {
+            entries.get(directory)
+        })
+        .map(|manifest| manifest.to_wire())
+    };
+    // The nearest manifest decides. `bin` targets resolve against its folder (an absolute one or
+    // one outside it never names a file below it); an unparsable `engines.node` falls through to
+    // `devEngines.runtime`'s `node` entry. One without a valid `type`, malformed, oversized or a
+    // symlink has nothing else either.
+    let unreadable = |folder: &str| json!({ "folder": folder, "type": "unset" });
+    for (path, expected) in [
+        (
+            "a.js",
+            json!({ "folder": "", "type": "unset", "bin": ["cli.js"], "nodeVersion": "^20.9",
+                "dependencies": ["react", "vitest"] }),
+        ),
+        (
+            "esm/deep/a.js",
+            json!({ "folder": "esm", "type": "module", "bin": ["x.js"], "nodeVersion": ">=22" }),
+        ),
+        (
+            "esm/cjs/a.js",
+            json!({ "folder": "esm/cjs", "type": "commonjs", "dependencies": ["vue"] }),
+        ),
+        ("broken/a.js", unreadable("broken")),
+        ("large/a.js", unreadable("large")),
+        ("sub/a.js", indexed("a.js", "javascript").unwrap()),
+    ] {
+        assert_eq!(host(&root, path), Some(expected.clone()), "{path}");
+        assert_eq!(
+            indexed(path, "javascript"),
+            Some(expected.clone()),
+            "{path}"
+        );
+        assert_eq!(in_file_set(path), Some(expected), "{path}");
+    }
+    #[cfg(unix)]
+    for read in [
+        host(&root, "linked/a.js"),
+        indexed("linked/a.js", "javascript"),
+    ] {
+        assert_eq!(read, Some(unreadable("linked")));
+    }
+    // Only ECMA files carry one, and no manifest above the root counts.
+    assert_eq!(indexed("a.js", "python"), None);
+    assert_eq!(host_as(&root, "a.py", "python"), None);
+    assert!(
+        super::super::reads_package_manifests("javascript".to_owned())
+            && !super::super::reads_package_manifests("python".to_owned())
+    );
+    assert_eq!(host(&root.join("sub"), "a.js"), None);
+}
+
 fn package_marker_code_rule() -> CompiledCodeRuleDsl {
     compile(
         "package-marker-context",
@@ -354,7 +507,7 @@ fn commit(repository: &std::path::Path, message: &str) {
 
 #[test]
 fn package_marker_changes_refresh_unchanged_siblings_and_match_a_fresh_index() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("package-marker-refresh");
     let root = directory.0.join("repo");
     let sibling = root.join("pkg/mod.py");
@@ -428,8 +581,563 @@ fn package_marker_changes_refresh_unchanged_siblings_and_match_a_fresh_index() {
 }
 
 #[test]
+fn package_json_entries_give_unhosted_ecma_files_their_nearest_manifest() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let code_rule = compile(
+        "package-depends-on",
+        json!([{
+            "id": "next-file",
+            "violation": { "anchor": "witness.span", "code": "NEXT", "message": "next file" },
+            "forbid": { "ast": { "language": "typescript",
+                "file": { "package": { "dependsOn": ["next"] } }, "rule": { "kind": "program" } } }
+        }]),
+    );
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace.add_code_rule(&code_rule, None).unwrap();
+    let source =
+        |path: &str| json!({ "path": path, "language": "typescript", "source": "export {};\n" });
+    let manifest = |path: &str, dependency: &str| {
+        json!({ "path": path, "language": "json",
+            "source": format!("{{ \"dependencies\": {{ \"{dependency}\": \"1\" }} }}") })
+    };
+    let reported = || {
+        located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES))
+            .into_iter()
+            .map(|(path, _, _)| path)
+            .collect::<Vec<_>>()
+    };
+    // Sources before their manifest, in separate requests, as a batching host may send them.
+    apply_host(
+        &workspace,
+        1,
+        json!([source("app/a.ts"), source("apps/web/b.ts")]),
+        &[],
+    );
+    assert!(reported().is_empty());
+    apply_host(
+        &workspace,
+        2,
+        json!([manifest("package.json", "next")]),
+        &[],
+    );
+    assert_eq!(reported(), ["app/a.ts", "apps/web/b.ts"]);
+    // A nearer manifest wins below it.
+    apply_host(
+        &workspace,
+        3,
+        json!([manifest("apps/web/package.json", "vite")]),
+        &[],
+    );
+    assert_eq!(reported(), ["app/a.ts"]);
+    // Removing it, the root's applies again; a host's own `package` stays authoritative.
+    let hosted = json!({ "path": "apps/web/c.ts", "language": "typescript", "source": "export {};\n",
+        "package": { "folder": "apps/web", "type": "unset" } });
+    apply_host(&workspace, 4, json!([hosted]), &["apps/web/package.json"]);
+    assert_eq!(reported(), ["app/a.ts", "apps/web/b.ts"]);
+    // Editing the root manifest's dependencies changes the result.
+    apply_host(
+        &workspace,
+        5,
+        json!([manifest("package.json", "react")]),
+        &[],
+    );
+    assert!(reported().is_empty());
+    workspace.close();
+}
+
+/// A workspace deriving a Next server graph for files the host sent no `package` for refreshes it
+/// whenever a request changes what the graph reads, even a request with no such file: removing
+/// the page that reached a module, editing the alias configuration (or a base it `extends`), or
+/// editing the manifest alone.
+#[test]
+fn a_derived_server_graph_follows_removals_configuration_and_manifest_edits() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let code_rule = compile(
+        "server-graph",
+        json!([{
+            "id": "server",
+            "violation": { "anchor": "witness.span", "code": "SERVER", "message": "server module" },
+            "forbid": { "ast": { "language": "typescript",
+                "file": { "package": { "serverGraph": true } }, "rule": { "kind": "program" } } }
+        }]),
+    );
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace.add_code_rule(&code_rule, None).unwrap();
+    let file = |path: &str, language: &str, source: &str| json!({ "path": path, "language": language, "source": source });
+    let next = r#"{ "dependencies": { "next": "16" } }"#;
+    let reported = || {
+        located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES))
+            .into_iter()
+            .map(|(path, _, _)| path)
+            .collect::<Vec<_>>()
+    };
+    apply_host(
+        &workspace,
+        1,
+        json!([
+            file("package.json", "json", next),
+            file(
+                "tsconfig.json",
+                "json",
+                r#"{ "extends": "./tsconfig.base.json" }"#
+            ),
+            file(
+                "tsconfig.base.json",
+                "json",
+                r#"{ "compilerOptions": { "paths": { "@/*": ["./lib/*"] } } }"#
+            ),
+            file(
+                "app/page.tsx",
+                "tsx",
+                "import '@/hook';\nexport default function Page() {}\n"
+            ),
+            file("lib/hook.ts", "typescript", "export const hook = 1;\n"),
+        ]),
+        &[],
+    );
+    assert_eq!(reported(), ["app/page.tsx", "lib/hook.ts"]);
+    // A base configuration's edit alone moves the alias, and with it the module.
+    apply_host(
+        &workspace,
+        2,
+        json!([file(
+            "tsconfig.base.json",
+            "json",
+            r#"{ "compilerOptions": { "paths": { "@/*": ["./other/*"] } } }"#
+        )]),
+        &[],
+    );
+    assert_eq!(reported(), ["app/page.tsx"]);
+    apply_host(
+        &workspace,
+        3,
+        json!([file(
+            "tsconfig.base.json",
+            "json",
+            r#"{ "compilerOptions": { "paths": { "@/*": ["./lib/*"] } } }"#
+        )]),
+        &[],
+    );
+    assert_eq!(reported(), ["app/page.tsx", "lib/hook.ts"]);
+    // Removing the page leaves the module unreached.
+    apply_host(&workspace, 4, json!([]), &["app/page.tsx"]);
+    assert!(reported().is_empty());
+    apply_host(
+        &workspace,
+        5,
+        json!([file(
+            "app/page.tsx",
+            "tsx",
+            "import '@/hook';\nexport default function Page() {}\n"
+        )]),
+        &[],
+    );
+    assert_eq!(reported(), ["app/page.tsx", "lib/hook.ts"]);
+    // A manifest edit alone derives the graph again rather than dropping it.
+    apply_host(
+        &workspace,
+        6,
+        json!([file(
+            "package.json",
+            "json",
+            r#"{ "name": "app", "dependencies": { "next": "16" } }"#
+        )]),
+        &[],
+    );
+    assert_eq!(reported(), ["app/page.tsx", "lib/hook.ts"]);
+    workspace.close();
+}
+
+/// A manifest that gains (or regains) `next` after its sources arrived derives the graph for
+/// them, and a nested package created or removed between a page and what it imports moves the
+/// boundary of the enclosing graph.
+#[test]
+fn a_derived_server_graph_follows_a_late_next_dependency_and_nested_packages() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let code_rule = compile(
+        "server-graph-boundaries",
+        json!([
+            { "id": "server",
+              "violation": { "anchor": "witness.span", "code": "SERVER", "message": "server" },
+              "forbid": { "ast": { "language": "typescript",
+                  "file": { "package": { "serverGraph": true } }, "rule": { "kind": "program" } } } },
+            { "id": "client",
+              "violation": { "anchor": "witness.span", "code": "CLIENT", "message": "client" },
+              "forbid": { "ast": { "language": "typescript",
+                  "file": { "package": { "serverGraph": false } }, "rule": { "kind": "program" } } } }
+        ]),
+    );
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace.add_code_rule(&code_rule, None).unwrap();
+    let file = |path: &str, language: &str, source: &str| json!({ "path": path, "language": language, "source": source });
+    let reported = || {
+        let mut reported = located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES))
+            .into_iter()
+            .map(|(path, code, _)| format!("{path} {code}"))
+            .collect::<Vec<_>>();
+        reported.sort();
+        reported
+    };
+    // Sources first, then a manifest without `next`: no graph, so neither value holds.
+    apply_host(
+        &workspace,
+        1,
+        json!([
+            file(
+                "app/page.tsx",
+                "tsx",
+                "import './sub/bridge';\nexport default function Page() {}\n"
+            ),
+            file(
+                "app/sub/bridge.ts",
+                "typescript",
+                "export * from '../shared/hook';\n"
+            ),
+            file(
+                "app/shared/hook.ts",
+                "typescript",
+                "export const hook = 1;\n"
+            ),
+        ]),
+        &[],
+    );
+    apply_host(
+        &workspace,
+        2,
+        json!([file("package.json", "json", "{}")]),
+        &[],
+    );
+    assert!(reported().is_empty());
+    let server = [
+        "app/page.tsx server",
+        "app/shared/hook.ts server",
+        "app/sub/bridge.ts server",
+    ];
+    let next = r#"{ "dependencies": { "next": "16" } }"#;
+    apply_host(
+        &workspace,
+        3,
+        json!([file("package.json", "json", next)]),
+        &[],
+    );
+    assert_eq!(reported(), server);
+    // Losing and regaining `next`.
+    apply_host(
+        &workspace,
+        4,
+        json!([file("package.json", "json", "{}")]),
+        &[],
+    );
+    assert!(reported().is_empty());
+    apply_host(
+        &workspace,
+        5,
+        json!([file("package.json", "json", next)]),
+        &[],
+    );
+    assert_eq!(reported(), server);
+    // A nested package around the bridge is no edge: the hook beyond it leaves the graph.
+    apply_host(
+        &workspace,
+        6,
+        json!([file("app/sub/package.json", "json", "{}")]),
+        &[],
+    );
+    assert_eq!(
+        reported(),
+        ["app/page.tsx server", "app/shared/hook.ts client"]
+    );
+    apply_host(&workspace, 7, json!([]), &["app/sub/package.json"]);
+    assert_eq!(reported(), server);
+    workspace.close();
+}
+
+/// A derived graph keeps what it read of files outside the code rule's scope across requests: the
+/// page that reaches an in-scope hook, and a root `app` folder's file of no source.
+#[test]
+fn a_derived_server_graph_keeps_inputs_outside_the_code_rules_scope() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let scoped = CodeRuleDslRuntime::compile(
+        json!({
+            "format": "rerail.policy/v1", "id": "server-graph-scoped", "revision": 1,
+            "mode": "steer",
+            "scope": { "include": ["app/shared/**", "src/**"], "exclude": [] },
+            "clauses": [{ "id": "server",
+                "violation": { "anchor": "witness.span", "code": "SERVER", "message": "server" },
+                "forbid": { "ast": { "language": "typescript",
+                    "file": { "package": { "serverGraph": true } }, "rule": { "kind": "program" } } } }],
+        })
+        .to_string(),
+        "json".into(),
+        CAPABILITIES.into(),
+    )
+    .unwrap();
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace.add_code_rule(&scoped, None).unwrap();
+    let file = |path: &str, language: &str, source: &str| json!({ "path": path, "language": language, "source": source });
+    let reported = || {
+        located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES))
+            .into_iter()
+            .map(|(path, _, _)| path)
+            .collect::<Vec<_>>()
+    };
+    apply_host(
+        &workspace,
+        1,
+        json!([
+            file(
+                "package.json",
+                "json",
+                r#"{ "dependencies": { "next": "16" } }"#
+            ),
+            file(
+                "app/page.tsx",
+                "tsx",
+                "import './shared/hook';\nexport default function Page() {}\n"
+            ),
+            file(
+                "app/shared/hook.ts",
+                "typescript",
+                "export const hook = 1;\n"
+            ),
+            file("app/styles.json", "json", "{}"),
+            file(
+                "src/app/page.tsx",
+                "tsx",
+                "export default function Page() {}\n"
+            ),
+        ]),
+        &[],
+    );
+    // The page outside the scope still reaches the hook; the root app folder hides src/app.
+    assert_eq!(reported(), ["app/shared/hook.ts"]);
+    // Editing the hook alone reads the page from the earlier request.
+    apply_host(
+        &workspace,
+        2,
+        json!([file(
+            "app/shared/hook.ts",
+            "typescript",
+            "export const hook = 2;\n"
+        )]),
+        &[],
+    );
+    assert_eq!(reported(), ["app/shared/hook.ts"]);
+    // Editing the src/app page alone keeps the root app folder present.
+    apply_host(
+        &workspace,
+        3,
+        json!([file(
+            "src/app/page.tsx",
+            "tsx",
+            "export default function Page() { return 2; }\n"
+        )]),
+        &[],
+    );
+    assert_eq!(reported(), ["app/shared/hook.ts"]);
+    // Removing every root app file uncovers src/app; a file of no source there hides it again.
+    apply_host(
+        &workspace,
+        4,
+        json!([]),
+        &["app/page.tsx", "app/shared/hook.ts", "app/styles.json"],
+    );
+    assert_eq!(reported(), ["src/app/page.tsx"]);
+    apply_host(
+        &workspace,
+        5,
+        json!([file("app/styles.json", "json", "{}")]),
+        &[],
+    );
+    assert!(reported().is_empty());
+    workspace.close();
+}
+
+#[test]
+fn a_server_graph_change_evaluates_again_only_the_files_whose_membership_it_changes() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let code_rule = compile(
+        "server-graph-membership",
+        json!([{ "id": "server",
+            "violation": { "anchor": "witness.span", "code": "SERVER", "message": "server" },
+            "forbid": { "ast": { "language": "typescript",
+                "file": { "package": { "serverGraph": true } }, "rule": { "kind": "program" } } } }]),
+    );
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace.add_code_rule(&code_rule, None).unwrap();
+    let file = |path: &str, language: &str, source: &str| json!({ "path": path, "language": language, "source": source });
+    let evaluated = |response: &Value| response["evaluation"]["metrics"]["files"].as_u64();
+    let first = apply_json(
+        &workspace,
+        1,
+        json!([
+            file(
+                "package.json",
+                "json",
+                r#"{ "dependencies": { "next": "16" } }"#
+            ),
+            file(
+                "app/page.tsx",
+                "tsx",
+                "import './a';\nexport default function Page() {}\n"
+            ),
+            file("app/a.ts", "typescript", "export const a = 1;\n"),
+            file("lib/b.ts", "typescript", "export const b = 1;\n"),
+            file("lib/c.ts", "typescript", "export const c = 1;\n"),
+        ]),
+    );
+    // The four sources and the manifest.
+    assert_eq!(evaluated(&first), Some(5));
+    // The page now imports a new module: the graph gains it, and no file already held changes
+    // membership but the page, which the request carries.
+    let second = apply_json(
+        &workspace,
+        2,
+        json!([
+            file(
+                "app/page.tsx",
+                "tsx",
+                "import './a';\nimport './new';\nexport default function Page() {}\n"
+            ),
+            file("app/new.ts", "typescript", "export const n = 1;\n"),
+        ]),
+    );
+    assert_eq!(evaluated(&second), Some(2));
+    let mut reported = located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES))
+        .into_iter()
+        .map(|(path, _, _)| path)
+        .collect::<Vec<_>>();
+    reported.sort();
+    assert_eq!(reported, ["app/a.ts", "app/new.ts", "app/page.tsx"]);
+    workspace.close();
+}
+
+#[test]
+fn a_syntax_error_is_no_failure_where_the_file_gates_exclude_the_file() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    // A negated outward relation: unsound under syntax errors, so an admitted errored file fails.
+    let gated = |file: Option<Value>| {
+        let mut ast = json!({ "language": "typescript",
+            "when": { "sourceType": "commonjs" },
+            "rule": { "kind": "identifier",
+                "not": { "inside": { "kind": "function_declaration", "stopBy": "end" } } } });
+        if let Some(file) = file {
+            ast["file"] = file;
+        }
+        CodeRuleDslRuntime::compile(
+            json!({
+                "format": "rerail.policy/v1", "id": "gated", "revision": 1, "mode": "steer",
+                "scope": { "include": ["**/*"], "exclude": [] },
+                "clauses": [{ "id": "gated",
+                    "violation": { "anchor": "witness.span", "code": "GATED", "message": "gated" },
+                    "forbid": { "ast": ast } }],
+            })
+            .to_string(),
+            "json".into(),
+            CAPABILITIES.into(),
+        )
+        .unwrap()
+    };
+    let failures = |compiled: &CompiledCodeRuleDsl, files: Value| {
+        let mut workspace = CodeRuleDslWorkspace::new();
+        workspace.add_code_rule(compiled, None).unwrap();
+        let response = apply_json(&workspace, 1, files);
+        workspace.close();
+        response["evaluation"]["failures"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter(|failure| failure["code"] == "source-incomplete")
+            .map(|failure| failure["path"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    let file = |path: &str, language: &str, source: &str| json!({ "path": path, "language": language, "source": source });
+    let typeless = || {
+        json!([
+            file("package.json", "json", r#"{ "name": "a" }"#),
+            // An ES module by its syntax, with a syntax error.
+            file(
+                "esm.js",
+                "javascript",
+                "import x from 'x';\nfunction f() { x(; }\n"
+            ),
+            file(
+                "cjs.js",
+                "javascript",
+                "require('x');\nfunction f() { x(; }\n"
+            ),
+        ])
+    };
+    // Node's syntax detection makes esm.js a module, which the commonjs-gated query skips.
+    let any_runtime = gated(None);
+    assert_eq!(failures(&any_runtime, typeless()), ["cjs.js"]);
+    // A file whose JSX runtime the query does not list is skipped too.
+    let preact = gated(Some(json!({ "jsxRuntime": ["react"] })));
+    assert_eq!(
+        failures(
+            &preact,
+            json!([file(
+                "a.cjs",
+                "javascript",
+                "/** @jsxImportSource preact */\nx(;\n"
+            )])
+        ),
+        Vec::<String>::new()
+    );
+}
+
+/// An errored file reads the module system and JSX runtime its candidates' file gates ask for
+/// once, however many gated candidates the syntax errors leave incomplete.
+#[test]
+fn an_errored_file_derives_its_file_gate_facts_once_for_all_gated_candidates() {
+    use crate::code_rule_dsl::matcher::{JSX_RUNTIME_DERIVATIONS, SOURCE_TYPE_DERIVATIONS};
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    const CANDIDATES: usize = 4;
+    // Negated outward relations: unsound under syntax errors, so each admitted clause fails.
+    let clauses = (0..CANDIDATES)
+        .map(|index| {
+            json!({ "id": format!("gated-{index}"),
+                "violation": { "anchor": "witness.span", "code": "GATED", "message": "gated" },
+                "forbid": { "ast": { "language": "typescript",
+                    "when": { "sourceType": "commonjs" }, "file": { "jsxRuntime": ["unknown"] },
+                    "rule": { "kind": "identifier", "regex": format!("^x{index}$"),
+                        "not": { "inside": { "kind": "function_declaration", "stopBy": "end" } } } } } })
+        })
+        .collect::<Vec<_>>();
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace
+        .add_code_rule(&compile("gated", json!(clauses)), None)
+        .unwrap();
+    SOURCE_TYPE_DERIVATIONS.set(0);
+    JSX_RUNTIME_DERIVATIONS.set(0);
+    // A typeless package leaves the module system to the file's syntax.
+    let response = apply_json(
+        &workspace,
+        1,
+        json!([
+            { "path": "package.json", "language": "json", "source": r#"{ "name": "a" }"# },
+            { "path": "cjs.js", "language": "javascript",
+                "source": "require('x');\nfunction f() { x(; }\n" },
+        ]),
+    );
+    workspace.close();
+    let incomplete = response["evaluation"]["failures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|failure| failure["code"] == "source-incomplete" && failure["path"] == "cjs.js")
+        .count();
+    assert_eq!(incomplete, CANDIDATES, "{response}");
+    assert_eq!(
+        (SOURCE_TYPE_DERIVATIONS.get(), JSX_RUNTIME_DERIVATIONS.get()),
+        (1, 1)
+    );
+}
+
+#[test]
 fn directory_reuse_restores_results_and_evidence_on_a_second_workspace() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = package_repository("directory-reuse");
     let root = directory.0.join("repo");
     let code_rule = helper_call_code_rule();
@@ -507,7 +1215,7 @@ fn assert_hidden_edit_is_read(tag: &str, edited: &str, hide: impl FnOnce(&std::p
 
 #[test]
 fn a_warm_index_reads_an_assume_unchanged_edit() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     assert_hidden_edit_is_read("assume-unchanged", "api/a.py", |root| {
         git(root, &["update-index", "--assume-unchanged", "api/a.py"]);
         std::fs::write(root.join("api/a.py"), "print(1)\n").unwrap();
@@ -516,7 +1224,7 @@ fn a_warm_index_reads_an_assume_unchanged_edit() {
 
 #[test]
 fn a_warm_index_reads_a_skip_worktree_edit() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     assert_hidden_edit_is_read("skip-worktree", "api/a.py", |root| {
         git(root, &["update-index", "--skip-worktree", "api/a.py"]);
         std::fs::write(root.join("api/a.py"), "print(1)\n").unwrap();
@@ -525,7 +1233,7 @@ fn a_warm_index_reads_a_skip_worktree_edit() {
 
 #[test]
 fn a_warm_index_reads_an_edit_under_a_case_variant_builtin_directory_when_git_ignores_case() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     assert_hidden_edit_is_read("ignorecase-builtin", "api/Tmp/a.py", |root| {
         git(root, &["config", "core.ignorecase", "true"]);
         std::fs::write(root.join("api/Tmp/a.py"), "print(1)\n").unwrap();
@@ -534,7 +1242,7 @@ fn a_warm_index_reads_an_edit_under_a_case_variant_builtin_directory_when_git_ig
 
 #[test]
 fn an_interactive_apply_runs_while_a_repository_index_plans_its_restore() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = package_repository("plan-interleave");
     let root = directory.0.join("repo");
     let code_rule = helper_call_code_rule();
@@ -627,7 +1335,7 @@ fn storage_workspace(root: &std::path::Path, store: PathBuf) -> CodeRuleDslWorks
 
 #[test]
 fn repository_index_skips_only_the_nested_checkouts_the_host_names() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = committed_repository("nested-checkouts", &[("main.py", b"print(1)\n")]);
     let root = directory.0.join("repo");
     for path in [
@@ -692,7 +1400,7 @@ fn repository_index_skips_only_the_nested_checkouts_the_host_names() {
 
 #[test]
 fn repository_index_reads_at_most_one_batch_per_call_and_keeps_no_source_resident() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     const FILES: usize = 80;
     let source = "value = 1\n".repeat(4 * 1024);
     let paths = (0..FILES)
@@ -739,7 +1447,7 @@ fn repository_index_reads_at_most_one_batch_per_call_and_keeps_no_source_residen
 
 #[test]
 fn repository_index_reports_paths_relative_to_the_storage_root() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = committed_repository(
         "rooted-index",
         &[
@@ -772,7 +1480,7 @@ fn repository_index_reports_paths_relative_to_the_storage_root() {
 
 #[test]
 fn repository_index_reports_unreadable_sources_as_failures() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let large = "print(2)\n".repeat(100);
     let directory = committed_repository(
         "index-failures",
@@ -825,7 +1533,7 @@ fn snapshot_holds(store: &std::path::Path, path: &str) -> bool {
 
 #[test]
 fn host_files_with_clean_blob_bytes_are_aliased_and_promoted() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = committed_repository(
         "host-aliases",
         &[("pkg/a.py", b"print(1)\n"), ("pkg/b.py", b"print(2)\n")],
@@ -870,7 +1578,7 @@ fn host_files_with_clean_blob_bytes_are_aliased_and_promoted() {
 
 #[test]
 fn restored_results_keep_partial_source_diagnostics() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("restored-partial-source");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let code_rule = compile(
@@ -883,7 +1591,7 @@ fn restored_results_keep_partial_source_diagnostics() {
         }]),
     );
     let files = json!([{ "path": "broken.ts", "language": "typescript",
-        "source": "debugger;\nfunction broken( {\n" }]);
+        "source": "debugger; // clean text keeps the error region under half the file\nfunction broken( {\n" }]);
     let cold = stored_workspace(&store, "/restored-partial-source", &code_rule);
     let expected = apply_json(&cold, 1, files.clone());
     assert_eq!(
@@ -906,7 +1614,7 @@ fn restored_results_keep_partial_source_diagnostics() {
 
 #[test]
 fn a_storage_prefetch_failure_keeps_dirty_files_for_the_next_revision() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("storage-prefetch-retry");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let workspace = stored_workspace(&store, "/storage-prefetch-retry", &print_code_rule());
@@ -937,7 +1645,7 @@ fn a_storage_prefetch_failure_keeps_dirty_files_for_the_next_revision() {
 
 #[test]
 fn a_recovered_file_is_replaced_with_later_revision_changes() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("storage-prefetch-replacement");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let workspace = stored_workspace(&store, "/storage-prefetch-replacement", &print_code_rule());
@@ -969,7 +1677,7 @@ fn a_recovered_file_is_replaced_with_later_revision_changes() {
 }
 #[test]
 fn package_marker_overlays_refresh_unchanged_siblings_for_json_and_buffer_requests() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("package-marker-overlays");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let code_rule = package_marker_code_rule();
@@ -1012,7 +1720,7 @@ fn package_marker_overlays_refresh_unchanged_siblings_for_json_and_buffer_reques
 
 #[test]
 fn removing_a_package_marker_never_reintroduces_the_removed_file() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("removed-package-marker");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let code_rule = compile(
@@ -1057,7 +1765,7 @@ fn removing_a_package_marker_never_reintroduces_the_removed_file() {
 
 #[test]
 fn an_edit_without_a_module_keeps_the_module_the_workspace_markers_give() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let mut workspace = CodeRuleDslWorkspace::new();
     workspace
         .add_code_rule(&package_marker_code_rule(), None)
@@ -1088,7 +1796,7 @@ fn an_edit_without_a_module_keeps_the_module_the_workspace_markers_give() {
 
 #[test]
 fn buffer_inline_and_repository_ingestion_agree_on_python_module_context() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let repository = package_repository("ingestion");
     let root = repository.0.join("repo");
     let code_rule = module_code_rule();
@@ -1130,7 +1838,7 @@ fn buffer_inline_and_repository_ingestion_agree_on_python_module_context() {
 
 #[test]
 fn identical_source_in_two_packages_never_reuses_a_wrong_result() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     for first in ["alpha", "beta"] {
         let directory = TempDir::new(&format!("packages-{first}"));
         let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
@@ -1181,7 +1889,7 @@ fn restored_results(workspace: &CodeRuleDslWorkspace) -> usize {
 
 #[test]
 fn another_engine_build_never_reuses_stored_results() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("engine-build");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let code_rule = module_code_rule();
@@ -1217,7 +1925,7 @@ fn another_engine_build_never_reuses_stored_results() {
 
 #[test]
 fn select_when_leaves_never_restore_each_others_results() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("leaves");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let code_rule = compile(
@@ -1245,58 +1953,491 @@ fn select_when_leaves_never_restore_each_others_results() {
     restarted.close();
 }
 
+/// A budget row a `rerail-ignore` covers is stored marked: restored from the content store, a
+/// row after the first still counts (the group stays over its maximum, reported at its first row)
+/// and a marked first row still silences the group's violation.
 #[test]
-fn transient_timeouts_are_retried_and_never_persisted() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
-    let directory = TempDir::new("deadline");
-    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+fn restored_budget_rows_keep_their_rerail_ignore_marks() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let code_rule = compile(
-        "deadline",
+        "budget-marks",
         json!([{
-            "id": "print", "violation": { "anchor": "witness.span", "code": "PY",
-                "message": "print" },
-            "forbid": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } }
+            "id": "budget", "violation": { "anchor": "witness.span", "code": "OVER",
+                "message": "too many debugger statements" },
+            "budget": {
+                "query": { "evidence": {
+                    "as": "usage",
+                    "query": { "ast": { "language": "typescript", "rule": {
+                        "kind": "debugger_statement" } } },
+                    "project": { "directory": "file.directory" }
+                } },
+                "group_by": ["usage.directory"],
+                "count": { "lte": 1 }
+            }
         }]),
     );
-    let file = json!([{ "path": "slow.py", "language": "python", "source": "print(1)\n" }]);
+    let ignored = "// rerail-ignore budget-marks\ndebugger;\n";
+    let reported = vec![("src/a.ts".to_owned(), "budget".to_owned(), 0)];
+    for (tag, first, second, expected) in [
+        ("later-row", "debugger;\n", ignored, reported),
+        ("reported-row", ignored, "debugger;\n", vec![]),
+    ] {
+        let directory = TempDir::new(&format!("budget-marks-{tag}"));
+        let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+        let files = json!([
+            { "path": "src/a.ts", "language": "typescript", "source": first },
+            { "path": "src/b.ts", "language": "typescript", "source": second },
+        ]);
+        let cold = stored_workspace(&store, "/budget-marks", &code_rule);
+        let result = apply_json(&cold, 1, files.clone());
+        assert_eq!(
+            result["evaluation"]["failures"],
+            json!([]),
+            "{tag}: {result}"
+        );
+        assert_eq!(
+            located(&result["evaluation"]["violations"]),
+            expected,
+            "{tag}: cold"
+        );
+        cold.close();
 
-    let workspace = stored_workspace(&store, "/deadline", &code_rule);
-    TEST_FILE_WORK_BUDGET.set(Some(0));
-    let timed_out = apply_json(&workspace, 1, file.clone());
-    TEST_FILE_WORK_BUDGET.set(None);
-    assert_eq!(timed_out["evaluation"]["violations"], json!([]));
-    assert_eq!(
-        timed_out["evaluation"]["failures"][0]["code"],
-        "budget-exceeded"
-    );
+        let restarted = stored_workspace(&store, "/budget-marks", &code_rule);
+        let warm = apply_json(&restarted, 1, files);
+        assert_eq!(
+            restored_results(&restarted),
+            2,
+            "{tag}: both files' rows come from the store"
+        );
+        assert_eq!(warm["evaluation"]["failures"], json!([]), "{tag}: {warm}");
+        assert_eq!(
+            located(&warm["evaluation"]["violations"]),
+            expected,
+            "{tag}: restored"
+        );
+        restarted.close();
+    }
+}
 
-    let retried = apply_json(&workspace, 2, file.clone());
-    assert_eq!(
-        located(&retried["evaluation"]["violations"]),
-        vec![("slow.py".to_owned(), "print".to_owned(), 0)],
-        "an unchanged file whose evaluation timed out is evaluated again"
+/// A file's clauses share a work ceiling: once the clauses before it spent it, a clause fails as
+/// a coverage gap (`FILE_CLAUSE_WORK_EXCEEDED`) instead of running, so a file's total work is
+/// bounded however many clauses run on it. That failure is the other clauses' doing, not the
+/// clause's verdict on the content: the workspace keeps it, the store never does, and a later
+/// workspace evaluates the clause again.
+#[test]
+fn a_file_s_clauses_share_a_work_ceiling_whose_failures_are_never_stored() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("clause-ceiling");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    let print = |id: &str| {
+        json!({
+            "id": id, "violation": { "anchor": "witness.span", "code": "PY", "message": "print" },
+            "forbid": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } }
+        })
+    };
+    let code_rule = compile(
+        "clause-ceiling",
+        json!([print("a"), print("b"), print("c")]),
     );
-    assert_eq!(retried["evaluation"]["failures"], json!([]));
+    let file = json!([{ "path": "ceiling.py", "language": "python", "source": "print(1)\n" }]);
+    let workspace = stored_workspace(&store, "/clause-ceiling", &code_rule);
+    // Every clause polls its allowance at least once: one unit is spent by the first.
+    TEST_CLAUSE_WORK_CEILING.set(Some(1));
+    let capped = apply_json(&workspace, 1, file.clone());
+    TEST_CLAUSE_WORK_CEILING.set(None);
+    let failures = capped["evaluation"]["failures"].as_array().unwrap().clone();
+    assert!(
+        failures
+            .iter()
+            .all(|failure| failure["message"] == FILE_CLAUSE_WORK_EXCEEDED),
+        "{capped}"
+    );
+    assert!(
+        failures.iter().any(|failure| failure["clauseId"] == "c"),
+        "the last clause finds the ceiling spent: {capped}"
+    );
+    assert_eq!(
+        failures.len() + located(&capped["evaluation"]["violations"]).len(),
+        3,
+        "{capped}"
+    );
+    {
+        let state = workspace.state.lock().unwrap();
+        let file = &state.files["ceiling.py"];
+        assert!(!file.transient_failure);
+        assert_eq!(file.unstored.len(), failures.len());
+    }
+    // The same content, in the same workspace, is not evaluated again.
+    let again = apply_json(&workspace, 2, file.clone());
+    assert_eq!(
+        again["evaluation"]["failures"],
+        capped["evaluation"]["failures"]
+    );
     workspace.close();
 
-    let timed_out_again = stored_workspace(&store, "/deadline-restart", &code_rule);
-    TEST_FILE_WORK_BUDGET.set(Some(0));
-    apply_json(&timed_out_again, 1, file.clone());
-    TEST_FILE_WORK_BUDGET.set(None);
-    timed_out_again.close();
-    let restarted = stored_workspace(&store, "/deadline-restart", &code_rule);
+    let restarted = stored_workspace(&store, "/clause-ceiling", &code_rule);
     let warm = apply_json(&restarted, 1, file);
     assert_eq!(
-        located(&warm["evaluation"]["violations"]),
-        vec![("slow.py".to_owned(), "print".to_owned(), 0)],
-        "a timed-out result is never restored as the content's verdict"
+        restored_results(&restarted),
+        3 - failures.len(),
+        "only the clauses that ran are restored: {warm}"
+    );
+    assert_eq!(warm["evaluation"]["failures"], json!([]), "{warm}");
+    assert_eq!(
+        located(&warm["evaluation"]["violations"]).len(),
+        3,
+        "{warm}"
     );
     restarted.close();
 }
 
+/// A clause whose required text the file lacks matches nothing and costs nothing: it answers even
+/// after the clauses before it spent the file's clause-work ceiling, instead of failing.
+#[test]
+fn a_clause_with_nothing_to_match_answers_past_the_ceiling() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let clause = |id: &str, call: &str| {
+        json!({
+            "id": id, "violation": { "anchor": "witness.span", "code": "PY", "message": "call" },
+            "forbid": { "ast": { "language": "python", "rule": { "pattern": format!("{call}($A)") } } }
+        })
+    };
+    let code_rule = compile(
+        "nothing-to-match",
+        json!([
+            clause("print", "print"),
+            clause("absent", "never_called_anywhere")
+        ]),
+    );
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace.add_code_rule(&code_rule, None).unwrap();
+    TEST_CLAUSE_WORK_CEILING.set(Some(1));
+    let applied = apply_json(
+        &workspace,
+        1,
+        json!([{ "path": "needle.py", "language": "python", "source": "print(1)\n" }]),
+    );
+    TEST_CLAUSE_WORK_CEILING.set(None);
+    let failed = applied["evaluation"]["failures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|failure| failure["clauseId"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert!(!failed.contains(&"absent".to_owned()), "{applied}");
+    workspace.close();
+}
+
+/// Running out of work in a pass over some of a file's clauses is no verdict on the content: run
+/// with the others, the clauses before it would have left tables and verdicts built. Clause `b` is
+/// evaluated alone (`a`'s result is restored) and runs out: that failure is never stored, and a
+/// later workspace evaluates `b` again.
+#[test]
+fn running_out_of_work_in_a_pass_over_some_clauses_is_never_stored() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("partial-pass");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    // `a`, a regex clause with one match, polls its allowance once, before `b` runs.
+    let code_rule = compile(
+        "partial-pass",
+        json!([
+            {
+                "id": "a", "violation": { "anchor": "witness.span", "code": "PY", "message": "print" },
+                "forbid": { "regex": { "source": "file.content", "pattern": "print" } }
+            },
+            {
+                "id": "b", "violation": { "anchor": "witness.span", "code": "PY", "message": "print" },
+                "forbid": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } }
+            }
+        ]),
+    );
+    let file = json!([{ "path": "partial.py", "language": "python", "source": "print(1)\n" }]);
+    // `a` runs and is stored; the ceiling stops `b`, which is not.
+    let first = stored_workspace(&store, "/partial-pass", &code_rule);
+    TEST_CLAUSE_WORK_CEILING.set(Some(1));
+    let capped = apply_json(&first, 1, file.clone());
+    TEST_CLAUSE_WORK_CEILING.set(None);
+    assert_eq!(
+        capped["evaluation"]["failures"][0]["message"], FILE_CLAUSE_WORK_EXCEEDED,
+        "{capped}"
+    );
+    first.close();
+    // `a` is restored; `b`, evaluated alone, runs out of its allowance.
+    let partial = stored_workspace(&store, "/partial-pass", &code_rule);
+    TEST_CLAUSE_WORK_BUDGET.set(Some(0));
+    let ran_out = apply_json(&partial, 1, file.clone());
+    TEST_CLAUSE_WORK_BUDGET.set(None);
+    assert_eq!(restored_results(&partial), 1, "{ran_out}");
+    assert_eq!(
+        ran_out["evaluation"]["failures"][0]["clauseId"], "b",
+        "{ran_out}"
+    );
+    partial.close();
+    let later = stored_workspace(&store, "/partial-pass", &code_rule);
+    let warm = apply_json(&later, 1, file);
+    assert_eq!(warm["evaluation"]["failures"], json!([]), "{warm}");
+    assert_eq!(
+        located(&warm["evaluation"]["violations"]).len(),
+        2,
+        "{warm}"
+    );
+    later.close();
+}
+
+/// A clause that fails a file for its syntax (unsound under errors) fails it whatever ran before
+/// it: that failure is the content's verdict, stored and restored like any other.
+#[test]
+fn a_syntax_failure_is_stored_and_restored() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("syntax-stored");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    let code_rule = compile(
+        "syntax-stored",
+        json!([{
+            "id": "unsound", "violation": { "anchor": "witness.span", "code": "U", "message": "u" },
+            "forbid": { "ast": { "language": "python", "rule": {
+                "kind": "call", "not": { "follows": { "kind": "import_statement", "stopBy": "end" } } } } }
+        }]),
+    );
+    let file =
+        json!([{ "path": "broken.py", "language": "python", "source": "print(3)\ndef (:\n" }]);
+    let workspace = stored_workspace(&store, "/syntax-stored", &code_rule);
+    let cold = apply_json(&workspace, 1, file.clone());
+    assert_eq!(
+        cold["evaluation"]["failures"][0]["code"], "source-incomplete",
+        "{cold}"
+    );
+    assert!(
+        workspace.state.lock().unwrap().files["broken.py"]
+            .unstored
+            .is_empty()
+    );
+    workspace.close();
+    let restarted = stored_workspace(&store, "/syntax-stored", &code_rule);
+    let warm = apply_json(&restarted, 1, file);
+    assert_eq!(restored_results(&restarted), 1, "{warm}");
+    assert_eq!(
+        warm["evaluation"]["failures"], cold["evaluation"]["failures"],
+        "{warm}"
+    );
+    restarted.close();
+}
+
+/// A file whose shared work (its parse, its tape's restore) runs out keeps no result: how much of
+/// that work an evaluation does depends on what an earlier one stored (a stored tape skips the
+/// parse), so the failure is not the content's verdict. It is transient: evaluated again by the
+/// next apply, never stored.
+#[test]
+fn a_file_whose_shared_work_runs_out_is_evaluated_again() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("deadline");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    let print = |id: &str| {
+        compile(
+            id,
+            json!([{
+                "id": id, "violation": { "anchor": "witness.span", "code": "PY",
+                    "message": "print" },
+                "forbid": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } }
+            }]),
+        )
+    };
+    let file = json!([{ "path": "slow.py", "language": "python", "source": "print(1)\n" }]);
+    let printed = vec![("slow.py".to_owned(), "print".to_owned(), 0)];
+
+    // The parse runs out.
+    let workspace = stored_workspace(&store, "/deadline", &print("print"));
+    TEST_FILE_WORK_BUDGET.set(Some(0));
+    let ran_out = apply_json(&workspace, 1, file.clone());
+    TEST_FILE_WORK_BUDGET.set(None);
+    assert_eq!(ran_out["evaluation"]["violations"], json!([]));
+    assert_eq!(
+        ran_out["evaluation"]["failures"][0]["code"], "file-budget-exceeded",
+        "{ran_out}"
+    );
+    assert!(workspace.state.lock().unwrap().files["slow.py"].transient_failure);
+    let again = apply_json(&workspace, 2, file.clone());
+    assert_eq!(
+        located(&again["evaluation"]["violations"]),
+        printed,
+        "{again}"
+    );
+    workspace.close();
+
+    // Another rule set reads the file's stored tape: its restore runs out instead.
+    let other = print("other");
+    let restoring = stored_workspace(&store, "/deadline-restore", &other);
+    TEST_FILE_WORK_BUDGET.set(Some(0));
+    let ran_out = apply_json(&restoring, 1, file.clone());
+    TEST_FILE_WORK_BUDGET.set(None);
+    assert_eq!(
+        ran_out["evaluation"]["failures"][0]["message"], "file tape restoration failed",
+        "{ran_out}"
+    );
+    assert!(restoring.state.lock().unwrap().files["slow.py"].transient_failure);
+    restoring.close();
+    let restarted = stored_workspace(&store, "/deadline-restore", &other);
+    let warm = apply_json(&restarted, 1, file);
+    assert_eq!(warm["evaluation"]["failures"], json!([]), "{warm}");
+    assert_eq!(
+        located(&warm["evaluation"]["violations"]),
+        vec![("slow.py".to_owned(), "other".to_owned(), 0)],
+        "{warm}"
+    );
+    restarted.close();
+}
+
+/// A clause that runs out of work fails alone: the clauses before it keep their violations, and
+/// the clauses after it still run under allowances of their own. Running out of its own allowance
+/// depends on the content alone, so the result is the content's verdict: persisted, and restored
+/// by a later workspace instead of paid for again. Before, one shared file budget failed every
+/// clause of the file, dropped the violations of those that had finished, and was re-run on every
+/// apply.
+#[test]
+fn a_clause_that_runs_out_of_work_fails_alone() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("clause-allowance");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    let print = |id: &str| {
+        json!({
+            "id": id, "violation": { "anchor": "witness.span", "code": "PY", "message": "print" },
+            "forbid": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } }
+        })
+    };
+    // Every element reads each one before it: quadratic in the list, with no text to rule a
+    // file out.
+    let costly = json!({
+        "id": "costly", "violation": { "anchor": "witness.span", "code": "SLOW", "message": "slow" },
+        "forbid": { "ast": { "language": "python", "rule": {
+            "kind": "integer", "follows": { "stopBy": "end", "regex": "^[a-z]{40}$" } } } }
+    });
+    let code_rule = compile(
+        "clause-allowance",
+        json!([print("before"), costly, print("after")]),
+    );
+    let numbers = (0..3_000)
+        .map(|n| n.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let file = json!([{ "path": "big.py", "language": "python",
+        "source": format!("print(1)\nx = [{numbers}]\n") }]);
+    let workspace = stored_workspace(&store, "/clause-allowance", &code_rule);
+    TEST_CLAUSE_WORK_BUDGET.set(Some(20));
+    let evaluated = apply_json(&workspace, 1, file.clone());
+    TEST_CLAUSE_WORK_BUDGET.set(None);
+    let clauses = |values: &Value| {
+        let mut clauses = values
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value["clauseId"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        clauses.sort();
+        clauses
+    };
+    assert_eq!(
+        clauses(&evaluated["evaluation"]["violations"]),
+        ["after", "before"],
+        "{evaluated}"
+    );
+    let failures = evaluated["evaluation"]["failures"].as_array().unwrap();
+    assert_eq!(failures.len(), 1, "{evaluated}");
+    assert_eq!(
+        [
+            &failures[0]["clauseId"],
+            &failures[0]["code"],
+            &failures[0]["message"],
+            &failures[0]["path"]
+        ],
+        [
+            &json!("costly"),
+            &json!("budget-exceeded"),
+            &json!(CLAUSE_WORK_BUDGET_EXCEEDED),
+            &json!("big.py")
+        ],
+    );
+    assert!(
+        !workspace.state.lock().unwrap().files["big.py"].transient_failure,
+        "running out of work is the content's verdict, not a transient failure"
+    );
+    workspace.close();
+
+    // A later workspace, under the full allowance, reads every clause's stored result back,
+    // the costly clause's failure included, instead of evaluating the file again.
+    let restarted = stored_workspace(&store, "/clause-allowance", &code_rule);
+    let warm = apply_json(&restarted, 1, file);
+    assert_eq!(restored_results(&restarted), 3, "{warm}");
+    assert_eq!(
+        warm["evaluation"]["failures"], evaluated["evaluation"]["failures"],
+        "{warm}"
+    );
+    restarted.close();
+}
+
+/// A utility verdict a clause computed while its allowance ran out is not remembered for the
+/// clauses after it: the second clause reads the same utility at the same node and either finds
+/// its violation or fails, never reports nothing. Both share a `define`'s utility, so a verdict
+/// one remembers the other reads.
+#[test]
+fn a_verdict_cut_short_by_a_spent_allowance_is_not_remembered_for_later_clauses() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("clause-allowance-memo");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    // A double negation of the utility: the anchor plan selects by `kind` alone, so a clause's
+    // allowance is spent matching the utility, not selecting its roots.
+    let reads = |id: &str| {
+        json!({
+            "id": id, "violation": { "anchor": "witness.span", "code": "LATE", "message": "late" },
+            "forbid": { "ast": { "language": "python", "rule": {
+                "kind": "list", "not": { "not": { "matches": "late" } } } } }
+        })
+    };
+    // A list holding a five-digit number, which only its 10,000th element is: no literal to
+    // search for, so the walk reads the elements one by one.
+    let shared = json!({ "id": "shared", "define": { "language": "python", "utils": {
+        "late": { "kind": "list", "has": { "stopBy": "end", "kind": "integer", "regex": "^[0-9]{5}$" } }
+    } } });
+    let code_rule = compile(
+        "clause-allowance-memo",
+        json!([shared, reads("first"), reads("second")]),
+    );
+    let numbers = (0..10_001)
+        .map(|n| n.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let file = json!([{ "path": "late.py", "language": "python", "source": format!("x = [{numbers}]\n") }]);
+    let workspace = stored_workspace(&store, "/clause-allowance-memo", &code_rule);
+    TEST_CLAUSE_WORK_BUDGET.set(Some(5));
+    let evaluated = apply_json(&workspace, 1, file);
+    TEST_CLAUSE_WORK_BUDGET.set(None);
+    let named = |list: &Value| {
+        list.as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["clauseId"] == "second")
+            .count()
+    };
+    assert_eq!(
+        evaluated["evaluation"]["failures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["clauseId"] == "first")
+            .count(),
+        1,
+        "the first clause runs out: {evaluated}"
+    );
+    assert_eq!(
+        named(&evaluated["evaluation"]["violations"]) + named(&evaluated["evaluation"]["failures"]),
+        1,
+        "the second clause reports its violation or fails, never nothing: {evaluated}"
+    );
+    workspace.close();
+}
+
 #[test]
 fn an_evaluation_that_finishes_past_an_unobserved_deadline_is_kept() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("unobserved-deadline");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let code_rule = compile(
@@ -1333,9 +2474,202 @@ fn an_evaluation_that_finishes_past_an_unobserved_deadline_is_kept() {
     restarted.close();
 }
 
+/// A wall-clock deadline (the inline fast path's budget) passes after the first clause's last
+/// poll: the second clause is skipped, and the evaluation must be known cut short (`observed`,
+/// which makes the inline path decline its result) and transient, so that the background apply
+/// evaluates the content again. Before, the check between clauses read the clock without
+/// recording what it found, so the cut-short result read as complete.
+#[test]
+fn an_evaluation_whose_deadline_passes_between_clauses_is_known_cut_short() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let print = |id: &str| {
+        json!({
+            "id": id, "violation": { "anchor": "witness.span", "code": "PY", "message": "print" },
+            "forbid": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } }
+        })
+    };
+    let code_rule = compile("inline-deadline", json!([print("first"), print("second")]));
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace.add_code_rule(&code_rule, None).unwrap();
+    let closed = StdArc::clone(&workspace.closed);
+    let mut state = workspace.state.lock().unwrap();
+    let WorkspaceState {
+        code_rules,
+        candidate_sets,
+        grammars,
+        ..
+    } = &mut *state;
+    let mut file = super::ingest::make_file(
+        FileInput {
+            path: "late.py".into(),
+            language: "python".into(),
+            source: StdArc::new("print(1)\n".to_owned()),
+            module: None,
+            package: None,
+        },
+        1,
+        code_rules,
+        candidate_sets,
+    );
+    let budget =
+        crate::code_rule_dsl::budget::MatchBudget::until(&closed, Duration::from_secs(600));
+    TEST_DEADLINE_PASSES_AT.set(Some("clause-done"));
+    super::evaluate::evaluate_file(
+        &mut file, code_rules, grammars, &closed, false, &budget, &mut None,
+    )
+    .unwrap();
+    TEST_DEADLINE_PASSES_AT.set(None);
+    assert_eq!(
+        file.failures.len(),
+        1,
+        "the second clause was skipped: {:?}",
+        file.failures
+    );
+    assert!(
+        budget.observed(),
+        "the cut-short evaluation reads as complete"
+    );
+    assert!(file.transient_failure, "the cut-short evaluation is kept");
+    drop(state);
+    workspace.close();
+}
+
+/// The file's budget is spent before a clause whose required text the file lacks: that clause
+/// matches nothing and costs nothing, so it answers instead of failing for the file's work.
+#[test]
+fn a_clause_with_nothing_to_match_answers_past_the_file_budget() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let clause = |id: &str, call: &str| {
+        json!({
+            "id": id, "violation": { "anchor": "witness.span", "code": "PY", "message": "call" },
+            "forbid": { "ast": { "language": "python", "rule": { "pattern": format!("{call}($A)") } } }
+        })
+    };
+    let code_rule = compile(
+        "nothing-to-match-late",
+        json!([
+            clause("print", "print"),
+            clause("absent", "never_called_anywhere")
+        ]),
+    );
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace.add_code_rule(&code_rule, None).unwrap();
+    let closed = StdArc::clone(&workspace.closed);
+    let mut state = workspace.state.lock().unwrap();
+    let WorkspaceState {
+        code_rules,
+        candidate_sets,
+        grammars,
+        ..
+    } = &mut *state;
+    let mut file = super::ingest::make_file(
+        FileInput {
+            path: "late.py".into(),
+            language: "python".into(),
+            source: StdArc::new("print(1)\n".to_owned()),
+            module: None,
+            package: None,
+        },
+        1,
+        code_rules,
+        candidate_sets,
+    );
+    let budget =
+        crate::code_rule_dsl::budget::MatchBudget::until(&closed, Duration::from_secs(600));
+    TEST_DEADLINE_PASSES_AT.set(Some("clause-done"));
+    super::evaluate::evaluate_file(
+        &mut file, code_rules, grammars, &closed, false, &budget, &mut None,
+    )
+    .unwrap();
+    TEST_DEADLINE_PASSES_AT.set(None);
+    assert!(file.failures.is_empty(), "{:?}", file.failures);
+    drop(state);
+    workspace.close();
+}
+
+/// Two clauses read the same lazily built per-file table (`file_table` / `file_php_names`). The
+/// first runs out of its own allowance while building it: that is no verdict on the table, so
+/// the second, under an allowance of its own, builds it again and reports its violation.
+fn a_table_build_cut_short_by_one_allowance_is_built_again(
+    language: &str,
+    path: &str,
+    source: String,
+    rule: Value,
+) {
+    let clause = |id: &str| {
+        json!({
+            "id": id, "violation": { "anchor": "witness.span", "code": "R", "message": "r" },
+            "forbid": { "ast": { "language": language, "rule": rule } }
+        })
+    };
+    let code_rule = compile("table-rebuild", json!([clause("first"), clause("second")]));
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace.add_code_rule(&code_rule, None).unwrap();
+    // Enough for the first clause to reach the build, not to finish it.
+    TEST_NEXT_CLAUSE_WORK_BUDGET.set(Some(8));
+    let applied = apply_json(
+        &workspace,
+        1,
+        json!([{ "path": path, "language": language, "source": source }]),
+    );
+    TEST_NEXT_CLAUSE_WORK_BUDGET.set(None);
+    let of = |list: &Value, clause: &str| {
+        list.as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["clauseId"] == clause)
+            .count()
+    };
+    let first = applied["evaluation"]["failures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["clauseId"] == "first")
+        .map(|item| item["message"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        first,
+        [json!(UtilLimit::Scope.message())],
+        "the first clause runs out building the table: {applied}"
+    );
+    assert_eq!(
+        (
+            of(&applied["evaluation"]["violations"], "second"),
+            of(&applied["evaluation"]["failures"], "second")
+        ),
+        (1, 0),
+        "the second clause builds the table again: {applied}"
+    );
+    workspace.close();
+}
+
+#[test]
+fn a_scope_table_cut_short_by_one_allowance_is_built_again() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    // Thousands of statements for the build to walk, and one identifier for the clauses to read.
+    a_table_build_cut_short_by_one_allowance_is_built_again(
+        "python",
+        "table.py",
+        format!("{}print(1)\n", "1\n".repeat(5_000)),
+        json!({ "kind": "identifier", "regex": "^print$", "resolves": { "global": ["print"] } }),
+    );
+}
+
+#[test]
+fn php_names_cut_short_by_one_allowance_are_built_again() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    a_table_build_cut_short_by_one_allowance_is_built_again(
+        "php",
+        "names.php",
+        format!("<?php\n{}random_int(1, 2);\n", "1;\n".repeat(5_000)),
+        json!({ "kind": "function_call_expression",
+            "has": { "field": "function", "resolves": { "import": ["random_int"] } } }),
+    );
+}
+
 #[test]
 fn an_ast_evaluation_that_finishes_past_an_unobserved_deadline_is_kept() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("unobserved-ast-deadline");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let code_rule = compile(
@@ -1379,7 +2713,7 @@ fn an_ast_evaluation_that_finishes_past_an_unobserved_deadline_is_kept() {
 /// they lack.
 #[test]
 fn a_registered_code_rule_reports_ast_violations_and_missing_llm_capability() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let code_rule = compile(
         "ast-and-llm",
         json!([
@@ -1436,7 +2770,7 @@ fn every_engine_limit_failure_round_trips_through_the_local_result_codec() {
 
 #[test]
 fn paged_results_equal_complete_results_for_each_violations_and_capture_anchors() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("paging");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let rule = json!({ "kind": "comparison_operator",
@@ -1512,7 +2846,7 @@ fn stored_local_results(store: &std::path::Path) -> Vec<(String, String, i64, i6
 
 #[test]
 fn stored_local_results_and_their_read_back_are_unchanged_by_eviction_round_trips() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("round-trips");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let code_rule = compile(
@@ -1617,9 +2951,7 @@ fn resolve(workspace: &CodeRuleDslWorkspace, reference: &str) -> Result<Value> {
 
 #[test]
 fn selector_index_misses_keep_input_budget_failures() {
-    let _slot = WORKSPACE_TEST_SLOT
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("selector-limits");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let files = json!([{ "path": "plain.py", "language": "python", "source": "value = 1\n" }]);
@@ -1657,7 +2989,11 @@ fn selector_index_misses_keep_input_budget_failures() {
     let fresh = apply_json(&unstored, 1, files);
     unstored.close();
     assert_eq!(
-        applied["evaluation"]["failures"][0]["message"], "file input budget exceeded",
+        [
+            &applied["evaluation"]["failures"][0]["code"],
+            &applied["evaluation"]["failures"][0]["message"]
+        ],
+        [&json!("input-limit"), &json!("file input budget exceeded")],
         "{applied}"
     );
     assert_eq!(
@@ -1668,7 +3004,7 @@ fn selector_index_misses_keep_input_budget_failures() {
 
 #[test]
 fn node_references_resolve_through_the_store_and_refuse_stale_versions() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("references");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let workspace = stored_workspace(&store, "/references", &print_code_rule());
@@ -1762,7 +3098,7 @@ fn node_references_resolve_through_the_store_and_refuse_stale_versions() {
 
 #[test]
 fn javascript_and_php_documents_have_distinct_persisted_grammars() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("javascript-php-grammars");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let code_rule = compile(
@@ -1803,7 +3139,7 @@ fn javascript_and_php_documents_have_distinct_persisted_grammars() {
 
 #[test]
 fn an_empty_resident_document_resolves_without_a_store() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let mut workspace = CodeRuleDslWorkspace::new();
     workspace.add_code_rule(&print_code_rule(), None).unwrap();
     apply_json(
@@ -1821,7 +3157,7 @@ fn an_empty_resident_document_resolves_without_a_store() {
 
 #[test]
 fn evicted_resident_and_unstored_workspaces_publish_the_same_results() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("eviction");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let code_rule = print_code_rule();
@@ -1910,7 +3246,7 @@ fn evicted_resident_and_unstored_workspaces_publish_the_same_results() {
 
 #[test]
 fn an_evicted_workspace_pages_its_complete_results() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("complete-pages");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let workspace = stored_workspace(&store, "/complete-pages", &print_code_rule());
@@ -1964,7 +3300,7 @@ fn an_evicted_workspace_pages_its_complete_results() {
 
 #[test]
 fn package_context_refresh_visits_only_affected_paths_across_index_batches() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     const FILES: usize = 2_000;
     const BATCH: usize = 32;
     let code_rule = compile(
@@ -2016,7 +3352,7 @@ fn package_context_refresh_visits_only_affected_paths_across_index_batches() {
 #[test]
 
 fn repository_index_carries_each_verified_blob_hash_to_publication() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = package_repository("blob-hash-once");
     let root = directory.0.join("repo");
     let code_rule = helper_call_code_rule();
@@ -2045,7 +3381,7 @@ fn resident_module(workspace: &CodeRuleDslWorkspace, path: &str) -> Option<Strin
 
 #[test]
 fn a_bulk_restored_package_marker_names_unhosted_files_and_its_removal_rederives_siblings() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = package_repository("restored-marker");
     let root = directory.0.join("repo");
     let code_rule = module_code_rule();
@@ -2108,7 +3444,7 @@ fn a_bulk_restored_package_marker_names_unhosted_files_and_its_removal_rederives
 
 #[test]
 fn a_package_marker_offered_inline_names_unhosted_siblings() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let code_rule = compile(
         "inline-marker",
         json!([{
@@ -2199,7 +3535,7 @@ fn undecodable_tapes_leave_the_search_index_backlog_without_pinning_its_cursor()
     use crate::code_rule_dsl::transducer::{POSITIONAL_INDEX_VERSION, kind_index_token};
     use crate::content_store::{SearchKindLookup, StoredKindPresence};
     use std::sync::atomic::AtomicBool;
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("undecodable-backlog");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let mut undecodable = Vec::new();
@@ -2324,7 +3660,7 @@ fn backdated_repository(tag: &str, files: &[(&str, &[u8])]) -> TempDir {
 /// restore does not trust discovery's clean status for it.
 #[test]
 fn a_warm_index_reads_a_same_size_edit_that_keeps_its_mtime_after_discovery() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = backdated_repository(
         "restore-stat",
         &[("api/a.py", b"pront(1)\n"), ("lib/b.py", b"x = 2\n")],
@@ -2372,7 +3708,7 @@ fn a_warm_index_reads_a_same_size_edit_that_keeps_its_mtime_after_discovery() {
 /// neither converted checkout holds, so each warm index restores only results of its own bytes.
 #[test]
 fn checkouts_sharing_a_store_restore_only_results_of_their_own_checkout_bytes() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let code_rule = compile(
         "checkout-bytes",
         json!([
@@ -2456,9 +3792,7 @@ fn checkouts_sharing_a_store_restore_only_results_of_their_own_checkout_bytes() 
 
 #[test]
 fn selector_indexes_skip_only_error_free_tapes_that_cannot_match() {
-    let _slot = WORKSPACE_TEST_SLOT
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("selectors");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
     let file =
@@ -2508,4 +3842,454 @@ fn selector_indexes_skip_only_error_free_tapes_that_cannot_match() {
     assert!(!skipped(&narrowed, "broken.py"));
     assert!(!skipped(&narrowed, "lambda.py"));
     narrowed.close();
+}
+
+/// A Next package with no server graph (one of its folders cannot be read on disk, or a file set
+/// holds more sources than `module_graph::MAX_GRAPH_FILES`) gives its files no membership:
+/// neither `serverGraph: true` nor `serverGraph: false` holds, rather than every file outside.
+#[test]
+fn a_package_without_a_server_graph_gives_its_files_no_membership() {
+    let next = r#"{ "dependencies": { "next": "16" } }"#;
+    let page = "export default function Page() {}\n";
+    // The file-set path: one source past the bound.
+    let mut files = vec![
+        json!({ "path": "package.json", "language": "json", "source": next }),
+        json!({ "path": "app/page.tsx", "language": "tsx", "source": page }),
+    ];
+    files.extend((0..20_000).map(|index| {
+        json!({ "path": format!("lib/m{index}.ts"), "language": "typescript",
+            "source": "export {};\n" })
+    }));
+    let snapshot = json!({ "facts": [], "files": files,
+        "format": "rerail.repository-snapshot/v1", "revision": 0 });
+    let (snapshot, _) =
+        crate::code_rule_dsl::eval::parse_snapshot(&snapshot.to_string(), true).unwrap();
+    let package = snapshot.files[1]
+        .package
+        .as_ref()
+        .expect("the page's manifest");
+    assert_eq!(package.in_server_graph("app/page.tsx"), None);
+    // The disk path: a folder of the package cannot be read.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = TempDir::new("unread-server-graph");
+        let root = directory.0.join("repo");
+        for (path, source) in [
+            ("package.json", next),
+            ("app/page.tsx", page),
+            ("app/locked/x.ts", "export {};\n"),
+        ] {
+            let file = root.join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, source).unwrap();
+        }
+        let membership = || {
+            crate::code_rule_dsl::package_manifest::Manifests::new(root.clone())
+                .reading_server_graphs(true)
+                .of_file(&root.join("app/page.tsx"))
+                .expect("the page's manifest")
+                .in_server_graph("app/page.tsx")
+        };
+        let locked = root.join("app/locked");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let unread = membership();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(unread, None);
+        assert_eq!(membership(), Some(true));
+    }
+}
+
+/// A folder below the root whose path resolves outside it (a committed `vendor -> /home/user`)
+/// holds no manifest: the lookup reads nothing there and goes on to the folders above it.
+#[cfg(unix)]
+#[test]
+fn a_symlinked_folder_pointing_outside_the_root_holds_no_manifest() {
+    let directory = TempDir::new("manifest-outside-root");
+    let root = directory.0.join("repo");
+    let outside = directory.0.join("outside");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(outside.join("app")).unwrap();
+    std::fs::write(
+        outside.join("package.json"),
+        r#"{ "type": "module", "dependencies": { "next": "16" } }"#,
+    )
+    .unwrap();
+    std::fs::write(outside.join("x.js"), "").unwrap();
+    std::os::unix::fs::symlink(&outside, root.join("vendor")).unwrap();
+    // A symlink to a folder inside the root still reads its manifest.
+    std::fs::create_dir_all(root.join("inner")).unwrap();
+    std::fs::write(root.join("inner/package.json"), r#"{ "type": "module" }"#).unwrap();
+    std::os::unix::fs::symlink(root.join("inner"), root.join("alias")).unwrap();
+    let package = |path: &str| {
+        crate::code_rule_dsl::package_manifest::Manifests::new(root.clone())
+            .reading_server_graphs(true)
+            .of_file(&root.join(path))
+            .map(|manifest| manifest.to_wire())
+    };
+    assert_eq!(package("vendor/x.js"), None);
+    assert_eq!(
+        package("alias/x.js"),
+        Some(json!({ "folder": "alias", "type": "module" }))
+    );
+    std::fs::write(root.join("package.json"), "{}").unwrap();
+    assert_eq!(
+        package("vendor/x.js"),
+        Some(json!({ "folder": "", "type": "unset" }))
+    );
+}
+
+/// A clean tree's reuse follows the configuration a nested package's `extends` reaches outside
+/// it: editing the base's `jsxImportSource` leaves the tree's key as it was, but each restored
+/// file's results are keyed by its context (`file_context`), whose package digest carries the
+/// `jsxImportSource` read again, so the file is evaluated again rather than restored.
+#[test]
+fn a_reused_directory_follows_a_configuration_base_outside_it() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let code_rule = compile(
+        "jsx-other",
+        json!([{
+            "id": "other",
+            "violation": { "anchor": "witness.span", "code": "OTHER", "message": "other JSX" },
+            "forbid": { "ast": { "language": "typescript",
+                "file": { "jsxRuntime": ["other"] }, "rule": { "kind": "program" } } }
+        }]),
+    );
+    let base = |source: &str| {
+        format!("{{ \"compilerOptions\": {{ \"jsxImportSource\": \"{source}\" }} }}\n")
+    };
+    let preact = base("preact");
+    let directory = backdated_repository(
+        "reuse-outside-base",
+        &[
+            ("tsconfig.base.json", preact.as_bytes()),
+            (
+                "packages/web/package.json",
+                br#"{ "dependencies": { "react": "19" } }"#,
+            ),
+            (
+                "packages/web/tsconfig.json",
+                br#"{ "extends": "../../tsconfig.base.json" }"#,
+            ),
+            ("packages/web/src/a.ts", b"export const a = 1;\n"),
+        ],
+    );
+    let root = directory.0.join("repo");
+    let index = || {
+        let mut workspace = storage_workspace(&root, directory.store());
+        workspace.add_code_rule(&code_rule, None).unwrap();
+        let indexed = index_workspace(&workspace);
+        let violations = located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES));
+        workspace.completion_task().compute().unwrap();
+        workspace.close();
+        (indexed, violations)
+    };
+    let other = vec![("packages/web/src/a.ts".to_owned(), "other".to_owned(), 0)];
+    let (indexed, violations) = index();
+    assert_eq!(violations, other, "{indexed}");
+    let (indexed, violations) = index();
+    assert_eq!(violations, other, "{indexed}");
+    assert_eq!(indexed["restoredFiles"], json!(1), "{indexed}");
+    // The edit dirties only the root tree; `packages/` stays clean.
+    std::fs::write(root.join("tsconfig.base.json"), base("react")).unwrap();
+    let (indexed, violations) = index();
+    assert_eq!(violations, vec![], "{indexed}");
+    assert_eq!(indexed["restoredFiles"], json!(0), "{indexed}");
+}
+
+/// A request that fails after the workspace derived its package context (here, the store refuses
+/// a removal that is no repository path) leaves that context as it was: later server graphs read
+/// only what the workspace accepted.
+#[test]
+fn a_request_that_fails_partway_leaves_the_package_context_unchanged() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let code_rule = compile(
+        "server-graph-atomic",
+        json!([{ "id": "server",
+            "violation": { "anchor": "witness.span", "code": "SERVER", "message": "server" },
+            "forbid": { "ast": { "language": "typescript",
+                "file": { "package": { "serverGraph": true } }, "rule": { "kind": "program" } } } }]),
+    );
+    let directory = TempDir::new("context-atomic");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    let workspace = stored_workspace(&store, "/context-atomic", &code_rule);
+    let file = |path: &str, language: &str, source: &str| json!({ "path": path, "language": language, "source": source });
+    let next = r#"{ "dependencies": { "next": "16" } }"#;
+    let page = |import: &str| format!("import '{import}';\nexport default function Page() {{}}\n");
+    let reported = || {
+        let mut reported = located(&all_pages(&workspace, MAXIMUM_PAGE_BYTES))
+            .into_iter()
+            .map(|(path, _, _)| path)
+            .collect::<Vec<_>>();
+        reported.sort();
+        reported
+    };
+    apply_host(
+        &workspace,
+        1,
+        json!([
+            file("package.json", "json", next),
+            file("app/page.tsx", "tsx", &page("./a")),
+            file("app/a.ts", "typescript", "export const a = 1;\n"),
+            file("lib/b.ts", "typescript", "export const b = 1;\n"),
+        ]),
+        &[],
+    );
+    assert_eq!(reported(), ["app/a.ts", "app/page.tsx"]);
+    let context = || {
+        let state = workspace.state.lock().unwrap();
+        (
+            state.graph_entries.keys().cloned().collect::<Vec<_>>(),
+            state.server_graph_directories.clone(),
+            state.module_configs.clone(),
+            state
+                .manifests
+                .iter()
+                .map(|(directory, manifest)| (directory.clone(), *manifest.digest()))
+                .collect::<Vec<_>>(),
+        )
+    };
+    let before = context();
+    let mut task = WorkspaceApplyTask {
+        state: Arc::clone(&workspace.state),
+        closed: Arc::clone(&workspace.closed),
+        request_json: json!({ "revision": 2, "removed": ["../escape.ts"], "files": [
+            file("app/page.tsx", "tsx", &page("../lib/b")),
+            file("tsconfig.json", "json", "{}"),
+            file("web/package.json", "json", next),
+            file("web/app/page.tsx", "tsx", &page("./c")),
+        ] })
+        .to_string(),
+        request_buffer: None,
+        request_direct: None,
+    };
+    task.compute().unwrap_err();
+    assert!(
+        context() == before,
+        "the failed request changed the context"
+    );
+    // A later request deriving the graph again reads the page the workspace holds.
+    apply_host(
+        &workspace,
+        3,
+        json!([file("lib/c.ts", "typescript", "export const c = 1;\n")]),
+        &[],
+    );
+    assert_eq!(reported(), ["app/a.ts", "app/page.tsx"]);
+    workspace.close();
+}
+
+/// A code rule `id` whose clauses read the documents Vue and Blade files derive
+/// (`ast.embedded`), and a Python file's own tree.
+fn derived_documents_code_rule(id: &str) -> CompiledCodeRuleDsl {
+    let clause = |id: &str, ast: Value| {
+        json!({
+            "id": id,
+            "violation": { "anchor": "witness.span", "code": "DERIVED", "message": id },
+            "forbid": { "ast": ast }
+        })
+    };
+    CodeRuleDslRuntime::compile(
+        json!({
+            "format": "rerail.policy/v1", "id": id, "revision": 1, "mode": "steer",
+            "scope": { "include": ["**/*"], "exclude": [] },
+            "clauses": [
+                clause("vue-script", json!({ "language": "vue", "embedded": "script-block",
+                    "rule": { "kind": "lexical_declaration" } })),
+                clause("blade-view", json!({ "language": "blade", "embedded": "compiled-view",
+                    "rule": { "kind": "binary_expression" } })),
+                clause("python", json!({ "language": "python", "rule": { "kind": "call" } })),
+            ],
+        })
+        .to_string(),
+        "json".into(),
+        include_str!("../capabilities.json").into(),
+    )
+    .unwrap()
+}
+
+/// Vue and Blade files whose derived documents hold witnesses, others whose do not, and a
+/// single-language file.
+fn derived_document_files() -> Value {
+    let file = |path: &str, language: &str, source: &str| json!({ "path": path, "language": language, "source": source });
+    json!([
+        file(
+            "src/Counter.vue",
+            "vue",
+            "<script setup>\nconst count = ref(0)\nconst double = count.value * 2\n</script>\n\
+             <template>\n  <p>{{ double }}</p>\n</template>\n",
+        ),
+        file(
+            "src/Plain.vue",
+            "vue",
+            "<script setup>\nload()\n</script>\n<template>\n  <p>{{ title }}</p>\n</template>\n",
+        ),
+        file(
+            "views/sum.blade.php",
+            "blade",
+            "<h1>{{ $title }}</h1>\n@if ($count > 0)\n  <p>{{ $a + $b }}</p>\n@endif\n",
+        ),
+        file("views/plain.blade.php", "blade", "<p>{{ $name }}</p>\n"),
+        file("probe.py", "python", "print(1)\n"),
+    ])
+}
+
+/// The stored tape of `path` in `workspace`'s overlay.
+fn overlay_tape(
+    store: &ContentStore,
+    workspace: &CodeRuleDslWorkspace,
+    path: &str,
+) -> crate::content_store::TapeId {
+    let workspace_id = workspace
+        .state
+        .lock()
+        .unwrap()
+        .storage
+        .as_ref()
+        .unwrap()
+        .workspace_id;
+    store
+        .overlay_file(workspace_id, path)
+        .unwrap()
+        .unwrap()
+        .tape
+        .unwrap()
+}
+
+/// Vue and Blade files published to the store and evaluated again from it: each file's tape and
+/// the documents it derives (`file_documents`) restore, and an `ast.embedded` clause finds the
+/// witnesses a fresh parse finds. A single-language file has no `file_documents` row, and a
+/// clause over a derived document is narrowed by that document's own selector index.
+#[test]
+fn derived_documents_restored_from_the_store_evaluate_as_a_fresh_parse() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("derived-documents");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    let files = derived_document_files();
+    let first = stored_workspace(
+        &store,
+        "/derived-first",
+        &derived_documents_code_rule("derived-first"),
+    );
+    apply_json(&first, 1, files.clone());
+    for path in ["src/Counter.vue", "views/sum.blade.php"] {
+        let tape = overlay_tape(&store, &first, path);
+        let rows = store.file_documents_bulk(&[tape]).unwrap();
+        let [row] = &rows[&tape][..] else {
+            panic!("{path} derives one document: {rows:?}");
+        };
+        assert_eq!((row.ordinal, row.parent_ordinal), (1, 0), "{path}");
+        assert_eq!(row.role_id, tape::DocumentRole::Generated.code(), "{path}");
+        assert!(
+            row.source.is_some(),
+            "{path}: the derived tape is a row of its own"
+        );
+    }
+    let python = overlay_tape(&store, &first, "probe.py");
+    assert!(
+        store.file_documents_bulk(&[python]).unwrap().is_empty(),
+        "a single-language file has no document rows"
+    );
+    first.close();
+    super::storage::index_stored_tapes(
+        &store,
+        &std::sync::atomic::AtomicBool::new(false),
+        &mut None,
+    );
+
+    // A new catalog reuses no result: its clauses run over the stored documents.
+    let code_rule = derived_documents_code_rule("derived-second");
+    let restored = stored_workspace(&store, "/derived-second", &code_rule);
+    let applied = apply_json(&restored, 1, files.clone());
+    let mut unstored = CodeRuleDslWorkspace::new();
+    unstored.add_code_rule(&code_rule, None).unwrap();
+    let fresh = apply_json(&unstored, 1, files);
+    unstored.close();
+    for key in ["violations", "failures"] {
+        assert_eq!(
+            applied["evaluation"][key], fresh["evaluation"][key],
+            "{key}"
+        );
+    }
+    let witnesses = located(&applied["evaluation"]["violations"]);
+    for (path, clause) in [
+        ("src/Counter.vue", "vue-script"),
+        ("views/sum.blade.php", "blade-view"),
+    ] {
+        assert!(
+            witnesses
+                .iter()
+                .any(|(at, id, _)| at == path && id == clause),
+            "{path}: {witnesses:?}"
+        );
+    }
+    let state = restored.state.lock().unwrap();
+    for path in ["src/Counter.vue", "views/sum.blade.php"] {
+        let file = &state.files[path];
+        assert!(
+            !file.selector_skipped && (file.tape_cache_hit || file.tape_decompressed),
+            "{path} read its stored documents"
+        );
+    }
+    // A derived document with no witness root, by its own index, is not decoded at all.
+    for path in ["src/Plain.vue", "views/plain.blade.php"] {
+        assert!(state.files[path].selector_skipped, "{path}");
+    }
+    drop(state);
+    restored.close();
+}
+
+/// A stored primary tape whose derived document's tape is gone is not stored: the file is parsed
+/// again, never restored without the document it derives.
+#[test]
+fn a_stored_tape_missing_a_derived_tape_is_parsed_again() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("derived-missing");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    let files = json!([{ "path": "src/Counter.vue", "language": "vue", "source":
+        "<script setup>\nconst count = ref(0)\n</script>\n<template>\n  <p>{{ count }}</p>\n</template>\n" }]);
+    let first = stored_workspace(
+        &store,
+        "/derived-missing-first",
+        &derived_documents_code_rule("derived-missing-first"),
+    );
+    let expected = located(&apply_json(&first, 1, files.clone())["evaluation"]["violations"]);
+    assert_eq!(expected.len(), 1, "{expected:?}");
+    let tape = overlay_tape(&store, &first, "src/Counter.vue");
+    first.close();
+    {
+        // The store's own foreign keys refuse this: a raw connection stands for lost rows.
+        let connection = rusqlite::Connection::open(directory.store()).unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", "OFF")
+            .unwrap();
+        let deleted = connection
+            .execute(
+                "DELETE FROM tape_objects WHERE tape_id IN (SELECT document_tape_id FROM file_documents)",
+                [],
+            )
+            .unwrap();
+        assert_eq!(deleted, 1);
+    }
+    let [document] = &store.file_documents_bulk(&[tape]).unwrap()[&tape][..] else {
+        panic!("the row outlives its tape");
+    };
+    assert_eq!(document.source, None);
+
+    let restored = stored_workspace(
+        &store,
+        "/derived-missing-second",
+        &derived_documents_code_rule("derived-missing-second"),
+    );
+    let applied = apply_json(&restored, 1, files);
+    assert_eq!(located(&applied["evaluation"]["violations"]), expected);
+    {
+        let state = restored.state.lock().unwrap();
+        let file = &state.files["src/Counter.vue"];
+        assert!(
+            !file.tape_cache_hit && !file.tape_decompressed,
+            "the file was parsed, not restored in part"
+        );
+    }
+    restored.close();
 }

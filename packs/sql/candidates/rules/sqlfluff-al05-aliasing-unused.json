@@ -1,0 +1,344 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "sqlfluff-al05-aliasing-unused",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove SQL table aliases the query never uses, unless the alias is required, as for a subquery, a VALUES list or a table joined to itself.",
+  "scope": {
+    "include": [
+      "**/*.sql"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unused-table-alias",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$ALIAS",
+            "inside": {
+              "kind": "relation",
+              "stopBy": "neighbor",
+              "has": {
+                "field": "alias",
+                "pattern": "$ALIAS"
+              },
+              "not": {
+                "any": [
+                  {
+                    "has": {
+                      "kind": "subquery",
+                      "stopBy": "neighbor"
+                    }
+                  },
+                  {
+                    "has": {
+                      "kind": "values",
+                      "stopBy": "neighbor"
+                    }
+                  },
+                  {
+                    "has": {
+                      "kind": "object_reference",
+                      "stopBy": "neighbor",
+                      "has": {
+                        "field": "name",
+                        "pattern": "$TABLE"
+                      }
+                    },
+                    "any": [
+                      {
+                        "inside": {
+                          "kind": "from",
+                          "stopBy": "neighbor"
+                        },
+                        "any": [
+                          {
+                            "follows": {
+                              "stopBy": "end",
+                              "compare": {
+                                "left": "TABLE",
+                                "op": "eq",
+                                "right": "OTHER",
+                                "text": "name"
+                              },
+                              "any": [
+                                {
+                                  "kind": "relation",
+                                  "has": {
+                                    "kind": "object_reference",
+                                    "stopBy": "neighbor",
+                                    "has": {
+                                      "field": "name",
+                                      "pattern": "$OTHER"
+                                    }
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "kind": "relation",
+                                    "stopBy": "neighbor",
+                                    "has": {
+                                      "kind": "object_reference",
+                                      "stopBy": "neighbor",
+                                      "has": {
+                                        "field": "name",
+                                        "pattern": "$OTHER"
+                                      }
+                                    }
+                                  },
+                                  "all": [
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "join"
+                                        },
+                                        {
+                                          "kind": "cross_join"
+                                        },
+                                        {
+                                          "kind": "lateral_join"
+                                        },
+                                        {
+                                          "kind": "lateral_cross_join"
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "precedes": {
+                              "stopBy": "end",
+                              "compare": {
+                                "left": "TABLE",
+                                "op": "eq",
+                                "right": "OTHER",
+                                "text": "name"
+                              },
+                              "any": [
+                                {
+                                  "kind": "relation",
+                                  "has": {
+                                    "kind": "object_reference",
+                                    "stopBy": "neighbor",
+                                    "has": {
+                                      "field": "name",
+                                      "pattern": "$OTHER"
+                                    }
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "kind": "relation",
+                                    "stopBy": "neighbor",
+                                    "has": {
+                                      "kind": "object_reference",
+                                      "stopBy": "neighbor",
+                                      "has": {
+                                        "field": "name",
+                                        "pattern": "$OTHER"
+                                      }
+                                    }
+                                  },
+                                  "all": [
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "join"
+                                        },
+                                        {
+                                          "kind": "cross_join"
+                                        },
+                                        {
+                                          "kind": "lateral_join"
+                                        },
+                                        {
+                                          "kind": "lateral_cross_join"
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "inside": {
+                            "kind": "from",
+                            "stopBy": "neighbor"
+                          },
+                          "any": [
+                            {
+                              "follows": {
+                                "stopBy": "end",
+                                "compare": {
+                                  "left": "TABLE",
+                                  "op": "eq",
+                                  "right": "OTHER",
+                                  "text": "name"
+                                },
+                                "any": [
+                                  {
+                                    "kind": "relation",
+                                    "has": {
+                                      "kind": "object_reference",
+                                      "stopBy": "neighbor",
+                                      "has": {
+                                        "field": "name",
+                                        "pattern": "$OTHER"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "kind": "relation",
+                                      "stopBy": "neighbor",
+                                      "has": {
+                                        "kind": "object_reference",
+                                        "stopBy": "neighbor",
+                                        "has": {
+                                          "field": "name",
+                                          "pattern": "$OTHER"
+                                        }
+                                      }
+                                    },
+                                    "all": [
+                                      {
+                                        "any": [
+                                          {
+                                            "kind": "join"
+                                          },
+                                          {
+                                            "kind": "cross_join"
+                                          },
+                                          {
+                                            "kind": "lateral_join"
+                                          },
+                                          {
+                                            "kind": "lateral_cross_join"
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "precedes": {
+                                "stopBy": "end",
+                                "compare": {
+                                  "left": "TABLE",
+                                  "op": "eq",
+                                  "right": "OTHER",
+                                  "text": "name"
+                                },
+                                "any": [
+                                  {
+                                    "kind": "relation",
+                                    "has": {
+                                      "kind": "object_reference",
+                                      "stopBy": "neighbor",
+                                      "has": {
+                                        "field": "name",
+                                        "pattern": "$OTHER"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "kind": "relation",
+                                      "stopBy": "neighbor",
+                                      "has": {
+                                        "kind": "object_reference",
+                                        "stopBy": "neighbor",
+                                        "has": {
+                                          "field": "name",
+                                          "pattern": "$OTHER"
+                                        }
+                                      }
+                                    },
+                                    "all": [
+                                      {
+                                        "any": [
+                                          {
+                                            "kind": "join"
+                                          },
+                                          {
+                                            "kind": "cross_join"
+                                          },
+                                          {
+                                            "kind": "lateral_join"
+                                          },
+                                          {
+                                            "kind": "lateral_cross_join"
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            }
+                          ],
+                          "all": [
+                            {
+                              "any": [
+                                {
+                                  "kind": "join"
+                                },
+                                {
+                                  "kind": "cross_join"
+                                },
+                                {
+                                  "kind": "lateral_join"
+                                },
+                                {
+                                  "kind": "lateral_cross_join"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            "binds": {
+              "used": false
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "AL05",
+        "message": "Alias '$ALIAS' is never used in SELECT statement.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "AL05",
+              "L025",
+              "aliasing",
+              "aliasing.unused",
+              "all",
+              "core"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

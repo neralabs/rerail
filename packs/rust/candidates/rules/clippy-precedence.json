@@ -1,0 +1,25 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "clippy-precedence",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Parenthesize arithmetic used as an operand of a shift or bitwise operator in Rust; the precedence is easy to misread.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "shift-with-arithmetic",
+      "forbid": { "ast": { "language": "rust", "rule": { "kind": "binary_expression", "has": { "field": "operator", "regex": "^(?:<<|>>)$" }, "any": [ { "has": { "field": "left", "kind": "binary_expression", "has": { "field": "operator", "regex": "^[-+*/%]$" } } }, { "has": { "field": "right", "kind": "binary_expression", "has": { "field": "operator", "regex": "^[-+*/%]$" } } } ] } } },
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::precedence", "clippy::all", "clippy::complexity", "warnings"] } }, "anchor": "witness.span", "code": "precedence", "message": "Add parentheses around the arithmetic in this shift, e.g. (a + b) << c, to make the order explicit." }
+    },
+    {
+      "id": "bitwise-with-arithmetic",
+      "forbid": { "ast": { "language": "rust", "rule": { "kind": "binary_expression", "has": { "field": "operator", "regex": "^[&^|]$" }, "any": [ { "has": { "field": "left", "kind": "binary_expression", "has": { "field": "operator", "regex": "^[-+*/%]$" } } }, { "has": { "field": "right", "kind": "binary_expression", "has": { "field": "operator", "regex": "^[-+*/%]$" } } } ] } } },
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::precedence", "clippy::all", "clippy::complexity", "warnings"] } }, "anchor": "witness.span", "code": "precedence", "message": "Add parentheses around the arithmetic in this bitwise expression, e.g. (a + b) & mask, to make the order explicit." }
+    },
+    {
+      "id": "closure-block-call",
+      "forbid": { "ast": { "language": "rust", "rule": { "kind": "closure_expression", "regex": "(?s)^(?:move )?\\|.*->", "precedes": { "stopBy": "neighbor", "regex": "^\\.$" } } } },
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::precedence", "clippy::all", "clippy::complexity", "warnings"] } }, "anchor": "witness.span", "code": "precedence", "message": "Wrap this closure in parentheses so it's clear the method call applies to the closure, not its body." }
+    }
+  ]
+}

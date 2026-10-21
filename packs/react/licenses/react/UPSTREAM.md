@@ -4,7 +4,7 @@ Upstream: [facebook/react](https://github.com/facebook/react/tree/1ddff43c41147b
 
 The files listed below are the upstream tests of the rules the React pack records (`conformance.json`, `upstream/common.mjs` `RULES`), and the test cases extracted from them, one case per file, and remain under react's license. Every other file under `upstream/eslint-plugin-react-hooks/` is Rerail's, under the Apache License 2.0 (the pack's `LICENSE`): `generate.mjs` (with its stub RuleTester), `../common.mjs` and the recordings they write by running the pinned plugin. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of eslint-plugin-react's and eslint-plugin-react-hooks' rules, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them.
 
-Paths are relative to the pack directory, `packs/react/`. `<file> valid[i]` / `invalid[i]` is the i-th case of the `valid` / `invalid` list the test file passes to `RuleTester.run`.
+Paths are relative to the pack directory, `packs/react/`. `<file> valid[i]` / `invalid[i]` is the i-th case of the `valid` / `invalid` list the test file passes to `RuleTester.run`. A `derived` row is a case's `code` that the port readiness gates' recorder (`npm run port-readiness:record`) copied from that upstream test file (at upstream's repository path), as upstream's own test helpers build the case; it is named by the sha256 of its code.
 
 | File | Upstream path | Copy |
 |---|---|---|
@@ -436,3 +436,34 @@ Paths are relative to the pack directory, `packs/react/`. `<file> valid[i]` / `i
 | `upstream/eslint-plugin-react-hooks/fixtures/exhaustive-deps/invalid-189.tsx` | `tests/__tests__/ESLintRuleExhaustiveDeps-test.js run "eslint: v7, parser: @typescript-eslint/parser@2.x" invalid[12]` | extracted (its `code`, verbatim) |
 | `upstream/eslint-plugin-react-hooks/fixtures/exhaustive-deps/invalid-190.tsx` | `tests/__tests__/ESLintRuleExhaustiveDeps-test.js run "eslint: v7, parser: @typescript-eslint/parser@2.x" invalid[13]` | extracted (its `code`, verbatim) |
 | `upstream/eslint-plugin-react-hooks/fixtures/exhaustive-deps/invalid-191.tsx` | `tests/__tests__/ESLintRuleExhaustiveDeps-test.js run "eslint: v7, parser: @typescript-eslint/parser@4.x" invalid[0]` | extracted (its `code`, verbatim) |
+| `upstream/eslint-plugin-react-hooks/fixtures/ESLintRuleExhaustiveDeps-test/0806220417ff.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRuleExhaustiveDeps-test.js` | derived |
+| `upstream/eslint-plugin-react-hooks/fixtures/ESLintRuleExhaustiveDeps-test/6c7c69c36b4b.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRuleExhaustiveDeps-test.js` | derived |
+| `upstream/eslint-plugin-react-hooks/fixtures/ESLintRuleExhaustiveDeps-test/7e8ee20b3dfd.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRuleExhaustiveDeps-test.js` | derived |
+| `upstream/eslint-plugin-react-hooks/fixtures/ESLintRuleExhaustiveDeps-test/dfa9cdc6a61f.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRuleExhaustiveDeps-test.js` | derived |
+| `upstream/eslint-plugin-react-hooks/fixtures/ESLintRulesOfHooks-test/01ab164bd102.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | derived |
+| `upstream/eslint-plugin-react-hooks/fixtures/ESLintRulesOfHooks-test/0863c54e1ee8.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | derived |
+| `upstream/eslint-plugin-react-hooks/fixtures/ESLintRulesOfHooks-test/1027fb35d8c4.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | derived |
+| `upstream/eslint-plugin-react-hooks/fixtures/ESLintRulesOfHooks-test/206df37dc32c.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | derived |
+| `upstream/eslint-plugin-react-hooks/fixtures/ESLintRulesOfHooks-test/2a02c318e5f2.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | derived |
+| `upstream/eslint-plugin-react-hooks/fixtures/ESLintRulesOfHooks-test/2bca38dc71ca.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | derived |
+| `upstream/eslint-plugin-react-hooks/fixtures/ESLintRulesOfHooks-test/2f42e9de0c0a.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | derived |
+| `upstream/eslint-plugin-react-hooks/fixtures/ESLintRulesOfHooks-test/3f11074618f2.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | derived |
+| `upstream/eslint-plugin-react-hooks/fixtures/ESLintRulesOfHooks-test/59f8a7ede638.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | derived |
+| `upstream/eslint-plugin-react-hooks/fixtures/ESLintRulesOfHooks-test/76fe63e6d2e4.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | derived |
+| `upstream/eslint-plugin-react-hooks/fixtures/ESLintRulesOfHooks-test/7d595364f253.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | derived |
+| `upstream/eslint-plugin-react-hooks/fixtures/ESLintRulesOfHooks-test/b6e1b9f1ae0e.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | derived |
+| `upstream/eslint-plugin-react-hooks/fixtures/ESLintRulesOfHooks-test/b8114f329501.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | derived |
+| `upstream/eslint-plugin-react-hooks/fixtures/ESLintRulesOfHooks-test/bfa5936ac1fc.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | derived |
+| `upstream/eslint-plugin-react-hooks/fixtures/ESLintRulesOfHooks-test/c724585e9cda.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | derived |
+| `upstream/eslint-plugin-react-hooks/fixtures/ESLintRulesOfHooks-test/c8a294366f74.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | derived |
+| `upstream/eslint-plugin-react-hooks/fixtures/ESLintRulesOfHooks-test/d3b7c8c23706.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | derived |
+| `upstream/eslint-plugin-react-hooks/fixtures/ESLintRulesOfHooks-test/d7a21fda2b0a.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | derived |
+| `upstream/eslint-plugin-react-hooks/fixtures/ESLintRulesOfHooks-test/eaa7d8873215.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | derived |
+| `upstream/eslint-plugin-react-hooks/fixtures/ESLintRulesOfHooks-test/fa4449ccccf7.js` | `packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js` | derived |
+
+> `recording.json` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
+> table above: the tool-pack's `recording.lock` names it and a GitHub release holds the bytes (docs/port-readiness.md).
+> It carries excerpts of this upstream's tests (`packages/eslint-plugin-react-hooks/__tests__/ESLint*-test.js`: the
+> `code` of each RuleTester case), redistributed under the licence above, together with Rerail's Apache-2.0; `LICENSE`
+> beside this file is this upstream's own, at the pinned commit.
+

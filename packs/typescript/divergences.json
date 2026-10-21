@@ -1,43 +1,11 @@
 [
   {
-    "rule": "typescript-eslint-no-unsafe-function-type",
-    "source": "vscode",
-    "path": "src/vs/code/electron-browser/workbench/workbench.ts",
-    "line": 557,
-    "kind": "rerail-unknown",
-    "evidence": "tree-sitter-typescript 0.23.2 (and upstream HEAD 75b3874) does not parse an import type followed by type arguments (`import('…/window.js').ILoadResult<M, T>`, line 14-16 of the file), so the file has syntax errors and the rule, which reads `resolves` (unsound under error regions), skips it with source-incomplete; the runner lists it under syntaxErrorFiles (T1 grammar gap G1, docs/design/rerail-pack-typescript.md)."
-  },
-  {
-    "rule": "typescript-eslint-no-unsafe-function-type",
-    "source": "vscode",
-    "path": "src/vs/code/electron-browser/workbench/workbench.ts",
-    "line": 570,
-    "kind": "rerail-unknown",
-    "evidence": "tree-sitter-typescript 0.23.2 (and upstream HEAD 75b3874) does not parse an import type followed by type arguments (`import('…/window.js').ILoadResult<M, T>`, line 14-16 of the file), so the file has syntax errors and the rule, which reads `resolves` (unsound under error regions), skips it with source-incomplete; the runner lists it under syntaxErrorFiles (T1 grammar gap G1, docs/design/rerail-pack-typescript.md)."
-  },
-  {
-    "rule": "typescript-eslint-no-unsafe-function-type",
-    "source": "vscode",
-    "path": "src/vs/sessions/electron-browser/sessions.ts",
-    "line": 170,
-    "kind": "rerail-unknown",
-    "evidence": "tree-sitter-typescript 0.23.2 (and upstream HEAD 75b3874) does not parse an import type followed by type arguments (`import('…/window.js').ILoadResult<M, T>`, line 14-16 of the file), so the file has syntax errors and the rule, which reads `resolves` (unsound under error regions), skips it with source-incomplete; the runner lists it under syntaxErrorFiles (T1 grammar gap G1, docs/design/rerail-pack-typescript.md)."
-  },
-  {
-    "rule": "typescript-eslint-no-unsafe-function-type",
-    "source": "vscode",
-    "path": "src/vs/sessions/electron-browser/sessions.ts",
-    "line": 183,
-    "kind": "rerail-unknown",
-    "evidence": "tree-sitter-typescript 0.23.2 (and upstream HEAD 75b3874) does not parse an import type followed by type arguments (`import('…/window.js').ILoadResult<M, T>`, line 14-16 of the file), so the file has syntax errors and the rule, which reads `resolves` (unsound under error regions), skips it with source-incomplete; the runner lists it under syntaxErrorFiles (T1 grammar gap G1, docs/design/rerail-pack-typescript.md)."
-  },
-  {
     "rule": "typescript-eslint-consistent-type-definitions",
     "source": "fixtures",
     "path": "consistent-indexed-object-style/037.ts",
     "line": 1,
     "kind": "rerail-unknown",
-    "evidence": "tree-sitter-typescript 0.23.2, the grammar the engine parses .ts files with, does not parse an index signature without a type annotation (`type Foo = { [key: string] };`): on this file the engine reports source-partial (\"file has syntax errors\") and the rule misses the finding upstream reports on the type alias. typescript-eslint 8.70.1 parses it, and TypeScript 6.0.3's parser reads it with no parse diagnostics; only TypeScript's checker rejects it (TS1021, an index signature must have a type annotation). The file is one of consistent-indexed-object-style's upstream tests; Rerail cannot decide it until the grammar reads the construct."
+    "evidence": "The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) does not parse an index signature without a type annotation (`type Foo = { [key: string] };`): on this file the engine reports source-partial (\"file has syntax errors\") and the rule misses the finding upstream reports on the type alias. typescript-eslint 8.70.1 parses it, and TypeScript 6.0.3's parser reads it with no parse diagnostics; only TypeScript's checker rejects it (TS1021, an index signature must have a type annotation). The file is one of consistent-indexed-object-style's upstream tests; Rerail cannot decide it until the grammar reads the construct."
   },
   {
     "rule": "typescript-eslint-consistent-type-definitions",
@@ -45,6 +13,6 @@
     "path": "consistent-indexed-object-style/038.ts",
     "line": 1,
     "kind": "rerail-unknown",
-    "evidence": "tree-sitter-typescript 0.23.2, the grammar the engine parses .ts files with, does not parse an index signature without a type annotation (`type Foo = { [] };`): on this file the engine reports source-partial (\"file has syntax errors\") and the rule misses the finding upstream reports on the type alias. typescript-eslint 8.70.1 parses it, and TypeScript 6.0.3's parser reads it with no parse diagnostics; only TypeScript's checker rejects it (TS1096, an index signature must have exactly one parameter). The file is one of consistent-indexed-object-style's upstream tests; Rerail cannot decide it until the grammar reads the construct."
+    "evidence": "The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) does not parse an index signature without a type annotation (`type Foo = { [] };`): on this file the engine reports source-partial (\"file has syntax errors\") and the rule misses the finding upstream reports on the type alias. typescript-eslint 8.70.1 parses it, and TypeScript 6.0.3's parser reads it with no parse diagnostics; only TypeScript's checker rejects it (TS1096, an index signature must have exactly one parameter). The file is one of consistent-indexed-object-style's upstream tests; Rerail cannot decide it until the grammar reads the construct."
   }
 ]

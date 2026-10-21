@@ -61,6 +61,19 @@
       "match": "line+column"
     },
     {
+      "id": "next-no-head-element",
+      "upstream": {
+        "tool": "eslint-plugin-next",
+        "rule": "@next/next/no-head-element"
+      },
+      "policy": "rules/next-no-head-element.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "next-no-sync-scripts",
       "upstream": {
         "tool": "eslint-plugin-next",
@@ -80,6 +93,20 @@
         "rule": "@next/next/no-css-tags"
       },
       "policy": "rules/next-no-css-tags.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "next-google-font-display",
+      "upstream": {
+        "tool": "eslint-plugin-next",
+        "rule": "@next/next/google-font-display"
+      },
+      "policy": "rules/next-google-font-display.json",
       "capabilities": [
         "syntax",
         "value",
@@ -281,39 +308,12 @@
       "match": "line+column"
     },
     {
-      "id": "next-no-head-element",
-      "upstream": {
-        "tool": "eslint-plugin-next",
-        "rule": "@next/next/no-head-element"
-      },
-      "policy": "candidates/rules/next-no-head-element.json",
-      "capabilities": [
-        "syntax",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "next-google-font-display",
-      "upstream": {
-        "tool": "eslint-plugin-next",
-        "rule": "@next/next/google-font-display"
-      },
-      "policy": "candidates/rules/next-google-font-display.json",
-      "capabilities": [
-        "syntax",
-        "value",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
       "id": "next-no-page-custom-font",
       "upstream": {
         "tool": "eslint-plugin-next",
         "rule": "@next/next/no-page-custom-font"
       },
-      "policy": "candidates/rules/next-no-page-custom-font.json",
+      "policy": "rules/next-no-page-custom-font.json",
       "capabilities": [
         "syntax",
         "value",
@@ -327,7 +327,7 @@
         "tool": "eslint-plugin-next",
         "rule": "@next/next/no-location-assign-relative-destination"
       },
-      "policy": "candidates/rules/next-no-location-assign-relative-destination.json",
+      "policy": "rules/next-no-location-assign-relative-destination.json",
       "capabilities": [
         "syntax",
         "scope",

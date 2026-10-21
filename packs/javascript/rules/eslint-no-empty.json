@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-empty",
-  "revision": 2,
+  "revision": 4,
   "mode": "steer",
-  "description": "Port of ESLint's `no-empty` rule (https://eslint.org/docs/latest/rules/no-empty). Flags a block (not a function body, class static block or TS module body) or switch with no statements and no comment. Options are declared in the `options` define (the rule's defaults); a variant is a config patch.",
+  "description": "Avoid empty blocks and switch statements in JavaScript; add the missing code or a comment explaining why it is empty.",
   "scope": {
     "include": [
       "**/*.js",
@@ -119,11 +119,21 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-empty",
-        "message": "Empty block statement.",
+        "message": "Add the missing code to this empty block, or add a comment saying why it is intentionally empty.",
         "suppress": {
           "eslint": {
             "rules": [
               "no-empty"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-empty"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noEmptyBlockStatements"
             ]
           }
         }
@@ -158,6 +168,16 @@
           "eslint": {
             "rules": [
               "no-empty"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-empty"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noEmptyBlockStatements"
             ]
           }
         }

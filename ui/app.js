@@ -4,10 +4,11 @@
  * something. Nothing here rebuilds the list wholesale.
  */
 import { send } from "./api.js";
+import { settingWrites } from "./settings-writes.js";
 import { h, setAttr, setText, setContent } from "./dom.js";
 import { ago, plural, shortSessionId } from "./format.js";
 import { data, ui, summary, panelRuleId, titleOf, packOfRule, rulesArray, readScope, setScope, repoName, stateHere, keptPacks, reviewing } from "./state.js";
-import { startPolling, refreshNow, loadSession, showMoreActivity, loadAgents, loadPresence, loadRecommendations, changeScope, captureScope, inScope } from "./poll.js";
+import { startPolling, refreshNow, loadSession, loadSessionFindings, loadMoreSessions, loadEarlier, showMoreActivity, loadAgents, loadPresence, loadFollowGitignore, saveFollowGitignore, loadRecommendations, changeScope } from "./poll.js";
 import { attachmentWrites, packName } from "./attachments.js";
 import { renderOverview } from "./render/overview.js";
 import { renderRules, allGroupsFolded, sectionKeys, groupRules } from "./render/rules.js";
@@ -194,46 +195,8 @@ function copyText(text, field, message) {
 const changeOwner = () => (ui.scope?.checkout === undefined ? "repository" : ui.owner);
 const ownerWords = () => (changeOwner() === "checkout" ? "in this worktree" : "for the repository");
 
-/**
- * Switch rules on or off: optimistic, one `PUT /api/repository/settings` per folder the rules are added at,
- * owned by this worktree or the repository; reverted on error. The poll that follows reads back the sources.
- */
-async function setEnabled(ids, enabled, label) {
-  if (ids.length === 0) return;
-  // The repository, owner and rows are fixed when the action starts: switching repository mid-save writes nothing there.
-  const scope = captureScope();
-  const owner = changeOwner();
-  const before = new Map();
-  const byFolder = new Map();
-  for (const id of ids) {
-    const r = data.rules.get(id);
-    if (!r) continue;
-    before.set(r, r.enabled);
-    r.enabled = enabled;
-    for (const folder of r.folders) byFolder.set(folder, [...(byFolder.get(folder) ?? []), id]);
-  }
-  invalidate();
-  let failure = null;
-  try {
-    for (const [folder, folderIds] of byFolder) {
-      await send("PUT", "/api/repository/settings", {
-        ...scope.target, folder, owner, targets: folderIds.map(id => ({ kind: "rule", id })), on: enabled,
-      });
-    }
-  } catch (error) {
-    failure = error;
-  }
-  // Another repository's page now: these rows and the outcome are not its.
-  if (!inScope(scope)) return;
-  if (failure === null) {
-    toast(label);
-  } else {
-    for (const [r, was] of before) r.enabled = was;
-    toast(`Could not save: ${failure.message}`);
-  }
-  invalidate();
-  refreshNow();
-}
+/** Rule settings: on or off, and suppression comments, for a rule or a pack; written as `changeOwner()`. */
+const { setEnabled, setSuppressions, setPackSuppressions } = settingWrites({ toast, invalidate, owner: changeOwner });
 
 function toggleRule(id) {
   const stored = data.rules.get(id);
@@ -242,6 +205,22 @@ function toggleRule(id) {
   setEnabled([id], enabled, enabled
     ? `On ${ownerWords()}. Rerail audits “${titleOf(stored)}” from the coding agent’s next turn.`
     : `Off ${ownerWords()}. Rerail stops auditing “${titleOf(stored)}”.`);
+}
+
+/** Honour or ignore linter suppression comments for one rule, from its panel. */
+function suppressRule(id, suppressions) {
+  const stored = data.rules.get(id);
+  if (!stored) return;
+  setSuppressions([id], suppressions, suppressions === "ignore"
+    ? `Suppression comments ignored ${ownerWords()}. “${titleOf(stored)}” reports a violation on a line a linter comment disables.`
+    : `Suppression comments honoured ${ownerWords()}. “${titleOf(stored)}” skips a line a linter comment disables.`);
+}
+
+/** Honour or ignore linter suppression comments for every rule of a pack, from its panel. */
+function suppressPack(id, suppressions) {
+  setPackSuppressions(id, suppressions, suppressions === "ignore"
+    ? `Suppression comments ignored ${ownerWords()} in ${packName(id)}. A rule with its own setting keeps it.`
+    : `Suppression comments honoured ${ownerWords()} in ${packName(id)}. A rule with its own setting keeps it.`);
 }
 
 const { addPacks, removePack, setUpRecommended, keepPack } = attachmentWrites({ toast, invalidate });
@@ -260,10 +239,13 @@ async function setRepository(key, verb) {
 /* ---------- navigation ---------- */
 
 function openRule(id, fromPack = null) {
-  if (panelRuleId() !== id) { ui.askOpen = false; resetPanelScroll(); }
+  const changed = panelRuleId() !== id;
+  if (changed) { ui.askOpen = false; resetPanelScroll(); }
   ui.backToPack = fromPack;
   ui.panel = { kind: "rule", id };
   invalidate();
+  // The panel shows the rule's violations in range, which only an open panel loads.
+  if (changed && data.loaded) refreshNow();
 }
 
 function closePanel() {
@@ -277,6 +259,7 @@ function enterView(view) {
     data.agentsError = null;
     loadAgents().catch(error => { data.agentsError = error.message; }).then(invalidate);
     loadPresence().then(invalidate, error => toast(`Could not read the status line setting: ${error.message}`));
+    if (ui.scope !== null) loadFollowGitignore().then(invalidate, error => toast(`Could not read the Follow .gitignore setting: ${error.message}`));
   }
   if (view === "review" && ui.scope !== null && data.recommendations === null) {
     loadRecommendations().then(invalidate, error => toast(`Could not read the repo: ${error.message}`));
@@ -291,25 +274,37 @@ function goView(view) {
   enterView(view);
   invalidate();
   window.scrollTo(0, 0);
+  // Each view loads only its own data: the new one's now, not at the next poll.
+  refreshNow();
 }
 
 /** The load behind the current selection, while it runs; a fallback must not pre-empt a deep link's 404 check. */
 let selecting = null;
 
-/** Resolves to the load error (`null` on success) so a caller can tell a missing session from a slow one. */
+/**
+ * Select a session and load it: its head and first transcript page, and its violations (the previous selection's are
+ * dropped). Resolves to the transcript's load error (`null` on success) so a caller can tell a missing session from a slow one.
+ */
 async function selectSession(id, then) {
   ui.selectedSession = id;
   ui.resumeOpen = false;
   invalidate();
   if (id === null) return null;
+  const violations = loadSessionFindings(id).catch(e => console.warn("session violations failed", e));
   const load = loadSession(id).then(() => null, e => e);
   selecting = load;
-  const error = await load;
+  const [error] = await Promise.all([load, violations]);
   if (selecting === load) selecting = null;
   if (error) console.warn("session load failed", error);
   render();
   if (then) then();
   return error;
+}
+
+/** A Load more button: run its load, then show what it brought; a failure is a toast, the button stays. */
+async function loadMore(load) {
+  try { await load(); } catch (error) { toast(`Could not load more: ${error.message}`); }
+  invalidate();
 }
 
 /** No selection, or one the list no longer has: pick what the view would show anyway and load it now, as a click would. */
@@ -450,6 +445,8 @@ const ACTIONS = {
   panelback: () => { if (ui.backToPack) { ui.panel = { kind: "pack", id: ui.backToPack }; ui.backToPack = null; invalidate(); } else closePanel(); },
   close: () => closePanel(),
   toggle: id => toggleRule(id),
+  suppress: (id, b) => suppressRule(id, b.dataset.v),
+  packsuppress: (id, b) => suppressPack(id, b.dataset.v),
   gtoggle: key => {
     const all = groupRules(key), allOn = all.every(r => r.enabled), name = key.slice(key.indexOf("|") + 1);
     setEnabled(all.map(r => r.rule.id), !allOn, `${name}: ${all.length === 1 ? "its rule" : `all ${all.length} rules`} ${allOn ? "off" : "on"} ${ownerWords()}.`);
@@ -513,9 +510,10 @@ const ACTIONS = {
     } catch (error) { data.presence = was; toast(`Could not save: ${error.message}`); }
     invalidate();
   },
+  gitignore: v => saveFollowGitignore(v === "on", { toast, invalidate }),
   cmdcopy: text => copyText(text, null, `Copied ${text}`),
   range: id => { ui.range = Number(id); ui.recentShown = 50; invalidate(); refreshNow(); },
-  more: async () => { await showMoreActivity(); invalidate(); },
+  more: () => loadMore(showMoreActivity),
   actrule: id => { ui.actRule = id; ui.actPack = ""; ui.recentShown = 50; goView("activity"); invalidate(); },
   actclear: () => { ui.actRule = null; invalidate(); },
   session: id => { closePanel(); goView("sessions"); selectSession(id, () => { const first = document.querySelector(".tl .corr"); if (first) jumpTo(first.dataset.key); }); },
@@ -532,7 +530,8 @@ const ACTIONS = {
   showall: () => { ui.showAll = true; ui.evFilter = "all"; invalidate(); },
   sfilter: id => { ui.sessFilter = id; invalidate(); },
   daytoggle: id => { toggleSet(ui.openDays, id); invalidate(); },
-  daymore: id => { ui.dayShown[id] = (ui.dayShown[id] ?? 50) + 50; invalidate(); },
+  sessmore: () => loadMore(loadMoreSessions),
+  earlier: () => { const s = currentSession(); if (s) loadMore(() => loadEarlier(s.sessionId)); },
   resumetoggle: () => { ui.resumeOpen = !ui.resumeOpen; invalidate(); },
   resumecopy: () => {
     const s = currentSession(); if (!s) return;

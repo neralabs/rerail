@@ -3,7 +3,7 @@
   "id": "typescript-eslint-prefer-optional-chain",
   "revision": 1,
   "mode": "log",
-  "description": "An && chain that checks a value and then reads through it, which `?.` says in one step.",
+  "description": "Use optional chaining in TypeScript instead of an && chain that checks a value and then reads through it; it says the same thing in one step.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -1088,11 +1088,21 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/prefer-optional-chain",
-        "message": "Prefer using an optional chain expression instead, as it's more concise and easier to read.",
+        "message": "Replace this && chain with optional chaining, like `a?.b?.c`.",
         "suppress": {
           "eslint": {
             "rules": [
               "@typescript-eslint/prefer-optional-chain"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "prefer-optional-chain"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/complexity/useOptionalChain"
             ]
           }
         }

@@ -3,7 +3,7 @@
   "id": "ruff-b031-reuse-of-groupby-generator",
   "revision": 1,
   "mode": "steer",
-  "description": "Partial port of Ruff's B031 (reuse-of-groupby-generator): in the body of `for k, g in itertools.groupby(...)`, a use of `g` inside a nested loop body or list/set/dict comprehension, or after an earlier statement (or the enclosing `if` test or `match` subject) that uses it. Ruff's per-branch use counting (maximum over if/match branches), resets at break/continue/return and reassignment of `g` are not modelled.",
+  "description": "Avoid using an itertools.groupby() group more than once, such as in a nested loop or comprehension; the group is a one-shot iterator, so later uses get nothing.",
   "scope": {
     "include": [
       "**/*"
@@ -297,7 +297,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B031",
-        "message": "Using the generator returned from `itertools.groupby()` more than once will do nothing on the second usage",
+        "message": "Copy this groupby group into a list before using it more than once; the group is a one-shot iterator.",
         "suppress": {
           "noqa": {
             "codes": [

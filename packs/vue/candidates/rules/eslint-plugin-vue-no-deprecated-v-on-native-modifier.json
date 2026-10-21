@@ -1,0 +1,59 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-plugin-vue-no-deprecated-v-on-native-modifier",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove the .native modifier from v-on listeners; Vue 3 dropped it and passes listeners to the component root on its own.",
+  "scope": {
+    "include": [
+      "**/*.vue"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "kind": "directive_modifier",
+            "regex": "^native$",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "directive_modifiers",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "directive_attribute",
+                "any": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "directive_name",
+                      "regex": "^v-on$"
+                    }
+                  },
+                  {
+                    "regex": "^@"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "vue/no-deprecated-v-on-native-modifier",
+        "message": "Remove the .native modifier from this v-on listener; Vue 3 passes listeners to the component root itself.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-deprecated-v-on-native-modifier"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

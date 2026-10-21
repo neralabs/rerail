@@ -3,7 +3,7 @@
   "id": "ruff-f403-undefined-local-with-import-star",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F403 (undefined-local-with-import-star): any `from <module> import *` whose module is not `__future__` (at any depth, whatever the relative level), reported on the whole statement.",
+  "description": "Avoid from module import * star imports; they hide where names come from and stop undefined names from being detected.",
   "scope": {
     "include": [
       "**/*"

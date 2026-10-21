@@ -1,0 +1,2187 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-plugin-vue-no-dupe-keys",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid reusing a name across a Vue component's props, computed, data, methods and setup, or a prop name for a script setup binding; the names collide in the template.",
+  "scope": {
+    "include": [
+      "**/*.vue"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "options-api",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "embedded": "script-block",
+          "rule": {
+            "all": [
+              {
+                "matches": "item-P"
+              },
+              {
+                "count": {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "program",
+                    "has": {
+                      "stopBy": "end",
+                      "all": [
+                        {
+                          "matches": "item-Q"
+                        },
+                        {
+                          "compare": {
+                            "left": "CQ",
+                            "op": "eq",
+                            "right": "CP",
+                            "text": "node"
+                          }
+                        },
+                        {
+                          "compare": {
+                            "left": "Q",
+                            "op": "eq",
+                            "right": "P",
+                            "text": "key"
+                          }
+                        },
+                        {
+                          "layout": {
+                            "after": {
+                              "to": "capture.P",
+                              "breaks": {
+                                "min": 0
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "min": 1
+                }
+              }
+            ]
+          },
+          "utils": {
+            "component-object-P": {
+              "all": [
+                {
+                  "kind": "object"
+                },
+                {
+                  "pattern": "$CP"
+                },
+                {
+                  "any": [
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "export_statement"
+                      }
+                    },
+                    {
+                      "all": [
+                        {
+                          "nthChild": {
+                            "position": 1,
+                            "reverse": true,
+                            "ofRule": {
+                              "not": {
+                                "kind": "comment"
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "arguments",
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "kind": "call_expression",
+                              "has": {
+                                "field": "function",
+                                "stopBy": "neighbor",
+                                "any": [
+                                  {
+                                    "kind": "member_expression",
+                                    "has": {
+                                      "field": "object",
+                                      "stopBy": "neighbor",
+                                      "kind": "identifier"
+                                    },
+                                    "any": [
+                                      {
+                                        "all": [
+                                          {
+                                            "has": {
+                                              "field": "object",
+                                              "stopBy": "neighbor",
+                                              "kind": "identifier",
+                                              "regex": "^Vue$"
+                                            }
+                                          },
+                                          {
+                                            "has": {
+                                              "field": "property",
+                                              "stopBy": "neighbor",
+                                              "kind": "property_identifier",
+                                              "regex": "^(?:component|mixin|extend)$"
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "all": [
+                                          {
+                                            "not": {
+                                              "has": {
+                                                "field": "object",
+                                                "stopBy": "neighbor",
+                                                "kind": "identifier",
+                                                "regex": "^Vue$"
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "has": {
+                                              "field": "property",
+                                              "stopBy": "neighbor",
+                                              "kind": "property_identifier",
+                                              "regex": "^(?:component|mixin)$"
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "kind": "identifier",
+                                    "regex": "^defineNuxtComponent$"
+                                  },
+                                  {
+                                    "kind": "identifier",
+                                    "any": [
+                                      {
+                                        "resolves": {
+                                          "global": [
+                                            "component",
+                                            "createApp",
+                                            "defineComponent"
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "resolves": {
+                                          "binding": {
+                                            "site": {
+                                              "kind": "import_specifier",
+                                              "has": {
+                                                "field": "name",
+                                                "stopBy": "neighbor",
+                                                "kind": "identifier",
+                                                "regex": "^(?:component|createApp|defineComponent)$"
+                                              },
+                                              "inside": {
+                                                "stopBy": "end",
+                                                "kind": "import_statement",
+                                                "has": {
+                                                  "field": "source",
+                                                  "stopBy": "neighbor",
+                                                  "kind": "string",
+                                                  "regex": "^(?:'(?:vue|@vue/composition-api|@nuxtjs/composition-api|#imports)'|\"(?:vue|@vue/composition-api|@nuxtjs/composition-api|#imports)\")$"
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "nthChild": 1
+                        },
+                        {
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "arguments",
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "kind": "new_expression",
+                              "has": {
+                                "field": "constructor",
+                                "stopBy": "neighbor",
+                                "kind": "identifier",
+                                "regex": "^Vue$"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "program",
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "comment",
+                          "regex": "@vue/component",
+                          "layout": {
+                            "after": {
+                              "to": "capture.CP",
+                              "breaks": {
+                                "eq": 1
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "group-P": {
+              "any": [
+                {
+                  "kind": "pair",
+                  "has": {
+                    "field": "key",
+                    "stopBy": "neighbor",
+                    "matches": "group-key"
+                  }
+                },
+                {
+                  "kind": "method_definition",
+                  "has": {
+                    "field": "name",
+                    "stopBy": "neighbor",
+                    "matches": "group-key"
+                  }
+                }
+              ],
+              "inside": {
+                "stopBy": "neighbor",
+                "matches": "component-object-P"
+              }
+            },
+            "object-in-group-P": {
+              "kind": "object",
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": {
+                      "not": {
+                        "kind": "parenthesized_expression"
+                      }
+                    },
+                    "matches": "group-P"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": {
+                      "not": {
+                        "kind": "parenthesized_expression"
+                      }
+                    },
+                    "kind": "return_statement",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "statement_block",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "matches": "group-P"
+                          },
+                          {
+                            "any": [
+                              {
+                                "kind": "function_expression"
+                              },
+                              {
+                                "kind": "generator_function"
+                              },
+                              {
+                                "kind": "arrow_function"
+                              }
+                            ],
+                            "inside": {
+                              "stopBy": {
+                                "not": {
+                                  "kind": "parenthesized_expression"
+                                }
+                              },
+                              "matches": "group-P"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "field": "body",
+                    "stopBy": {
+                      "not": {
+                        "kind": "parenthesized_expression"
+                      }
+                    },
+                    "kind": "arrow_function",
+                    "inside": {
+                      "stopBy": {
+                        "not": {
+                          "kind": "parenthesized_expression"
+                        }
+                      },
+                      "matches": "group-P"
+                    }
+                  }
+                }
+              ]
+            },
+            "component-object-Q": {
+              "all": [
+                {
+                  "kind": "object"
+                },
+                {
+                  "pattern": "$CQ"
+                },
+                {
+                  "any": [
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "export_statement"
+                      }
+                    },
+                    {
+                      "all": [
+                        {
+                          "nthChild": {
+                            "position": 1,
+                            "reverse": true,
+                            "ofRule": {
+                              "not": {
+                                "kind": "comment"
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "arguments",
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "kind": "call_expression",
+                              "has": {
+                                "field": "function",
+                                "stopBy": "neighbor",
+                                "any": [
+                                  {
+                                    "kind": "member_expression",
+                                    "has": {
+                                      "field": "object",
+                                      "stopBy": "neighbor",
+                                      "kind": "identifier"
+                                    },
+                                    "any": [
+                                      {
+                                        "all": [
+                                          {
+                                            "has": {
+                                              "field": "object",
+                                              "stopBy": "neighbor",
+                                              "kind": "identifier",
+                                              "regex": "^Vue$"
+                                            }
+                                          },
+                                          {
+                                            "has": {
+                                              "field": "property",
+                                              "stopBy": "neighbor",
+                                              "kind": "property_identifier",
+                                              "regex": "^(?:component|mixin|extend)$"
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "all": [
+                                          {
+                                            "not": {
+                                              "has": {
+                                                "field": "object",
+                                                "stopBy": "neighbor",
+                                                "kind": "identifier",
+                                                "regex": "^Vue$"
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "has": {
+                                              "field": "property",
+                                              "stopBy": "neighbor",
+                                              "kind": "property_identifier",
+                                              "regex": "^(?:component|mixin)$"
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "kind": "identifier",
+                                    "regex": "^defineNuxtComponent$"
+                                  },
+                                  {
+                                    "kind": "identifier",
+                                    "any": [
+                                      {
+                                        "resolves": {
+                                          "global": [
+                                            "component",
+                                            "createApp",
+                                            "defineComponent"
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "resolves": {
+                                          "binding": {
+                                            "site": {
+                                              "kind": "import_specifier",
+                                              "has": {
+                                                "field": "name",
+                                                "stopBy": "neighbor",
+                                                "kind": "identifier",
+                                                "regex": "^(?:component|createApp|defineComponent)$"
+                                              },
+                                              "inside": {
+                                                "stopBy": "end",
+                                                "kind": "import_statement",
+                                                "has": {
+                                                  "field": "source",
+                                                  "stopBy": "neighbor",
+                                                  "kind": "string",
+                                                  "regex": "^(?:'(?:vue|@vue/composition-api|@nuxtjs/composition-api|#imports)'|\"(?:vue|@vue/composition-api|@nuxtjs/composition-api|#imports)\")$"
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "nthChild": 1
+                        },
+                        {
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "arguments",
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "kind": "new_expression",
+                              "has": {
+                                "field": "constructor",
+                                "stopBy": "neighbor",
+                                "kind": "identifier",
+                                "regex": "^Vue$"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "program",
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "comment",
+                          "regex": "@vue/component",
+                          "layout": {
+                            "after": {
+                              "to": "capture.CQ",
+                              "breaks": {
+                                "eq": 1
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "group-Q": {
+              "any": [
+                {
+                  "kind": "pair",
+                  "has": {
+                    "field": "key",
+                    "stopBy": "neighbor",
+                    "matches": "group-key"
+                  }
+                },
+                {
+                  "kind": "method_definition",
+                  "has": {
+                    "field": "name",
+                    "stopBy": "neighbor",
+                    "matches": "group-key"
+                  }
+                }
+              ],
+              "inside": {
+                "stopBy": "neighbor",
+                "matches": "component-object-Q"
+              }
+            },
+            "object-in-group-Q": {
+              "kind": "object",
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": {
+                      "not": {
+                        "kind": "parenthesized_expression"
+                      }
+                    },
+                    "matches": "group-Q"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": {
+                      "not": {
+                        "kind": "parenthesized_expression"
+                      }
+                    },
+                    "kind": "return_statement",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "statement_block",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "matches": "group-Q"
+                          },
+                          {
+                            "any": [
+                              {
+                                "kind": "function_expression"
+                              },
+                              {
+                                "kind": "generator_function"
+                              },
+                              {
+                                "kind": "arrow_function"
+                              }
+                            ],
+                            "inside": {
+                              "stopBy": {
+                                "not": {
+                                  "kind": "parenthesized_expression"
+                                }
+                              },
+                              "matches": "group-Q"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "field": "body",
+                    "stopBy": {
+                      "not": {
+                        "kind": "parenthesized_expression"
+                      }
+                    },
+                    "kind": "arrow_function",
+                    "inside": {
+                      "stopBy": {
+                        "not": {
+                          "kind": "parenthesized_expression"
+                        }
+                      },
+                      "matches": "group-Q"
+                    }
+                  }
+                }
+              ]
+            },
+            "group-key": {
+              "any": [
+                {
+                  "kind": "property_identifier",
+                  "regex": "^(?:props|computed|data|methods|setup)$"
+                },
+                {
+                  "kind": "string",
+                  "regex": "^(?:'(?:props|computed|data|methods|setup)'|\"(?:props|computed|data|methods|setup)\")$"
+                }
+              ]
+            },
+            "item-P": {
+              "all": [
+                {
+                  "pattern": "$P"
+                },
+                {
+                  "any": [
+                    {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "kind": "string",
+                              "not": {
+                                "regex": "^(''|\"\"|``)$"
+                              }
+                            },
+                            {
+                              "kind": "number"
+                            },
+                            {
+                              "kind": "template_string",
+                              "not": {
+                                "any": [
+                                  {
+                                    "has": {
+                                      "kind": "template_substitution"
+                                    }
+                                  },
+                                  {
+                                    "regex": "^(''|\"\"|``)$"
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "pattern": "$K"
+                        },
+                        {
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "array",
+                            "inside": {
+                              "stopBy": {
+                                "not": {
+                                  "kind": "parenthesized_expression"
+                                }
+                              },
+                              "matches": "group-P"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "object",
+                            "matches": "object-in-group-P"
+                          }
+                        },
+                        {
+                          "any": [
+                            {
+                              "kind": "shorthand_property_identifier",
+                              "pattern": "$K"
+                            },
+                            {
+                              "kind": "pair",
+                              "any": [
+                                {
+                                  "has": {
+                                    "field": "key",
+                                    "stopBy": "neighbor",
+                                    "any": [
+                                      {
+                                        "kind": "property_identifier",
+                                        "pattern": "$K"
+                                      },
+                                      {
+                                        "kind": "string",
+                                        "not": {
+                                          "regex": "^(''|\"\"|``)$"
+                                        },
+                                        "pattern": "$K"
+                                      },
+                                      {
+                                        "kind": "number",
+                                        "pattern": "$K"
+                                      }
+                                    ]
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "field": "key",
+                                    "stopBy": "neighbor",
+                                    "kind": "computed_property_name",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "any": [
+                                        {
+                                          "kind": "string",
+                                          "not": {
+                                            "regex": "^(''|\"\"|``)$"
+                                          },
+                                          "pattern": "$K"
+                                        },
+                                        {
+                                          "kind": "number",
+                                          "pattern": "$K"
+                                        },
+                                        {
+                                          "kind": "template_string",
+                                          "not": {
+                                            "any": [
+                                              {
+                                                "has": {
+                                                  "kind": "template_substitution"
+                                                }
+                                              },
+                                              {
+                                                "regex": "^(''|\"\"|``)$"
+                                              }
+                                            ]
+                                          },
+                                          "pattern": "$K"
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "kind": "method_definition",
+                              "any": [
+                                {
+                                  "has": {
+                                    "field": "name",
+                                    "stopBy": "neighbor",
+                                    "any": [
+                                      {
+                                        "kind": "property_identifier",
+                                        "pattern": "$K"
+                                      },
+                                      {
+                                        "kind": "string",
+                                        "not": {
+                                          "regex": "^(''|\"\"|``)$"
+                                        },
+                                        "pattern": "$K"
+                                      },
+                                      {
+                                        "kind": "number",
+                                        "pattern": "$K"
+                                      }
+                                    ]
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "field": "name",
+                                    "stopBy": "neighbor",
+                                    "kind": "computed_property_name",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "any": [
+                                        {
+                                          "kind": "string",
+                                          "not": {
+                                            "regex": "^(''|\"\"|``)$"
+                                          },
+                                          "pattern": "$K"
+                                        },
+                                        {
+                                          "kind": "number",
+                                          "pattern": "$K"
+                                        },
+                                        {
+                                          "kind": "template_string",
+                                          "not": {
+                                            "any": [
+                                              {
+                                                "has": {
+                                                  "kind": "template_substitution"
+                                                }
+                                              },
+                                              {
+                                                "regex": "^(''|\"\"|``)$"
+                                              }
+                                            ]
+                                          },
+                                          "pattern": "$K"
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "not": {
+                    "all": [
+                      {
+                        "kind": "method_definition",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "regex": "^set$",
+                          "not": {
+                            "kind": "property_identifier"
+                          }
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "not": {
+                                  "follows": {
+                                    "stopBy": "end",
+                                    "all": [
+                                      {
+                                        "kind": "method_definition",
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "regex": "^set$",
+                                          "not": {
+                                            "kind": "property_identifier"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "pattern": "$S1P"
+                                      },
+                                      {
+                                        "compare": {
+                                          "left": "S1P",
+                                          "op": "eq",
+                                          "right": "P",
+                                          "text": "key"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "count": {
+                                      "follows": {
+                                        "stopBy": "end",
+                                        "all": [
+                                          {
+                                            "kind": "method_definition",
+                                            "has": {
+                                              "stopBy": "neighbor",
+                                              "regex": "^get$",
+                                              "not": {
+                                                "kind": "property_identifier"
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "pattern": "$G1P"
+                                          },
+                                          {
+                                            "compare": {
+                                              "left": "G1P",
+                                              "op": "eq",
+                                              "right": "P",
+                                              "text": "key"
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      "min": 1
+                                    }
+                                  },
+                                  {
+                                    "count": {
+                                      "precedes": {
+                                        "stopBy": "end",
+                                        "all": [
+                                          {
+                                            "kind": "method_definition",
+                                            "has": {
+                                              "stopBy": "neighbor",
+                                              "regex": "^get$",
+                                              "not": {
+                                                "kind": "property_identifier"
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "pattern": "$G2P"
+                                          },
+                                          {
+                                            "compare": {
+                                              "left": "G2P",
+                                              "op": "eq",
+                                              "right": "P",
+                                              "text": "key"
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      "min": 1
+                                    }
+                                  }
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "all": [
+                              {
+                                "count": {
+                                  "follows": {
+                                    "stopBy": "end",
+                                    "all": [
+                                      {
+                                        "kind": "method_definition",
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "regex": "^set$",
+                                          "not": {
+                                            "kind": "property_identifier"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "pattern": "$S3P"
+                                      },
+                                      {
+                                        "compare": {
+                                          "left": "S3P",
+                                          "op": "eq",
+                                          "right": "P",
+                                          "text": "key"
+                                        }
+                                      }
+                                    ]
+                                  },
+                                  "min": 1,
+                                  "max": 1
+                                }
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "count": {
+                                      "follows": {
+                                        "stopBy": "end",
+                                        "all": [
+                                          {
+                                            "kind": "method_definition",
+                                            "has": {
+                                              "stopBy": "neighbor",
+                                              "regex": "^get$",
+                                              "not": {
+                                                "kind": "property_identifier"
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "pattern": "$G4P"
+                                          },
+                                          {
+                                            "compare": {
+                                              "left": "G4P",
+                                              "op": "eq",
+                                              "right": "P",
+                                              "text": "key"
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      "min": 2
+                                    }
+                                  },
+                                  {
+                                    "count": {
+                                      "precedes": {
+                                        "stopBy": "end",
+                                        "all": [
+                                          {
+                                            "kind": "method_definition",
+                                            "has": {
+                                              "stopBy": "neighbor",
+                                              "regex": "^get$",
+                                              "not": {
+                                                "kind": "property_identifier"
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "pattern": "$G5P"
+                                          },
+                                          {
+                                            "compare": {
+                                              "left": "G5P",
+                                              "op": "eq",
+                                              "right": "P",
+                                              "text": "key"
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      "min": 2
+                                    }
+                                  },
+                                  {
+                                    "all": [
+                                      {
+                                        "count": {
+                                          "follows": {
+                                            "stopBy": "end",
+                                            "all": [
+                                              {
+                                                "kind": "method_definition",
+                                                "has": {
+                                                  "stopBy": "neighbor",
+                                                  "regex": "^get$",
+                                                  "not": {
+                                                    "kind": "property_identifier"
+                                                  }
+                                                }
+                                              },
+                                              {
+                                                "pattern": "$G6P"
+                                              },
+                                              {
+                                                "compare": {
+                                                  "left": "G6P",
+                                                  "op": "eq",
+                                                  "right": "P",
+                                                  "text": "key"
+                                                }
+                                              }
+                                            ]
+                                          },
+                                          "min": 1
+                                        }
+                                      },
+                                      {
+                                        "count": {
+                                          "precedes": {
+                                            "stopBy": "end",
+                                            "all": [
+                                              {
+                                                "kind": "method_definition",
+                                                "has": {
+                                                  "stopBy": "neighbor",
+                                                  "regex": "^get$",
+                                                  "not": {
+                                                    "kind": "property_identifier"
+                                                  }
+                                                }
+                                              },
+                                              {
+                                                "pattern": "$G7P"
+                                              },
+                                              {
+                                                "compare": {
+                                                  "left": "G7P",
+                                                  "op": "eq",
+                                                  "right": "P",
+                                                  "text": "key"
+                                                }
+                                              }
+                                            ]
+                                          },
+                                          "min": 1
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "item-Q": {
+              "all": [
+                {
+                  "pattern": "$Q"
+                },
+                {
+                  "any": [
+                    {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "kind": "string",
+                              "not": {
+                                "regex": "^(''|\"\"|``)$"
+                              }
+                            },
+                            {
+                              "kind": "number"
+                            },
+                            {
+                              "kind": "template_string",
+                              "not": {
+                                "any": [
+                                  {
+                                    "has": {
+                                      "kind": "template_substitution"
+                                    }
+                                  },
+                                  {
+                                    "regex": "^(''|\"\"|``)$"
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "array",
+                            "inside": {
+                              "stopBy": {
+                                "not": {
+                                  "kind": "parenthesized_expression"
+                                }
+                              },
+                              "matches": "group-Q"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "object",
+                            "matches": "object-in-group-Q"
+                          }
+                        },
+                        {
+                          "any": [
+                            {
+                              "kind": "shorthand_property_identifier"
+                            },
+                            {
+                              "kind": "pair",
+                              "any": [
+                                {
+                                  "has": {
+                                    "field": "key",
+                                    "stopBy": "neighbor",
+                                    "any": [
+                                      {
+                                        "kind": "property_identifier"
+                                      },
+                                      {
+                                        "kind": "string",
+                                        "not": {
+                                          "regex": "^(''|\"\"|``)$"
+                                        }
+                                      },
+                                      {
+                                        "kind": "number"
+                                      }
+                                    ]
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "field": "key",
+                                    "stopBy": "neighbor",
+                                    "kind": "computed_property_name",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "any": [
+                                        {
+                                          "kind": "string",
+                                          "not": {
+                                            "regex": "^(''|\"\"|``)$"
+                                          }
+                                        },
+                                        {
+                                          "kind": "number"
+                                        },
+                                        {
+                                          "kind": "template_string",
+                                          "not": {
+                                            "any": [
+                                              {
+                                                "has": {
+                                                  "kind": "template_substitution"
+                                                }
+                                              },
+                                              {
+                                                "regex": "^(''|\"\"|``)$"
+                                              }
+                                            ]
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "kind": "method_definition",
+                              "any": [
+                                {
+                                  "has": {
+                                    "field": "name",
+                                    "stopBy": "neighbor",
+                                    "any": [
+                                      {
+                                        "kind": "property_identifier"
+                                      },
+                                      {
+                                        "kind": "string",
+                                        "not": {
+                                          "regex": "^(''|\"\"|``)$"
+                                        }
+                                      },
+                                      {
+                                        "kind": "number"
+                                      }
+                                    ]
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "field": "name",
+                                    "stopBy": "neighbor",
+                                    "kind": "computed_property_name",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "any": [
+                                        {
+                                          "kind": "string",
+                                          "not": {
+                                            "regex": "^(''|\"\"|``)$"
+                                          }
+                                        },
+                                        {
+                                          "kind": "number"
+                                        },
+                                        {
+                                          "kind": "template_string",
+                                          "not": {
+                                            "any": [
+                                              {
+                                                "has": {
+                                                  "kind": "template_substitution"
+                                                }
+                                              },
+                                              {
+                                                "regex": "^(''|\"\"|``)$"
+                                              }
+                                            ]
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "not": {
+                    "all": [
+                      {
+                        "kind": "method_definition",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "regex": "^set$",
+                          "not": {
+                            "kind": "property_identifier"
+                          }
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "not": {
+                                  "follows": {
+                                    "stopBy": "end",
+                                    "all": [
+                                      {
+                                        "kind": "method_definition",
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "regex": "^set$",
+                                          "not": {
+                                            "kind": "property_identifier"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "pattern": "$S1Q"
+                                      },
+                                      {
+                                        "compare": {
+                                          "left": "S1Q",
+                                          "op": "eq",
+                                          "right": "Q",
+                                          "text": "key"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "count": {
+                                      "follows": {
+                                        "stopBy": "end",
+                                        "all": [
+                                          {
+                                            "kind": "method_definition",
+                                            "has": {
+                                              "stopBy": "neighbor",
+                                              "regex": "^get$",
+                                              "not": {
+                                                "kind": "property_identifier"
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "pattern": "$G1Q"
+                                          },
+                                          {
+                                            "compare": {
+                                              "left": "G1Q",
+                                              "op": "eq",
+                                              "right": "Q",
+                                              "text": "key"
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      "min": 1
+                                    }
+                                  },
+                                  {
+                                    "count": {
+                                      "precedes": {
+                                        "stopBy": "end",
+                                        "all": [
+                                          {
+                                            "kind": "method_definition",
+                                            "has": {
+                                              "stopBy": "neighbor",
+                                              "regex": "^get$",
+                                              "not": {
+                                                "kind": "property_identifier"
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "pattern": "$G2Q"
+                                          },
+                                          {
+                                            "compare": {
+                                              "left": "G2Q",
+                                              "op": "eq",
+                                              "right": "Q",
+                                              "text": "key"
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      "min": 1
+                                    }
+                                  }
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "all": [
+                              {
+                                "count": {
+                                  "follows": {
+                                    "stopBy": "end",
+                                    "all": [
+                                      {
+                                        "kind": "method_definition",
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "regex": "^set$",
+                                          "not": {
+                                            "kind": "property_identifier"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "pattern": "$S3Q"
+                                      },
+                                      {
+                                        "compare": {
+                                          "left": "S3Q",
+                                          "op": "eq",
+                                          "right": "Q",
+                                          "text": "key"
+                                        }
+                                      }
+                                    ]
+                                  },
+                                  "min": 1,
+                                  "max": 1
+                                }
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "count": {
+                                      "follows": {
+                                        "stopBy": "end",
+                                        "all": [
+                                          {
+                                            "kind": "method_definition",
+                                            "has": {
+                                              "stopBy": "neighbor",
+                                              "regex": "^get$",
+                                              "not": {
+                                                "kind": "property_identifier"
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "pattern": "$G4Q"
+                                          },
+                                          {
+                                            "compare": {
+                                              "left": "G4Q",
+                                              "op": "eq",
+                                              "right": "Q",
+                                              "text": "key"
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      "min": 2
+                                    }
+                                  },
+                                  {
+                                    "count": {
+                                      "precedes": {
+                                        "stopBy": "end",
+                                        "all": [
+                                          {
+                                            "kind": "method_definition",
+                                            "has": {
+                                              "stopBy": "neighbor",
+                                              "regex": "^get$",
+                                              "not": {
+                                                "kind": "property_identifier"
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "pattern": "$G5Q"
+                                          },
+                                          {
+                                            "compare": {
+                                              "left": "G5Q",
+                                              "op": "eq",
+                                              "right": "Q",
+                                              "text": "key"
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      "min": 2
+                                    }
+                                  },
+                                  {
+                                    "all": [
+                                      {
+                                        "count": {
+                                          "follows": {
+                                            "stopBy": "end",
+                                            "all": [
+                                              {
+                                                "kind": "method_definition",
+                                                "has": {
+                                                  "stopBy": "neighbor",
+                                                  "regex": "^get$",
+                                                  "not": {
+                                                    "kind": "property_identifier"
+                                                  }
+                                                }
+                                              },
+                                              {
+                                                "pattern": "$G6Q"
+                                              },
+                                              {
+                                                "compare": {
+                                                  "left": "G6Q",
+                                                  "op": "eq",
+                                                  "right": "Q",
+                                                  "text": "key"
+                                                }
+                                              }
+                                            ]
+                                          },
+                                          "min": 1
+                                        }
+                                      },
+                                      {
+                                        "count": {
+                                          "precedes": {
+                                            "stopBy": "end",
+                                            "all": [
+                                              {
+                                                "kind": "method_definition",
+                                                "has": {
+                                                  "stopBy": "neighbor",
+                                                  "regex": "^get$",
+                                                  "not": {
+                                                    "kind": "property_identifier"
+                                                  }
+                                                }
+                                              },
+                                              {
+                                                "pattern": "$G7Q"
+                                              },
+                                              {
+                                                "compare": {
+                                                  "left": "G7Q",
+                                                  "op": "eq",
+                                                  "right": "Q",
+                                                  "text": "key"
+                                                }
+                                              }
+                                            ]
+                                          },
+                                          "min": 1
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          "transform": {
+            "KT": {
+              "substring": {
+                "source": "$K",
+                "value": true
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.K",
+        "code": "vue/no-dupe-keys",
+        "message": "Duplicate key '$KT'. May cause name collision in script or template tag.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-dupe-keys"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "script-setup-props",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "embedded": "script-block",
+          "rule": {
+            "all": [
+              {
+                "matches": "prop-name"
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": {
+                      "kind": "variable_declarator"
+                    },
+                    "kind": "variable_declarator",
+                    "has": {
+                      "field": "name",
+                      "stopBy": "neighbor",
+                      "kind": "object_pattern",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "pair_pattern",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "key",
+                              "stopBy": "neighbor",
+                              "kind": "property_identifier",
+                              "pattern": "$RK"
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "value",
+                              "stopBy": "neighbor",
+                              "kind": "identifier",
+                              "pattern": "$RV"
+                            }
+                          },
+                          {
+                            "compare": {
+                              "left": "RK",
+                              "op": "eq",
+                              "right": "N",
+                              "text": "unquoted"
+                            }
+                          },
+                          {
+                            "compare": {
+                              "left": "RK",
+                              "op": "ne",
+                              "right": "RV"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "program",
+                  "has": {
+                    "stopBy": "end",
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "kind": "type_identifier"
+                          },
+                          {
+                            "kind": "shorthand_property_identifier_pattern"
+                          }
+                        ],
+                        "pattern": "$NAME"
+                      },
+                      {
+                        "compare": {
+                          "left": "N",
+                          "op": "eq",
+                          "right": "NAME",
+                          "text": "unquoted"
+                        }
+                      },
+                      {
+                        "binds": {
+                          "scope": "module",
+                          "site": {
+                            "pattern": "$SITE",
+                            "not": {
+                              "matches": "props-initialized"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "utils": {
+            "top-statement": {
+              "any": [
+                {
+                  "kind": "lexical_declaration"
+                },
+                {
+                  "kind": "variable_declaration"
+                },
+                {
+                  "kind": "expression_statement"
+                }
+              ],
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "program"
+              },
+              "follows": {
+                "stopBy": {
+                  "kind": "empty_statement",
+                  "host": {
+                    "kind": "start_tag",
+                    "regex": "^<script\\b"
+                  }
+                },
+                "kind": "empty_statement",
+                "host": {
+                  "kind": "start_tag",
+                  "regex": "^<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$)"
+                }
+              }
+            },
+            "macro-position": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "expression_statement",
+                    "matches": "top-statement"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "variable_declarator",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "lexical_declaration"
+                        },
+                        {
+                          "kind": "variable_declaration"
+                        }
+                      ],
+                      "matches": "top-statement"
+                    }
+                  }
+                }
+              ]
+            },
+            "define-props-call": {
+              "kind": "call_expression",
+              "has": {
+                "field": "function",
+                "stopBy": "neighbor",
+                "kind": "identifier",
+                "regex": "^defineProps$"
+              },
+              "any": [
+                {
+                  "matches": "macro-position"
+                },
+                {
+                  "nthChild": 1,
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "arguments",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "call_expression",
+                      "has": {
+                        "field": "function",
+                        "stopBy": "neighbor",
+                        "kind": "identifier",
+                        "regex": "^withDefaults$"
+                      },
+                      "matches": "macro-position"
+                    }
+                  }
+                }
+              ]
+            },
+            "props-initialized": {
+              "kind": "variable_declarator",
+              "any": [
+                {
+                  "has": {
+                    "field": "value",
+                    "stopBy": "end",
+                    "matches": "define-props-call"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "value",
+                    "stopBy": "end",
+                    "kind": "identifier",
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "variable_declarator",
+                          "has": {
+                            "field": "value",
+                            "stopBy": "end",
+                            "matches": "define-props-call"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "prop-name": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "string",
+                      "not": {
+                        "regex": "^(''|\"\"|``)$"
+                      }
+                    },
+                    {
+                      "kind": "number"
+                    },
+                    {
+                      "kind": "template_string",
+                      "not": {
+                        "any": [
+                          {
+                            "has": {
+                              "kind": "template_substitution"
+                            }
+                          },
+                          {
+                            "regex": "^(''|\"\"|``)$"
+                          }
+                        ]
+                      }
+                    }
+                  ],
+                  "pattern": "$N",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "array",
+                    "nthChild": 1,
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "arguments",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "matches": "define-props-call"
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "object",
+                    "nthChild": 1,
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "arguments",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "matches": "define-props-call"
+                      }
+                    }
+                  },
+                  "any": [
+                    {
+                      "kind": "shorthand_property_identifier",
+                      "pattern": "$N"
+                    },
+                    {
+                      "kind": "pair",
+                      "any": [
+                        {
+                          "has": {
+                            "field": "key",
+                            "stopBy": "neighbor",
+                            "any": [
+                              {
+                                "kind": "property_identifier",
+                                "pattern": "$N"
+                              },
+                              {
+                                "kind": "string",
+                                "not": {
+                                  "regex": "^(''|\"\"|``)$"
+                                },
+                                "pattern": "$N"
+                              },
+                              {
+                                "kind": "number",
+                                "pattern": "$N"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "key",
+                            "stopBy": "neighbor",
+                            "kind": "computed_property_name",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "any": [
+                                {
+                                  "kind": "string",
+                                  "not": {
+                                    "regex": "^(''|\"\"|``)$"
+                                  },
+                                  "pattern": "$N"
+                                },
+                                {
+                                  "kind": "number",
+                                  "pattern": "$N"
+                                },
+                                {
+                                  "kind": "template_string",
+                                  "not": {
+                                    "any": [
+                                      {
+                                        "has": {
+                                          "kind": "template_substitution"
+                                        }
+                                      },
+                                      {
+                                        "regex": "^(''|\"\"|``)$"
+                                      }
+                                    ]
+                                  },
+                                  "pattern": "$N"
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "method_definition",
+                      "any": [
+                        {
+                          "has": {
+                            "field": "name",
+                            "stopBy": "neighbor",
+                            "any": [
+                              {
+                                "kind": "property_identifier",
+                                "pattern": "$N"
+                              },
+                              {
+                                "kind": "string",
+                                "not": {
+                                  "regex": "^(''|\"\"|``)$"
+                                },
+                                "pattern": "$N"
+                              },
+                              {
+                                "kind": "number",
+                                "pattern": "$N"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "name",
+                            "stopBy": "neighbor",
+                            "kind": "computed_property_name",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "any": [
+                                {
+                                  "kind": "string",
+                                  "not": {
+                                    "regex": "^(''|\"\"|``)$"
+                                  },
+                                  "pattern": "$N"
+                                },
+                                {
+                                  "kind": "number",
+                                  "pattern": "$N"
+                                },
+                                {
+                                  "kind": "template_string",
+                                  "not": {
+                                    "any": [
+                                      {
+                                        "has": {
+                                          "kind": "template_substitution"
+                                        }
+                                      },
+                                      {
+                                        "regex": "^(''|\"\"|``)$"
+                                      }
+                                    ]
+                                  },
+                                  "pattern": "$N"
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "property_signature",
+                      "has": {
+                        "field": "name",
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "kind": "property_identifier",
+                            "pattern": "$N"
+                          },
+                          {
+                            "kind": "string",
+                            "not": {
+                              "regex": "^(''|\"\"|``)$"
+                            },
+                            "pattern": "$N"
+                          },
+                          {
+                            "kind": "number",
+                            "pattern": "$N"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "kind": "method_signature",
+                      "has": {
+                        "field": "name",
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "kind": "property_identifier",
+                            "pattern": "$N"
+                          },
+                          {
+                            "kind": "string",
+                            "not": {
+                              "regex": "^(''|\"\"|``)$"
+                            },
+                            "pattern": "$N"
+                          },
+                          {
+                            "kind": "number",
+                            "pattern": "$N"
+                          }
+                        ]
+                      }
+                    }
+                  ],
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "object_type",
+                    "nthChild": 1,
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "type_arguments",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "matches": "define-props-call"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.SITE",
+        "code": "vue/no-dupe-keys",
+        "message": "Duplicate key '$NAME'. May cause name collision in script or template tag.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-dupe-keys"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

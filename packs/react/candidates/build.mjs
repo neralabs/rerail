@@ -14,6 +14,12 @@ import { HAND_WRITTEN, SPECS } from "./specs.mjs";
 const CANDIDATES = dirname(fileURLToPath(import.meta.url));
 const PACK_DIRECTORY = dirname(CANDIDATES);
 const EXTENSIONS = ["ts", "mts", "cts", "tsx", "js", "jsx", "mjs", "cjs"];
+/**
+ * The JSX runtimes a React rule runs under: React, or a runtime the file does not settle. A file whose JSX belongs to
+ * another library (a `@jsx h` / `@jsxImportSource preact` pragma, `h` imported from Stencil, Preact or Vue, a manifest
+ * depending on Vue and not React) is not React code, so no React rule reads it.
+ */
+const JSX_RUNTIMES = ["react", "unknown"];
 
 /** A check's own utilities: those the document's shared define does not already hold. */
 function local(spec, check) {
@@ -41,7 +47,7 @@ function document(spec) {
             rule: check.rule,
             ...(local(spec, check) ? { utils: local(spec, check) } : {}),
             ...(check.constraints ? { constraints: check.constraints } : {}),
-            ...(check.file ? { file: check.file } : {}),
+            file: { ...check.file, jsxRuntime: JSX_RUNTIMES },
           },
         },
         violation: {

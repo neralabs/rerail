@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "next-no-duplicate-head",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-duplicate-head: every <Head> child of a returned element after the first, in a return inside a class extending the default import of next/document.",
+  "description": "Keep a single Head element in a custom Next.js Document's render output; duplicate heads produce unexpected markup.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -178,6 +178,11 @@
           "eslint": {
             "rules": [
               "@next/next/no-duplicate-head"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-duplicate-head"
             ]
           }
         }

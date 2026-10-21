@@ -3,7 +3,7 @@
   "id": "eslint-prefer-const",
   "revision": 1,
   "mode": "log",
-  "description": "A `let` binding with an initial value, or a `for\u2026in`/`for\u2026of` `let`, that is never reassigned.",
+  "description": "Declare JavaScript variables with const instead of let when they are never reassigned; it signals intent and prevents accidental changes.",
   "scope": {
     "include": [
       "**/*.js",
@@ -230,6 +230,16 @@
           "eslint": {
             "rules": [
               "prefer-const"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "prefer-const"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/useConst"
             ]
           }
         }

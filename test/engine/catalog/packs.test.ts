@@ -1,22 +1,29 @@
 /**
- * The pack validation contract (docs/pack-format.md): every packs/<id>/ directory passes checks 1 to 6, one test per
+ * The pack validation contract (docs/pack-format.md): every packs/<id>/ directory passes checks 1 to 8, one test per
  * check, and reports each rule's status; a rule core cannot read yet is skipped as not supported yet. Check 4 scores
  * ported rules on the tools' fixtures, and on the pinned corpora that are checked out (RERAIL_PACK_CORPORA=1: every
  * corpus, a missing checkout failing; 0: none).
  *
  * The validator's own tests run it over the fixture packs in fixtures/packs/: `valid` passes, each negative
- * breaks one check of a copy of it, `vue`, for a language core plans, passes with its rule not supported yet, and
- * `empty`, whose ports are all candidates, passes with no rules.
+ * breaks one check of a copy of it, `exemplar`, for the test-only planned language, passes with its rule not supported
+ * yet, and `empty`, whose ports are all candidates, passes with no rules.
  */
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it, test } from "vitest";
+import { afterEach, describe, expect, it, test, vi } from "vitest";
 import { z } from "zod";
-import { PACK_CHECKS, packedFileFailures, validatePack, type PackCheckName, type PackValidation, type ValidatePackOptions } from "../../../conformance/pack-validation.js";
+import { PACK_CHECKS, packedFileFailures, textFailures, validatePack, type PackCheckName, type PackValidation, type ValidatePackOptions } from "../../../conformance/pack-validation.js";
 import { compareDeterministicStrings } from "../../../src/engine/stable-json.js";
 import { fixturesPath } from "../../support/oracles.js";
+
+// The exemplar is a language only tests plan: the registry module lists it for this file, and the engine refuses it as a
+// planned language (test/engine/support/exemplar-registry.ts, exemplar-engine.ts).
+vi.mock("../../../src/engine/code-rule/code-rule-language-registry.generated.js", async () =>
+  (await import("../support/exemplar-registry.js")).exemplarRegistryModule());
+vi.mock("../../../src/engine/native/native.js", async importOriginal =>
+  (await import("../support/exemplar-engine.js")).nativeRefusingExemplar(await importOriginal()));
 
 const PACKS = fileURLToPath(new URL("../../../packs/", import.meta.url));
 const FIXTURES = fixturesPath("packs");
@@ -137,10 +144,10 @@ describe("validatePack", () => {
   });
 
   it("passes a pack for a planned language, its rules not supported yet and their examples skipped", async () => {
-    const validation = await validatePack(join(FIXTURES, "vue"), { corpora: false });
+    const validation = await validatePack(join(FIXTURES, "exemplar"), { corpora: false });
     expect(failing(validation)).toEqual({});
     expect(validation.rules).toEqual([
-      { id: "no-v-html", document: "rules/no-v-html.json", status: "not-supported-yet", reason: "/clauses/0/forbid/ast/language: `vue` is not supported yet" },
+      { id: "no-identifier", document: "rules/no-identifier.json", status: "not-supported-yet", reason: "/clauses/0/forbid/ast/language: `exemplar` is not supported yet" },
     ]);
   });
 
@@ -199,7 +206,7 @@ describe("validatePack", () => {
       "a candidate whose id is not lowercase letters, digits and dashes, though its file is named for it",
       directory => {
         mkdirSync(join(directory, "candidates", "rules"), { recursive: true });
-        writeJson(join(directory, "candidates", "rules", "eslint:no-alert.json"), { format: "rerail.policy/v1", id: "eslint:no-alert", clauses: [] });
+        writeJson(join(directory, "candidates", "rules", "eslint:no-alert.json"), { format: "rerail.policy/v1", id: "eslint:no-alert", description: "Avoid alert().", clauses: [] });
       },
       { rules: ["candidates/rules/eslint:no-alert.json: id eslint:no-alert is not lowercase letters, digits and dashes"] },
     ],
@@ -207,7 +214,7 @@ describe("validatePack", () => {
       "a candidate with no id",
       directory => {
         mkdirSync(join(directory, "candidates", "rules"), { recursive: true });
-        writeJson(join(directory, "candidates", "rules", "no-pass.json"), { format: "rerail.policy/v1", clauses: [] });
+        writeJson(join(directory, "candidates", "rules", "no-pass.json"), { format: "rerail.policy/v1", description: "Remove pass statements.", clauses: [] });
       },
       { rules: ["candidates/rules/no-pass.json: has no id"] },
     ],
@@ -215,7 +222,7 @@ describe("validatePack", () => {
       "a candidate in an older document format",
       directory => {
         mkdirSync(join(directory, "candidates", "rules"), { recursive: true });
-        writeJson(join(directory, "candidates", "rules", "no-pass.json"), { format: "tempo.policy/v1", id: "no-pass", checks: [] });
+        writeJson(join(directory, "candidates", "rules", "no-pass.json"), { format: "tempo.policy/v1", id: "no-pass", description: "Remove pass statements.", checks: [] });
       },
       { rules: ["candidates/rules/no-pass.json: format is tempo.policy/v1; a rule document is rerail.policy/v1"] },
     ],
@@ -340,9 +347,29 @@ describe("validatePack", () => {
       { licences: ["upstream/examplelint/fixtures/more.py is under upstream/<tool>/ but neither licenses/*/UPSTREAM.md (copied) nor its tool's UPSTREAM.md (Rerail's) lists it"] },
     ],
     [
+      "a file copied from an upstream path its UPSTREAM.md lists as not copied",
+      directory => appendFileSync(join(directory, "licenses", "examplelint", "UPSTREAM.md"), "\n- Not copied: `tests/` — a copyleft project, GPL-3.0-only\n"),
+      { licences: ["licenses/examplelint/UPSTREAM.md lists upstream/examplelint/fixtures/asserts.py as copied from tests/asserts.py, under tests/, which it lists as not copied"] },
+    ],
+    [
       "an authored file the tool's UPSTREAM.md does not list",
       directory => writeFileSync(join(directory, "upstream", "examplelint", "UPSTREAM.md"), "# examplelint: files Rerail wrote\n"),
       { licences: ["upstream/examplelint/fixtures/clean.py is under upstream/<tool>/ but neither licenses/*/UPSTREAM.md (copied) nor its tool's UPSTREAM.md (Rerail's) lists it"] },
+    ],
+    [
+      "a description that names its tool and holds code",
+      directory => editJson(join(directory, "rules", "pass-statement.json"), document => ({ ...document, description: "Port of Ruff's `PIE790`." })),
+      {
+        text: [
+          "rules/pass-statement.json: description names an upstream tool: Port of Ruff's `PIE790`.",
+          "rules/pass-statement.json: description holds code (backticks): Port of Ruff's `PIE790`.",
+        ],
+      },
+    ],
+    [
+      "a rule with no description",
+      directory => editJson(join(directory, "rules", "pass-statement.json"), ({ description: _description, ...document }) => document),
+      { text: ["rules/pass-statement.json: has no description"] },
     ],
   ];
 
@@ -350,6 +377,44 @@ describe("validatePack", () => {
     const validation = await validatePack(changed("valid", change), { corpora: false });
     expect(failing(validation)).toEqual(expected);
     expect(validation.pass).toBe(false);
+  });
+
+  it("passes a rule whatever its message says: messages are left to review", async () => {
+    const message = `NEVER keep this pass (pass-statement); Rerail flags it.${" Remove it.".repeat(20)}`;
+    const validation = await validatePack(
+      changed("valid", directory => editJson(join(directory, "rules", "pass-statement.json"), document => ({
+        ...document,
+        clauses: (document.clauses as { violation: object }[]).map(clause => ({ ...clause, violation: { ...clause.violation, message } })),
+      }))),
+      { corpora: false },
+    );
+    expect(failing(validation)).toEqual({});
+    expect(validation.pass).toBe(true);
+    expect(validation.rules.find(rule => rule.id === "pass-statement")?.status).toBe("ok");
+  });
+
+  describe("check 8: text", () => {
+    it("reads no sentence end in an abbreviation or quoted text, and no tool name in a quoted value", () => {
+      const document = { description: "Use field init shorthand, e.g. Point { x } for Point { x: x }, not 'eslint' style.", clauses: [] };
+      expect(textFailures("rules/x.json", JSON.stringify(document))).toEqual([]);
+    });
+  });
+
+  describe("check 7: manifest", () => {
+    it("fails a pack.json without match, as a manifest failure besides check 1's schema failure", async () => {
+      const validation = await validatePack(changed("valid", directory => editJson(join(directory, "pack.json"), ({ match: _match, ...pack }) => pack)), { corpora: false });
+      expect(failing(validation)).toEqual({
+        rules: ["pack.json: ✖ Invalid input: expected object, received undefined\n  → at match"],
+        proof: ["pack.json does not parse; see check 1"],
+        examples: ["pack.json does not parse; see check 1"],
+        manifest: ["pack.json has no match: set-up could never recommend this pack"],
+      });
+    });
+
+    it("fails a pack core's generated pack list does not name, when it must be listed", async () => {
+      const validation = await validatePack(join(FIXTURES, "valid"), { corpora: false, listed: true });
+      expect(failing(validation)).toEqual({ manifest: ["src/engine/catalog/pack-list.generated.ts does not list valid; run npm run generate:packs"] });
+    });
   });
 
   it("marks the rule a failure belongs to", async () => {
@@ -362,6 +427,128 @@ describe("validatePack", () => {
       { id: "pass-statement", status: "ok" },
     ]);
   });
+
+  it("passes a pack whose ESLint port honours ESLint's suppression comments", async () => {
+    const validation = await validatePack(join(FIXTURES, "eslint-port"), { corpora: false });
+    expect(failing(validation)).toEqual({});
+    expect(validation.rules).toEqual([{ id: "no-debugger", document: "rules/no-debugger.json", status: "ok" }]);
+  });
+
+  /** The eslint-port pack with its port's `suppress` removed, scored on a fixture with no directive to honour. */
+  const withoutSuppress = (directory: string): void => {
+    editJson(join(directory, "rules", "no-debugger.json"), document => ({
+      ...document,
+      clauses: z
+        .array(z.looseObject({ violation: z.record(z.string(), z.unknown()) }))
+        .parse(document.clauses)
+        .map(({ violation: { suppress: _suppress, ...violation }, ...clause }) => ({ ...clause, violation })),
+    }));
+    writeFileSync(join(directory, "upstream", "eslint", "fixtures", "debugger.js"), "debugger;\n");
+  };
+  const exempted = (directory: string): void =>
+    editJson(join(directory, "conformance.json"), pack => ({ ...pack, suppressionExemptions: [{ rule: "no-debugger", reason: "recorded before the port modelled eslint-disable comments" }] }));
+
+  it("fails an ESLint port whose violation does not suppress its upstream rule", async () => {
+    const validation = await validatePack(changed("eslint-port", withoutSuppress), { corpora: false });
+    expect(failing(validation)).toEqual({
+      ports: [
+        "no-debugger: rules/no-debugger.json reports eslint's no-debugger without suppress.eslint.rules naming it (clause debugger-statement), so the comments that silence no-debugger are ignored; add it, or exempt the port in suppressionExemptions with a reason",
+      ],
+    });
+    expect(validation.rules.map(({ id, status }) => ({ id, status }))).toEqual([{ id: "no-debugger", status: "failed" }]);
+  });
+
+  it("passes a port without suppress that conformance.json exempts with a reason", async () => {
+    const validation = await validatePack(
+      changed("eslint-port", directory => {
+        withoutSuppress(directory);
+        exempted(directory);
+      }),
+      { corpora: false },
+    );
+    expect(failing(validation)).toEqual({});
+  });
+
+  it("fails a stale suppression exemption, for a port that suppresses its upstream rule", async () => {
+    const validation = await validatePack(changed("eslint-port", exempted), { corpora: false });
+    expect(failing(validation)).toEqual({ ports: ["no-debugger: stale suppression exemption: every violation of rules/no-debugger.json names no-debugger in suppress.eslint.rules"] });
+  });
+
+  it("fails a port whose violation carries suppress.oxlint without suppress.eslint", async () => {
+    const validation = await validatePack(
+      changed("eslint-port", directory =>
+        editJson(join(directory, "rules", "no-debugger.json"), document => ({
+          ...document,
+          clauses: z
+            .array(z.looseObject({ violation: z.record(z.string(), z.unknown()) }))
+            .parse(document.clauses)
+            .map(clause => ({ ...clause, violation: { ...clause.violation, suppress: { oxlint: { rules: ["no-debugger"] } } } })),
+        })),
+      ),
+      { corpora: false },
+    );
+    expect(failing(validation)).toEqual({
+      ports: [
+        "no-debugger: rules/no-debugger.json reports eslint's no-debugger without suppress.eslint.rules naming it (clause debugger-statement), so the comments that silence no-debugger are ignored; add it, or exempt the port in suppressionExemptions with a reason",
+        "no-debugger: rules/no-debugger.json carries suppress.eslint and suppress.oxlint on different violations (clause debugger-statement); Oxlint reads eslint-disable comments too, so both go on the same violations",
+      ],
+    });
+  });
+
+  it("fails a port whose suppress.eslint lacks the Biome rule the same as its ESLint rule, or that carries suppress.biome alone", async () => {
+    const suppressing = (suppress: Record<string, unknown>) => (directory: string) =>
+      editJson(join(directory, "rules", "no-debugger.json"), document => ({
+        ...document,
+        clauses: z
+          .array(z.looseObject({ violation: z.record(z.string(), z.unknown()) }))
+          .parse(document.clauses)
+          .map(clause => ({ ...clause, violation: { ...clause.violation, suppress } })),
+      }));
+    const eslint = { rules: ["no-debugger"] };
+    const oxlint = { rules: ["no-debugger"] };
+    const missing = {
+      ports: [
+        "no-debugger: rules/no-debugger.json carries suppress.eslint without suppress.biome naming lint/suspicious/noDebugger (clause debugger-statement), the Biome 2.5.15 rule the same as the ESLint rule it names, so the biome-ignore comments that silence it are ignored; run scripts/generate/packs/biome-suppression.mjs",
+      ],
+    };
+    expect(failing(await validatePack(changed("eslint-port", suppressing({ eslint, oxlint })), { corpora: false }))).toEqual(missing);
+    const otherRule = suppressing({ eslint, oxlint, biome: { rules: ["lint/suspicious/noConsole"] } });
+    expect(failing(await validatePack(changed("eslint-port", otherRule), { corpora: false }))).toEqual(missing);
+    const alone = await validatePack(changed("eslint-port", suppressing({ biome: { rules: ["lint/suspicious/noDebugger"] } })), { corpora: false });
+    expect(failing(alone)).toEqual({
+      ports: [
+        // The fixture's eslint-disable comments no longer silence the port: its recording disagrees.
+        'no-debugger (fixtures): 2 unexplained FP, first {"path":"debugger.js","line":2,"column":1}',
+        "no-debugger: rules/no-debugger.json reports eslint's no-debugger without suppress.eslint.rules naming it (clause debugger-statement), so the comments that silence no-debugger are ignored; add it, or exempt the port in suppressionExemptions with a reason",
+        "no-debugger: rules/no-debugger.json carries suppress.biome without suppress.eslint (clause debugger-statement); a port names the Biome rules the same as the ESLint rule it names",
+      ],
+    });
+  });
+
+  it("asks no suppress.biome of a port whose query language does not honour Biome's comments", async () => {
+    // Vue's registry entry honours eslint alone: a Vue query, over the component's script program
+    // too, refuses suppress.biome.
+    const vue = (directory: string) =>
+      editJson(join(directory, "rules", "no-debugger.json"), document => ({
+        ...document,
+        clauses: z
+          .array(z.looseObject({ forbid: z.looseObject({ ast: z.looseObject({}) }), violation: z.record(z.string(), z.unknown()) }))
+          .parse(document.clauses)
+          .map(clause => ({
+            ...clause,
+            forbid: { ...clause.forbid, ast: { ...clause.forbid.ast, language: "vue", embedded: "script-block" } },
+            violation: { ...clause.violation, suppress: { eslint: { rules: ["no-debugger"] } } },
+          })),
+      }));
+    const validation = await validatePack(changed("eslint-port", vue), { corpora: false });
+    // The fixtures are .js files, which a Vue query does not read; nothing asks for suppress.biome.
+    expect(failing(validation)).toEqual({
+      ports: [
+        'no-debugger (fixtures): 1 unexplained FN, first {"path":"debugger.js","line":1,"column":1}',
+        "no-debugger (fixtures): 0 TP and no examples in pack.json; nothing shows it catches anything",
+      ],
+    });
+  });
 });
 
 describe("packedFileFailures", () => {
@@ -372,14 +559,14 @@ describe("packedFileFailures", () => {
   });
 
   it("fails an entry files does not publish", () => {
-    expect(packedFileFailures(files, ["pack.json", "CHANGELOG.md", "checks/match.mjs"])).toEqual([
+    expect(packedFileFailures(files, ["pack.json", "CHANGELOG.md", "docs/notes.md"])).toEqual([
       "CHANGELOG.md: package.json files does not publish it",
-      "checks/match.mjs: package.json files does not publish it",
+      "docs/notes.md: package.json files does not publish it",
     ]);
   });
 
-  it("passes a directory a pack adds to files, such as checks/", () => {
-    expect(packedFileFailures([...files, "checks"], ["checks/match.mjs"])).toEqual([]);
+  it("passes a directory a pack adds to files, such as docs/", () => {
+    expect(packedFileFailures([...files, "docs"], ["docs/notes.md"])).toEqual([]);
   });
 
   it("passes files under a folder a glob entry matches, which npm publishes whole", () => {

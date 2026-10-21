@@ -6,9 +6,10 @@ import { ingestEngineEvent, startEngineService, stopDaemon, SqliteSessionReader 
 import { runCodexHook } from "../src/hosts/codex/index.js";
 import { RerailDaemon } from "../src/daemon/index.js";
 import { runCursorHook } from "../src/hosts/cursor/index.js";
-import { type AdapterDelivery, steerHeadlines, parseConversationRule } from "../src/engine/index.js";
+import { type AdapterDelivery, parseConversationRule } from "../src/engine/index.js";
+import { awaitCodeRulesOpen } from "./support/code-rules-open.js";
 import { CONTRACT_CURSOR_EXECUTE_MESSAGE, CONTRACT_CURSOR_EXECUTE_RULE_ID, seedContractCodeRule } from "./support/contract-code-rule.js";
-import { cursorRelayed, steerText } from "./support/steer-text.js";
+import { cursorRelayed, steerLine, steerText } from "./support/steer-text.js";
 import { startTestRepository } from "../test/support/started-repository.js";
 import { setUpTestRepository } from "../test/support/repository-rules.js";
 const originalRerailHome = process.env.RERAIL_HOME;
@@ -61,6 +62,7 @@ describe("engine service", () => {
       service = await startEngineService({ socketPath, storageRoot, modelPath: resolve("model") });
 
       await ingestEngineEvent(socketPath, { kind: "session-start", eventId: "start", session });
+      await awaitCodeRulesOpen(socketPath, session);
       await ingestEngineEvent(socketPath, {
         kind: "call",
         eventId: "call:write-route",
@@ -151,13 +153,16 @@ describe("engine service", () => {
         },
         options,
       );
-      const steer = await steerText(CONTRACT_CURSOR_EXECUTE_RULE_ID, `${CONTRACT_CURSOR_EXECUTE_MESSAGE} (api/route.py:2:5)`, common.cwd);
-      const shown = expect.stringContaining(steerHeadlines(steer)[0]!);
-      // Policy evaluation settles in the background: the steer returns as PostToolUse context when it is
-      // ready by then, otherwise as the Stop follow-up — exactly once either way.
-      expect([initial, stop]).toEqual(Object.keys(initial).length === 0
-        ? [{}, { decision: "block", reason: expect.stringContaining(steer), systemMessage: shown }]
-        : [{ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: expect.stringContaining(steer) }, systemMessage: shown }, {}]);
+      const next = await runCodexHook({ ...common, hook_event_name: "UserPromptSubmit", turn_id: "turn-2", prompt: "next" }, options);
+      const steer = steerText(CONTRACT_CURSOR_EXECUTE_RULE_ID, CONTRACT_CURSOR_EXECUTE_MESSAGE, "api/route.py:2:5");
+      const late = steerText(CONTRACT_CURSOR_EXECUTE_RULE_ID, CONTRACT_CURSOR_EXECUTE_MESSAGE, "api/route.py:2:5", { kind: "late" });
+      const shown = expect.stringContaining(await steerLine(CONTRACT_CURSOR_EXECUTE_RULE_ID, common.cwd, "plain"));
+      // Policy evaluation settles in the background: the steer returns as PostToolUse context when it is ready by
+      // then; otherwise its line shows at Stop and its block, led as late, goes out with the next message. Never as a
+      // Stop block, whose reason Codex records as the user's turn.
+      expect([initial, stop, next]).toEqual(Object.keys(initial).length === 0
+        ? [{}, { systemMessage: shown }, { hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: expect.stringContaining(late) } }]
+        : [{ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: expect.stringContaining(steer) }, systemMessage: shown }, {}, {}]);
     } finally {
       await service?.close();
       await rm(root, { recursive: true, force: true });
@@ -203,7 +208,7 @@ describe("engine service", () => {
         }),
         "DAEMON_ENGINE_MATCH",
       )).toEqual([
-        expect.objectContaining({ content: await steerText("resident", "DAEMON_ENGINE_MATCH"), mechanism: "additional-context" }),
+        expect.objectContaining({ content: steerText("resident", "DAEMON_ENGINE_MATCH"), mechanism: "additional-context" }),
       ]);
     } finally {
       await daemon?.close();
@@ -222,6 +227,7 @@ describe("engine service", () => {
       await writeFile(join(root, "api/route.py"), "def route():\n    return 1\n");
       service = await startEngineService(options);
       await ingestEngineEvent(socketPath, { kind: "session-start", eventId: "start", session });
+      await awaitCodeRulesOpen(socketPath, session);
       await ingestEngineEvent(socketPath, {
         kind: "call",
         eventId: "call",
@@ -234,6 +240,10 @@ describe("engine service", () => {
       service = undefined;
       await writeFile(join(root, "api/route.py"), "def route(cursor):\n    cursor.execute('SELECT 1')\n");
       service = await startEngineService(options);
+      // The restarted runtime takes the session back at its next event and reopens its evaluator; a result that
+      // arrived during that open would go on without code rules.
+      await ingestEngineEvent(socketPath, { kind: "user-prompt", eventId: "reattach", sessionId: session.sessionId, session, text: "go on" });
+      await awaitCodeRulesOpen(socketPath, session);
       const deliveries = await ingestEngineEvent(socketPath, {
         kind: "result",
         eventId: "result",
@@ -312,7 +322,7 @@ describe("engine service", () => {
             text: "continue",
           }, configuration),
           project,
-        )).toEqual([expect.objectContaining({ content: await steerText("project-rule", project), sessionId: session.sessionId })]);
+        )).toEqual([expect.objectContaining({ content: steerText("project-rule", project), sessionId: session.sessionId })]);
       }
     } finally {
       await service?.close();
@@ -361,7 +371,7 @@ describe("engine service", () => {
         },
         options,
       );
-      const recovery = await steerText("recovery", "CURSOR_RECOVERY", common.workspace_roots[0]!);
+      const recovery = await cursorRelayed(steerText("recovery", "CURSOR_RECOVERY", undefined, { kind: "tool", tool: "Write" }), "recovery", common.workspace_roots[0]!);
       let pollCount = 0;
       await expect.poll(
         async () => {
@@ -376,7 +386,7 @@ describe("engine service", () => {
           return runCursorHook({ ...tool, hook_event_name: "postToolUse", tool_output: "written" }, options);
         },
         { timeout: 10_000, interval: 10 },
-      ).toEqual({ additional_context: cursorRelayed(recovery) });
+      ).toEqual({ additional_context: recovery });
     } finally {
       await service?.close();
       await rm(root, { recursive: true, force: true });
@@ -455,7 +465,7 @@ describe("engine service", () => {
     }
   }, 30_000);
 
-  it("starts a Codex continuation when a turn-boundary conversation rule fires at Stop", async () => {
+  it("shows a turn-boundary conversation rule's line at Codex's Stop and gives its steer with the next message", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-codex-stop-rule-"));
     const socketPath = join(root, "engine.sock");
     const storageRoot = join(root, ".rerail/sessions");
@@ -476,13 +486,15 @@ describe("engine service", () => {
       const options = { storageRoot, modelPath: resolve("model"), kernelSocketPath: socketPath };
       const common = { cwd: root, session_id: "stop-rule", turn_id: "turn" };
       await runCodexHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, options);
-      const reason = await steerText("turn-steer", "CONTINUE_AFTER_STOP", common.cwd);
+      const content = steerText("turn-steer", "CONTINUE_AFTER_STOP");
       expect(
         await runCodexHook(
           { ...common, hook_event_name: "Stop", last_assistant_message: "Preserve database transaction atomicity" },
           options,
         ),
-      ).toEqual({ decision: "block", reason, systemMessage: steerHeadlines(reason).join("\n") });
+      ).toEqual({ systemMessage: await steerLine("turn-steer", root, "plain") });
+      expect(await runCodexHook({ ...common, turn_id: "turn-2", hook_event_name: "UserPromptSubmit", prompt: "next" }, options))
+        .toEqual({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: content } });
     } finally {
       await service?.close();
       await rm(root, { recursive: true, force: true });
@@ -501,12 +513,11 @@ describe("engine service", () => {
     delete process.env.RERAIL_ENGINE_SOCKET;
     startTestRepository(root);
     try {
-      await expect(
-        runCodexHook(
-          { session_id: "no-autostart", cwd: root, hook_event_name: "SessionStart", source: "startup" },
-          { storageRoot: join(root, "sessions"), modelPath: resolve("model") },
-        ),
-      ).rejects.toThrow("RERAIL_AUTOSTART");
+      // Codex has no footer, so a session that starts without a daemon says so in its one line.
+      expect(await runCodexHook(
+        { session_id: "no-autostart", cwd: root, hook_event_name: "SessionStart", source: "startup" },
+        { storageRoot: join(root, "sessions"), modelPath: resolve("model") },
+      )).toEqual({ systemMessage: "Rerail ✕ not running · start it with: rerail daemon start" });
       // The home holds only the database recording the repository start: no daemon state, log, or start lock.
       expect((await readdir(home)).filter(entry => !entry.startsWith("rerail.sqlite"))).toEqual([]);
     } finally {
@@ -599,7 +610,7 @@ describe("engine service", () => {
           },
           options,
         ),
-      ).toEqual({ additional_context: cursorRelayed(await steerText("transcript-prompt", marker, common.workspace_roots[0]!)) });
+      ).toEqual({ additional_context: await cursorRelayed(steerText("transcript-prompt", marker), "transcript-prompt", common.workspace_roots[0]!) });
       expect(
         await runCursorHook(
           {
@@ -705,7 +716,7 @@ describe("engine service", () => {
           },
           options,
         ),
-      ).toEqual({ additional_context: cursorRelayed(await steerText("native-prompt", marker, common.workspace_roots[0]!)) });
+      ).toEqual({ additional_context: await cursorRelayed(steerText("native-prompt", marker), "native-prompt", common.workspace_roots[0]!) });
       expect(
         await runCursorHook(
           {

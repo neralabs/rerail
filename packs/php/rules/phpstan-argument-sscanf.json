@@ -3,7 +3,7 @@
   "id": "phpstan-argument-sscanf",
   "revision": 1,
   "mode": "steer",
-  "description": "PHPStan 2.2.16 argument.sscanf (PrintfParametersRule): an sscanf() call passing variables whose known format assigns more or fewer of them than it passes, or that PHP refuses.",
+  "description": "Pass sscanf() exactly as many output variables as its format string assigns, and keep the format valid.",
   "scope": {
     "include": [
       "**/*.php"
@@ -61,7 +61,7 @@
             ]
           }
         },
-        "message": "Call to sscanf contains more placeholders than values given."
+        "message": "Pass sscanf() one output variable for each placeholder in its format, or remove the extra placeholders."
       }
     },
     {
@@ -112,7 +112,7 @@
             ]
           }
         },
-        "message": "Call to sscanf contains fewer placeholders than values given."
+        "message": "Remove the extra output variables passed to sscanf(), or add placeholders to fill them."
       }
     },
     {
@@ -167,7 +167,7 @@
             ]
           }
         },
-        "message": "Call to sscanf contains an invalid placeholder."
+        "message": "Fix the invalid placeholder in this sscanf() format, or write a literal percent sign as %%."
       }
     }
   ]

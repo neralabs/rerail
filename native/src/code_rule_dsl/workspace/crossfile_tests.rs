@@ -4,6 +4,9 @@
 use super::super::CodeRuleDslRuntime;
 use super::api::{CodeRuleDslWorkspace, WorkspaceApplyTask};
 use super::storage::StorageContext;
+use super::storage_tests::{
+    BusyDeadline, BusyWindowClock, HeldWriter, UnpublishedBudget, spend_deadline_on_busy_attempts,
+};
 use super::tests::WORKSPACE_TEST_SLOT;
 use super::*;
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
@@ -12,7 +15,7 @@ use napi::Task;
 use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::sync::Arc as StdArc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const CAPABILITIES: &str = r#"{
     "ast": { "engine": "ast-grep-core", "engineVersion": "0.45",
@@ -315,9 +318,7 @@ fn scenario(
     edits: Vec<Edit<'_>>,
     expected: &[Outcome],
 ) {
-    let _slot = WORKSPACE_TEST_SLOT
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new(tag);
     let store = StdArc::new(ContentStore::open(&directory.0.join("content.sqlite")).unwrap());
     let resident = stored_workspace(&store, &format!("/{tag}-resident"), code_rule);
@@ -487,9 +488,7 @@ fn e1_components_without_stories_follow_story_edits_in_unchanged_files() {
 /// deadline some step observed overflows it.
 #[test]
 fn a_global_evaluation_that_finishes_past_an_unobserved_deadline_is_kept() {
-    let _slot = WORKSPACE_TEST_SLOT
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let mut workspace = CodeRuleDslWorkspace::new();
     workspace
         .add_code_rule(&component_story_code_rule(), None)
@@ -803,6 +802,31 @@ fn e4_a_definition_moved_by_a_comment_keeps_its_seed() {
     );
 }
 
+const CLOCK: &str = "import time\n\ndef pause():\n    time.monotonic()\n";
+
+/// A consumer clause: an async function's un-awaited call reaching `import` through sync
+/// functions, reported as `id`.
+fn sink_consumer(id: &str, import: &str) -> Value {
+    json!({
+        "id": id,
+        "violation": violation(id, "an async function reaches a sink"),
+        "forbid": { "ast": { "language": "python", "rule": {
+            "kind": "function_definition",
+            "regex": "^async ",
+            "has": {
+                "stopBy": { "kind": "function_definition" },
+                "kind": "call",
+                "not": { "inside": { "kind": "await" } },
+                "calls": { "through": "sync", "has": {
+                    "stopBy": { "kind": "function_definition" },
+                    "kind": "call",
+                    "has": { "field": "function", "resolves": { "import": [import] } }
+                } }
+            }
+        } } }
+    })
+}
+
 /// When a sink goes three files away, consumers of unchanged `api.py` go quiet and its results
 /// move to a new stamp. Read after eviction, with no apply to rebuild the call graph first, the
 /// results still answer: whether every consumer went quiet or only some, and whether `api.py` was
@@ -810,39 +834,16 @@ fn e4_a_definition_moved_by_a_comment_keeps_its_seed() {
 #[test]
 fn e4_results_of_consumers_gone_quiet_are_readable_after_eviction() {
     const BOTH: &str = "import time\n\ndef pause():\n    time.sleep(1)\n    time.monotonic()\n";
-    const CLOCK: &str = "import time\n\ndef pause():\n    time.monotonic()\n";
-    let _slot = WORKSPACE_TEST_SLOT
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("e4-quiet-eviction");
     let store = StdArc::new(ContentStore::open(&directory.0.join("content.sqlite")).unwrap());
     // Two consumers: an async function's un-awaited call reaching `time.sleep`, and one reaching
     // `time.monotonic`.
-    let consumer = |id: &str, import: &str| {
-        json!({
-            "id": id,
-            "violation": violation(id, "an async function reaches a sink"),
-            "forbid": { "ast": { "language": "python", "rule": {
-                "kind": "function_definition",
-                "regex": "^async ",
-                "has": {
-                    "stopBy": { "kind": "function_definition" },
-                    "kind": "call",
-                    "not": { "inside": { "kind": "await" } },
-                    "calls": { "through": "sync", "has": {
-                        "stopBy": { "kind": "function_definition" },
-                        "kind": "call",
-                        "has": { "field": "function", "resolves": { "import": [import] } }
-                    } }
-                }
-            } } }
-        })
-    };
     let code_rule = compile(
         "e4-quiet-eviction",
         json!([
-            consumer("sleeps", "time.sleep"),
-            consumer("clocks", "time.monotonic")
+            sink_consumer("sleeps", "time.sleep"),
+            sink_consumer("clocks", "time.monotonic")
         ]),
     );
     let tree = [
@@ -888,6 +889,276 @@ fn e4_results_of_consumers_gone_quiet_are_readable_after_eviction() {
             workspace.close();
         }
     }
+}
+
+/// An evicted file's consumers are evaluated again when a file they read changes, on a file
+/// rebuilt for them alone. A consumer that runs out of work there keeps the file resident (its
+/// failure is not stored), and the file keeps its other clauses' stored results: `api.py`'s local
+/// violation is still reported, in the apply's result and in a later page. Where the store cannot
+/// be read, the clauses it would have answered fail instead of vanishing, and the next apply that
+/// sends the file evaluates it in full.
+#[test]
+fn an_evicted_file_kept_for_a_consumer_that_ran_out_keeps_its_other_results() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("e4-evicted-consumer");
+    let store = StdArc::new(ContentStore::open(&directory.0.join("content.sqlite")).unwrap());
+    let code_rule = compile(
+        "e4-evicted-consumer",
+        json!([
+            {
+                "id": "consumer",
+                "violation": violation("E4", "an async function reaches blocking I/O"),
+                "forbid": { "ast": { "language": "python", "rule": {
+                    "kind": "function_definition",
+                    "regex": "^async ",
+                    "has": {
+                        "stopBy": { "kind": "function_definition" },
+                        "kind": "call",
+                        "not": { "inside": { "kind": "await" } },
+                        "calls": reaches_sleep()
+                    }
+                } } }
+            },
+            {
+                "id": "local",
+                "violation": violation("LOCAL", "a handler"),
+                "forbid": { "regex": { "source": "file.content", "pattern": "handler" } }
+            }
+        ]),
+    );
+    for read_fails in [false, true] {
+        let workspace = stored_workspace(
+            &store,
+            &format!("/e4-evicted-consumer-{read_fails}"),
+            &code_rule,
+        );
+        let tree = [
+            module_file("app/__init__.py", ""),
+            module_file("app/api.py", API),
+            module_file("app/services/__init__.py", SERVICES),
+            module_file("app/services/impl.py", IMPL),
+            module_file("app/util.py", IDLE),
+        ];
+        let before = outcome(&apply(&workspace, 1, &tree, &[]));
+        // `handler` in `async def handler():`.
+        let local = ("app/api.py".to_owned(), 42, None);
+        let unread = ("adapter-error".to_owned(), "app/api.py".to_owned());
+        assert!(before.violations.contains(&local), "{before:?}");
+        assert!(workspace.evict_inactive().unwrap());
+        // The sink comes, three files away: `api.py`'s consumer is evaluated again, and in its
+        // consumers' pass it runs out at once.
+        TEST_CONSUMER_CLAUSE_WORK_BUDGET.set(Some(0));
+        TEST_EVICTED_READ_FAILURE.set(read_fails);
+        let response = apply_response(&workspace, 2, &[module_file("app/util.py", SLEEPS)], &[]);
+        TEST_EVICTED_READ_FAILURE.set(false);
+        TEST_CONSUMER_CLAUSE_WORK_BUDGET.set(None);
+        let applied = merged(&before, &response);
+        assert!(
+            applied
+                .failures
+                .contains(&("budget-exceeded".to_owned(), "app/api.py".to_owned())),
+            "the consumer ran out on api.py: {applied:?}"
+        );
+        let page = super::tests::result_page(&workspace, 0, 64 * 1024 * 1024)
+            .map(|page| outcome(&serde_json::from_str(&page).unwrap()))
+            .unwrap();
+        for (seen, case) in [(&applied, "apply"), (&page, "page")] {
+            assert_eq!(
+                (
+                    seen.violations.contains(&local),
+                    seen.failures.contains(&unread)
+                ),
+                (!read_fails, read_fails),
+                "read fails: {read_fails}, {case}: {seen:?}"
+            );
+        }
+        if read_fails {
+            let resent = merged(
+                &applied,
+                &apply_response(&workspace, 3, &[module_file("app/api.py", API)], &[]),
+            );
+            assert!(resent.violations.contains(&local), "resent: {resent:?}");
+            assert!(!resent.failures.contains(&unread), "resent: {resent:?}");
+        }
+        workspace.close();
+    }
+}
+
+/// A file whose shared work ran out has an opaque call summary, this workspace's alone: it is
+/// never stored, so a later workspace extracts the summary again and a consumer reading through
+/// the file reports its violation.
+#[test]
+fn a_call_summary_cut_short_is_extracted_again() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("e4-opaque-summary");
+    let store = StdArc::new(ContentStore::open(&directory.0.join("content.sqlite")).unwrap());
+    let code_rule = async_blocking_code_rule();
+    let first = stored_workspace(&store, "/e4-opaque-summary", &code_rule);
+    TEST_FILE_WORK_BUDGET.set(Some(0));
+    apply(&first, 1, &[module_file("app/util.py", SLEEPS)], &[]);
+    TEST_FILE_WORK_BUDGET.set(None);
+    first.close();
+    let later = stored_workspace(&store, "/e4-opaque-summary", &code_rule);
+    let tree = [
+        module_file("app/__init__.py", ""),
+        module_file("app/api.py", API),
+        module_file("app/services/__init__.py", SERVICES),
+        module_file("app/services/impl.py", IMPL),
+        module_file("app/util.py", SLEEPS),
+    ];
+    assert_eq!(
+        outcome(&apply(&later, 1, &tree, &[])),
+        found(&[("app/api.py", 32, None)], &[]),
+        "the sink's summary is extracted again"
+    );
+    later.close();
+}
+
+/// A consumer restamped while another writer holds the store past the write deadline keeps its
+/// new results through eviction: the store holds its source and its earlier results, not these,
+/// so it stays resident until the next apply that publishes stores them.
+#[test]
+fn e4_a_consumer_restamped_while_the_store_is_busy_keeps_its_results_through_eviction() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let _deadline = BusyDeadline::set(Duration::from_secs(1));
+    let window = BusyWindowClock;
+    let directory = TempDir::new("e4-busy-restamp");
+    let path = directory.0.join("content.sqlite");
+    let store = StdArc::new(ContentStore::open(&path).unwrap());
+    let code_rule = compile(
+        "e4-busy-restamp",
+        json!([
+            sink_consumer("sleeps", "time.sleep"),
+            sink_consumer("clocks", "time.monotonic")
+        ]),
+    );
+    let workspace = stored_workspace(&store, "/e4-busy-restamp", &code_rule);
+    // Each violation's path and code, as a result page reads them.
+    let paged = || {
+        super::tests::result_page(&workspace, 0, 64 * 1024 * 1024)
+            .map(|page| {
+                serde_json::from_str::<Value>(&page).unwrap()["violations"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|violation| {
+                        (
+                            violation["path"].as_str().unwrap().to_owned(),
+                            violation["code"].as_str().unwrap().to_owned(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .map_err(|error| error.reason)
+    };
+    let resident = || {
+        workspace
+            .state
+            .lock()
+            .unwrap()
+            .files
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>()
+    };
+    let tree = [
+        module_file("app/__init__.py", ""),
+        module_file("app/api.py", API),
+        module_file("app/services/__init__.py", SERVICES),
+        module_file("app/services/impl.py", IMPL),
+        module_file("app/util.py", SLEEPS),
+    ];
+    apply(&workspace, 1, &tree, &[]);
+    assert!(workspace.evict_inactive().unwrap());
+    let sleeps = vec![("app/api.py".to_owned(), "sleeps".to_owned())];
+    assert_eq!(paged(), Ok(sleeps));
+
+    let writer = HeldWriter::hold(&path);
+    // The sink changes three files away: `api.py`, evicted, is restamped, and its `clocks`
+    // consumer evaluated again under the new stamp.
+    let edit = apply_response(&workspace, 2, &[module_file("app/util.py", CLOCK)], &[]);
+    assert!(
+        edit["replacedPaths"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("app/api.py")),
+        "{edit}"
+    );
+    assert_eq!(
+        outcome(&edit["evaluation"]),
+        found(&[("app/api.py", 32, None)], &[])
+    );
+    assert!(workspace.evict_inactive().unwrap());
+    // The edited file, and the consumers restamped and evaluated again: `api.py`, and `impl.py`
+    // on the chain.
+    assert_eq!(
+        resident(),
+        BTreeSet::from(["app/api.py", "app/services/impl.py", "app/util.py"].map(str::to_owned)),
+        "eviction keeps exactly the files the busy store left unpublished"
+    );
+    let clocks = vec![("app/api.py".to_owned(), "clocks".to_owned())];
+    assert_eq!(paged(), Ok(clocks.clone()), "read while unpublished");
+
+    drop(writer);
+    window.pass_window();
+    apply(
+        &workspace,
+        3,
+        &[module_file("app/other.py", "value = 3\n")],
+        &[],
+    );
+    assert!(workspace.evict_inactive().unwrap());
+    assert!(
+        resident().is_empty(),
+        "the apply after the writer left published them: {:?}",
+        resident()
+    );
+    assert_eq!(paged(), Ok(clocks), "read back from the store");
+    workspace.close();
+}
+
+/// A consumer a busy store left freed down to its results (the workspace has no Git worktree to
+/// read its source from, and the store never got it) that a sink edit restamps is reported
+/// incomplete: the apply still succeeds, a busy store costs reuse, never the scan.
+#[test]
+fn e4_a_freed_consumer_nothing_can_reread_is_reported_incomplete_not_failed() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let _deadline = BusyDeadline::set(Duration::from_secs(1));
+    let _budget = UnpublishedBudget::set(0);
+    let directory = TempDir::new("e4-freed-consumer");
+    let path = directory.0.join("content.sqlite");
+    let store = StdArc::new(ContentStore::open(&path).unwrap());
+    let code_rule = compile(
+        "e4-freed-consumer",
+        json!([
+            sink_consumer("sleeps", "time.sleep"),
+            sink_consumer("clocks", "time.monotonic")
+        ]),
+    );
+    let workspace = stored_workspace(&store, "/e4-freed-consumer", &code_rule);
+    let _writer = HeldWriter::hold(&path);
+    let _spent = spend_deadline_on_busy_attempts(Duration::from_secs(1), || {});
+    let tree = [
+        module_file("app/__init__.py", ""),
+        module_file("app/api.py", API),
+        module_file("app/services/__init__.py", SERVICES),
+        module_file("app/services/impl.py", IMPL),
+        module_file("app/util.py", SLEEPS),
+    ];
+    apply(&workspace, 1, &tree, &[]);
+    assert!(
+        workspace.state.lock().unwrap().files["app/api.py"].results_only,
+        "the busy store left the consumer freed"
+    );
+
+    let edit = apply_response(&workspace, 2, &[module_file("app/util.py", CLOCK)], &[]);
+    assert!(
+        clause_failures(&edit["evaluation"])
+            .iter()
+            .any(|(_, code, path)| code == "source-incomplete" && path == "app/api.py"),
+        "{edit}"
+    );
+    workspace.close();
 }
 
 /// E5: "must reach". An async handler none of whose calls reaches `time.sleep` is a violation; an
@@ -942,9 +1213,7 @@ fn e5_absence_needs_a_closed_chain() {
 /// violations are equal.
 #[test]
 fn e6_stored_summaries_spare_a_restart_the_parse() {
-    let _slot = WORKSPACE_TEST_SLOT
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("e6");
     let store = StdArc::new(ContentStore::open(&directory.0.join("content.sqlite")).unwrap());
     let code_rule = async_blocking_code_rule();
@@ -982,9 +1251,7 @@ fn e6_stored_summaries_spare_a_restart_the_parse() {
 /// (extracted, or restored from the store); an edit gives only the edited file its own.
 #[test]
 fn e7_open_workspaces_share_one_summary_per_file_version() {
-    let _slot = WORKSPACE_TEST_SLOT
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("e7");
     let store = StdArc::new(ContentStore::open(&directory.0.join("content.sqlite")).unwrap());
     let code_rule = async_blocking_code_rule();
@@ -1192,7 +1459,7 @@ fn e11_a_blade_call_reaches_a_conditionally_declared_php_helper() {
     let clauses = json!([{
         "id": "reaches-escape",
         "violation": violation("E11", "the call reaches htmlspecialchars"),
-        "forbid": { "ast": { "language": "blade", "rule": {
+        "forbid": { "ast": { "language": "blade", "embedded": "compiled-view", "rule": {
             "kind": "function_call_expression",
             "calls": { "has": { "stopBy": "end", "kind": "function_call_expression",
                 "has": { "field": "function", "regex": "^htmlspecialchars$" } } }
@@ -1257,9 +1524,7 @@ fn clause_failures(evaluation: &Value) -> BTreeSet<(String, String, String)> {
 /// were no longer reported.
 #[test]
 fn e10_a_calls_pass_keeps_the_other_clauses_partial_on_a_broken_file() {
-    let _slot = WORKSPACE_TEST_SLOT
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let code_rule = compile(
         "e10-partial",
         json!([
@@ -1343,9 +1608,7 @@ fn e10_a_calls_pass_keeps_the_other_clauses_partial_on_a_broken_file() {
 /// override and global-function edits, a new caller and removals.
 #[test]
 fn e13_an_edit_after_eviction_updates_the_kept_call_graph() {
-    let _slot = WORKSPACE_TEST_SLOT
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("e13");
     let store = StdArc::new(ContentStore::open(&directory.0.join("content.sqlite")).unwrap());
     let linked = || calls_state::GRAPHS_LINKED.with(std::cell::Cell::get);

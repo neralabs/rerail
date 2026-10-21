@@ -1,11 +1,30 @@
 //! Blade's semantics through compiled code rules: what each predicate finds in a template's
-//! embedded PHP.
+//! embedded PHP, its compiled view (`ast.embedded: compiled-view`).
 
 use crate::code_rule_dsl::test_support::*;
 use serde_json::{Value as Json, json};
 
+/// A rule over the template's compiled view.
 fn run(rule: Json, source: &str) -> Vec<String> {
     run_in("blade", "view.blade.php", rule, source)
+}
+
+/// A rule over the template's own tree.
+fn run_template(rule: Json, source: &str) -> Vec<String> {
+    let capabilities: Json = serde_json::from_str(CAPABILITIES).expect("capabilities");
+    let compiled = compile_document_with(
+        clause_document(json!({
+            "id": "blade",
+            "forbid": { "ast": { "language": "blade", "rule": rule } },
+            "violation": violation(),
+        })),
+        &capabilities,
+    )
+    .unwrap_or_else(|error| panic!("{}", error.reason));
+    matched_texts(
+        &evaluate_file(&compiled, "blade", "view.blade.php", source),
+        source,
+    )
 }
 
 /// The same rule on a PHP file: what the embedded program's PHP answers.
@@ -15,10 +34,14 @@ fn run_php(rule: Json, source: &str) -> Vec<String> {
 
 fn run_in(language: &str, path: &str, rule: Json, source: &str) -> Vec<String> {
     let capabilities: Json = serde_json::from_str(CAPABILITIES).expect("capabilities");
+    let mut ast = json!({ "language": language, "rule": rule });
+    if language == "blade" {
+        ast["embedded"] = json!("compiled-view");
+    }
     let compiled = compile_document_with(
         clause_document(json!({
             "id": language,
-            "forbid": { "ast": { "language": language, "rule": rule } },
+            "forbid": { "ast": ast },
             "violation": violation(),
         })),
         &capabilities,
@@ -163,8 +186,8 @@ fn blade_calls_are_the_php_blade_compiles() {
     );
 }
 
-/// A Blade pattern Blade reads as text alone is PHP and matches the embedded program; one with a
-/// Blade construct matches the template.
+/// A pattern of a clause over the compiled view is PHP's and matches the view; one of a clause over
+/// the template is Blade's and matches the template.
 #[test]
 fn blade_php_patterns_match_the_embedded_program() {
     let source =
@@ -183,7 +206,11 @@ fn blade_php_patterns_match_the_embedded_program() {
         ),
         ["return 1; X=1"]
     );
-    assert_eq!(run(json!({ "pattern": "@csrf" }), source), ["@csrf"]);
+    assert_eq!(
+        run_template(json!({ "pattern": "@csrf" }), source),
+        ["@csrf"]
+    );
+    assert!(run_template(json!({ "pattern": "sprintf($F, $$$A)" }), source).is_empty());
 }
 
 const FORMATS: &str = "\
@@ -403,15 +430,16 @@ fn blade_binding_flags_read_the_flow() {
     }
 }
 
-/// What the PHP a template embeds genuinely lacks is refused, naming blade.
+/// What the PHP a template embeds genuinely lacks is refused as PHP's; semantics over the
+/// template's own tree are refused as the compiled view's.
 #[test]
 fn blade_refusals_say_what_its_php_lacks() {
-    let refusal = |rule: Json| {
+    let refusal_in = |ast: Json| {
         let capabilities: Json = serde_json::from_str(CAPABILITIES).expect("capabilities");
         match compile_document_with(
             clause_document(json!({
                 "id": "blade",
-                "forbid": { "ast": { "language": "blade", "rule": rule } },
+                "forbid": { "ast": ast },
                 "violation": violation(),
             })),
             &capabilities,
@@ -420,31 +448,44 @@ fn blade_refusals_say_what_its_php_lacks() {
             Err(error) => error.reason,
         }
     };
+    let refusal = |rule: Json| {
+        refusal_in(json!({ "language": "blade", "embedded": "compiled-view", "rule": rule }))
+    };
+    for rule in [
+        json!({ "kind": "directive", "resolves": { "unresolved": true } }),
+        json!({ "kind": "echo", "has": { "kind": "directive", "value": { "eq": 1 } } }),
+    ] {
+        let reason = refusal_in(json!({ "language": "blade", "rule": rule }));
+        assert!(
+            reason.contains("reads blade's embedded program, not the file's own tree"),
+            "{reason}"
+        );
+    }
     let format_args = |style: &str| json!({ "pattern": "f($S, $$$A)", "formatArgs": { "style": style, "string": "S", "args": "A", "unused": { "kind": "argument" } } });
     for (rule, message) in [
         (
             json!({ "kind": "function_call_expression", "arguments": { "mode": "estree", "signature": ["a"], "bind": { "A": "a" } } }),
-            "arguments/mode: `estree` reads ESLint's `node.arguments` of ESTree, JavaScript's syntax tree; blade has none (use language or syntactic)",
+            "arguments/mode: `estree` reads ESLint's `node.arguments` of ESTree, JavaScript's syntax tree; php has none (use language or syntactic)",
         ),
         (
             json!({ "pattern": "$L == $R", "compare": { "left": "L", "op": "eq", "right": "R", "text": "structure-parts" } }),
-            "compare/text: `structure-parts` compares Python's implicitly concatenated string parts; blade embeds PHP, which has no implicit string concatenation",
+            "compare/text: `structure-parts` compares Python's implicitly concatenated string parts; PHP has no implicit string concatenation",
         ),
         (
             json!({ "kind": "variable_name", "resolves": { "binding": { "stopAtGlobal": false } } }),
-            "binding/stopAtGlobal: a blade read after `global $x` reads that statement's binding; which top-level binding the global variable then holds depends on when the function runs, so blade has no lookup through it",
+            "binding/stopAtGlobal: a php read after `global $x` reads that statement's binding; which top-level binding the global variable then holds depends on when the function runs, so php has no lookup through it",
         ),
         (
             json!({ "kind": "variable_name", "binds": { "exported": true } }),
-            "binds/exported: `exported` reads Python's re-exports and TypeScript's exports; a PHP file exports no variables (an including file shares its global scope, which no declaration exports); blade has none",
+            "binds/exported: `exported` reads Python's re-exports and TypeScript's exports; a PHP file exports no variables (an including file shares its global scope, which no declaration exports); php has none",
         ),
         (
             format_args("percent"),
-            "formatArgs/style: `percent` reads Python's `%` formats; blade embeds PHP, whose printf-family calls are style `printf`",
+            "formatArgs/style: `percent` reads Python's `%` formats; PHP's printf-family calls are style `printf`",
         ),
         (
             json!({ "kind": "string", "parse": { "grammar": "percentFormat", "regex": "." } }),
-            "parse/grammar: `percentFormat` parses Python literals; blade embeds PHP, whose printf formats are `printfFormat`",
+            "parse/grammar: `percentFormat` parses Python literals; PHP's printf formats are `printfFormat`",
         ),
     ] {
         let reason = refusal(rule);
@@ -460,7 +501,7 @@ fn blade_calls_reach_workspace_definitions() {
     let compiled = compile_document_with(
         clause_document(json!({
             "id": "blade-calls",
-            "forbid": { "ast": { "language": "blade", "rule": {
+            "forbid": { "ast": { "language": "blade", "embedded": "compiled-view", "rule": {
                 "calls": { "has": { "stopBy": "end", "kind": "function_call_expression", "regex": "^exec\\(" } }
             } } },
             "violation": violation(),
@@ -539,4 +580,56 @@ fn a_paren_on_the_next_line_is_not_arguments() {
     ] {
         assert_eq!(run(rule.clone(), source), expected, "{source:?}");
     }
+}
+
+/// Lines (1-based) a shipped Blade pack rule reports on `source`, which must evaluate without a
+/// failure.
+fn pack_rule_lines(document: &str, source: &str) -> Vec<u64> {
+    let compiled = crate::code_rule_dsl::CodeRuleDslRuntime::compile(
+        document.to_owned(),
+        "json".to_owned(),
+        CAPABILITIES.to_owned(),
+    )
+    .unwrap_or_else(|error| panic!("{}", error.reason));
+    let result = evaluate_file(&compiled, "blade", "resources/views/view.blade.php", source);
+    assert_eq!(result["failures"], json!([]), "{result}");
+    result["violations"]
+        .as_array()
+        .expect("violations")
+        .iter()
+        .map(|violation| violation["span"]["startLine"].as_u64().expect("line") + 1)
+        .collect()
+}
+
+/// The templates tree-sitter-blade read as one error region (NER-1793, NER-1794) or as text
+/// (NER-1795): a directive inside an element, in a start tag or an attribute value, and an echo
+/// in `<script>`. Forte reads each as Blade.
+#[test]
+fn directives_in_elements_tags_and_scripts_are_reported() {
+    let debug = include_str!("../../../../packs/blade/rules/blade-parser-debug-directive.json");
+    let dump = include_str!("../../../../packs/blade/rules/tlint-no-dump-directives.json");
+    let ray = include_str!("../../../../packs/blade/rules/tlint-no-ray-directive.json");
+    for (source, line) in [
+        ("<div>\n@dump($x)\n</div>\n", 2),
+        (
+            "<div>\n    @if ($d)\n        @dump($f)\n    @endif\n</div>\n",
+            3,
+        ),
+        ("@if($a)\n<div>\n@dump($x)\n</div>\n@endif\n", 3),
+        ("<div @if($a) class=\"x\" @endif>\n@dump($x)\n</div>\n", 2),
+        ("<p>y</p>\n@dump($x)\n", 2),
+        ("@if($w)\n<br>\n@dump($x)\n@endif\n", 3),
+    ] {
+        assert_eq!(pack_rule_lines(debug, source), [line], "{source:?}");
+        assert_eq!(pack_rule_lines(dump, source), [line], "{source:?}");
+    }
+    let ray_source = "<div>\n    @if ($d)\n        @ray($f)\n    @endif\n</div>\n";
+    assert_eq!(pack_rule_lines(ray, ray_source), [3]);
+    let spacing = "<input @if($a == 1) checked @endif>\n<div class=\"x @if($a) y @endif\">z</div>\n@if($b)\nx\n@endif\n<script>\nvar n = '{{$prefix}}';\n</script>\n<p>{{$prefix}}</p>\n";
+    let space_after =
+        include_str!("../../../../packs/blade/rules/tlint-space-after-blade-directives.json");
+    let render_content =
+        include_str!("../../../../packs/blade/rules/tlint-spaces-around-blade-render-content.json");
+    assert_eq!(pack_rule_lines(space_after, spacing), [1, 2, 3]);
+    assert_eq!(pack_rule_lines(render_content, spacing), [7, 9]);
 }

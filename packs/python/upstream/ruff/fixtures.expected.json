@@ -506,6 +506,7 @@
    "rerail/noqa/B026.py",
    "rerail/noqa/B028.py",
    "rerail/noqa/B029.py",
+   "rerail/noqa/B030.py",
    "rerail/noqa/B032.py",
    "rerail/noqa/B033.py",
    "rerail/noqa/B034.py",
@@ -6261,6 +6262,18 @@
    "rule": "B030",
    "path": "flake8_simplify/SIM105_0.py",
    "line": 112,
+   "column": 8
+  },
+  {
+   "rule": "B030",
+   "path": "rerail/noqa/B030.py",
+   "line": 3,
+   "column": 8
+  },
+  {
+   "rule": "B030",
+   "path": "rerail/noqa/B030.py",
+   "line": 23,
    "column": 8
   },
   {

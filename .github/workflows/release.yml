@@ -7,6 +7,9 @@ name: Release
 # build can be installed and checked by hand. Pushing a `v*` tag publishes that tarball to npmjs
 # under the dist-tag derived from the tag: `v1.2.3` -> latest, `v1.2.3-beta.N` -> beta,
 # `v1.2.3-next.N` -> next. The tag must equal package.json's version.
+#
+# The cargo cache is restored, never saved: a tag's run can read caches saved on main but not those an earlier
+# tag's run saved, so saving here bought nothing and cost minutes. release-cache.yml builds and saves it on main.
 
 on:
   workflow_dispatch:
@@ -103,11 +106,11 @@ jobs:
 
       - uses: ./.github/actions/lfs
 
+      # No npm cache: on a tag, setup-node's cache misses on every runner but macOS arm64, and it saves on a miss.
       - name: Set up Node.js v24
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: "24"
-          cache: "npm"
 
       # rust-toolchain.toml is the single pin: rustup reads it whenever cargo runs in this repository,
       # so the toolchain installed here must be the same channel.
@@ -117,21 +120,21 @@ jobs:
         run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
 
       - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
           targets: ${{ matrix.target }}
 
-      - name: Cache cargo artifacts
-        uses: actions/cache@v6
+      # Exactly the key release-cache.yml builds from scratch on main (same paths), with no prefix fallback, so a
+      # published engine never links artifacts carried forward from an older cache. A miss builds cold.
+      - name: Restore cargo artifacts
+        uses: actions/cache/restore@v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: rerail-release-${{ matrix.target }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            rerail-release-${{ matrix.target }}-${{ steps.rust-toolchain.outputs.channel }}-
+          key: rerail-release-${{ matrix.target }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'native/Cargo.toml', '.cargo/config.toml') }}
 
       - name: Install dependencies
         run: npm ci # NOSONAR githubactions:S6505 -- trusted native dependency lifecycle scripts are required
@@ -221,11 +224,11 @@ jobs:
 
       - uses: ./.github/actions/lfs
 
+      # No npm cache, as in the native job.
       - name: Set up Node.js v24
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: "24"
-          cache: "npm"
 
       - name: Install dependencies
         run: npm ci # NOSONAR githubactions:S6505 -- trusted native dependency lifecycle scripts are required
@@ -242,7 +245,7 @@ jobs:
           npm run build:ui
 
       - name: Download native engines
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: rerail-native-*
           path: native
@@ -327,12 +330,12 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js v24
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: "24"
 
       - name: Download release tarball
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: rerail-package
           path: release
@@ -358,7 +361,7 @@ jobs:
       id-token: write
     steps:
       - name: Set up Node.js v24
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: "24"
 
@@ -369,7 +372,7 @@ jobs:
           npm --version
 
       - name: Download release tarball
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: rerail-package
           path: release

@@ -832,6 +832,198 @@
     "evidence": "PHPStan: \"If condition is always false.\". The condition is always true or false by PHPStan's types and narrowing (an object or `self` parameter type, a method's or function's return type, `method_exists`/`property_exists`/`function_exists` narrowing from an enclosing or earlier condition, a property's declared type, a variable narrowed by an enclosing `if`); Rerail's value capability decides truthiness of constants only (`value: {truthy, follow}`), so it does not decide the condition."
   },
   {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/SymfonyTestsListener.php",
+    "line": 16,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class SymfonyTestsListener, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/TextUI/Command.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class Command, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/CacheWarmer/AbstractPhpFileCacheWarmer.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class AbstractPhpFileCacheWarmer, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/CacheWarmer/CachePoolClearerCacheWarmer.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class CachePoolClearerCacheWarmer, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/CacheWarmer/RouterCacheWarmer.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class RouterCacheWarmer, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/CacheWarmer/SerializerCacheWarmer.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class SerializerCacheWarmer, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/CacheWarmer/TranslationsCacheWarmer.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class TranslationsCacheWarmer, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/CacheWarmer/ValidatorCacheWarmer.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class ValidatorCacheWarmer, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Command/CachePoolDeleteCommand.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class CachePoolDeleteCommand, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Command/CachePoolInvalidateTagsCommand.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class CachePoolInvalidateTagsCommand, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Command/CachePoolListCommand.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class CachePoolListCommand, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Command/CachePoolPruneCommand.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class CachePoolPruneCommand, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Command/RouterMatchCommand.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class RouterMatchCommand, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Controller/RedirectController.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class RedirectController, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Controller/TemplateController.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class TemplateController, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/DependencyInjection/Compiler/AddValidatorSecurityExpressionLanguageProviderPass.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class AddValidatorSecurityExpressionLanguageProviderPass, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/DependencyInjection/Compiler/AssetsContextPass.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class AssetsContextPass, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/DependencyInjection/Compiler/TranslationLintCommandPass.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class TranslationLintCommandPass, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/DependencyInjection/Compiler/TranslationUpdateCommandPass.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class TranslationUpdateCommandPass, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Routing/Attribute/AsRoutingConditionService.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class AsRoutingConditionService, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Routing/DelegatingLoader.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class DelegatingLoader, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Routing/Router.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class Router, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Tests/Fixtures/ClassAliasExampleClass.php",
+    "line": 10,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class ClassAliasExampleClass, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
+    "rule": "phpstan-if-always-false",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Translation/Translator.php",
+    "line": 20,
+    "kind": "upstream-wrong",
+    "evidence": "A declaration stub: the block only declares class Translator, which never exists at runtime (a class_alias call declares the name) but which Composer's class map and IDEs read; deleting the dead branch, as the finding says, removes that declaration (symfony#66188). The port does not report an if whose block holds only declarations and class_alias calls. (NER-1810)"
+  },
+  {
     "rule": "phpstan-variable-undefined",
     "source": "fixtures",
     "path": "Rules/Variables/data/bug-7291.php",
@@ -1774,5 +1966,469 @@
     "line": 55,
     "kind": "upstream-wrong",
     "evidence": "Two of the three size calls in this condition measure values the loop changes: it drains `$values` with `array_shift($values)` and appends to `$temp` with `$temp[] = …`, so `\\count($values)` (column 20) and `\\count($temp)` (column 39) must be re-read on each pass; hoisting either one stops the loop from ending when it should. The port does not report a size call whose value the loop writes, and still reports `\\count($subarray)` (column 55), which the loop leaves alone (NER-1812)."
+  },
+  {
+    "rule": "psalm-forbidden-code",
+    "source": "symfony",
+    "path": "src/Symfony/Component/KeyManagement/Bridge/Flysystem/Tests/FlysystemKeyLoaderTest.php",
+    "line": 185,
+    "kind": "upstream-wrong",
+    "evidence": "The `var_dump()` runs between `ob_start();` and `$printed = ob_get_clean();`, so its output is captured into a string the test then asserts on (the test checks that the printed object does not leak the key); removing it, as the finding says, breaks the test. The port does not report a var_dump statement buffered by an earlier `ob_start()` and read by a later `ob_get_clean()` or `ob_get_contents()` in the same block. (NER-1809)"
+  },
+  {
+    "rule": "psalm-forbidden-code",
+    "source": "symfony",
+    "path": "src/Symfony/Component/KeyManagement/Bridge/GoogleCloudKms/Tests/ServiceAccountTokenProviderTest.php",
+    "line": 225,
+    "kind": "upstream-wrong",
+    "evidence": "The `var_dump()` runs between `ob_start();` and `$printed = ob_get_clean();`, so its output is captured into a string the test then asserts on (the test checks that the printed object does not leak the key); removing it, as the finding says, breaks the test. The port does not report a var_dump statement buffered by an earlier `ob_start()` and read by a later `ob_get_clean()` or `ob_get_contents()` in the same block. (NER-1809)"
+  },
+  {
+    "rule": "psalm-forbidden-code",
+    "source": "symfony",
+    "path": "src/Symfony/Component/KeyManagement/Tests/KeyMaterialTest.php",
+    "line": 54,
+    "kind": "upstream-wrong",
+    "evidence": "The `var_dump()` runs between `ob_start();` and `$printed = ob_get_clean();`, so its output is captured into a string the test then asserts on (the test checks that the printed object does not leak the key); removing it, as the finding says, breaks the test. The port does not report a var_dump statement buffered by an earlier `ob_start()` and read by a later `ob_get_clean()` or `ob_get_contents()` in the same block. (NER-1809)"
+  },
+  {
+    "rule": "psalm-forbidden-code",
+    "source": "symfony",
+    "path": "src/Symfony/Component/VarDumper/Tests/Cloner/VarClonerTest.php",
+    "line": 457,
+    "kind": "upstream-wrong",
+    "evidence": "The `var_dump()` runs between `ob_start();` and `ob_get_clean()` in the next statement, so its output is captured into a string the test then asserts on (`assertStringMatchesFormat(..., ob_get_clean())` checks what var_dump prints for a cloned Data object); removing it, as the finding says, breaks the test. The port does not report a var_dump statement buffered by an earlier `ob_start()` and read by a later `ob_get_clean()` or `ob_get_contents()` in the same block. (NER-1809)"
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/Doctrine/CacheWarmer/ProxyCacheWarmer.php",
+    "line": 46,
+    "kind": "upstream-wrong",
+    "evidence": "Race-safe `@mkdir` re-checked with is_dir(): when another process creates $proxyCacheDir first, mkdir() warns and returns false, and the is_dir($proxyCacheDir) re-check right after decides whether that was a failure. Removing the @, as the finding steers, turns a lost race into a warning (an ErrorException under Symfony's error handler). The port does not report a silenced mkdir(), rmdir() or unlink() whose path the right operand of `&&`, `||`, `and` or `or` re-checks (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Legacy/SymfonyTestsListenerTrait.php",
+    "line": 240,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Legacy/SymfonyTestsListenerTrait.php",
+    "line": 293,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Tests/DeprecationErrorHandler/deprecation/deprecation.php",
+    "line": 12,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Tests/DeprecationErrorHandler/fake_app/AppService.php",
+    "line": 34,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Tests/DeprecationErrorHandler/fake_app_fallback/App/Services/FallbackDirService.php",
+    "line": 18,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Tests/DeprecationErrorHandler/fake_vendor/acme/lib/SomeService.php",
+    "line": 24,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Tests/DeprecationErrorHandler/fake_vendor/acme/lib/deprecation_riddled.php",
+    "line": 25,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Tests/DeprecationErrorHandler/fake_vendor/acme/lib/deprecation_riddled.php",
+    "line": 31,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Tests/DeprecationErrorHandler/fake_vendor/acme/lib/deprecation_riddled.php",
+    "line": 33,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Tests/DeprecationErrorHandler/fake_vendor/acme/lib/deprecation_riddled.php",
+    "line": 39,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Tests/DeprecationErrorHandler/fake_vendor/bar/lib/AnotherService.php",
+    "line": 22,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Tests/DeprecationErrorHandler/fake_vendor_bis/foo/lib/SomeOtherService.php",
+    "line": 18,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Tests/ExpectDeprecationTraitTest.php",
+    "line": 34,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Tests/ExpectDeprecationTraitTest.php",
+    "line": 49,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Tests/ExpectDeprecationTraitTest.php",
+    "line": 62,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Tests/ExpectDeprecationTraitTest.php",
+    "line": 63,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Tests/ExpectDeprecationTraitTest.php",
+    "line": 77,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Tests/ExpectDeprecationTraitTest.php",
+    "line": 78,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Tests/ExpectDeprecationTraitTest.php",
+    "line": 94,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Tests/ExpectDeprecationTraitTest.php",
+    "line": 95,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Tests/ExpectDeprecationTraitTest.php",
+    "line": 96,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Tests/ExpectDeprecationTraitTest.php",
+    "line": 97,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Tests/ExpectedDeprecationAnnotationTest.php",
+    "line": 31,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Tests/ExpectedDeprecationAnnotationTest.php",
+    "line": 45,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Tests/ExpectedDeprecationAnnotationTest.php",
+    "line": 46,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Tests/FailTests/ExpectDeprecationTraitTestFail.php",
+    "line": 40,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Tests/FailTests/ExpectDeprecationTraitTestFail.php",
+    "line": 55,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Tests/FailTests/NoAssertionsTestRisky.php",
+    "line": 38,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bridge/PhpUnit/Tests/ProcessIsolationTest.php",
+    "line": 35,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Secrets/SodiumVault.php",
+    "line": 150,
+    "kind": "upstream-wrong",
+    "evidence": "Race-safe `@unlink` re-checked with file_exists(): when another process removes $file first, unlink() warns and returns false, and the file_exists($file) re-check right after decides whether that was a failure. Removing the @, as the finding steers, turns a lost race into a warning (an ErrorException under Symfony's error handler). The port does not report a silenced mkdir(), rmdir() or unlink() whose path the right operand of `&&`, `||`, `and` or `or` re-checks (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Secrets/SodiumVault.php",
+    "line": 231,
+    "kind": "upstream-wrong",
+    "evidence": "Race-safe `@mkdir` re-checked with is_dir(): when another process creates $this->secretsDir first, mkdir() warns and returns false, and the is_dir($this->secretsDir) re-check right after decides whether that was a failure. Removing the @, as the finding steers, turns a lost race into a warning (an ErrorException under Symfony's error handler). The port does not report a silenced mkdir(), rmdir() or unlink() whose path the right operand of `&&`, `||`, `and` or `or` re-checks (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Component/BrowserKit/AbstractBrowser.php",
+    "line": 439,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Component/Cache/Adapter/PhpArrayAdapter.php",
+    "line": 234,
+    "kind": "upstream-wrong",
+    "evidence": "Race-safe `@unlink` re-checked with file_exists(): when another process removes $this->file first, unlink() warns and returns false, and the file_exists($this->file) re-check right after decides whether that was a failure. Removing the @, as the finding steers, turns a lost race into a warning (an ErrorException under Symfony's error handler). The port does not report a silenced mkdir(), rmdir() or unlink() whose path the right operand of `&&`, `||`, `and` or `or` re-checks (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Component/Cache/Traits/FilesystemTrait.php",
+    "line": 41,
+    "kind": "upstream-wrong",
+    "evidence": "Race-safe `@unlink` re-checked with file_exists(): when another process removes $file first, unlink() warns and returns false, and the file_exists($file) re-check right after decides whether that was a failure. Removing the @, as the finding steers, turns a lost race into a warning (an ErrorException under Symfony's error handler). The port does not report a silenced mkdir(), rmdir() or unlink() whose path the right operand of `&&`, `||`, `and` or `or` re-checks (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Component/Console/Input/File/InputFile.php",
+    "line": 181,
+    "kind": "upstream-wrong",
+    "evidence": "Race-safe `@mkdir` re-checked with is_dir(): when another process creates $directory first, mkdir() warns and returns false, and the is_dir($directory) re-check right after decides whether that was a failure. Removing the @, as the finding steers, turns a lost race into a warning (an ErrorException under Symfony's error handler). The port does not report a silenced mkdir(), rmdir() or unlink() whose path the right operand of `&&`, `||`, `and` or `or` re-checks (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Component/DependencyInjection/Kernel/KernelTrait.php",
+    "line": 300,
+    "kind": "upstream-wrong",
+    "evidence": "Race-safe `@mkdir` re-checked with is_dir(): when another process creates $dir first, mkdir() warns and returns false, and the is_dir($dir) re-check right after decides whether that was a failure. Removing the @, as the finding steers, turns a lost race into a warning (an ErrorException under Symfony's error handler). The port does not report a silenced mkdir(), rmdir() or unlink() whose path the right operand of `&&`, `||`, `and` or `or` re-checks (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Component/ErrorHandler/DebugClassLoader.php",
+    "line": 391,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Component/ErrorHandler/Tests/ErrorHandlerTest.php",
+    "line": 844,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Component/ErrorHandler/Tests/ErrorHandlerTest.php",
+    "line": 845,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Component/HttpFoundation/File/File.php",
+    "line": 117,
+    "kind": "upstream-wrong",
+    "evidence": "Race-safe `@mkdir` re-checked with is_dir(): when another process creates $directory first, mkdir() warns and returns false, and the is_dir($directory) re-check right after decides whether that was a failure. Removing the @, as the finding steers, turns a lost race into a warning (an ErrorException under Symfony's error handler). The port does not report a silenced mkdir(), rmdir() or unlink() whose path the right operand of `&&`, `||`, `and` or `or` re-checks (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Component/HttpFoundation/Session/Storage/Handler/NativeFileSessionHandler.php",
+    "line": 47,
+    "kind": "upstream-wrong",
+    "evidence": "Race-safe `@mkdir` re-checked with is_dir(): when another process creates $baseDir first, mkdir() warns and returns false, and the is_dir($baseDir) re-check right after decides whether that was a failure. Removing the @, as the finding steers, turns a lost race into a warning (an ErrorException under Symfony's error handler). The port does not report a silenced mkdir(), rmdir() or unlink() whose path the right operand of `&&`, `||`, `and` or `or` re-checks (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Component/HttpFoundation/Session/Storage/MockFileSessionStorage.php",
+    "line": 37,
+    "kind": "upstream-wrong",
+    "evidence": "Race-safe `@mkdir` re-checked with is_dir(): when another process creates $savePath first, mkdir() warns and returns false, and the is_dir($savePath) re-check right after decides whether that was a failure. Removing the @, as the finding steers, turns a lost race into a warning (an ErrorException under Symfony's error handler). The port does not report a silenced mkdir(), rmdir() or unlink() whose path the right operand of `&&`, `||`, `and` or `or` re-checks (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Component/HttpKernel/HttpCache/Store.php",
+    "line": 46,
+    "kind": "upstream-wrong",
+    "evidence": "Race-safe `@mkdir` re-checked with is_dir(): when another process creates $this->root first, mkdir() warns and returns false, and the is_dir($this->root) re-check right after decides whether that was a failure. Removing the @, as the finding steers, turns a lost race into a warning (an ErrorException under Symfony's error handler). The port does not report a silenced mkdir(), rmdir() or unlink() whose path the right operand of `&&`, `||`, `and` or `or` re-checks (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Component/HttpKernel/HttpCache/Store.php",
+    "line": 78,
+    "kind": "upstream-wrong",
+    "evidence": "Race-safe `@mkdir` re-checked with is_dir(): when another process creates \\dirname($path) first, mkdir() warns and returns false, and the is_dir(\\dirname($path)) re-check right after decides whether that was a failure. Removing the @, as the finding steers, turns a lost race into a warning (an ErrorException under Symfony's error handler). The port does not report a silenced mkdir(), rmdir() or unlink() whose path the right operand of `&&`, `||`, `and` or `or` re-checks (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Component/HttpKernel/HttpCache/Store.php",
+    "line": 384,
+    "kind": "upstream-wrong",
+    "evidence": "Race-safe `@mkdir` re-checked with is_dir(): when another process creates \\dirname($path) first, mkdir() warns and returns false, and the is_dir(\\dirname($path)) re-check right after decides whether that was a failure. Removing the @, as the finding steers, turns a lost race into a warning (an ErrorException under Symfony's error handler). The port does not report a silenced mkdir(), rmdir() or unlink() whose path the right operand of `&&`, `||`, `and` or `or` re-checks (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Component/HttpKernel/Profiler/FileProfilerStorage.php",
+    "line": 40,
+    "kind": "upstream-wrong",
+    "evidence": "Race-safe `@mkdir` re-checked with is_dir(): when another process creates $this->folder first, mkdir() warns and returns false, and the is_dir($this->folder) re-check right after decides whether that was a failure. Removing the @, as the finding steers, turns a lost race into a warning (an ErrorException under Symfony's error handler). The port does not report a silenced mkdir(), rmdir() or unlink() whose path the right operand of `&&`, `||`, `and` or `or` re-checks (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Component/HttpKernel/Profiler/FileProfilerStorage.php",
+    "line": 144,
+    "kind": "upstream-wrong",
+    "evidence": "Race-safe `@mkdir` re-checked with is_dir(): when another process creates $dir first, mkdir() warns and returns false, and the is_dir($dir) re-check right after decides whether that was a failure. Removing the @, as the finding steers, turns a lost race into a warning (an ErrorException under Symfony's error handler). The port does not report a silenced mkdir(), rmdir() or unlink() whose path the right operand of `&&`, `||`, `and` or `or` re-checks (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Component/Lock/Store/FlockStore.php",
+    "line": 43,
+    "kind": "upstream-wrong",
+    "evidence": "Race-safe `@mkdir` re-checked with is_dir(): when another process creates $lockPath first, mkdir() warns and returns false, and the is_dir($lockPath) re-check right after decides whether that was a failure. Removing the @, as the finding steers, turns a lost race into a warning (an ErrorException under Symfony's error handler). The port does not report a silenced mkdir(), rmdir() or unlink() whose path the right operand of `&&`, `||`, `and` or `or` re-checks (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Component/Translation/Tests/Util/XliffUtilsTest.php",
+    "line": 53,
+    "kind": "upstream-wrong",
+    "evidence": "Race-safe `@mkdir` re-checked with is_dir(): when another process creates $dir first, mkdir() warns and returns false, and the is_dir($dir) re-check right after decides whether that was a failure. Removing the @, as the finding steers, turns a lost race into a warning (an ErrorException under Symfony's error handler). The port does not report a silenced mkdir(), rmdir() or unlink() whose path the right operand of `&&`, `||`, `and` or `or` re-checks (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Component/Translation/Tests/Util/XliffUtilsTest.php",
+    "line": 92,
+    "kind": "upstream-wrong",
+    "evidence": "Race-safe `@mkdir` re-checked with is_dir(): when another process creates $tmpDir first, mkdir() warns and returns false, and the is_dir($tmpDir) re-check right after decides whether that was a failure. Removing the @, as the finding steers, turns a lost race into a warning (an ErrorException under Symfony's error handler). The port does not report a silenced mkdir(), rmdir() or unlink() whose path the right operand of `&&`, `||`, `and` or `or` re-checks (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Component/Translation/Writer/TranslationWriter.php",
+    "line": 64,
+    "kind": "upstream-wrong",
+    "evidence": "Race-safe `@mkdir` re-checked with is_dir(): when another process creates $options['path'] first, mkdir() warns and returns false, and the is_dir($options['path']) re-check right after decides whether that was a failure. Removing the @, as the finding steers, turns a lost race into a warning (an ErrorException under Symfony's error handler). The port does not report a silenced mkdir(), rmdir() or unlink() whose path the right operand of `&&`, `||`, `and` or `or` re-checks (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Component/Validator/Tests/Constraints/YamlValidatorTest.php",
+    "line": 141,
+    "kind": "upstream-wrong",
+    "evidence": "The @ in `@trigger_error(..., \\E_USER_DEPRECATED)` is Symfony's deprecation convention: it keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing it, as the finding steers, sends every deprecation to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
+  },
+  {
+    "rule": "phpcs-generic-php-no-silenced-errors",
+    "source": "symfony",
+    "path": "src/Symfony/Contracts/Deprecation/function.php",
+    "line": 25,
+    "kind": "upstream-wrong",
+    "evidence": "This is trigger_deprecation() itself, the function the convention goes through: `@trigger_error(..., \\E_USER_DEPRECATED)` keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing the @, as the finding steers, sends every deprecation in every package that calls trigger_deprecation() to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED (NER-1811)."
   }
 ]

@@ -3,7 +3,7 @@
   "id": "phpcs-generic-php-lower-case-constant",
   "revision": 1,
   "mode": "steer",
-  "description": "PHP_CodeSniffer 4.0.4 Generic.PHP.LowerCaseConstant: a true, false or null constant (written \\TRUE too, not a type) with an upper-case letter.",
+  "description": "Write true, false and null in lowercase in PHP, including their fully qualified forms.",
   "scope": {
     "include": [
       "**/*.php"

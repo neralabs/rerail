@@ -86,10 +86,13 @@ Coding-agent configurations invoke the stable `rerail` launcher rather than a ve
 |- current -> versions/<active>/node_modules/@neralabs/rerail
 |- bin/rerail
 |- daemon.json
+|- packs/node_modules/@neralabs/rerail-pack-<id>/
 `- versions/
    |- 0.2.0/node_modules/@neralabs/rerail/
    `- 0.2.1/node_modules/@neralabs/rerail/
 ```
+
+Rule packs are npm packages too, installed with the same npm configuration into `packs/`, beside the versions rather than inside one, so `rerail update` and `rerail update rollback` keep them. A pack names the core versions it works with (`peerDependencies["@neralabs/rerail"]`); after an update the catalog leaves out, and `rerail packs list` reports, any installed pack whose range excludes the new version until a newer pack is installed.
 
 The state file is the active-version pointer. It records the selected npm dist-tag, current installation, previous known-good installation, and the last explicit check. State updates use a temporary file and atomic rename.
 
@@ -100,10 +103,10 @@ rerail update check
 rerail update
 rerail update status
 rerail update rollback
-rerail events
+rerail events          # internal testing
 ```
 
-Updates are explicit. `rerail events`, the coding agent hooks, and the daemon run the active version and never contact a registry; a new version arrives only when a person runs `rerail update` (or `/rerail-update` inside OMP, Pi, Claude Code, and Cursor, `$rerail-update` in Codex). Auto-updating a machine's global package without consent is out of scope. A successful update becomes active only for newly started coding agent sessions; an already running event-loop process continues on its original version, but it evaluates nothing itself: like every managed client it sends events to the machine's one main daemon, which the first hook or session of the new version replaces (see "One main instance" in `docs/installation.md`).
+Updates are explicit. `rerail events` ([internal testing](../README.md#internal-testing)), the coding agent hooks, and the daemon run the active version and never contact a registry; a new version arrives only when a person runs `rerail update` (or `/rerail-update` inside OMP, Pi, Claude Code, and Cursor, `$rerail-update` in Codex). Auto-updating a machine's global package without consent is out of scope. A successful update becomes active only for newly started coding agent sessions; an already running event-loop process continues on its original version, but it evaluates nothing itself: like every managed client it sends events to the machine's one main daemon, which the first hook or session of the new version replaces (see "One main instance" in `docs/installation.md`).
 
 An update:
 
@@ -117,6 +120,7 @@ An update:
 8. Moves the staged installation into its immutable version directory.
 9. Atomically records the old current version as previous and activates the new version.
 10. Retains the previous installation for explicit rollback.
+11. Registers the active version again with every coding agent already connected (`rerail install --refresh`, run as that version's CLI), so the commands, skills and hooks it ships arrive and the ones it retired go. This step runs even when no newer version was found. A connected coding agent that cannot be registered again fails this step for that agent only, and the update then exits non-zero with the new version still active; an agent whose configuration cannot be read to tell whether it is connected is named and left alone. The update that brings this step runs the previous version's update, which lacks it: run `rerail install --refresh` once after it.
 
 Failed resolution, authentication, installation, or health checks leave the current version unchanged. Revoked npm access therefore prevents future updates without breaking an installed version. Concurrent updates share the update lock and cannot race activation.
 
@@ -125,6 +129,8 @@ Channels map directly to npm dist-tags. `latest` is stable, while `beta` and `ne
 Both the native entrypoint and a real `RERAIL-EVENTS/1` session-start exchange must pass before activation. An update that fails either check is discarded without changing the active version.
 
 ## Activation
+
+Internal testing: activation profiles (`rerail activate`, `rerail activation request`, `rerail profile` and `--profile`) are not part of Rerail 0.1.0. See the README's [Internal testing](../README.md#internal-testing) section.
 
 Installation and customer activation are separate operations. Package access authorizes download; a signed entitlement authorizes execution and selects a customer deployment.
 

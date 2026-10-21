@@ -1,0 +1,13 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "clippy-redundant-field-names",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use field init shorthand in Rust struct expressions when the value is a variable named like the field.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [{ "id": "redundant-field-name", "forbid": { "ast": { "language": "rust", "rule": { "kind": "field_initializer", "all": [
+    { "has": { "field": "field", "pattern": "$F" } },
+    { "has": { "field": "value", "pattern": "$V", "kind": "identifier" } },
+    { "compare": { "left": "F", "op": "eq", "right": "V", "text": "source" } }
+  ] } } }, "violation": { "suppress": { "clippy": { "lints": ["clippy::redundant_field_names", "clippy::all", "clippy::style", "warnings"], "msrv": "1.17" } }, "anchor": "witness.span", "code": "redundant_field_names", "message": "Use field init shorthand here, e.g. Point { x } instead of Point { x: x }." } }]
+}

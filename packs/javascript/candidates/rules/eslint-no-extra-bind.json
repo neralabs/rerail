@@ -3,7 +3,7 @@
  "id": "eslint-no-extra-bind",
  "revision": 1,
  "mode": "steer",
- "description": "Port of ESLint's `no-extra-bind` rule (https://eslint.org/docs/latest/rules/no-extra-bind). Reports `.bind(x)` with one argument on an arrow function or on a function expression that does not use its own `this`; removes the call when the argument is side-effect free and no comment is inside.",
+ "description": "Remove bind() calls that do nothing because the function is an arrow function or never uses this.",
  "scope": {
   "include": [
    "**/*"
@@ -278,7 +278,19 @@
     "anchor": "capture.PROP",
     "code": "no-extra-bind",
     "message": "The function binding is unnecessary.",
-    "fix": "$OBJ"
+    "fix": "$OBJ",
+    "suppress": {
+     "eslint": {
+      "rules": [
+       "no-extra-bind"
+      ]
+     },
+     "oxlint": {
+      "rules": [
+       "no-extra-bind"
+      ]
+     }
+    }
    }
   },
   {
@@ -552,7 +564,19 @@
     "anchor": "capture.PROP",
     "code": "no-extra-bind",
     "message": "The function binding is unnecessary.",
-    "fix": "($OBJ)"
+    "fix": "($OBJ)",
+    "suppress": {
+     "eslint": {
+      "rules": [
+       "no-extra-bind"
+      ]
+     },
+     "oxlint": {
+      "rules": [
+       "no-extra-bind"
+      ]
+     }
+    }
    }
   },
   {
@@ -856,7 +880,19 @@
    "violation": {
     "anchor": "capture.PROP",
     "code": "no-extra-bind",
-    "message": "The function binding is unnecessary."
+    "message": "The function binding is unnecessary.",
+    "suppress": {
+     "eslint": {
+      "rules": [
+       "no-extra-bind"
+      ]
+     },
+     "oxlint": {
+      "rules": [
+       "no-extra-bind"
+      ]
+     }
+    }
    }
   }
  ]

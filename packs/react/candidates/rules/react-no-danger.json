@@ -3,7 +3,7 @@
   "id": "react-no-danger",
   "revision": 1,
   "mode": "steer",
-  "description": "eslint-plugin-react 7.37.5 react/no-danger (default options): a `dangerouslySetInnerHTML` attribute on a DOM element (a tag whose name starts with a lower-case letter, jsx-ast-utils' elementType).",
+  "description": "Avoid dangerouslySetInnerHTML on DOM elements; injecting raw HTML opens the door to cross-site scripting.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -44,17 +44,33 @@
                 "regex": "^[a-z]"
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
       "violation": {
         "anchor": "witness.start",
         "code": "react/no-danger",
-        "message": "Dangerous property 'dangerouslySetInnerHTML' found",
+        "message": "Render this content as JSX instead of dangerouslySetInnerHTML; raw HTML from data opens the door to cross-site scripting.",
         "suppress": {
           "eslint": {
             "rules": [
               "react/no-danger"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-danger"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/security/noDangerouslySetInnerHtml"
             ]
           }
         }

@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "bandit-b604-any-other-function-with-shell-equals-true",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "Detect calls outside the configured subprocess set when the shell argument evaluates truthy",
+  "description": "Avoid passing a truthy shell argument to functions outside subprocess; such wrappers likely run the command through a shell, risking injection.",
   "scope": {
     "include": [
       "**/*.py"
@@ -21,12 +21,13 @@
             "pattern": "$F($$$ARGS)",
             "arguments": {
               "signature": [
-                "command",
+                "*",
                 "shell"
               ],
               "bind": {
                 "SHELL": "shell"
-              }
+              },
+              "mode": "syntactic"
             }
           },
           "constraints": {
@@ -44,8 +45,47 @@
               }
             },
             "SHELL": {
-              "value": {
-                "truthy": true
+              "not": {
+                "any": [
+                  {
+                    "kind": "false"
+                  },
+                  {
+                    "kind": "none"
+                  },
+                  {
+                    "kind": "integer",
+                    "value": {
+                      "truthy": false
+                    }
+                  },
+                  {
+                    "kind": "float",
+                    "value": {
+                      "truthy": false
+                    }
+                  },
+                  {
+                    "kind": "string",
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "interpolation"
+                      }
+                    },
+                    "value": {
+                      "truthy": false
+                    }
+                  },
+                  {
+                    "kind": "list",
+                    "regex": "^\\[\\s*\\]$"
+                  },
+                  {
+                    "kind": "dictionary",
+                    "regex": "^\\{\\s*\\}$"
+                  }
+                ]
               }
             }
           }
@@ -54,7 +94,7 @@
       "violation": {
         "code": "B604",
         "anchor": "capture.F",
-        "message": "Non-subprocess call uses a truthy shell keyword",
+        "message": "Drop the truthy shell argument and pass the command as an argument list; this wrapper likely runs it through a shell.",
         "suppress": {
           "nosec": {
             "codes": [

@@ -3,9 +3,8 @@
 //! Python).
 
 use super::each::binding_range;
-use super::resolve::file_lines;
-use super::{host, spend_util_step};
-use crate::code_rule_dsl::lines::{LineTable, Terminators};
+use super::spend_util_step;
+use crate::code_rule_dsl::origin::InFile;
 use ast_grep_core::meta_var::MetaVarEnv;
 use ast_grep_core::{Doc, Node};
 use std::borrow::Cow;
@@ -81,7 +80,12 @@ impl Layout {
         node: Node<'t, D>,
         env: &mut Cow<MetaVarEnv<'t, D>>,
     ) -> Option<Node<'t, D>> {
-        let range = node.range();
+        // Positions and lines are the file's (`origin`): an embedded program's node lies where the
+        // bytes it stands for do. A parsed tree's nodes have no lines of the file.
+        let file = InFile::of(&node);
+        let range = file
+            .as_ref()
+            .map_or_else(|| node.range(), |file| file.node(&node));
         if self
             .start
             .is_some_and(|start| !start.holds(range.start as u64))
@@ -91,9 +95,8 @@ impl Layout {
         if self.span.is_none() && !self.outward() {
             return Some(node);
         }
-        // A parsed tree's nodes have no lines of the file.
-        let (source, language) = host(&node)?;
-        let lines = file_lines(source, Terminators::of(language));
+        let file = file?;
+        let lines = file.lines();
         if let Some(span) = self.span {
             let breaks = lines.line(range.end) - lines.line(range.start);
             if !span.holds(breaks as u64) {
@@ -102,7 +105,7 @@ impl Layout {
         }
         for (gap, side) in [(&self.before, Side::Before), (&self.after, Side::After)] {
             if let Some(gap) = gap
-                && !gap.holds(&node, side, env, &lines, source.len())?
+                && !gap.holds(&node, side, env, &file)?
             {
                 return None;
             }
@@ -125,19 +128,24 @@ impl Gap {
         node: &Node<'t, D>,
         side: Side,
         env: &MetaVarEnv<'t, D>,
-        lines: &LineTable,
-        length: usize,
+        file: &InFile<'_>,
     ) -> Option<bool> {
-        let range = node.range();
+        let lines = file.lines();
+        let range = file.node(node);
         let neighbour = match &self.to {
-            Neighbour::Token => token(node, side, self.comments)?.map(|token| token.range()),
-            Neighbour::Sibling => sibling(node, side, self.comments).map(|sibling| sibling.range()),
+            Neighbour::Token => token(node, side, self.comments)?.map(|token| file.node(&token)),
+            Neighbour::Sibling => {
+                sibling(node, side, self.comments).map(|sibling| file.node(&sibling))
+            }
             // The capture must lie wholly on its side of the node.
-            Neighbour::Capture(name) => binding_range(env, name).filter(|capture| match side {
-                Side::Before => capture.end <= range.start,
-                Side::After => capture.start >= range.end,
-            }),
+            Neighbour::Capture(name) => binding_range(env, name)
+                .map(|capture| file.range(capture))
+                .filter(|capture| match side {
+                    Side::Before => capture.end <= range.start,
+                    Side::After => capture.start >= range.end,
+                }),
         };
+        let length = file.source().len();
         let edge = match side {
             Side::Before => 0..0,
             Side::After => length..length,
@@ -164,7 +172,7 @@ impl Gap {
         let blank_lines = if last <= first + 1 {
             0
         } else {
-            blank_lines(node, side, from..to, lines)?
+            blank_lines(node, side, from..to, file)?
         };
         Some(blank.holds(blank_lines as u64))
     }
@@ -176,8 +184,9 @@ fn blank_lines<D: Doc>(
     node: &Node<'_, D>,
     side: Side,
     gap: Range<usize>,
-    lines: &LineTable,
+    file: &InFile<'_>,
 ) -> Option<usize> {
+    let lines = file.lines();
     let (first, last) = (lines.line(gap.start), lines.line(gap.end));
     let mut blank = 0;
     // The line the walk last left: the node's first (before) or last (after).
@@ -193,7 +202,7 @@ fn blank_lines<D: Doc>(
         let Some(next) = leaf(&current, side) else {
             break;
         };
-        let token = next.range();
+        let token = file.node(&next);
         let inside = match side {
             Side::Before => token.end > gap.start,
             Side::After => token.start < gap.end,
@@ -218,7 +227,7 @@ fn blank_lines<D: Doc>(
 
 /// Whether a node is a comment, which a token or sibling walk passes over unless asked not to.
 fn is_comment<D: Doc>(node: &Node<'_, D>) -> bool {
-    matches!(node.kind().as_ref(), "comment" | "html_comment")
+    super::util::is_comment_kind(&node.kind())
 }
 
 /// The nearest token on `side` of the node that has a width, comments included or passed over;

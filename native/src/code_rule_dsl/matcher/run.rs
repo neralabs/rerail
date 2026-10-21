@@ -3,6 +3,7 @@
 //! limits (`begin_clause`), with `violation.each` enumerated at a matching root. Utility verdicts are
 //! remembered for the whole file while the caller holds `memo::with_file`.
 
+use super::resolve::{decide_file_jsx_runtime, decide_file_source_type};
 use super::{EachScope, GrammarMatcher, UtilLimit, begin_clause, end_clause, util_limit_hit};
 use crate::code_rule_dsl::budget::matcher_budget_observed;
 use crate::code_rule_dsl::tape::TapeDoc;
@@ -88,7 +89,9 @@ fn match_root<'f>(
 /// Runs `matcher`'s clause over `file` with `work` left of its utility budget, until `visit`
 /// (given each matching root and its bindings) ends it. Roots at preorder ordinals from `bound`
 /// on are not matched. The clause's context is set up only while roots are matched: `visit` runs
-/// outside it, with the budget it left in `work`.
+/// outside it, with the budget it left in `work`. A file whose source type its query's `when`
+/// does not list (`GrammarMatcher::may_apply_to`, decided here once its syntax is read), or whose
+/// JSX runtime its `file.jsxRuntime` does not, matches nothing.
 pub(in crate::code_rule_dsl) fn run_clause<'f, E>(
     file: &'f Root<TapeDoc>,
     matcher: &GrammarMatcher,
@@ -97,6 +100,17 @@ pub(in crate::code_rule_dsl) fn run_clause<'f, E>(
     work: &mut usize,
     mut visit: impl FnMut(u32, MetaVarEnv<'f, TapeDoc>, &mut usize) -> Result<bool, E>,
 ) -> Result<Result<(), Stopped>, E> {
+    if !matcher.may_apply_to(Some(decide_file_source_type(&file.root()))) {
+        return Ok(Ok(()));
+    }
+    if let Some(runtimes) = matcher
+        .file
+        .as_ref()
+        .and_then(|condition| condition.jsx_runtime.as_ref())
+        && !runtimes.contains(&decide_file_jsx_runtime(&file.root()))
+    {
+        return Ok(Ok(()));
+    }
     begin_clause(matcher, *work);
     for root in roots(file, matcher, None, selected).take_while(|&root| (root as usize) < bound) {
         let found = match match_root(file, matcher, root) {
@@ -127,9 +141,11 @@ pub(in crate::code_rule_dsl) fn run_clause<'f, E>(
     Ok(limit.map_or(Ok(()), |limit| Err(Stopped::Limit(limit))))
 }
 
-/// `violation.each` at one root (`run_clause`'s `node`, its bindings `first`): the root is matched
-/// again with every binding of `name` recorded so far excluded, until a match binds nothing new or
-/// `room` matches were found. A match that leaves the capture unbound is kept only as the first.
+/// `violation.each` at one root (`run_clause`'s `node`, its bindings `first`): each match is passed
+/// to `visit`, then the root is matched again with every binding of `name` recorded so far
+/// excluded, until a match binds nothing new or `visit` returns false (which this returns). A match
+/// that leaves the capture unbound is visited only as the first. `visit` runs with nothing
+/// excluded: its own matching (a transform's) reads its bindings as a clause's does.
 pub(in crate::code_rule_dsl) fn enumerate<'f>(
     file: &'f Root<TapeDoc>,
     matcher: &GrammarMatcher,
@@ -137,21 +153,19 @@ pub(in crate::code_rule_dsl) fn enumerate<'f>(
     first: MetaVarEnv<'f, TapeDoc>,
     work: &mut usize,
     name: &str,
-    room: usize,
-) -> Result<Vec<MetaVarEnv<'f, TapeDoc>>, Stopped> {
-    let mut found = Vec::new();
-    if room == 0 {
-        return Ok(found);
-    }
+    mut visit: impl FnMut(MetaVarEnv<'f, TapeDoc>, &mut usize) -> Result<bool, Stopped>,
+) -> Result<bool, Stopped> {
     let scope = EachScope::start(name);
     let mut matched = first;
+    let mut visited = false;
     loop {
         let fresh = scope.record(&matched, name);
-        if fresh || found.is_empty() {
-            found.push(matched);
+        if (fresh || !visited) && !super::each::suspended(|| visit(matched, work))? {
+            return Ok(false);
         }
-        if !fresh || found.len() >= room {
-            return Ok(found);
+        visited = true;
+        if !fresh {
+            return Ok(true);
         }
         begin_clause(matcher, *work);
         let next = roots(file, matcher, Some(node), None)
@@ -164,7 +178,7 @@ pub(in crate::code_rule_dsl) fn enumerate<'f>(
             return Err(Stopped::Limit(limit));
         }
         let Some(next) = next?.flatten() else {
-            return Ok(found);
+            return Ok(true);
         };
         matched = next;
     }

@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import type { AuditRecorder, AuditInput, AuditResult } from "../../../src/engine/audit/audit.js";
+import { isSourceGap, type AuditRecorder, type AuditInput, type AuditResult } from "../../../src/engine/audit/audit.js";
 import { defaultRerailDatabasePath } from "../../../src/engine/storage/database.js";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import type { SteerMetadata } from "../../../src/engine/code-rule/code-rule.js";
@@ -21,7 +21,6 @@ import { SOURCE_LANGUAGES } from "../../../src/engine/code-rule/code-rule-langua
 import { bundledCodeRuleDslDirectory } from "../../../src/engine/code-rule/code-rule-compile.js";
 import { type CodeRule, codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
 import type { RuleMode } from "../../../src/engine/catalog/rule-mode.js";
-import { steerBlock } from "../../../src/engine/code-rule/rerail-steer.js";
 import type {
   NativeBinding,
   NativeCodeRuleDslWorkspace,
@@ -106,6 +105,7 @@ async function fixture({ codeRules = [needleCodeRule(1)], ...options }: {
   mode?: "steer" | "log";
   audits?: AuditRecorder;
   codeRules?: readonly CodeRule[];
+  timingLog?: (line: string) => void;
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), "rerail-enforcer-"));
   roots.push(root);
@@ -165,8 +165,11 @@ async function writeAuditTree(root: string, git: boolean): Promise<void> {
   execFileSync("git", gitCommit, { cwd: root });
 }
 
-/** One log-only repository audit of `workspaceRoot`, whose catalog lives elsewhere: its status, sorted violation paths and sorted `path code` failures. */
-async function repositoryAudit(workspaceRoot: string): Promise<{ status: string | undefined; paths: string[]; failures: string[] }> {
+/**
+ * One log-only repository audit of `workspaceRoot`, whose catalog lives elsewhere, following `.gitignore` or not: its
+ * status, sorted violation paths and sorted `path code` failures.
+ */
+async function repositoryAudit(workspaceRoot: string, followGitignore = false): Promise<{ status: string | undefined; paths: string[]; failures: string[] }> {
   const home = await mkdtemp(join(tmpdir(), "rerail-scan-catalog-"));
   roots.push(home);
   const capabilitiesPath = join(home, "capabilities.json");
@@ -177,6 +180,7 @@ async function repositoryAudit(workspaceRoot: string): Promise<{ status: string 
     workspaceRoot,
     steerDelivery: { requestSteer: async () => undefined },
     audits: recorder,
+    followGitignore,
   });
   try {
     await enforcer.openWorkspace("audit-parity");
@@ -193,8 +197,8 @@ async function repositoryAudit(workspaceRoot: string): Promise<{ status: string 
 }
 
 /** The sorted violation paths of one repository audit of `workspaceRoot` that must complete without failures. */
-async function repositoryAuditPaths(workspaceRoot: string): Promise<string[]> {
-  const result = await repositoryAudit(workspaceRoot);
+async function repositoryAuditPaths(workspaceRoot: string, followGitignore = false): Promise<string[]> {
+  const result = await repositoryAudit(workspaceRoot, followGitignore);
   expect(result).toMatchObject({ status: "completed", failures: [] });
   return result.paths;
 }
@@ -609,7 +613,11 @@ describe("mechanical code rule regressions", () => {
         "repository-edit",
         "steer",
         expect.stringContaining("NEEDLE"),
-        expect.objectContaining({ revision: 1, generatedEdit: true }),
+        expect.objectContaining({
+          revision: 1,
+          // The findings travel with the text, for the yield digest should the steer miss its step.
+          generatedEdit: expect.objectContaining({ violations: [expect.objectContaining({ path: "api/a.py", ruleId: expect.any(String) })] }),
+        }),
       );
     } finally { await enforcer.close(); }
   });
@@ -629,7 +637,7 @@ describe("mechanical code rule regressions", () => {
       const before = completedDirectories();
       const [auditId] = await enforcer.audit("git-repository-audit", { scope: "repository", mode: "log" });
       expect(audits.get(auditId!)?.result).toMatchObject({
-        status: "failed",
+        status: "completed",
         violations: [
           expect.objectContaining({ path: "api/a.py", code: "NEEDLE" }),
           expect.objectContaining({ path: "api/ignored.py", code: "NEEDLE" }),
@@ -638,6 +646,101 @@ describe("mechanical code rule regressions", () => {
       });
       expect(completedDirectories()).toBeGreaterThan(before);
     } finally { await enforcer.close(); }
+  });
+
+  it("completes a repository audit whose only failures are files with syntax errors or binary content, and reads every file past them", async () => {
+    const { recorder, audits } = recordingAudits();
+    const { root, enforcer } = await fixture({ audits: recorder, codeRules: [consoleCodeRule(1)] });
+    try {
+      await mkdir(join(root, "web"));
+      for (let index = 0; index < 25; index += 1) {
+        await writeFile(join(root, "web", `broken${String(index).padStart(2, "0")}.ts`), "const x: = ;\nconsole.log(x);\n");
+      }
+      await writeFile(join(root, "web", "binary.ts"), "console.log(1)\0\n");
+      await writeFile(join(root, "web", "zz-clean.ts"), "console.log(1);\n");
+      execFileSync("git", ["init", "--quiet"], { cwd: root });
+      execFileSync("git", ["add", "web"], { cwd: root });
+      execFileSync("git", gitCommit, { cwd: root });
+      await enforcer.openWorkspace("syntax-only-failures");
+      const [auditId] = await enforcer.audit("syntax-only-failures", { scope: "repository", mode: "log" });
+      const result = audits.get(auditId!)?.result;
+      expect(result?.status).toBe("completed");
+      expect(result?.violations?.map((violation) => violation.path)).toContain("web/zz-clean.ts");
+      expect(result?.failures?.map((failure) => failure.message)).not.toContainEqual(expect.stringContaining("stopped"));
+      expect(result?.failures).toContainEqual(expect.objectContaining({ path: "web/binary.ts", code: "source-incomplete" }));
+      expect(result?.failures).toContainEqual(expect.objectContaining({ path: "web/broken00.ts", code: "source-partial" }));
+      // 26 files were read in part and 20 are listed: the rest are counted, which does not fail a completed audit.
+      expect(result?.failures).toHaveLength(20);
+      expect(result?.unlistedFailureCount).toBe(6);
+    } finally { await enforcer.close(); }
+  });
+
+  it("fails a touched-files scan of a file with syntax errors, as it does not for a repository audit", async () => {
+    const { recorder, audits } = recordingAudits();
+    const { root, enforcer } = await fixture({ audits: recorder, codeRules: [consoleCodeRule(1)] });
+    try {
+      await mkdir(join(root, "web"));
+      await writeFile(join(root, "web", "broken.ts"), "const x: = ;\nconsole.log(x);\n");
+      execFileSync("git", ["init", "--quiet"], { cwd: root });
+      execFileSync("git", ["add", "web"], { cwd: root });
+      execFileSync("git", gitCommit, { cwd: root });
+      await enforcer.openWorkspace("touched-syntax-errors");
+      const [touchedId] = await enforcer.audit("touched-syntax-errors", { scope: "touched-files", mode: "log", paths: ["web/broken.ts"] });
+      expect(audits.get(touchedId!)?.result?.failures).toContainEqual(expect.objectContaining({ path: "web/broken.ts", code: "source-partial" }));
+      expect(audits.get(touchedId!)?.result?.status).toBe("failed");
+      const [repositoryId] = await enforcer.audit("touched-syntax-errors", { scope: "repository", mode: "log" });
+      expect(audits.get(repositoryId!)?.result?.failures).toContainEqual(expect.objectContaining({ path: "web/broken.ts", code: "source-partial" }));
+      expect(audits.get(repositoryId!)?.result?.status).toBe("completed");
+    } finally { await enforcer.close(); }
+  });
+
+  describe("what the native engine reports for a file it read only in part is a source gap", () => {
+    /** A rule of the clause kind that cannot run around syntax errors: it resolves a name, which needs the whole file's scope. */
+    function resolvesRule(id: string, language: "python" | "typescript", include: string, name: string) {
+      return codeRuleSchema.parse({
+        format: "rerail.policy/v1", id, revision: 1, mode: "block",
+        scope: { include: [include], exclude: [] },
+        clauses: [{
+          id: "resolves", violation: { code: "RESOLVES", anchor: "witness.span", message: "Resolved" },
+          forbid: { ast: { language, rule: { kind: "identifier", resolves: { global: [name] } } } },
+        }],
+      });
+    }
+    async function repositoryAuditFailures(files: Record<string, string | Buffer>, codeRules: readonly CodeRule[]) {
+      const { recorder, audits } = recordingAudits();
+      const { root, enforcer } = await fixture({ audits: recorder, codeRules });
+      try {
+        await mkdir(join(root, "web"));
+        for (const [path, content] of Object.entries(files)) await writeFile(join(root, path), content);
+        execFileSync("git", ["init", "--quiet"], { cwd: root });
+        execFileSync("git", ["add", "."], { cwd: root });
+        execFileSync("git", gitCommit, { cwd: root });
+        await enforcer.openWorkspace("source-gap-contract");
+        const [auditId] = await enforcer.audit("source-gap-contract", { scope: "repository", mode: "log" });
+        return audits.get(auditId!)?.result;
+      } finally { await enforcer.close(); }
+    }
+
+    it("for a rule that needs the whole file, of a TypeScript or Python file with syntax errors", async () => {
+      const result = await repositoryAuditFailures(
+        { "api/broken.py": "print(1)\ndef (:\n", "web/broken.ts": "console.log(1);\nconst x: = ;\n" },
+        [resolvesRule("test:python-resolves", "python", "api/**/*.py", "print"), resolvesRule("test:ts-resolves", "typescript", "web/**/*.ts", "console")],
+      );
+      for (const path of ["api/broken.py", "web/broken.ts"]) {
+        const failure = result?.failures?.find(item => item.path === path);
+        expect(failure, path).toMatchObject({ code: "source-incomplete", stage: "evaluate" });
+        expect(isSourceGap(failure!), `${path}: ${failure?.message}`).toBe(true);
+      }
+      expect(result?.status).toBe("completed");
+    });
+
+    it("for a binary file the native repository index skips", async () => {
+      const result = await repositoryAuditFailures({ "api/binary.py": "print(1)\0\n" }, [needleCodeRule(1)]);
+      const failure = result?.failures?.find(item => item.path === "api/binary.py");
+      expect(failure).toMatchObject({ code: "source-incomplete", stage: "read" });
+      expect(isSourceGap(failure!), failure?.message).toBe(true);
+      expect(result?.status).toBe("completed");
+    });
   });
 
   it("indexes a Git checkout's files of every source language an audit evaluates", async () => {
@@ -708,6 +811,103 @@ describe("mechanical code rule regressions", () => {
     }
   });
 
+  it("fails a repository audit when a file's source was released by a busy store: that is no file read in part", async () => {
+    const { recorder, audits } = recordingAudits();
+    const real = native.loadNativeBinding();
+    const released = {
+      ruleId: "test:needle", clauseId: "needle", code: "source-incomplete", path: "api/a.py",
+      message: "source released while the content store was busy and no longer available",
+    };
+    class Workspace {
+      constructor() {
+        const inner = new real.CodeRuleDslWorkspace();
+        return new Proxy(inner, {
+          get(target, key) {
+            const value: unknown = Reflect.get(target, key, target);
+            if (typeof value !== "function") return value;
+            if (key === "resultPageAsync")
+              return async (cursor: number, bytes: number) => {
+                const page = JSON.parse(await target.resultPageAsync(cursor, bytes)) as { failures: unknown[] };
+                return JSON.stringify({ ...page, failures: [...page.failures, released] });
+              };
+            return value.bind(target);
+          },
+        });
+      }
+    }
+    const binding = vi
+      .spyOn(native, "loadNativeBinding")
+      .mockReturnValue(Object.assign(Object.create(real) as NativeBinding, { CodeRuleDslWorkspace: Workspace }));
+    const { root, enforcer } = await fixture({ audits: recorder });
+    try {
+      await writeFile(join(root, ".gitignore"), ".rerail/\ncapabilities.json\n");
+      await writeFile(join(root, "api", "a.py"), "safe()\n");
+      execFileSync("git", ["init", "--quiet"], { cwd: root });
+      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", gitCommit, { cwd: root });
+      await enforcer.openWorkspace("released-source");
+      const [auditId] = await enforcer.audit("released-source", { scope: "repository", mode: "log" });
+      expect(audits.get(auditId!)?.result).toMatchObject({
+        status: "failed",
+        failures: [expect.objectContaining({ path: "api/a.py", code: "source-incomplete", message: released.message })],
+      });
+    } finally {
+      binding.mockRestore();
+      await enforcer.close();
+    }
+  });
+
+  it("lists a guardrail that stopped the scan after more read failures than the list holds", async () => {
+    const { recorder, audits } = recordingAudits();
+    const real = native.loadNativeBinding();
+    // The index reports 25 unreadable files, then that the scan reached its file or byte budget.
+    const unreadable = Array.from({ length: 25 }, (_, index) => ({
+      path: `api/unreadable-${index}.py`, code: "budget-exceeded", message: "Source exceeds the per-file byte budget",
+    }));
+    class Workspace {
+      constructor() {
+        const inner = new real.CodeRuleDslWorkspace();
+        return new Proxy(inner, {
+          get(target, key) {
+            const value: unknown = Reflect.get(target, key, target);
+            if (typeof value !== "function") return value;
+            if (key === "indexRepositoryAsync")
+              return async (options: NativeRepositoryIndexOptions) => {
+                const chunk = JSON.parse(await target.indexRepositoryAsync(options)) as Record<string, unknown>;
+                return JSON.stringify({ ...chunk, done: true, overBudget: true, failures: unreadable });
+              };
+            return value.bind(target);
+          },
+        });
+      }
+    }
+    const binding = vi
+      .spyOn(native, "loadNativeBinding")
+      .mockReturnValue(Object.assign(Object.create(real) as NativeBinding, { CodeRuleDslWorkspace: Workspace }));
+    const { root, enforcer } = await fixture({ audits: recorder });
+    try {
+      await writeFile(join(root, ".gitignore"), ".rerail/\ncapabilities.json\n");
+      await writeFile(join(root, "api", "a.py"), "NEEDLE\n");
+      execFileSync("git", ["init", "--quiet"], { cwd: root });
+      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", gitCommit, { cwd: root });
+      await enforcer.openWorkspace("stopped-index");
+      const [auditId] = await enforcer.audit("stopped-index", { scope: "repository", mode: "log" });
+      expect(audits.get(auditId!)?.result).toMatchObject({
+        status: "failed",
+        failures: [
+          ...Array.from({ length: 20 }, () => expect.objectContaining({ clauseId: "source", stage: "read" })),
+          expect.objectContaining({
+            clauseId: "scan", stage: "scan", message: "Repository scan exceeded its 100,000-file or 512 MiB source budget",
+          }),
+        ],
+      });
+    } finally {
+      binding.mockRestore();
+      await enforcer.close();
+    }
+  });
+
   it("spools oversized pending batches and reclaims the spool directory", async () => {
     const { enforcer } = await fixture();
     try {
@@ -719,6 +919,67 @@ describe("mechanical code rule regressions", () => {
       expect((await settled(enforcer)).violations).toHaveLength(12);
     } finally { await enforcer.close(); }
   }, 60_000);
+
+  it("never evaluates a spooled edit a newer edit of its file superseded while the pump was running", async () => {
+    const { recorder, audits } = recordingAudits();
+    const { enforcer } = await fixture({ scope: "ai-output", audits: recorder });
+    const spoolReads: string[] = [];
+    // The queue reads the superseded edit back from its spool: held until the pump has read it too (it took it out of
+    // the queue to evaluate it) or gone idle without it.
+    const reads = vi.spyOn(fsPromises, "readFile").mockImplementation(async (...args: Parameters<typeof fsPromises.readFile>) => {
+      const path = String(args[0]);
+      if (path.includes("rerail-policy-")) {
+        spoolReads.push(path);
+        while (spoolReads.length === 1 && enforcer.snapshotStatus().pending) await new Promise(resolve => queueHostTurn(resolve));
+      }
+      const handle = await fsPromises.open(path, "r");
+      try {
+        return await handle.readFile(args[1] as Parameters<typeof handle.readFile>[0]);
+      } finally {
+        await handle.close();
+      }
+    });
+    try {
+      await enforcer.openWorkspace("superseded-spool");
+      // Eight megabytes held in memory, so the next edit of api/late.py goes to the spool.
+      const held = Array.from({ length: 8 }, (_, index) => ({ path: `api/held-${index}.py`, language: "python" as const, generatedText: "x".repeat(1_000_000) }));
+      const first = `NEEDLE\n${"x".repeat(400_000)}\n`;
+      await enforcer.auditGeneratedEdits("superseded-spool", {
+        revision: 1, checkpoints: ["edit"], edits: [...held, { path: "api/late.py", language: "python", generatedText: first }],
+      });
+      await enforcer.auditGeneratedEdits("superseded-spool", {
+        revision: 2, checkpoints: ["edit"], edits: [{ path: "api/late.py", language: "python", previousText: first, generatedText: `${first}NEEDLE\n` }],
+      });
+      await settled(enforcer);
+      const late = [...audits.values()].filter(audit => audit.paths.includes("api/late.py"));
+      // The first edit's audit stays superseded; the second reports both edits' lines, since the first was never reported.
+      expect(late.map(audit => [audit.revision, audit.result?.status, audit.result?.violations?.length])).toEqual([[1, "superseded", 0], [2, "completed", 2]]);
+    } finally {
+      reads.mockRestore();
+      await enforcer.close();
+    }
+  }, 60_000);
+
+  it("reports the whole file when the edit it overtook had no known earlier text", async () => {
+    const { recorder, audits } = recordingAudits();
+    const { enforcer } = await fixture({ scope: "ai-output", audits: recorder });
+    try {
+      await enforcer.openWorkspace("unknown-overtaken");
+      // A shell write whose earlier text is unknown, superseded before it was checked by an edit that knows its own.
+      const written = "NEEDLE\nsafe()\n";
+      await enforcer.auditGeneratedEdits("unknown-overtaken", {
+        revision: 1, checkpoints: ["edit"], edits: [{ path: "api/shell.py", language: "python", previousReadError: "Source changed outside a tool", generatedText: written }],
+      });
+      await enforcer.auditGeneratedEdits("unknown-overtaken", {
+        revision: 2, checkpoints: ["edit"], edits: [{ path: "api/shell.py", language: "python", previousText: written, generatedText: `${written}ok()\n` }],
+      });
+      await settled(enforcer);
+      const shell = [...audits.values()].filter(audit => audit.paths.includes("api/shell.py"));
+      expect(shell.map(audit => [audit.revision, audit.result?.status, audit.result?.violations?.length])).toEqual([[1, "superseded", 0], [2, "completed", 1]]);
+    } finally {
+      await enforcer.close();
+    }
+  });
 
   it("evaluates TypeScript AST rules against React files with the JSX grammar", async () => {
     const { recorder, audits } = recordingAudits();
@@ -770,10 +1031,17 @@ describe("mechanical code rule regressions", () => {
       await settled(enforcer);
 
       expect(requestSteer).toHaveBeenCalledTimes(1);
-      expect(requestSteer.mock.calls[0]![2]).toBe(steerBlock("test:logger", [
-        "Log user through the logger (web/App.tsx:2:15)",
-        "  Suggested fix: replace 2:3-2:20 with `logger.info(user)`",
-      ].join("\n")));
+      expect(requestSteer.mock.calls[0]![2]).toBe([
+        "Rerail found 1 problem in your last edit:",
+        "- web/App.tsx:2:15 — Log user through the logger [test:logger]",
+        "  Suggested fix: replace 2:3–2:20 with `logger.info(user)`",
+        "Fix it, or tell the user in one line why you won't.",
+      ].join("\n"));
+      // Where the rule comes from is for the person's line, never the agent's text.
+      expect(requestSteer.mock.calls[0]![3]).toMatchObject({
+        ruleIds: ["test:logger"],
+        rules: [{ id: "test:logger", state: "steered", origin: "From your rule library." }],
+      });
       expect(auditForPath(audits, "web/App.tsx")?.result).toMatchObject({
         violations: [expect.objectContaining({ fix: { span: expect.objectContaining({ startLine: 1, startColumn: 2 }), text: "logger.info(user)" } })],
       });
@@ -908,7 +1176,7 @@ describe("mechanical code rule regressions", () => {
     }
   });
 
-  it("evaluates the files the walk selects whether or not the workspace is a Git checkout", async () => {
+  it("evaluates the files the walk selects, leaving out what Git ignores only when following .gitignore", async () => {
     const plain = await mkdtemp(join(tmpdir(), "rerail-scan-plain-"));
     const checkout = await mkdtemp(join(tmpdir(), "rerail-scan-git-"));
     roots.push(plain, checkout);
@@ -916,12 +1184,21 @@ describe("mechanical code rule regressions", () => {
     await writeAuditTree(checkout, true);
     const walked = await repositoryAuditPaths(plain);
     expect(walked).toEqual(["api/a.py", "api/gen/c.py", "api/nested/d.py", "api/nested/e.py", "api/skip/f.py", "api/tmp/b.py"]);
+    // Outside Git there is nothing to follow.
+    expect(await repositoryAuditPaths(plain, true)).toEqual(walked);
     // `api/nested` holds its own repository in the Git tree; only the lane's owner can make it a checkout apart.
     expect(await repositoryAuditPaths(checkout)).toEqual(walked);
+    // Following .gitignore leaves out the gitignored `api/gen/` and the file the nested `.gitignore` names; the
+    // tracked `api/tmp/b.py` and the `.rerailignore`d `api/skip/f.py` stay, as Git lists them.
+    expect(await repositoryAuditPaths(checkout, true)).toEqual(["api/a.py", "api/nested/d.py", "api/skip/f.py", "api/tmp/b.py"]);
     for (const workspace of ["tmp/ws", "out/ws"]) {
       expect(await repositoryAuditPaths(join(plain, workspace))).toEqual(["api/a.py"]);
+      expect(await repositoryAuditPaths(join(plain, workspace), true)).toEqual(["api/a.py"]);
       expect(await repositoryAuditPaths(join(checkout, workspace))).toEqual(["api/a.py"]);
     }
+    // A workspace in a folder the checkout around it ignores is ignored whole.
+    expect(await repositoryAuditPaths(join(checkout, "tmp/ws"), true)).toEqual(["api/a.py"]);
+    expect(await repositoryAuditPaths(join(checkout, "out/ws"), true)).toEqual([]);
   }, 60_000);
 
   it("audits a workspace root reached through a symlink as its target, with or without Git", async () => {
@@ -1022,6 +1299,40 @@ describe("mechanical code rule regressions", () => {
     }
   }, 30_000);
 
+  it("opens the workspace and evaluates edits while another process holds the store writer for the whole attach", async () => {
+    const { recorder, audits } = recordingAudits();
+    const { root, enforcer } = await fixture({ audits: recorder });
+    const holder = await storeWriterHolder(process.env.RERAIL_CONTENT_STORE_PATH!);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await writeFile(join(root, ".gitignore"), ".rerail/\ncapabilities.json\n");
+      await writeFile(join(root, "api", "a.py"), "safe()\n");
+      execFileSync("git", ["init", "--quiet"], { cwd: root });
+      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", gitCommit, { cwd: root });
+      // The store is a cache: an attach that waits out its write deadline runs without reuse instead of failing.
+      await holder.request("lock");
+      await enforcer.openWorkspace("busy-store-attach");
+      await enforcer.auditGeneratedEdits("busy-store-attach", {
+        revision: 1,
+        checkpoints: ["edit"],
+        edits: [{ path: "api/a.py", language: "python", generatedText: "NEEDLE\n" }],
+      });
+      await writeFile(join(root, "api", "a.py"), "NEEDLE\n");
+      expect((await settled(enforcer)).violations).toEqual([expect.objectContaining({ path: "api/a.py", code: "NEEDLE" })]);
+      expect(auditForPath(audits, "api/a.py")?.result).toMatchObject({ status: "completed", failures: [] });
+      const failures = [...audits.values()].flatMap(audit => audit.result?.failures ?? []);
+      expect(failures).not.toContainEqual(expect.objectContaining({ clauseId: "catalog" }));
+      const reports = stderr.mock.calls.map(([chunk]) => String(chunk)).filter(line => line.includes("repository reuse"));
+      expect(reports).toEqual([expect.stringMatching(/^rerail: repository reuse is disabled: content store busy: /u)]);
+    } finally {
+      stderr.mockRestore();
+      await holder.request("release").catch(() => undefined);
+      holder.close();
+      await enforcer.close();
+    }
+  }, 60_000);
+
   it("keeps a finished audit's violations when its reuse-cache write fails", async () => {
     const { recorder, audits } = recordingAudits();
     const { root, enforcer } = await fixture({ audits: recorder });
@@ -1072,7 +1383,7 @@ describe("mechanical code rule regressions", () => {
     const { enforcer } = await fixture({ audits: recorder });
     const reason = "cannot read .rerailignore: Is a directory (os error 21)";
     const unattached = () => Object.assign(pagingWorkspace((cursor) => openPage(cursor, 1)), {
-      enableStorageAsync: async () => ({ attached: false, reason }),
+      enableStorageAsync: async () => ({ attached: false, reason, discoveryMilliseconds: 0, publicationMilliseconds: 0 }),
     });
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const binding = nativeWorkspaces(unattached(), unattached(), unattached());
@@ -1090,6 +1401,65 @@ describe("mechanical code rule regressions", () => {
       await enforcer.close();
     }
   });
+
+  it("writes how long each storage attach took, split into discovery and publication, to the timing log", async () => {
+    const lines: string[] = [];
+    const { enforcer } = await fixture({ timingLog: line => lines.push(line) });
+    const timed = (attached: boolean) => Object.assign(pagingWorkspace((cursor) => openPage(cursor, 1)), {
+      enableStorageAsync: async () => ({ attached, discoveryMilliseconds: 12, publicationMilliseconds: 34 }),
+    });
+    const binding = nativeWorkspaces(timed(true), timed(false));
+    try {
+      await enforcer.openWorkspace("timed-attach");
+      await enforcer.audit("timed-attach", { scope: "touched-files", mode: "log", paths: ["api"] });
+      expect(lines.filter((line) => line.startsWith("rerail: repository storage"))).toEqual([
+        expect.stringMatching(/^rerail: repository storage attached in \d+ ms \(discovery 12 ms, publication 34 ms\)\n$/u),
+        expect.stringMatching(/^rerail: repository storage not attached in \d+ ms \(discovery 12 ms, publication 34 ms\)\n$/u),
+      ]);
+    } finally {
+      binding.mockRestore();
+      await enforcer.close();
+    }
+  });
+
+  it("writes one line per repository audit with its phase times, files, violations, failures and status", async () => {
+    const { recorder } = recordingAudits();
+    const lines: string[] = [];
+    const { root, enforcer } = await fixture({ audits: recorder, timingLog: line => lines.push(line) });
+    await writeFile(join(root, "api", "once.py"), "NEEDLE\n");
+    execFileSync("git", ["init", "--quiet"], { cwd: root });
+    execFileSync("git", ["add", "."], { cwd: root });
+    execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
+    try {
+      await enforcer.openWorkspace("timed-audit");
+      await enforcer.audit("timed-audit", { scope: "touched-files", mode: "log", paths: ["api/once.py"] });
+      expect(lines.filter((line) => line.startsWith("rerail: repository audit"))).toEqual([]);
+      await enforcer.audit("timed-audit", { scope: "repository", mode: "log" });
+      expect(lines.filter((line) => line.startsWith("rerail: repository audit"))).toEqual([
+        expect.stringMatching(/^rerail: repository audit completed in \d+ ms \(index \d+ ms, result pages \d+ ms\): [1-9]\d* files, 1 violations, 0 failures\n$/u),
+      ]);
+    } finally {
+      await enforcer.close();
+    }
+  }, 30_000);
+
+  it("writes no timing line to stderr unless it is given a timing log", async () => {
+    const { recorder } = recordingAudits();
+    const { root, enforcer } = await fixture({ audits: recorder });
+    await writeFile(join(root, "api", "once.py"), "NEEDLE\n");
+    execFileSync("git", ["init", "--quiet"], { cwd: root });
+    execFileSync("git", ["add", "."], { cwd: root });
+    execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await enforcer.openWorkspace("untimed");
+      await enforcer.audit("untimed", { scope: "repository", mode: "log" });
+      expect(stderr.mock.calls.map(([chunk]) => String(chunk)).filter((line) => line.startsWith("rerail: repository"))).toEqual([]);
+    } finally {
+      stderr.mockRestore();
+      await enforcer.close();
+    }
+  }, 30_000);
 
   it("never applies to a replacement that a newer catalog superseded while it replayed", async () => {
     const { enforcer, rules } = await fixture();
@@ -1142,7 +1512,8 @@ const completedApply = JSON.stringify({
 /** A native workspace double that serves result pages from `page` and reports each apply to `onApply`. */
 function pagingWorkspace(page: (cursor: number) => string, onApply: () => void = () => undefined): NativeCodeRuleDslWorkspace {
   return {
-    enableStorageAsync: async () => ({ attached: true }), addCodeRule: () => undefined, acceptsPath: () => true, tryApply: () => null,
+    enableStorageAsync: async () => ({ attached: true, discoveryMilliseconds: 0, publicationMilliseconds: 0 }), addCodeRule: () => undefined, acceptsPath: () => true, readsServerGraph: () => false, readsPackageManifests: () => false,
+    tryApply: () => null,
     applyAsync: async () => { onApply(); return completedApply; },
     applyBufferAsync: async () => { onApply(); return completedApply; },
     memoryProfile: () => JSON.stringify({}),
@@ -1284,6 +1655,93 @@ describe("result paging", () => {
         violations: [],
         failures: [expect.objectContaining({ clauseId: "scan", code: "adapter-error", stage: "scan" })],
       });
+    } finally {
+      binding.mockRestore();
+      await enforcer.close();
+    }
+  });
+
+  it("caps the failure list of a scan that fails, and keeps how many it leaves out", async () => {
+    const { recorder, audits } = recordingAudits();
+    const { root, enforcer } = await fixture({ audits: recorder });
+    const session = pagingWorkspace(() => { throw new Error("the session workspace is never paged"); });
+    const scan = pagingWorkspace(() => { throw new Error("the result stream broke"); });
+    const binding = nativeWorkspaces(session, scan);
+    try {
+      // 25 files past the byte budget fail to read before the scan itself fails.
+      const oversized = Array.from({ length: 25 }, (_, index) => `api/oversized-${index}.py`);
+      await Promise.all(oversized.map(async (path) => {
+        await writeFile(join(root, path), "");
+        await fsPromises.truncate(join(root, path), 32_000_001);
+      }));
+      await writeFile(join(root, "api", "page.py"), "safe()\n");
+      await enforcer.openWorkspace("scan-fails");
+      await enforcer.audit("scan-fails", { scope: "touched-files", mode: "log", paths: [...oversized, "api/page.py"] });
+      const result = audits.get("run-1")?.result;
+      expect(result).toMatchObject({ status: "failed", unlistedFailureCount: 5 });
+      expect(result?.failures).toHaveLength(21);
+      expect(result?.failures).toContainEqual(expect.objectContaining({ clauseId: "scan", code: "adapter-error", stage: "scan" }));
+    } finally {
+      binding.mockRestore();
+      await enforcer.close();
+    }
+  });
+
+  it("lists each rule the file's work stopped, however many failures came before it", async () => {
+    const { recorder, audits } = recordingAudits();
+    const { root, enforcer } = await fixture({ audits: recorder });
+    const gap = (ruleId: string, code: string, index: number) => ({
+      ruleId, clauseId: "c", code, message: "out of work", path: `api/f${index}.py`,
+    });
+    // One rule runs out of work on 21 files, then the file's work stops another on one more.
+    const failures = [
+      ...Array.from({ length: 21 }, (_, index) => gap("test:own", "budget-exceeded", index)),
+      gap("test:file", "file-budget-exceeded", 21),
+    ];
+    const session = pagingWorkspace(() => { throw new Error("the session workspace is never paged"); });
+    const scan = pagingWorkspace(() => JSON.stringify({
+      revision: 1, cursor: 1, done: true, failures, coverage: [], bytes: 0, violations: [],
+    }));
+    const binding = nativeWorkspaces(session, scan);
+    try {
+      await writeFile(join(root, "api", "page.py"), "safe()\n");
+      await enforcer.openWorkspace("file-work-listed");
+      await enforcer.audit("file-work-listed", { scope: "touched-files", mode: "log", paths: ["api/page.py"] });
+      const result = audits.get("run-1")?.result;
+      expect(result?.status).toBe("completed");
+      expect(result?.failures).toContainEqual(expect.objectContaining({ ruleId: "test:file", code: "file-budget-exceeded" }));
+      expect(result?.failures).toHaveLength(22);
+    } finally {
+      binding.mockRestore();
+      await enforcer.close();
+    }
+  });
+
+  it("folds into a blind file only the failures its row stands for, so a cross-file query's failure still fails the audit", async () => {
+    const { recorder, audits } = recordingAudits();
+    const { root, enforcer } = await fixture({ audits: recorder });
+    const path = "api/x.py";
+    const failures = [
+      { ruleId: "test:local", clauseId: "c", code: "budget-exceeded", message: "clause work budget exceeded", path },
+      { ruleId: "test:cross", clauseId: "g", code: "source-incomplete", message: "A cross-file query source is incomplete", path },
+    ];
+    const blindFiles = [{ path, reason: "budget", clauses: 1, message: "clause work budget exceeded", folded: [["test:local", "c"]] }];
+    const session = pagingWorkspace(() => { throw new Error("the session workspace is never paged"); });
+    const scan = pagingWorkspace(() => JSON.stringify({
+      revision: 1, cursor: 1, done: true, failures, blindFiles, coverage: [], bytes: 0, violations: [],
+    }));
+    const binding = nativeWorkspaces(session, scan);
+    try {
+      await writeFile(join(root, "api", "page.py"), "safe()\n");
+      await enforcer.openWorkspace("cross-blind");
+      await enforcer.audit("cross-blind", { scope: "touched-files", mode: "log", paths: ["api/page.py"] });
+      const result = audits.get("run-1")?.result;
+      expect(result?.status).toBe("failed");
+      expect(result?.failures).toEqual(expect.arrayContaining([
+        expect.objectContaining({ ruleId: "test:cross", clauseId: "g", code: "source-incomplete", path }),
+        expect.objectContaining({ clauseId: "file", path, blind: "budget" }),
+      ]));
+      expect(result?.failures).not.toContainEqual(expect.objectContaining({ ruleId: "test:local" }));
     } finally {
       binding.mockRestore();
       await enforcer.close();

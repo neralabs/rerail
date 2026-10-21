@@ -1,0 +1,1762 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-plugin-vue-no-async-in-computed-properties",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Keep Vue computed properties synchronous, with no async getter, await, promises, nextTick or timers; a computed must return its value right away.",
+  "scope": {
+    "include": [
+      "**/*.vue"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "vue",
+        "utils": {
+          "fn-like": {
+            "any": [
+              {
+                "kind": "function_declaration"
+              },
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "generator_function"
+              },
+              {
+                "kind": "generator_function_declaration"
+              },
+              {
+                "kind": "method_definition"
+              }
+            ]
+          },
+          "fn-expr": {
+            "any": [
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "generator_function"
+              }
+            ]
+          },
+          "paren-as": {
+            "any": [
+              {
+                "kind": "parenthesized_expression"
+              },
+              {
+                "kind": "as_expression"
+              }
+            ]
+          },
+          "setup-marker": {
+            "kind": "empty_statement",
+            "host": {
+              "kind": "start_tag",
+              "regex": "^<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$)"
+            }
+          },
+          "any-marker": {
+            "kind": "empty_statement",
+            "host": {
+              "kind": "start_tag",
+              "regex": "^<script\\b"
+            }
+          },
+          "top-in-setup": {
+            "all": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "program"
+                }
+              },
+              {
+                "follows": {
+                  "stopBy": {
+                    "matches": "any-marker"
+                  },
+                  "matches": "setup-marker"
+                }
+              }
+            ]
+          },
+          "in-setup": {
+            "any": [
+              {
+                "matches": "top-in-setup"
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "matches": "top-in-setup"
+                }
+              }
+            ]
+          },
+          "file-setup": {
+            "inside": {
+              "stopBy": "end",
+              "kind": "program",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "setup-marker"
+              }
+            }
+          },
+          "file-plain": {
+            "not": {
+              "matches": "file-setup"
+            }
+          },
+          "key-computed": {
+            "any": [
+              {
+                "regex": "^(?:computed|'computed'|\"computed\")$",
+                "not": {
+                  "kind": "computed_property_name"
+                }
+              },
+              {
+                "kind": "computed_property_name",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "string",
+                  "regex": "^(?:'computed'|\"computed\")$"
+                }
+              }
+            ]
+          },
+          "key-get": {
+            "any": [
+              {
+                "regex": "^(?:get|'get'|\"get\")$",
+                "not": {
+                  "kind": "computed_property_name"
+                }
+              },
+              {
+                "kind": "computed_property_name",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "string",
+                  "regex": "^(?:'get'|\"get\")$"
+                }
+              }
+            ]
+          },
+          "last-arg": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "arguments"
+                    }
+                  },
+                  {
+                    "nthChild": {
+                      "position": 1,
+                      "reverse": true,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "matches": "paren-as"
+                    },
+                    {
+                      "matches": "last-arg"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "first-arg": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "arguments"
+                    }
+                  },
+                  {
+                    "nthChild": {
+                      "position": 1,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "matches": "paren-as"
+                    },
+                    {
+                      "matches": "first-arg"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "define-callee": {
+            "any": [
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^(?:component|mixin)$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier",
+                      "regex": "^Vue$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^extend$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "identifier",
+                "regex": "^defineNuxtComponent$"
+              },
+              {
+                "kind": "identifier",
+                "regex": "^(?:component|createApp|defineComponent)$",
+                "not": {
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "any": [
+                          {
+                            "kind": "import_specifier",
+                            "not": {
+                              "inside": {
+                                "stopBy": "end",
+                                "kind": "import_statement",
+                                "has": {
+                                  "field": "source",
+                                  "kind": "string",
+                                  "value": {
+                                    "regex": "^(?:vue|@vue/composition-api|@nuxtjs/composition-api|#imports)$"
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          {
+                            "kind": "function_declaration"
+                          },
+                          {
+                            "kind": "generator_function_declaration"
+                          },
+                          {
+                            "kind": "class_declaration"
+                          },
+                          {
+                            "kind": "catch_clause"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "vue-object": {
+            "kind": "object",
+            "any": [
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "kind": "export_statement",
+                  "not": {
+                    "matches": "top-in-setup"
+                  }
+                }
+              },
+              {
+                "all": [
+                  {
+                    "matches": "last-arg"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": {
+                        "not": {
+                          "matches": "paren-as"
+                        }
+                      },
+                      "kind": "arguments",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "call_expression",
+                        "has": {
+                          "field": "function",
+                          "matches": "define-callee"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "matches": "first-arg"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": {
+                        "not": {
+                          "matches": "paren-as"
+                        }
+                      },
+                      "kind": "arguments",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "new_expression",
+                        "has": {
+                          "field": "constructor",
+                          "kind": "identifier",
+                          "regex": "^Vue$"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "not": {
+                    "all": [
+                      {
+                        "pattern": "$VUEOBJ"
+                      },
+                      {
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "program",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "comment",
+                            "regex": "@vue/component",
+                            "layout": {
+                              "after": {
+                                "to": "capture.VUEOBJ",
+                                "breaks": {
+                                  "eq": 1
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "computed-object": {
+            "kind": "object",
+            "inside": {
+              "field": "value",
+              "stopBy": "neighbor",
+              "kind": "pair",
+              "all": [
+                {
+                  "has": {
+                    "field": "key",
+                    "matches": "key-computed"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "vue-object"
+                  }
+                }
+              ]
+            }
+          },
+          "opt-getter": {
+            "any": [
+              {
+                "kind": "method_definition",
+                "all": [
+                  {
+                    "has": {
+                      "field": "name",
+                      "pattern": "$K"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "computed-object"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "matches": "fn-expr"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": {
+                        "not": {
+                          "matches": "paren-as"
+                        }
+                      },
+                      "kind": "pair",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "key",
+                            "pattern": "$K"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "matches": "computed-object"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "method_definition",
+                "all": [
+                  {
+                    "has": {
+                      "field": "name",
+                      "matches": "key-get"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "object",
+                      "inside": {
+                        "stopBy": {
+                          "not": {
+                            "matches": "paren-as"
+                          }
+                        },
+                        "kind": "pair",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "key",
+                              "pattern": "$K"
+                            }
+                          },
+                          {
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "matches": "computed-object"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "matches": "fn-expr"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": {
+                        "not": {
+                          "kind": "parenthesized_expression"
+                        }
+                      },
+                      "kind": "pair",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "key",
+                            "matches": "key-get"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "object",
+                            "inside": {
+                              "stopBy": {
+                                "not": {
+                                  "matches": "paren-as"
+                                }
+                              },
+                              "kind": "pair",
+                              "all": [
+                                {
+                                  "has": {
+                                    "field": "key",
+                                    "pattern": "$K"
+                                  }
+                                },
+                                {
+                                  "inside": {
+                                    "stopBy": "neighbor",
+                                    "matches": "computed-object"
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "computed-callee": {
+            "any": [
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "import_specifier",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "name",
+                            "regex": "^computed$"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "stopBy": "end",
+                            "kind": "import_statement",
+                            "has": {
+                              "field": "source",
+                              "kind": "string",
+                              "value": {
+                                "regex": "^(?:vue|@vue/composition-api|@nuxtjs/composition-api|#imports)$"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^computed$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier",
+                      "resolves": {
+                        "binding": {
+                          "site": {
+                            "kind": "namespace_import",
+                            "inside": {
+                              "stopBy": "end",
+                              "kind": "import_statement",
+                              "has": {
+                                "field": "source",
+                                "kind": "string",
+                                "value": {
+                                  "regex": "^(?:vue|@vue/composition-api|@nuxtjs/composition-api|#imports)$"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "computed-arg": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "nthChild": {
+                      "position": 1,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "arguments",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "call_expression",
+                        "has": {
+                          "field": "function",
+                          "matches": "computed-callee"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "matches": "computed-arg"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "fn-or-arrow": {
+            "any": [
+              {
+                "matches": "fn-expr"
+              },
+              {
+                "kind": "arrow_function"
+              }
+            ]
+          },
+          "comp-getter": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "matches": "fn-or-arrow"
+                  },
+                  {
+                    "matches": "computed-arg"
+                  }
+                ]
+              },
+              {
+                "kind": "method_definition",
+                "all": [
+                  {
+                    "has": {
+                      "field": "name",
+                      "matches": "key-get"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "object",
+                      "matches": "computed-arg"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "matches": "fn-or-arrow"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": {
+                        "not": {
+                          "kind": "parenthesized_expression"
+                        }
+                      },
+                      "kind": "pair",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "key",
+                            "matches": "key-get"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "object",
+                            "matches": "computed-arg"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "in-vue-object": {
+            "inside": {
+              "stopBy": "end",
+              "matches": "vue-object"
+            }
+          },
+          "comp-ctx": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "matches": "file-setup"
+                  },
+                  {
+                    "matches": "in-setup"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "matches": "file-plain"
+                  },
+                  {
+                    "matches": "in-vue-object"
+                  }
+                ]
+              }
+            ]
+          },
+          "this-ish": {
+            "any": [
+              {
+                "kind": "this"
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "only": true,
+                    "site": {
+                      "kind": "variable_declarator",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "name",
+                            "kind": "identifier"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "value",
+                            "kind": "this"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "lexical_declaration",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "regex": "^const$"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "promise-callee": {
+            "any": [
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "promise-callee"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "any": [
+                      {
+                        "kind": "member_expression",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "property",
+                              "kind": "property_identifier",
+                              "regex": "^(?:then|catch|finally)$"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "kind": "subscript_expression",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "index",
+                              "kind": "string",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "string_fragment",
+                                "regex": "^(?:then|catch|finally)$"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "member_expression",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "object",
+                              "kind": "identifier",
+                              "regex": "^Promise$"
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "property",
+                              "kind": "property_identifier",
+                              "regex": "^(?:all|allSettled|any|race|reject|resolve|try|withResolvers)$"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "kind": "subscript_expression",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "object",
+                              "kind": "identifier",
+                              "regex": "^Promise$"
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "index",
+                              "kind": "string",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "string_fragment",
+                                "regex": "^(?:all|allSettled|any|race|reject|resolve|try|withResolvers)$"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "timed-callee": {
+            "any": [
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "timed-callee"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "regex": "^(?:setTimeout|setInterval|setImmediate|requestAnimationFrame)$"
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "member_expression",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "object",
+                              "kind": "identifier",
+                              "regex": "^window$"
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "property",
+                              "kind": "property_identifier",
+                              "regex": "^(?:setTimeout|setInterval|setImmediate|requestAnimationFrame)$"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "kind": "subscript_expression",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "object",
+                              "kind": "identifier",
+                              "regex": "^window$"
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "index",
+                              "kind": "string",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "string_fragment",
+                                "regex": "^(?:setTimeout|setInterval|setImmediate|requestAnimationFrame)$"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "nexttick-callee": {
+            "any": [
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "nexttick-callee"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "any": [
+                      {
+                        "kind": "member_expression",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "object",
+                              "matches": "this-ish"
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "property",
+                              "kind": "property_identifier",
+                              "regex": "^\\$nextTick$"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "kind": "subscript_expression",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "object",
+                              "matches": "this-ish"
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "index",
+                              "kind": "string",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "string_fragment",
+                                "regex": "^\\$nextTick$"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "member_expression",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "object",
+                              "kind": "identifier",
+                              "regex": "^Vue$"
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "property",
+                              "kind": "property_identifier",
+                              "regex": "^nextTick$"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "kind": "subscript_expression",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "object",
+                              "kind": "identifier",
+                              "regex": "^Vue$"
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "index",
+                              "kind": "string",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "string_fragment",
+                                "regex": "^nextTick$"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "async-function-in-options-getter",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "embedded": "script-block",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "method_definition",
+                    "any": [
+                      {
+                        "has": {
+                          "field": "type_parameters",
+                          "pattern": "$A"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "parameters",
+                          "pattern": "$A"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "matches": "fn-or-arrow"
+                      },
+                      {
+                        "pattern": "$A"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "matches": "opt-getter"
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^async$",
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "identifier"
+                      },
+                      {
+                        "kind": "property_identifier"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "matches": "file-plain"
+              }
+            ]
+          },
+          "transform": {
+            "N1": {
+              "replace": {
+                "source": "$K",
+                "replace": "^(?:\\[\\s*(?:'([^']*)'|\"([^\"]*)\")\\s*\\]|'([^']*)'|\"([^\"]*)\")$",
+                "by": "${1}${2}${3}${4}"
+              }
+            },
+            "NAME": {
+              "replace": {
+                "source": "$N1",
+                "replace": "^\\[.*\\]$",
+                "by": "Unknown"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.A",
+        "code": "vue/no-async-in-computed-properties",
+        "message": "Make the \"$NAME\" computed getter synchronous and move the async work into a watcher or method.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-async-in-computed-properties"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "async-function-in-composition-getter",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "embedded": "script-block",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "method_definition",
+                    "any": [
+                      {
+                        "has": {
+                          "field": "type_parameters",
+                          "pattern": "$A"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "parameters",
+                          "pattern": "$A"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "matches": "fn-or-arrow"
+                      },
+                      {
+                        "pattern": "$A"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "matches": "comp-getter"
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^async$",
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "identifier"
+                      },
+                      {
+                        "kind": "property_identifier"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "matches": "comp-ctx"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.A",
+        "code": "vue/no-async-in-computed-properties",
+        "message": "Make this computed getter synchronous and move the async work into a watcher or function.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-async-in-computed-properties"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "await-in-options-getter",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "embedded": "script-block",
+          "rule": {
+            "all": [
+              {
+                "kind": "await_expression"
+              },
+              {
+                "matches": "file-plain"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "fn-like"
+                  },
+                  "matches": "opt-getter"
+                }
+              }
+            ]
+          },
+          "transform": {
+            "N1": {
+              "replace": {
+                "source": "$K",
+                "replace": "^(?:\\[\\s*(?:'([^']*)'|\"([^\"]*)\")\\s*\\]|'([^']*)'|\"([^\"]*)\")$",
+                "by": "${1}${2}${3}${4}"
+              }
+            },
+            "NAME": {
+              "replace": {
+                "source": "$N1",
+                "replace": "^\\[.*\\]$",
+                "by": "Unknown"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vue/no-async-in-computed-properties",
+        "message": "Remove this await from the \"$NAME\" computed and load the value in a watcher or method instead.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-async-in-computed-properties"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "await-in-composition-getter",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "embedded": "script-block",
+          "rule": {
+            "all": [
+              {
+                "kind": "await_expression"
+              },
+              {
+                "matches": "comp-ctx"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "fn-like"
+                  },
+                  "matches": "comp-getter"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vue/no-async-in-computed-properties",
+        "message": "Remove this await from the computed getter and load the value in a watcher or function instead.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-async-in-computed-properties"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "new-promise-in-options-getter",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "embedded": "script-block",
+          "rule": {
+            "all": [
+              {
+                "kind": "new_expression",
+                "has": {
+                  "field": "constructor",
+                  "kind": "identifier",
+                  "regex": "^Promise$"
+                }
+              },
+              {
+                "matches": "file-plain"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "fn-like"
+                  },
+                  "matches": "opt-getter"
+                }
+              }
+            ]
+          },
+          "transform": {
+            "N1": {
+              "replace": {
+                "source": "$K",
+                "replace": "^(?:\\[\\s*(?:'([^']*)'|\"([^\"]*)\")\\s*\\]|'([^']*)'|\"([^\"]*)\")$",
+                "by": "${1}${2}${3}${4}"
+              }
+            },
+            "NAME": {
+              "replace": {
+                "source": "$N1",
+                "replace": "^\\[.*\\]$",
+                "by": "Unknown"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vue/no-async-in-computed-properties",
+        "message": "Remove this Promise from the \"$NAME\" computed and resolve the value in a watcher or method instead.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-async-in-computed-properties"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "new-promise-in-composition-getter",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "embedded": "script-block",
+          "rule": {
+            "all": [
+              {
+                "kind": "new_expression",
+                "has": {
+                  "field": "constructor",
+                  "kind": "identifier",
+                  "regex": "^Promise$"
+                }
+              },
+              {
+                "matches": "comp-ctx"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "fn-like"
+                  },
+                  "matches": "comp-getter"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vue/no-async-in-computed-properties",
+        "message": "Remove this Promise from the computed getter and resolve the value in a watcher or function instead.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-async-in-computed-properties"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "async-action-in-options-getter",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "embedded": "script-block",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call_expression"
+                  },
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "kind": "arguments"
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "field": "function",
+                          "matches": "promise-callee"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "function",
+                          "matches": "nexttick-callee"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "matches": "file-plain"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "fn-like"
+                  },
+                  "matches": "opt-getter"
+                }
+              }
+            ]
+          },
+          "transform": {
+            "N1": {
+              "replace": {
+                "source": "$K",
+                "replace": "^(?:\\[\\s*(?:'([^']*)'|\"([^\"]*)\")\\s*\\]|'([^']*)'|\"([^\"]*)\")$",
+                "by": "${1}${2}${3}${4}"
+              }
+            },
+            "NAME": {
+              "replace": {
+                "source": "$N1",
+                "replace": "^\\[.*\\]$",
+                "by": "Unknown"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vue/no-async-in-computed-properties",
+        "message": "Move the async work out of the \"$NAME\" computed into a watcher or method, and have the computed return a value synchronously.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-async-in-computed-properties"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "async-action-in-composition-getter",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "embedded": "script-block",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call_expression"
+                  },
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "kind": "arguments"
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "field": "function",
+                          "matches": "promise-callee"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "function",
+                          "matches": "nexttick-callee"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "matches": "comp-ctx"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "fn-like"
+                  },
+                  "matches": "comp-getter"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vue/no-async-in-computed-properties",
+        "message": "Move the async work out of this computed into a watcher or function, and have the getter return a value synchronously.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-async-in-computed-properties"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "timed-function-in-options-getter",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "embedded": "script-block",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call_expression"
+                  },
+                  {
+                    "arguments": {
+                      "signature": [
+                        "callback"
+                      ],
+                      "bind": {
+                        "CB": "callback"
+                      },
+                      "mode": "estree"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "function",
+                      "matches": "timed-callee"
+                    }
+                  }
+                ]
+              },
+              {
+                "matches": "file-plain"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "fn-like"
+                  },
+                  "matches": "opt-getter"
+                }
+              }
+            ]
+          },
+          "transform": {
+            "N1": {
+              "replace": {
+                "source": "$K",
+                "replace": "^(?:\\[\\s*(?:'([^']*)'|\"([^\"]*)\")\\s*\\]|'([^']*)'|\"([^\"]*)\")$",
+                "by": "${1}${2}${3}${4}"
+              }
+            },
+            "NAME": {
+              "replace": {
+                "source": "$N1",
+                "replace": "^\\[.*\\]$",
+                "by": "Unknown"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vue/no-async-in-computed-properties",
+        "message": "Move this timer out of the \"$NAME\" computed into a watcher or method; the computed must return its value right away.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-async-in-computed-properties"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "timed-function-in-composition-getter",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "embedded": "script-block",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call_expression"
+                  },
+                  {
+                    "arguments": {
+                      "signature": [
+                        "callback"
+                      ],
+                      "bind": {
+                        "CB": "callback"
+                      },
+                      "mode": "estree"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "function",
+                      "matches": "timed-callee"
+                    }
+                  }
+                ]
+              },
+              {
+                "matches": "comp-ctx"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "fn-like"
+                  },
+                  "matches": "comp-getter"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vue/no-async-in-computed-properties",
+        "message": "Move this timer out of the computed getter into a watcher or function; the computed must return its value right away.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-async-in-computed-properties"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

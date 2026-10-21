@@ -6,6 +6,7 @@ import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { ADAPTER_CAPABILITIES, type RerailHost } from "../engine/adapter-contract.js";
 import { ENTRY_POINTS, PACKAGE_ROOT as packageRoot } from "../engine/package-root.js";
+import { internalTesting } from "../engine/internal-testing.js";
 import { claudeWorkspace } from "../hosts/claude/claude-event-adapter.js";
 import { readPresentation, readRulesDashboard, readSummaryState } from "../presentation/session-presentation.js";
 import { renderRerailSummary } from "../harness/rerail-summary.js";
@@ -21,12 +22,12 @@ import {
 } from "./activation-cli.js";
 import { CustomerActivationManager, CustomerProfileStore } from "../activation/customer-profile.js";
 import {
-  readOnlyStartState, stopRerail, workspaceSetUp, workspaceStartState,
+  readOnlyStartState, stopRerail, workspaceSetUp, workspaceStartState, type RepositoryStopOptions,
 } from "../runtime/repository-start.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import { repositoryName } from "../engine/catalog/repository-identity.js";
-import { checkSetupAnswer, setupAgents, startRerail } from "./repository-setup.js";
-import { isPreSetupHealthCheck, startForPreSetupHealthCheck } from "../runtime/pre-setup-health-check.js";
+import { checkSetupAnswer, setupAgents, setupPacks, startRerail } from "./repository-setup.js";
+import { isPreSetupHealthCheck, skipsSessionsApproval, startForPreSetupHealthCheck } from "../runtime/pre-setup-health-check.js";
 import { assertHostBindable, parseArguments, parsePort, parsePublicHosts } from "../daemon/daemon.js";
 import { defaultRerailDatabasePath, openRerailDatabase, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import {
@@ -40,13 +41,16 @@ import {
 } from "../runtime/daemon-control.js";
 import { deviceSecretStore } from "../activation/device-keystore.js";
 import { runRerailMcpBridge } from "../api/mcp-bridge.js";
-import { runResetCommand, runRulesCommand, snapshotDatabaseBeforeUpdate } from "./project-cli.js";
+import { rollbackWithSnapshot, runResetCommand, runRulesCommand, updateWithSnapshot } from "./project-cli.js";
 import { lookupCheckout, parentCheckouts, recordCheckout } from "../engine/catalog/repository-registry.js";
 import { listRepositoryRules, setUpRepository } from "../engine/catalog/rule-configuration.js";
-import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
+import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, seedRerailDatabase } from "./seed.js";
 import { runAuditCommand } from "./audit-cli.js";
 import { runRuleDraftCommand } from "./rule-draft.js";
+import { runRuleEvidenceCommand } from "./rule-evidence.js";
+import { runShowMeCommand } from "./show-me.js";
+import { runPacksCommand } from "./packs-cli.js";
 import { JSON_FLAG, machinePlace, runInstallCommand, runSetupCommand, setupAnswerCommand, setupEnvironment, setupIo, startStep, type SetupContext } from "./setup-cli.js";
 import { SETUP_FLAGS } from "../harness/setup-screens.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
@@ -55,6 +59,7 @@ import {
   type UpdateResult,
   type UpdateStatus,
 } from "../setup/updater.js";
+import { packsLeftOutByCore } from "../setup/rule-pack-store.js";
 
 const MANAGED_CHILD_ARGUMENT = "--rerail-managed-child";
 
@@ -93,10 +98,22 @@ function printStatus(status: UpdateStatus): void {
   process.stdout.write(`Last check: ${status.lastCheckAt ?? "never"}\n`);
 }
 
-function printUpdateResult(result: UpdateResult): void {
+/**
+ * What an update or rollback did, and, when it changed the active core, the installed rule packs that version leaves
+ * out by their core range: every repository that adds one runs none of its rules until a version that fits is in.
+ */
+function printUpdateResult(result: UpdateResult, home: string): void {
   process.stdout.write(result.changed
     ? `Activated Rerail ${result.current.version}; new harness sessions will use it.\n`
     : `Rerail ${result.current.version} is current for channel ${result.channel}.\n`);
+  if (!result.changed) return;
+  const leftOut = packsLeftOutByCore(home, result.current.version, result.previous?.version);
+  if (leftOut.length === 0) return;
+  process.stdout.write([
+    `Rerail ${result.current.version} leaves out ${leftOut.length === 1 ? "this rule pack" : `these ${leftOut.length} rule packs`}, so repositories that add ${leftOut.length === 1 ? "it run none of its" : "them run none of their"} rules:`,
+    ...leftOut.map(line => `  ${line}`),
+    "Install a version that fits with `rerail packs add <id>`, or go back with `rerail update rollback`.",
+  ].join("\n") + "\n");
 }
 
 function selectedChannel(args: readonly string[]): string | undefined {
@@ -112,32 +129,43 @@ function usage(): string {
     "Usage:",
     "  rerail setup [--answer <answer>] [--repo <dir>] [--agents omp,pi,claude-code,codex,cursor] [--repository] [--port <n>] [--json] [--relay] [--database <file>]",
     "  rerail install [--root <package>] [--agents <list>] [--remove] [--dry-run]",
+    "  rerail install --refresh",
     "  rerail start [--repo <dir>] [--repository] [--agents <list>] [--answer <answer>] [--json] [--relay] [--database <file>]",
-    "  rerail stop [--repo <dir>] [--repository] [--database <file>]",
+    "  rerail stop [<host> [<session-id>]] [--repo <dir>] [--repository] [--database <file>]",
     "  rerail state [--set-up] [--repo <dir>] [--database <file>]",
     "  rerail status",
     "  rerail daemon start [--dev] [--port <port>] [--host <host>] [--allow-remote] [--public-host <name,...>] [--open]",
     "  rerail daemon stop",
     "  rerail session [<host> [<session-id>]] [--open]",
-    "  rerail ui [--print]",
+    "  rerail manage [--print]",
     "  rerail seed",
     "  rerail reset",
+    "  rerail packs [list]",
+    "  rerail packs add <id[@version] | package | tarball | folder>...",
+    "  rerail packs remove <id>...",
+    "  rerail packs recommend [--repo <dir>]",
     "  rerail rules export [--output <rules.json>]",
     "  rerail rules import <rules.json>",
     "  rerail rules test <draft.json> [--repo <dir>] [--json]",
     "  rerail rules add <draft.json> [--repo <dir>]",
-    "  rerail [--profile <name>] events",
-    "  rerail scan --session <id> [--scope repository|git-diff] [--wait] [--json]",
+    "  rerail rules evidence [--repo <dir>] [--days <n>] [--limit <n>] [--json]",
+    "  rerail show-me [--cleanup] [--repo <dir>] [--json]",
     "  rerail settings --session <id> [--scope repository|touched-files|ai-output] [--mode log|steer] [--json]",
+    "  rerail update",
+    "  rerail update check [--channel <tag>]",
+    "  rerail update status",
+    "  rerail update rollback",
+    "  rerail update --channel <tag>",
+    "",
+    internalTesting("Not part of the 0.1.0 release:"),
+    "  rerail scan --session <id> [--scope repository|git-diff] [--wait] [--json]",
+    "  rerail settings --session <id> --steer-strategy message|rewind|subagent   experimental: takes effect with RERAIL_EXPERIMENTAL_STEER_STRATEGIES=1",
+    "  rerail [--profile <name>] events",
     "  rerail [--profile <name>] activate --file <profile.jws> --trust-root <roots.json>",
     "  rerail [--profile <name>] activate --code <code> --activation-url <url> --trust-root <roots.json>",
     "  rerail [--profile <name>] activation request --deployment <id> --output <file>",
     "  rerail [--profile <name>] profile [status|select|remove]",
-    "  rerail [--profile <name>] update",
-    "  rerail [--profile <name>] update check [--channel <tag>]",
-    "  rerail update status",
-    "  rerail update rollback",
-    "  rerail update --channel <tag>",
+    "  rerail --profile <name> update [check [--channel <tag>]]",
   ].join("\n");
 }
 
@@ -225,8 +253,8 @@ function runSeedCommand(args: readonly string[]): number {
 }
 
 /** The rules page of the daemon serving this checkout; `--print` only reports the URL. */
-async function runUiCommand(args: readonly string[]): Promise<number> {
-  const { flags } = parseArguments(args, { flags: ["--print"], options: [] }, argument => `Unknown ui option: ${argument}\n\n${usage()}`);
+async function runManageCommand(args: readonly string[]): Promise<number> {
+  const { flags } = parseArguments(args, { flags: ["--print"], options: [] }, argument => `Unknown manage option: ${argument}\n\n${usage()}`);
   const page = await readRulesDashboard({ cwd: claudeWorkspace(process.cwd()) });
   if (page.url === null) {
     process.stdout.write(`Rerail is not running for this checkout (${page.reason}). Check rerail status, or start the daemon with rerail daemon start --open.\n`);
@@ -247,7 +275,10 @@ async function dispatchToManagedVersion(args: readonly string[], updater: Manage
   return await runChild(process.execPath, [managedCli, MANAGED_CHILD_ARGUMENT, ...args]);
 }
 
-/** The persistent event stream for out-of-process hosts. It never checks for or installs updates; `rerail update` is the only way a new version arrives. */
+/**
+ * The persistent event stream for out-of-process hosts. It never checks for or installs updates; `rerail update` is the only way a new version arrives.
+ * Internal testing: `rerail events`; the hooks of the released coding agents do not use it.
+ */
 async function runEvents(policy?: SignedUpdatePolicy): Promise<number> {
   assertLocalEngineEntitlement(policy);
   return await runChild(process.execPath, [join(packageRoot, ENTRY_POINTS.eventStream)]);
@@ -274,13 +305,22 @@ async function runUpdateCommand(
     return 0;
   }
   if (action === "rollback") {
-    printUpdateResult(await updater.rollback());
+    printUpdateResult(await rollbackWithSnapshot(updater, join(home, RERAIL_DATABASE_FILE), () => stopDaemon(home)), home);
     return 0;
   }
   if (action !== undefined && action !== "--channel") throw new Error(`Unknown update action: ${action}`);
-  snapshotDatabaseBeforeUpdate(join(home, RERAIL_DATABASE_FILE));
-  printUpdateResult(await updater.update(channel));
-  return 0;
+  printUpdateResult(await updateWithSnapshot(updater, join(home, RERAIL_DATABASE_FILE), channel), home);
+  // Newer version or not, the version `current` names registers itself again, as its own CLI, with every coding agent
+  // already connected (`install --refresh`): its commands, skills and hooks arrive and the ones it retired go. A failure
+  // leaves that version active and exits non-zero, naming the command to run once the configuration is fixed. Reading
+  // the Claude Code status-line record loads `node:sqlite`, whose experimental warning is not the update's to report.
+  return await runChild(process.execPath, [
+    "--disable-warning=ExperimentalWarning",
+    join(updater.currentLink, ENTRY_POINTS.cli),
+    MANAGED_CHILD_ARGUMENT,
+    "install",
+    "--refresh",
+  ]);
 }
 
 /**
@@ -297,7 +337,7 @@ function enabledRuleCount(workspace: string): number | null {
     const checkout = lookupCheckout(database, workspace);
     if (checkout === undefined) return null;
     const parentCheckoutPaths = parentCheckouts(database, checkout).map(row => row.checkoutPath);
-    return listRepositoryRules(database, loadBundledCatalog(), checkout.repositoryKey, { checkoutPath: checkout.checkoutPath, parentCheckoutPaths })
+    return listRepositoryRules(database, loadRuleCatalog(), checkout.repositoryKey, { checkoutPath: checkout.checkoutPath, parentCheckoutPaths })
       .rules.filter(rule => rule.on).length;
   } catch (error) {
     process.stderr.write(`rerail: could not count this repo's rules: ${error instanceof Error ? error.message : String(error)}\n`);
@@ -357,8 +397,24 @@ async function runDaemonCommand(command: string, args: readonly string[], home: 
     throw new Error(`Usage: rerail daemon start [options] | rerail daemon stop\n\n${usage()}`);
   }
   if (command === "status") return await runStatusCommand(home);
-  if (command === "ui") return await runUiCommand(args);
+  if (command === "manage") return await runManageCommand(args);
   return undefined;
+}
+
+/**
+ * The coding agent `rerail stop [<host> [<session-id>]]` was typed in, named as `rerail session` names it. The host
+ * decides the reply's command sigil; `codex` without an id reads its thread from `CODEX_THREAD_ID`. An id the coding
+ * agent left empty names no session, and a bare `stop` (a terminal, or Cursor) names no agent: the stop never depends
+ * on knowing either.
+ */
+function stopSession(positionals: readonly string[]): RepositoryStopOptions["session"] {
+  if (positionals.length === 0) return undefined;
+  const [host, given] = positionals;
+  if (positionals.length > 2 || host === undefined || !Object.hasOwn(ADAPTER_CAPABILITIES, host)) {
+    throw new Error(`Usage: rerail stop [<host> [<session-id>]] [options]; rerail stop codex uses CODEX_THREAD_ID\n\n${usage()}`);
+  }
+  const sessionId = (given ?? (host === "codex" ? process.env.CODEX_THREAD_ID : undefined))?.trim();
+  return sessionId ? { host: host as RerailHost, sessionId } : { host: host as RerailHost };
 }
 
 /**
@@ -366,10 +422,14 @@ async function runDaemonCommand(command: string, args: readonly string[], home: 
  * it, or with `--repository` on every checkout of its repository. Starting a repository that is not set up runs
  * set-up there: its questions are answered with `--answer`, then `rerail setup`. Without a terminal, or with `--relay`,
  * the caller is a coding agent relaying the output, so the text names its slash commands and every answer carries
- * `--relay`. `--json` prints one set-up step.
+ * `--relay`. `--json` prints one set-up step. `stop` takes the coding agent's session first, as `rerail session` does,
+ * so its reply names the rules that steered that session.
  * `--database` names the database an extension was configured with, as `rerail state` takes it.
  */
-async function runRepositoryCommand(command: "start" | "stop", args: readonly string[], context: SetupContext): Promise<number> {
+async function runRepositoryCommand(command: "start" | "stop", rawArgs: readonly string[], context: SetupContext): Promise<number> {
+  const firstOption = rawArgs.findIndex(argument => argument.startsWith("--"));
+  const positionals = command === "stop" ? rawArgs.slice(0, firstOption === -1 ? rawArgs.length : firstOption) : [];
+  const args = rawArgs.slice(positionals.length);
   const io = setupIo(args);
   try {
     if (command === "start" && args.includes(JSON_FLAG)) {
@@ -381,7 +441,7 @@ async function runRepositoryCommand(command: "start" | "stop", args: readonly st
       args,
       {
         flags: command === "start" ? ["--repository", SETUP_FLAGS.relay] : ["--repository"],
-        options: command === "start" ? ["--repo", "--agents", "--answer", "--database"] : ["--repo", "--database"],
+        options: command === "start" ? ["--repo", "--agents", SETUP_FLAGS.packs, "--answer", "--database"] : ["--repo", "--database"],
       },
       argument => `Unknown ${command} option: ${argument}\n\n${usage()}`,
     );
@@ -390,7 +450,12 @@ async function runRepositoryCommand(command: "start" | "stop", args: readonly st
     const databasePath = database === undefined ? undefined : resolve(database);
     const repository = flags.has("--repository");
     if (command === "stop") {
-      stopRerail(workspace, io, { ...(databasePath === undefined ? {} : { databasePath }), repository });
+      const session = stopSession(positionals);
+      stopRerail(workspace, io, {
+        ...(databasePath === undefined ? {} : { databasePath }),
+        repository,
+        ...(session === undefined ? {} : { session }),
+      });
       return 0;
     }
     // A release from before set-up checks an update with a bare `start`, which set-up would only ask a question of.
@@ -400,20 +465,27 @@ async function runRepositoryCommand(command: "start" | "stop", args: readonly st
     }
     const answer = checkSetupAnswer(options.get("--answer"));
     const { agents, agentsError } = setupAgents(options.get("--agents"), answer);
+    const packs = setupPacks(options.get(SETUP_FLAGS.packs), answer);
     const setupCommand = setupAnswerCommand(context, {
       ...(databasePath === undefined ? {} : { databasePath }),
       repository,
       ...(io.lane === "agent" ? { relay: true } : {}),
       ...(agents === undefined ? {} : { agents }),
     });
+    const environment = setupEnvironment(context);
+    // An update's health check (`skipsSessionsApproval`) reads no one's sessions, so it is not asked to allow it, and
+    // its "I'll pick rule packs myself" starts with none, as `--packs none` does: no pack fits its empty folder, the
+    // releases that run it expect Rerail on there, and it fetches nothing from npm.
+    const healthCheck = skipsSessionsApproval(args, io.lane, workspace, () => environment.agentsFound());
     const report = await startRerail(workspace, io, {
       ...(databasePath === undefined ? {} : { databasePath }),
       ...(agents === undefined ? {} : { agents }),
       ...(agentsError === undefined ? {} : { agentsError }),
+      ...(healthCheck ? { packs: [] } : packs),
       ...(answer === undefined ? {} : { answer }),
       ...(setupCommand === undefined ? {} : { setupCommand }),
       repository,
-      environment: setupEnvironment(context),
+      environment: healthCheck ? { ...environment, sessionsApproved: () => true } : environment,
     });
     // The set-up's own summary ends on the dashboard link; ending its questions early is a failure.
     if (report.setUpRan) return report.cancelled ? 1 : 0;
@@ -447,8 +519,8 @@ function isVersionIndependentCommand(args: readonly string[]): boolean {
   const commandArgs = takeOption(args, "--profile").args;
   const command = commandArgs[0];
   // `setup` installs the package it was invoked from, so it must not forward to an older active version.
-  // `seed`, `rules`, and `reset` write the Rerail database with the invoking package's schema (a checkout build, say).
-  if (["setup", "install", "start", "stop", "state", "status", "session", "ui", "seed", "rules", "reset"].includes(command ?? "")) return true;
+  // `seed`, `rules`, `show-me` and `reset` write the Rerail database with the invoking package's schema (a checkout build, say).
+  if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset"].includes(command ?? "")) return true;
   if (command === "daemon") return commandArgs[1] === "stop";
   return command === "update" && (commandArgs[1] === "status" || commandArgs[1] === "rollback");
 }
@@ -505,6 +577,7 @@ interface CommandContext {
   profile: ReturnType<typeof takeOption>["value"];
 }
 
+/** Internal testing: activation profiles (`activate`, `activation request`, `profile`, `--profile`). */
 async function runAccountCommand(command: string, args: readonly string[], context: CommandContext): Promise<number | undefined> {
   const { activation, profileStore, packageVersion, profile } = context;
   if (command === "activate") return await runActivateCommand(args, activation, packageVersion, profile);
@@ -520,12 +593,16 @@ async function runProjectCommand(command: string, args: readonly string[], conte
   if (command === "session") return await runSessionCommand(args);
   if (command === "seed") return runSeedCommand(args);
   if (command === "rules" && (args[0] === "test" || args[0] === "add")) return await runRuleDraftCommand(args[0], args.slice(1), usage);
+  if (command === "rules" && args[0] === "evidence") return await runRuleEvidenceCommand(args.slice(1), usage);
   if (command === "rules") return runRulesCommand(args, usage);
+  if (command === "show-me") return runShowMeCommand(args, usage);
+  if (command === "packs") return await runPacksCommand(args, usage);
   if (command === "reset") return runResetCommand(args, usage);
   const daemonExit = await runDaemonCommand(command, args, home);
   if (daemonExit !== undefined) return daemonExit;
   if (command === "start" || command === "stop") return await runRepositoryCommand(command, args, { home, packageRoot, updater });
   if (command === "state") return runStateCommand(args);
+  // Internal testing: `scan`, explicit full-repository and git-diff audits. `settings` is decided in NER-1883.
   if (command === "scan" || command === "settings") return await runAuditCommand(command, args, { home });
   return undefined;
 }

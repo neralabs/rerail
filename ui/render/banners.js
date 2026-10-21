@@ -7,7 +7,7 @@
  */
 import { h, setContent, icon } from "../dom.js";
 import { fmt, plural, startOfDay } from "../format.js";
-import { data, ui, repoName, stateHere } from "../state.js";
+import { data, ui, repoName, stateHere, runningCount } from "../state.js";
 
 const dismiss = act => h("button.x", { "data-act": act, "aria-label": "Dismiss" }, "✕");
 
@@ -52,11 +52,11 @@ function showWelcome(repository) {
   if (ui.welcomeDismissed) return false;
   try { if (localStorage.getItem(welcomeKey()) === "1") return false; } catch { /* storage blocked */ }
   const at = repository.configuredAt;
-  return at !== null && at >= startOfDay() && !data.sessions.some(s => s.startedAt >= at);
+  return at !== null && at >= startOfDay() && !(data.newestSession !== null && data.newestSession.startedAt >= at);
 }
 
 function welcomeBanner(repo) {
-  const on = [...data.rules.values()].filter(r => r.enabled).length;
+  const on = runningCount();
   return h("div.welcome", { role: "status" }, icon("done", 22), h("div", null,
     h("b", null, `Rerail is set up. ${fmt(on)} ${plural(on, "rule")} ${on === 1 ? "is" : "are"} on.`),
     h("p", null, `Open a new coding agent session in ${repo} and start coding. Sessions that were already open won’t have Rerail; nothing needs restarting.`)),
@@ -74,6 +74,6 @@ function banner() {
 
 export function renderBanners(root) {
   const b = banner();
-  const on = [...data.rules.values()].filter(r => r.enabled).length;
+  const on = runningCount();
   setContent(root, JSON.stringify([b === null ? null : b.textContent, on, ui.recommend]), () => b);
 }

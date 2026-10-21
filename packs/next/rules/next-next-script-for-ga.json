@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "next-next-script-for-ga",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "@next/eslint-plugin-next 16.3.8 @next/next/next-script-for-ga: a <script> with a literal src containing the Google Analytics or gtag URL, or whose dangerouslySetInnerHTML object's first property is a template literal whose first quasi contains the GA or GTM script URL.",
+  "description": "Use the Google helpers from @next/third-parties instead of raw script tags for Google Analytics or Tag Manager; they load the tags without slowing the page.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -129,11 +129,16 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@next/next/next-script-for-ga",
-        "message": "Prefer `@next/third-parties/google` when using the inline script for Google Analytics and Tag Manager. See: https://nextjs.org/docs/messages/next-script-for-ga",
+        "message": "Replace this inline Google Analytics or Tag Manager script with GoogleAnalytics or GoogleTagManager from @next/third-parties/google.",
         "suppress": {
           "eslint": {
             "rules": [
               "@next/next/next-script-for-ga"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "next-script-for-ga"
             ]
           }
         }

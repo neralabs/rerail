@@ -1,10 +1,14 @@
 //! Value decoding and comparison (`value`, `compare`): `Semantic::Value`.
 
-use super::{Blade, Ecma, Php, Python, Refusal};
+use super::{Ecma, Php, Python, Refusal};
+use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::matcher::SemanticText;
 use crate::code_rule_dsl::value::structure::{self, Equality, Tok};
-use crate::code_rule_dsl::value::{self, Context, Lang, Value, key, php_compare, php_structure};
+use crate::code_rule_dsl::value::{
+    self, BigInt, Context, Ordered, TypeNames, Value, key, php_compare, php_structure,
+};
 use ast_grep_core::{Doc, Node};
+use std::cmp::Ordering;
 
 /// A DSL option of `value` or `compare` a family may refuse.
 #[derive(Clone, Copy)]
@@ -21,8 +25,10 @@ pub(crate) trait ValueRules {
     /// which the adapter kit checks.
     #[cfg_attr(not(test), allow(dead_code))]
     const SUPPORTED: bool;
-    /// The language whose semantics the family's values follow.
-    const LANG: Lang;
+    /// The family whose value semantics a reading's values follow (`Reading::lang`): its own,
+    /// or the one its documents embed (Blade's are PHP's). A new family's is `Self::FAMILY`'s
+    /// variant (`const LANG: Family = Family::Rust;`) with the hooks below.
+    const LANG: Family;
     /// The grammar's expression kinds: only these have values.
     const EXPRESSION_KINDS: &'static [&'static str];
     /// The kinds whose value `decode` can know.
@@ -30,6 +36,28 @@ pub(crate) trait ValueRules {
     /// The kinds of the names a reading following bindings gives a value (in PHP, named and
     /// class constants too).
     const NAME_KINDS: &'static [&'static str];
+    /// Truthiness (`Value::truthy`): Python's `bool(v)`, JavaScript's ToBoolean (objects and
+    /// arrays are truthy even when empty), PHP's `(bool)`. `None` when it is not known.
+    fn truthy(value: &Value) -> Option<bool>;
+    /// The type's name (`value`'s `type`): Python's `type(v).__name__`, for JavaScript `typeof`
+    /// refined with `null`, `array` and `regexp`, PHP's `get_debug_type`.
+    fn type_name(value: &Value) -> Option<&'static str>;
+    /// Equality in the language's own sense (`compare`'s `eq`): Python `==`, JavaScript
+    /// `Object.is`, PHP `===`. `None` when it depends on elements that are not known.
+    fn equals(left: &Value, right: &Value) -> Option<bool>;
+    /// Order in the language's own sense: `Some(None)` when the two do not order, `None` when it
+    /// is not known.
+    fn order(left: &Value, right: &Value) -> Option<Option<Ordering>>;
+    /// Whether `left operator right` holds for a relational `operator` (`<`, `<=`, `>`, `>=`), as
+    /// the language's relational operators read it (`compare`'s orderings).
+    fn relation(operator: &str, left: &Value, right: &Value) -> Option<bool>;
+    /// Whether a value is a number a bound (`value`'s `gt`, `le`, ...) compares.
+    fn numeric(value: &Value) -> bool;
+    /// The integer a value's bits are (`value`'s `bitsAny`); `None` for a value without one.
+    fn integer(value: &Value) -> Option<BigInt>;
+    /// A node's value converted to a string as the language converts it (`transform`'s value
+    /// text); `None` where it is not known or has no such conversion.
+    fn to_str<D: Doc>(value: &Value, node: &Node<'_, D>) -> Option<String>;
     /// Decodes `node` to its value; `Unknown` for anything that is not a literal the family knows.
     fn decode<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value;
     /// A node's structure under one of the structural equalities; `None` where it is not known.
@@ -106,10 +134,71 @@ fn type_name(name: &str, known: &[&str], language: &str) -> Result<(), Refusal> 
 
 impl ValueRules for Python {
     const SUPPORTED: bool = true;
-    const LANG: Lang = Lang::Python;
+    const LANG: Family = Family::Python;
     const EXPRESSION_KINDS: &'static [&'static str] = value::python::EXPRESSION_KINDS;
     const VALUE_KINDS: &'static [&'static str] = value::python::VALUE_KINDS;
     const NAME_KINDS: &'static [&'static str] = &["identifier"];
+
+    /// NaN is truthy.
+    fn truthy(value: &Value) -> Option<bool> {
+        value.truthy_where(true)
+    }
+
+    fn type_name(value: &Value) -> Option<&'static str> {
+        value.type_name_as(&TypeNames {
+            none: "NoneType",
+            bool: "bool",
+            float: "float",
+        })
+    }
+
+    fn equals(left: &Value, right: &Value) -> Option<bool> {
+        value::python_equals(left, right)
+    }
+
+    /// `bool` is an `int`; tuples order element by element.
+    fn order(left: &Value, right: &Value) -> Option<Option<Ordering>> {
+        left.ordered(
+            right,
+            Ordered {
+                bools_are_ints: true,
+                tuples: true,
+            },
+        )
+    }
+
+    /// Values that do not order (NaN, different types) fail an ordering.
+    fn relation(operator: &str, left: &Value, right: &Value) -> Option<bool> {
+        Self::order(left, right).map(|order| {
+            order.is_some_and(|order| match operator {
+                "<" => order == Ordering::Less,
+                "<=" => order != Ordering::Greater,
+                ">" => order == Ordering::Greater,
+                _ => order != Ordering::Less,
+            })
+        })
+    }
+
+    fn numeric(value: &Value) -> bool {
+        matches!(
+            value,
+            Value::Int(_) | Value::Float(_) | Value::BigInt(_) | Value::Bool(_)
+        )
+    }
+
+    fn integer(value: &Value) -> Option<BigInt> {
+        match value {
+            Value::Int(value) => Some(value.clone()),
+            Value::BigInt(value) => Some(BigInt::from(*value)),
+            Value::Bool(value) => Some(BigInt::from(u8::from(*value))),
+            _ => None,
+        }
+    }
+
+    /// `str(v)` of a scalar.
+    fn to_str<D: Doc>(value: &Value, _: &Node<'_, D>) -> Option<String> {
+        value::python::to_str(value)
+    }
 
     fn decode<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
         value::python::decode(node, context)
@@ -189,10 +278,72 @@ impl ValueRules for Python {
 
 impl ValueRules for Ecma {
     const SUPPORTED: bool = true;
-    const LANG: Lang = Lang::Js;
+    const LANG: Family = Family::Ecma;
     const EXPRESSION_KINDS: &'static [&'static str] = value::ecma::EXPRESSION_KINDS;
     const VALUE_KINDS: &'static [&'static str] = value::ecma::VALUE_KINDS;
     const NAME_KINDS: &'static [&'static str] = &["identifier", "undefined"];
+
+    /// NaN is falsy.
+    fn truthy(value: &Value) -> Option<bool> {
+        value.truthy_where(false)
+    }
+
+    fn type_name(value: &Value) -> Option<&'static str> {
+        value.type_name_as(&TypeNames {
+            none: "null",
+            bool: "boolean",
+            float: "number",
+        })
+    }
+
+    fn equals(left: &Value, right: &Value) -> Option<bool> {
+        value::js_same_value(left, right)
+    }
+
+    fn order(left: &Value, right: &Value) -> Option<Option<Ordering>> {
+        left.ordered(
+            right,
+            Ordered {
+                bools_are_ints: false,
+                tuples: false,
+            },
+        )
+    }
+
+    /// As JavaScript's relational operators, converting primitives.
+    fn relation(operator: &str, left: &Value, right: &Value) -> Option<bool> {
+        value::ecma::ops::relation(operator, left, right)
+    }
+
+    fn numeric(value: &Value) -> bool {
+        matches!(value, Value::Int(_) | Value::Float(_) | Value::BigInt(_))
+    }
+
+    /// A number's bits where it is a safe integer.
+    fn integer(value: &Value) -> Option<BigInt> {
+        match value {
+            Value::Int(value) => Some(value.clone()),
+            Value::BigInt(value) => Some(BigInt::from(*value)),
+            Value::Float(value)
+                if value.fract() == 0.0 && value.abs() <= 9_007_199_254_740_992.0 =>
+            {
+                Some(BigInt::from(*value as i64))
+            }
+            _ => None,
+        }
+    }
+
+    /// `String(v)` of a primitive or a RegExp; an identifier otherwise reads as its name,
+    /// escapes decoded.
+    fn to_str<D: Doc>(value: &Value, node: &Node<'_, D>) -> Option<String> {
+        value::ecma::ops::to_string(value)
+            .or_else(|| {
+                (!value.is_known() && node.kind() != "string")
+                    .then(|| key::node_name(node))
+                    .flatten()
+            })
+            .and_then(|units| String::from_utf16(&units).ok())
+    }
 
     fn decode<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
         value::ecma::decode(node, context)
@@ -212,8 +363,11 @@ impl ValueRules for Ecma {
         Value::Float(number.as_f64().unwrap_or(f64::NAN))
     }
 
-    fn spelled<D: Doc>(_: &Node<'_, D>) -> bool {
-        true
+    /// Whether no token of the node is one an embedder wrote (a Vue view's `(` and `);` around an
+    /// interpolation, a character reference's character), which a comparison of tokens must not
+    /// read as the file's (`embed::rewritten`).
+    fn spelled<D: Doc>(node: &Node<'_, D>) -> bool {
+        !crate::code_rule_dsl::embed::rewritten(node)
     }
 
     /// ESTree's name.
@@ -267,7 +421,7 @@ impl ValueRules for Ecma {
 
 impl ValueRules for Php {
     const SUPPORTED: bool = true;
-    const LANG: Lang = Lang::Php;
+    const LANG: Family = Family::Php;
     const EXPRESSION_KINDS: &'static [&'static str] = value::php::EXPRESSION_KINDS;
     const VALUE_KINDS: &'static [&'static str] = value::php::VALUE_KINDS;
     const NAME_KINDS: &'static [&'static str] = &[
@@ -277,6 +431,45 @@ impl ValueRules for Php {
         "relative_name",
         "class_constant_access_expression",
     ];
+
+    fn truthy(value: &Value) -> Option<bool> {
+        value::php::truthy(value)
+    }
+
+    fn type_name(value: &Value) -> Option<&'static str> {
+        value::php::type_name(value)
+    }
+
+    fn equals(left: &Value, right: &Value) -> Option<bool> {
+        value::php::identical(left, right)
+    }
+
+    /// As PHP 8's `<=>`.
+    fn order(left: &Value, right: &Value) -> Option<Option<Ordering>> {
+        value::php::order(left, right)
+    }
+
+    /// As PHP's relational operators: `a > b` is `b < a`, which PHP's comparison of arrays does
+    /// not make the same question.
+    fn relation(operator: &str, left: &Value, right: &Value) -> Option<bool> {
+        value::php::relation(operator, left, right)
+    }
+
+    fn numeric(value: &Value) -> bool {
+        matches!(value, Value::Int(_) | Value::Float(_) | Value::BigInt(_))
+    }
+
+    fn integer(value: &Value) -> Option<BigInt> {
+        match value {
+            Value::Int(value) => Some(value.clone()),
+            Value::BigInt(value) => Some(BigInt::from(*value)),
+            _ => None,
+        }
+    }
+
+    fn to_str<D: Doc>(value: &Value, _: &Node<'_, D>) -> Option<String> {
+        value::php::to_string(value)
+    }
 
     fn decode<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
         value::php::decode(node, context)
@@ -304,8 +497,10 @@ impl ValueRules for Php {
         }
     }
 
-    fn spelled<D: Doc>(_: &Node<'_, D>) -> bool {
-        true
+    /// Whether no token of the node is one an embedder wrote (a Blade view's `@unless` `!(`),
+    /// which a comparison of tokens must not read as the template's (`embed::rewritten`).
+    fn spelled<D: Doc>(node: &Node<'_, D>) -> bool {
+        !crate::code_rule_dsl::embed::rewritten(node)
     }
 
     /// The name PHP looks a symbol up by, or a string literal's value.
@@ -357,99 +552,24 @@ impl ValueRules for Php {
     }
 }
 
-/// Blade's values are those of the PHP its template embeds (`blade::view`), but for the tokens
-/// the view writes, which the template does not spell.
-impl ValueRules for Blade {
-    const SUPPORTED: bool = <Php as ValueRules>::SUPPORTED;
-    const LANG: Lang = <Php as ValueRules>::LANG;
-    const EXPRESSION_KINDS: &'static [&'static str] = <Php as ValueRules>::EXPRESSION_KINDS;
-    const VALUE_KINDS: &'static [&'static str] = <Php as ValueRules>::VALUE_KINDS;
-    const NAME_KINDS: &'static [&'static str] = <Php as ValueRules>::NAME_KINDS;
-
-    fn decode<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
-        <Php as ValueRules>::decode(node, context)
-    }
-
-    /// The embedded PHP's; `compare` reads none where Blade wrote a token (`spelled`).
-    fn structure<D: Doc>(
-        node: &Node<'_, D>,
-        equality: Equality,
-        context: &mut Context<'_>,
-    ) -> Option<Vec<Tok>> {
-        <Php as ValueRules>::structure(node, equality, context)
-    }
-
-    fn string(text: &str) -> Value {
-        <Php as ValueRules>::string(text)
-    }
-
-    fn number(number: &serde_json::Number) -> Value {
-        <Php as ValueRules>::number(number)
-    }
-
-    /// Whether no token of the node is one the view writes (`@unless`'s `!(`), which a
-    /// comparison of tokens must not read as the template's (`blade::rewritten`).
-    fn spelled<D: Doc>(node: &Node<'_, D>) -> bool {
-        !crate::code_rule_dsl::blade::rewritten(node)
-    }
-
-    fn node_name<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16>> {
-        <Php as ValueRules>::node_name(node)
-    }
-
-    fn key_name<'r, D: Doc>(
-        node: &Node<'r, D>,
-        value: &mut dyn FnMut(&Node<'r, D>) -> Value,
-    ) -> Option<Vec<u16>> {
-        <Php as ValueRules>::key_name(node, value)
-    }
-
-    fn member_name<'r, D: Doc>(
-        node: &Node<'r, D>,
-        value: &mut dyn FnMut(&Node<'r, D>) -> Value,
-    ) -> Option<Vec<u16>> {
-        <Php as ValueRules>::member_name(node, value)
-    }
-
-    fn same_reference<D: Doc>(
-        left: &Node<'_, D>,
-        right: &Node<'_, D>,
-        static_keys: bool,
-    ) -> Option<bool> {
-        <Php as ValueRules>::same_reference(left, right, static_keys)
-    }
-
-    fn feature(feature: ValueFeature<'_>) -> Result<(), Refusal> {
-        match feature {
-            ValueFeature::Compare(SemanticText::Structure(Equality::Parts), _) => Err(Refusal::Refused(
-                "`structure-parts` compares Python's implicitly concatenated string parts; blade embeds PHP, which has no implicit string concatenation"
-                    .into(),
-            )),
-            ValueFeature::Type(_) | ValueFeature::Compare(..) => {
-                <Php as ValueRules>::feature(feature)
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 pub(super) mod kit {
     use super::super::{Adapter, Refusal};
     use super::{ValueFeature, ValueRules};
-    use crate::code_rule_dsl::language::GrammarDialect;
+    use crate::code_rule_dsl::language::Family;
     use crate::code_rule_dsl::matcher::SemanticText;
     use crate::code_rule_dsl::tape::TapeDoc;
     use crate::code_rule_dsl::value::structure::Equality;
-    use crate::code_rule_dsl::value::{Context, Lang, Value};
+    use crate::code_rule_dsl::value::{Context, Value};
     use ast_grep_core::AstGrep;
 
     /// What one family's values are.
     pub(in super::super) struct Expect {
-        pub(in super::super) lang: Lang,
+        pub(in super::super) lang: Family,
         /// The rule values of the JSON string `é` and the JSON numbers `16` and `2^64 - 1`.
         pub(in super::super) string: Value,
         pub(in super::super) numbers: [Value; 2],
-        /// A document, the kind of the first node of that kind in its regions, and that node's
+        /// A source, the kind of the first node of that kind in its document, and that node's
         /// value.
         pub(in super::super) decoded: (&'static str, &'static str, Value),
         pub(in super::super) name_kinds: &'static [&'static str],
@@ -457,9 +577,9 @@ pub(super) mod kit {
         pub(in super::super) str_type: Result<(), &'static str>,
         /// The verdict on `compare`'s `structure-parts`.
         pub(in super::super) structure_parts: Result<(), &'static str>,
-        /// A document and whether its regions' roots are spelled.
+        /// A source and whether its document's root is spelled.
         pub(in super::super) spelled: (&'static str, bool),
-        /// A document, the kind of the first node of that kind in its regions, and its name
+        /// A source, the kind of the first node of that kind in its document, and its name
         /// (`None`: `name` is refused).
         pub(in super::super) name: Option<(&'static str, &'static str, &'static str)>,
     }
@@ -472,23 +592,25 @@ pub(super) mod kit {
         })
     }
 
-    /// The first node of `kind` in `source`'s regions, read by `with`.
+    /// The first node of `kind` in a document, read by `with`.
     fn first<A: Adapter, T>(
         doc: &AstGrep<TapeDoc>,
         kind: &str,
         with: impl FnOnce(&ast_grep_core::Node<'_, TapeDoc>) -> T,
     ) -> T {
-        let root = doc.root();
-        let node = A::regions(&root)
-            .find_map(|region| region.root.dfs().find(|node| node.kind() == kind))
+        let node = doc
+            .root()
+            .dfs()
+            .find(|node| node.kind() == kind)
             .unwrap_or_else(|| panic!("no {kind}"));
         with(&node)
     }
 
+    /// Checks `A`'s values against `expect`, over the documents its semantics read of each source
+    /// (`tape`).
     pub(in super::super) fn check<A: Adapter>(
         expect: &Expect,
-        dialect: GrammarDialect,
-        tape: fn(&str, GrammarDialect) -> AstGrep<TapeDoc>,
+        tape: impl Fn(&str) -> AstGrep<TapeDoc>,
     ) {
         assert_eq!(<A::Value as ValueRules>::LANG, expect.lang);
         assert_eq!(<A::Value as ValueRules>::string("é"), expect.string);
@@ -502,7 +624,7 @@ pub(super) mod kit {
         let (source, kind, decoded) = &expect.decoded;
         assert!(<A::Value as ValueRules>::EXPRESSION_KINDS.contains(kind));
         assert!(<A::Value as ValueRules>::VALUE_KINDS.contains(kind));
-        let doc = tape(source, dialect);
+        let doc = tape(source);
         let mut spend = || true;
         let value = first::<A, _>(&doc, kind, |node| {
             <A::Value as ValueRules>::decode(node, &mut Context::new(&mut spend))
@@ -521,15 +643,14 @@ pub(super) mod kit {
             expect.structure_parts.map_err(str::to_owned)
         );
         let (source, spelled) = expect.spelled;
-        let doc = tape(source, dialect);
-        let root = doc.root();
+        let doc = tape(source);
         assert_eq!(
-            A::regions(&root).all(|region| <A::Value as ValueRules>::spelled(&region.root)),
+            <A::Value as ValueRules>::spelled(&doc.root()),
             spelled,
             "{source:?}"
         );
         if let Some((source, kind, name)) = expect.name {
-            let doc = tape(source, dialect);
+            let doc = tape(source);
             let read = first::<A, _>(&doc, kind, <A::Value as ValueRules>::node_name);
             assert_eq!(read, Some(name.encode_utf16().collect()), "{source:?}");
         }

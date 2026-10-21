@@ -1,0 +1,64 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "phpstan-random-int-parameters",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Pass random_int() a minimum no greater than its maximum; otherwise it throws at runtime.",
+  "scope": {
+    "include": [
+      "**/*.php"
+    ],
+    "exclude": [
+      "**/*.blade.php"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "kind": "function_call_expression",
+            "has": {
+              "field": "function",
+              "resolves": {
+                "import": [
+                  "random_int"
+                ]
+              }
+            },
+            "arguments": {
+              "signature": [
+                "min",
+                "max"
+              ],
+              "bind": {
+                "MIN": "min",
+                "MAX": "max"
+              }
+            },
+            "compare": {
+              "left": "MIN",
+              "op": "gt",
+              "right": "MAX",
+              "text": "value"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "argument.type",
+        "message": "Parameter #1 $min of function random_int expects lower number than parameter #2 $max.",
+        "suppress": {
+          "phpstan": {
+            "identifiers": [
+              "argument.type"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

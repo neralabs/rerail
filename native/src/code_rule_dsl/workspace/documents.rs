@@ -11,7 +11,7 @@ use super::persisted::{file_context, grammar_id, grammar_version};
 use super::*;
 use crate::code_rule_dsl::eval::file_language;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
-use crate::content_store::{ContentStore, HashKey, StoredSourceObjects};
+use crate::content_store::{ContentStore, HashKey, StoredDocument, StoredSourceObjects, TapeId};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -43,10 +43,10 @@ impl FileVersion {
     }
 }
 
-/// A document the contract loaded: exactly the source and tape of one file version.
+/// A document the contract loaded: exactly the source and documents of one file version.
 pub(super) struct Document {
     pub(super) source: Arc<String>,
-    pub(super) image: tape::TapeImage,
+    pub(super) image: tape::FileImage,
     language: GrammarDialect,
     bytes: usize,
 }
@@ -137,11 +137,13 @@ impl DocumentCache {
     }
 }
 
-/// The stored object metadata for a batch of sources. Tape frames are deliberately not prefetched:
-/// selector eligibility can prove every AST terminal empty without decompressing a stored tape.
+/// The stored object metadata for a batch of sources, with the documents each stored tape
+/// derives (`file_documents`). Tape frames are deliberately not prefetched: selector eligibility
+/// can prove every AST terminal empty without decompressing a stored tape.
 #[derive(Default)]
 pub(super) struct StoredDocuments {
     pub(super) objects: HashMap<HashKey, StoredSourceObjects>,
+    pub(super) derived: HashMap<TapeId, Vec<StoredDocument>>,
 }
 
 pub(super) fn prefetch(store: &ContentStore, sources: &[HashKey]) -> Result<StoredDocuments> {
@@ -152,28 +154,74 @@ pub(super) fn prefetch(store: &ContentStore, sources: &[HashKey]) -> Result<Stor
             i64::from(tape::TAPE_FORMAT_VERSION),
         )
         .map_err(|error| invalid(error.to_string()))?;
-    Ok(StoredDocuments { objects })
+    let tapes = objects
+        .values()
+        .flat_map(|stored| stored.tapes.values().copied())
+        .collect::<Vec<_>>();
+    let derived = store
+        .file_documents_bulk(&tapes)
+        .map_err(|error| invalid(error.to_string()))?;
+    Ok(StoredDocuments { objects, derived })
 }
 
-/// Attach one stored tape after selector eligibility requires ordinary evaluation. A tape that
-/// does not decode is left out and the file is parsed instead.
+/// The documents the store keeps for one file: its tape `tape_id` and the documents `derived`
+/// from it, read in bulk, with whether the read cache held all of them. `None` where any part is
+/// missing or fails its checks: a primary is never read without its derived documents.
+fn stored_image(
+    store: &ContentStore,
+    tape_id: TapeId,
+    derived: &[StoredDocument],
+    grammar: &Arc<tape::Grammar>,
+) -> Option<(tape::FileImage, bool)> {
+    let sources = derived
+        .iter()
+        .map(|document| document.source)
+        .collect::<Option<Vec<_>>>()?;
+    let tape_ids = std::iter::once(tape_id)
+        .chain(derived.iter().map(|document| document.tape))
+        .collect::<Vec<_>>();
+    let tapes = store.get_tapes_bulk(&tape_ids).ok()?;
+    let texts = store.get_sources_bulk(&sources).ok()?;
+    let (primary, primary_hit) = tapes.get(&tape_id)?;
+    let mut cache_hit = *primary_hit;
+    let stored = derived
+        .iter()
+        .zip(&sources)
+        .map(|(document, source)| {
+            let (text, text_hit) = texts.get(source)?;
+            let (tape, tape_hit) = tapes.get(&document.tape)?;
+            cache_hit &= *text_hit && *tape_hit;
+            Some(tape::StoredDerived {
+                ordinal: document.ordinal,
+                parent: document.parent_ordinal,
+                role: document.role_id,
+                via: document.via_id,
+                text,
+                source_map: &document.source_map,
+                host_errors: &document.host_errors,
+                tape,
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let image = tape::FileImage::read(primary, grammar, &stored).ok()?;
+    Some((image, cache_hit))
+}
+
+/// Attach one stored file's documents after selector eligibility requires ordinary evaluation.
+/// Documents that are missing or do not decode are left out and the file is parsed instead.
 pub(super) fn attach_stored_tape(
     store: &ContentStore,
-    tape_id: crate::content_store::TapeId,
+    tape_id: TapeId,
+    derived: &[StoredDocument],
     file: &mut FileState,
     grammar: &Arc<tape::Grammar>,
 ) {
-    let Ok(tapes) = store.get_tapes_bulk(&[tape_id]) else {
+    let Some((image, cache_hit)) = stored_image(store, tape_id, derived, grammar) else {
         return;
     };
-    let Some((bytes, cache_hit)) = tapes.get(&tape_id) else {
-        return;
-    };
-    file.tape_cache_hit = *cache_hit;
-    file.tape_decompressed = !*cache_hit;
-    if let Ok(image) = tape::TapeImage::from_bytes(bytes, grammar) {
-        file.tape = Some((file.source_revision, image));
-    }
+    file.tape_cache_hit = cache_hit;
+    file.tape_decompressed = !cache_hit;
+    file.tape = Some((file.source_revision, image));
 }
 
 /// The version the workspace currently holds for `path`: its resident file, else the version it
@@ -201,7 +249,9 @@ pub(super) fn load(state: &mut WorkspaceState, path: &str) -> Result<(FileVersio
         .ok_or_else(|| invalid(format!("{path} has no tape grammar")))?;
     let grammar = tape::Grammar::new(language).map_err(invalid)?;
     let resident = state.files.get(path).filter(|file| {
-        FileVersion::of(file) == version && (file.stored.is_none() || !file.input.source.is_empty())
+        FileVersion::of(file) == version
+            && !file.results_only
+            && (file.stored.is_none() || !file.input.source.is_empty())
     });
     let (source, image) = if let Some(file) = resident {
         state.documents.loads.resident += 1;
@@ -210,6 +260,10 @@ pub(super) fn load(state: &mut WorkspaceState, path: &str) -> Result<(FileVersio
             _ => parse(&file.input.source, &grammar)?,
         };
         (Arc::clone(&file.input.source), image)
+    } else if let Some(source) = released_source(state, path, &version) {
+        state.documents.loads.parsed += 1;
+        let image = parse(&source, &grammar)?;
+        (source, image)
     } else {
         let storage = state.storage.as_ref().ok_or_else(|| {
             invalid(format!(
@@ -234,9 +288,8 @@ pub(super) fn load(state: &mut WorkspaceState, path: &str) -> Result<(FileVersio
             String::from_utf8(bytes).map_err(|_| invalid(format!("{path} is not UTF-8")))?,
         );
         let image = objects.tapes.get(&version.grammar).and_then(|&tape_id| {
-            let tapes = storage.store.get_tapes_bulk(&[tape_id]).ok()?;
-            let (bytes, _) = tapes.get(&tape_id)?;
-            tape::TapeImage::from_bytes(bytes, &grammar).ok()
+            let derived = stored.derived.get(&tape_id).map_or(&[][..], Vec::as_slice);
+            stored_image(&storage.store, tape_id, derived, &grammar).map(|(image, _)| image)
         });
         let image = match image {
             Some(image) => {
@@ -262,7 +315,34 @@ pub(super) fn load(state: &mut WorkspaceState, path: &str) -> Result<(FileVersio
     Ok((version, document))
 }
 
-fn parse(source: &str, grammar: &Arc<tape::Grammar>) -> Result<tape::TapeImage> {
+/// The source of a file whose source was freed while the store was busy (`results_only`), read
+/// back from the worktree when it still hashes to the version the file was evaluated at. `None`
+/// for any other file, outside a Git worktree, or when the worktree's copy changed: the store is
+/// asked then, and a version nobody holds is an error, never a different version.
+fn released_source(
+    state: &WorkspaceState,
+    path: &str,
+    version: &FileVersion,
+) -> Option<Arc<String>> {
+    state
+        .files
+        .get(path)
+        .filter(|file| file.results_only && FileVersion::of(file) == *version)?;
+    let storage = state.storage.as_ref()?;
+    let repository = storage.repository.as_ref()?;
+    let bytes = std::fs::read(
+        repository
+            .worktree_root
+            .join(format!("{}{path}", storage.repository_prefix)),
+    )
+    .ok()?;
+    if HashKey::sha256(&bytes) != version.source {
+        return None;
+    }
+    String::from_utf8(bytes).ok().map(Arc::new)
+}
+
+fn parse(source: &str, grammar: &Arc<tape::Grammar>) -> Result<tape::FileImage> {
     tape::TapeImage::parse(grammar, source, &|| false)
         .ok_or_else(|| invalid("document could not be parsed"))?
         .map_err(invalid)

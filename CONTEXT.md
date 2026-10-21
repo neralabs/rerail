@@ -111,3 +111,11 @@ The one place the engine reads a language family: its scope, values, call argume
 ## Language Pack
 
 A language's registry entry, its engine adapter, and the rule packs written in it. A Code Rule for a `planned` language, or one reading a capability its language does not support yet, is stored but inactive: compiling it is refused as `language-not-supported`.
+
+## Binding Form
+
+The construct a name's binding site is (the engine's `Form`), which `binds: { form }` filters: Python's assignments, imports and definitions, TypeScript's declarations, PHP's assignments and `static`, and SQL's `relation` (a `FROM`/`JOIN` relation, bound under its alias, else its table name's last part), `cte` (a `WITH` name) and `target` (an `UPDATE`, `DELETE` or `INSERT` table). Each family's adapter names the forms it reads and refuses the others.
+
+## Scope Kind
+
+The kind of scope that holds a binding (the engine's `ScopeKind`), which `binds: { scope }` filters: Python's module, class, function, lambda, comprehension and type-parameter scopes, eslint-scope's for TypeScript, PHP's global, function and closure, and SQL's `query`. A SQL query block is a `SELECT`, `UPDATE`, `DELETE` or `INSERT` with its clauses, or the block around a `WITH` statement that binds its CTE names; a qualified column reference resolves to a relation of its own block or an enclosing one.

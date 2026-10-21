@@ -3,7 +3,7 @@
   "id": "bandit-b317-xml-bad-sax",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect vulnerable xml.sax parsing calls",
+  "description": "Use defusedxml instead of xml.sax to parse XML; the standard parser is open to entity-expansion and other XML attacks on untrusted input.",
   "scope": {
     "include": [
       "**/*.py"

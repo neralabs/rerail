@@ -1,55 +1,32 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-default-param-last",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "Port of ESLint's `default-param-last` rule (https://eslint.org/docs/latest/rules/default-param-last). Reports a defaulted or optional parameter of a function with a body that is followed by a required, non-rest parameter.",
-  "scope": { "include": ["**/*"], "exclude": [] },
+  "description": "Put JavaScript parameters with default values after the required ones; a default before a required parameter can only be used by passing undefined.",
+  "scope": { "include": ["**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"], "exclude": [] },
   "clauses": [
     {
       "id": "default-param-not-last",
       "forbid": {
         "ast": {
-          "language": "typescript",
-          "utils": {
-            "defaulted": {
-              "any": [
-                { "kind": "optional_parameter" },
-                { "kind": "required_parameter", "has": { "regex": "^=$", "stopBy": "neighbor" } }
-              ]
-            },
-            "plain": {
-              "kind": "required_parameter",
-              "not": {
-                "any": [
-                  { "has": { "regex": "^=$", "stopBy": "neighbor" } },
-                  { "has": { "kind": "rest_pattern", "stopBy": "neighbor" } }
-                ]
-              }
-            }
-          },
+          "language": "javascript",
           "rule": {
-            "matches": "defaulted",
-            "precedes": { "matches": "plain", "stopBy": "end" },
-            "inside": {
-              "kind": "formal_parameters",
-              "stopBy": "neighbor",
-              "inside": {
-                "any": [
-                  { "kind": "function_declaration" },
-                  { "kind": "function_expression" },
-                  { "kind": "generator_function_declaration" },
-                  { "kind": "generator_function" },
-                  { "kind": "arrow_function" },
-                  { "kind": "method_definition" }
-                ],
-                "stopBy": "neighbor"
-              }
+            "kind": "assignment_pattern",
+            "inside": { "kind": "formal_parameters", "stopBy": "neighbor" },
+            "precedes": {
+              "stopBy": "end",
+              "any": [
+                { "kind": "identifier" },
+                { "kind": "undefined" },
+                { "kind": "object_pattern" },
+                { "kind": "array_pattern" }
+              ]
             }
           }
         }
       },
-      "violation": { "anchor": "witness.span", "code": "default-param-last", "message": "Default parameters should be last." }
+      "violation": { "anchor": "witness.span", "code": "default-param-last", "message": "Default parameters should be last.", "suppress": { "eslint": { "rules": ["default-param-last"] }, "oxlint": { "rules": ["default-param-last"] }, "biome": { "rules": ["lint/style/useDefaultParameterLast"] } } }
     }
   ]
 }

@@ -5,9 +5,9 @@ import { codeRuleMessageVariables, codeRuleSchema } from "../../../src/engine/co
 import { validateCodeRule } from "../../../src/engine/rules.js";
 
 const astRule = (
-  language: "blade" | "javascript" | "php" | "python" | "typescript",
+  language: "blade" | "javascript" | "php" | "python" | "typescript" | "vue",
   rule: object,
-  { languageOptions, suppress }: { languageOptions?: object; suppress?: object } = {},
+  { languageOptions, suppress, embedded, utils }: { languageOptions?: object; suppress?: object; embedded?: string; utils?: object } = {},
 ) => ({
   format: "rerail.policy/v1",
   id: `test:${language}`,
@@ -16,9 +16,13 @@ const astRule = (
   clauses: [{
     id: "check",
     violation: { code: "TEST", anchor: "witness.span", message: "Test", ...(suppress === undefined ? {} : { suppress }) },
-    forbid: { ast: { language, rule, ...(languageOptions === undefined ? {} : { languageOptions }) } },
+    forbid: { ast: { language, ...(embedded === undefined ? {} : { embedded }), rule, ...(utils === undefined ? {} : { utils }), ...(languageOptions === undefined ? {} : { languageOptions }) } },
   }],
 });
+
+/** A document's schema issues, with paths relative to its query's `ast`. */
+const astIssues = (document: object) =>
+  (codeRuleSchema.safeParse(document).error?.issues ?? []).map(issue => ({ path: issue.path.slice(4).join("."), message: issue.message }));
 
 describe("codeRuleMessageVariables", () => {
   it("recognizes engine-supported braced capture references", () => {
@@ -99,8 +103,8 @@ describe("code rule schema language families", () => {
     const mixedParam = { kind: "comment", parse: { grammar: "phpDoc", kind: "param_tag_value", has: { kind: "identifier_type", value: { eq: "mixed" }, capture: "T" } } };
     expect(reason(astRule("typescript", mixedParam))).toBe("/clauses/0/forbid/ast/rule/parse/grammar: `phpDoc` parses PHP doc comments");
     expect(reason(astRule("python", mixedParam))).toBe("/clauses/0/forbid/ast/rule/parse/grammar: `phpDoc` parses PHP doc comments");
-    expect(reason(astRule("blade", { kind: "echo_statement" }, { languageOptions: { ecmaVersion: 2020 } }))).toBe("/clauses/0/forbid/ast/languageOptions: `languageOptions` is not available for blade policies");
-    expect(reason(astRule("blade", { kind: "echo_statement" }, { suppress: { phpstan: { identifiers: ["variable.undefined"] } } }))).toBe("/clauses/0/violation/suppress/phpstan: @phpstan-ignore comments are PHPStan's; a blade query has none");
+    expect(reason(astRule("blade", { kind: "echo" }, { languageOptions: { ecmaVersion: 2020 } }))).toBe("/clauses/0/forbid/ast/languageOptions: `languageOptions` is not available for blade policies");
+    expect(reason(astRule("blade", { kind: "echo" }, { suppress: { phpstan: { identifiers: ["variable.undefined"] } } }))).toBe("/clauses/0/violation/suppress/phpstan: @phpstan-ignore comments are PHPStan's; a blade query has none");
   });
 
   it("accepts PHP's own linters' suppressions, and refuses malformed names", () => {
@@ -129,6 +133,38 @@ describe("code rule schema language families", () => {
     expect(validateCodeRule(onPhp)).toMatchObject({ ok: false, code: "invalid-rule", reason: expect.stringContaining("nosec comments are Bandit's; a php query has none") });
   });
 
+  it("reads oxlint's disable directives on TypeScript and JavaScript queries only", () => {
+    const hook = { kind: "call_expression" };
+    const both = { eslint: { rules: ["react-hooks/rules-of-hooks"] }, oxlint: { rules: ["rules-of-hooks"] } };
+    expect(codeRuleSchema.safeParse(astRule("typescript", hook, { suppress: both })).success).toBe(true);
+    expect(codeRuleSchema.safeParse(astRule("javascript", hook, { suppress: { oxlint: { rules: ["rules-of-hooks"] } } })).success).toBe(true);
+    const empty = astRule("typescript", hook, { suppress: { oxlint: { rules: [] } } });
+    expect(codeRuleSchema.safeParse(empty).error?.message).toContain("Too small");
+    const prefixed = astRule("typescript", hook, { suppress: { oxlint: { rules: ["react-hooks/rules-of-hooks"] } } });
+    expect(codeRuleSchema.safeParse(prefixed).error?.message).toContain("Must be an oxlint rule name");
+    const onPython = astRule("python", { kind: "assert_statement" }, { suppress: { oxlint: { rules: ["no-console"] } } });
+    expect(validateCodeRule(onPython)).toMatchObject({ ok: false, code: "invalid-rule", reason: expect.stringContaining("oxlint-disable comments are Oxlint's; a python query has none") });
+    const onPhp = astRule("php", { kind: "function_call_expression" }, { suppress: { oxlint: { rules: ["no-console"] } } });
+    expect(validateCodeRule(onPhp)).toMatchObject({ ok: false, code: "invalid-rule", reason: expect.stringContaining("oxlint-disable comments are Oxlint's; a php query has none") });
+  });
+
+  it("reads Biome's biome-ignore comments on TypeScript and JavaScript queries only, naming lint rules of its JavaScript analyzer", () => {
+    const hook = { kind: "call_expression" };
+    const all = { eslint: { rules: ["react-hooks/rules-of-hooks"] }, oxlint: { rules: ["rules-of-hooks"] }, biome: { rules: ["lint/correctness/useHookAtTopLevel"] } };
+    expect(validateCodeRule(astRule("typescript", hook, { suppress: all }))).toMatchObject({ ok: true });
+    expect(validateCodeRule(astRule("javascript", hook, { suppress: { biome: { rules: ["lint/correctness/useHookAtTopLevel"] } } }))).toMatchObject({ ok: true });
+    const empty = astRule("typescript", hook, { suppress: { biome: { rules: [] } } });
+    expect(codeRuleSchema.safeParse(empty).error?.message).toContain("Too small");
+    const bare = astRule("typescript", hook, { suppress: { biome: { rules: ["useHookAtTopLevel"] } } });
+    expect(codeRuleSchema.safeParse(bare).error?.message).toContain("Must be a Biome lint rule name");
+    const group = astRule("typescript", hook, { suppress: { biome: { rules: ["lint/correctness"] } } });
+    expect(codeRuleSchema.safeParse(group).error?.message).toContain("Must be a Biome lint rule name");
+    const css = astRule("typescript", hook, { suppress: { biome: { rules: ["lint/a11y/useGenericFontNames"] } } });
+    expect(validateCodeRule(css)).toMatchObject({ ok: false, code: "invalid-rule", reason: expect.stringContaining("must be a lint rule of Biome 2.5.15's JavaScript analyzer") });
+    const onPython = astRule("python", { kind: "assert_statement" }, { suppress: { biome: { rules: ["lint/suspicious/noConsole"] } } });
+    expect(validateCodeRule(onPython)).toMatchObject({ ok: false, code: "invalid-rule", reason: expect.stringContaining("biome-ignore comments are Biome's; a python query has none") });
+  });
+
   it("reads PHP doc comments with phpDoc", () => {
     const mixedParam = { kind: "comment", parse: { grammar: "phpDoc", kind: "param_tag_value", has: { kind: "identifier_type", value: { eq: "mixed" }, capture: "T" } } };
     expect(codeRuleSchema.safeParse(astRule("php", mixedParam)).error?.issues ?? []).toEqual([]);
@@ -153,6 +189,61 @@ describe("code rule schema language families", () => {
       { parse: { grammar: "phpDoc", has: { stopBy: "end", kind: "param_tag_value" } } },
       { kind: "function_call_expression", calls: { through: "any", has: sleeps } },
     ];
-    for (const rule of accepted) expect(codeRuleSchema.safeParse(astRule("blade", rule)).error?.issues ?? []).toEqual([]);
+    for (const rule of accepted) expect(astIssues(astRule("blade", rule, { embedded: "compiled-view" }))).toEqual([]);
+  });
+});
+
+describe("code rule schema embedded programs", () => {
+  it("runs a query on the program its language embeds through ast.embedded", () => {
+    expect(astIssues(astRule("blade", { kind: "function_call_expression" }, { embedded: "compiled-view" }))).toEqual([]);
+    expect(astIssues(astRule("vue", { kind: "call_expression" }, { embedded: "script-block" }))).toEqual([]);
+  });
+
+  it.each([
+    ["blade", "script-block", "blade embeds no program via script-block; expected compiled-view."],
+    ["vue", "compiled-view", "vue embeds no program via compiled-view; expected script-block."],
+    ["php", "compiled-view", "php embeds no other language; ast.embedded names how a language embeds one (blade: compiled-view; vue: script-block)."],
+  ] as const)("refuses ast.embedded on %s via %s", (language, via, message) => {
+    expect(astIssues(astRule(language, { kind: "program" }, { embedded: via }))).toContainEqual({ path: "embedded", message });
+  });
+
+  it("reaches the embedded program from a host node with embedded, and back with host", () => {
+    const echoesGet = { kind: "echo_statement", embedded: { kind: "variable_name", regex: "^\\$_GET$", host: { kind: "echo_statement" } } };
+    expect(astIssues(astRule("blade", echoesGet))).toEqual([]);
+    expect(astIssues(astRule("vue", { kind: "interpolation", embedded: { kind: "identifier", not: { inside: { kind: "arrow_function" } } } }))).toEqual([]);
+    // A host rule reached from the program may reach the program again.
+    const nested = { kind: "variable_name", host: { kind: "directive", embedded: { kind: "variable_name" } } };
+    expect(astIssues(astRule("blade", nested, { embedded: "compiled-view" }))).toEqual([]);
+  });
+
+  it("reads host outside parse only from a node of an embedded program", () => {
+    expect(astIssues(astRule("blade", { kind: "variable_name", host: { kind: "echo_statement" } }, { embedded: "compiled-view" }))).toEqual([]);
+    expect(astIssues(astRule("vue", { kind: "identifier", any: [{ host: { kind: "interpolation" } }, { inside: { kind: "call_expression", host: { kind: "directive_attribute" } } }] }, { embedded: "script-block" }))).toEqual([]);
+    expect(astIssues(astRule("blade", { kind: "echo_statement", host: { kind: "directive" } }))).toContainEqual({
+      path: "rule.host",
+      message: "host tests the literal a parse holds, or the host node of an embedded program's node; use it inside parse, or in a rule over the embedded program (ast.embedded or embedded).",
+    });
+    // Inside a parse the innermost context decides: host is the literal the parse holds.
+    const docComment = { kind: "comment", parse: { grammar: "phpDoc", has: { kind: "param_tag_value", host: { kind: "comment" } } } };
+    expect(astIssues(astRule("blade", docComment, { embedded: "compiled-view" }))).toEqual([]);
+  });
+
+  it.each([
+    ["a rule over the embedded program", "blade", { kind: "variable_name", embedded: { kind: "variable_name" } }, "compiled-view", "rule.embedded", "embedded reaches the program embedded in a host node; this rule already runs on the embedded program. Reach the host node with host first."],
+    ["an embedded sub-rule", "vue", { kind: "element", embedded: { kind: "identifier", has: { kind: "identifier", embedded: { kind: "identifier" } } } }, undefined, "rule.embedded.has.embedded", "embedded reaches the program embedded in a host node; this rule already runs on the embedded program. Reach the host node with host first."],
+    ["a language that embeds none", "php", { kind: "program", embedded: { kind: "variable_name" } }, undefined, "rule.embedded", "embedded reaches the program a language embeds; php embeds none (blade: compiled-view; vue: script-block)."],
+    ["a parsed tree", "blade", { kind: "comment", parse: { grammar: "phpDoc", has: { kind: "param_tag_value", embedded: { kind: "name" } } } }, "compiled-view", "rule.parse.has.embedded", "embedded is not supported inside parse (phpDoc trees)."],
+  ] as const)("refuses embedded in %s", (_name, language, rule, embedded, path, message) => {
+    expect(astIssues(astRule(language, rule, embedded === undefined ? {} : { embedded }))).toContainEqual({ path, message });
+  });
+
+  it("leaves the document of utilities to the rules that reach them", () => {
+    const utils = { "in-echo": { host: { kind: "echo_statement" } }, "echoes-get": { embedded: { kind: "variable_name", regex: "^\\$_GET$" } } };
+    expect(astIssues(astRule("blade", { kind: "echo_statement", matches: "echoes-get" }, { utils }))).toEqual([]);
+    expect(astIssues(astRule("blade", { kind: "variable_name", matches: "in-echo" }, { embedded: "compiled-view", utils }))).toEqual([]);
+    expect(astIssues(astRule("php", { kind: "variable_name", matches: "in-echo" }, { utils: { "in-echo": { host: { kind: "echo_statement" } } } }))).toContainEqual({
+      path: "utils.in-echo.host",
+      message: "host tests the literal a parse holds; use it inside parse.",
+    });
   });
 });

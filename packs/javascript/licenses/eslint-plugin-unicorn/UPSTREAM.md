@@ -7,8 +7,12 @@ The files listed below contain material copied from eslint-plugin-unicorn and re
 licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The recorder `upstream/eslint-plugin-unicorn/generate.mjs` and
 the `fixtures.expected.json` recording it writes by running the plugin are Rerail's, under the Apache License 2.0 (the pack's `LICENSE`).
 
-Each copied file is the `code` of one of the rule's own `valid` or `invalid` test cases, verbatim, written by the recorder:
-cases for another parser or file type are left out, and identical cases are written once.
+Each copied file is the `code` of one of the rule's own `valid` or `invalid` test cases, verbatim, written by the
+recorder: cases for another parser or file type are left out, and identical cases are written once. The port readiness gates'
+recorder (`npm run port-readiness:record`) reuses those files and writes every other case the gates read, the same verbatim
+`code`, as `upstream/eslint-plugin-unicorn/fixtures/<rule>/<sha256 prefix>.<ext>`. Its recording (`recording.json`,
+which `upstream/eslint-plugin-unicorn/recording.lock` names and a GitHub release holds) also holds the `code` of every
+test case of the plugin's rule tests, verbatim, as the words `not-overfit` reads.
 
 Paths are relative to the pack directory, `packs/javascript/`.
 
@@ -113,6 +117,7 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/097/test/foo/fooBar.testUtils.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/098/test/foo/.testUtils.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/099/test/foo/foo_bar.Test.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/0bc018802648.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/100/test/foo/foo_bar.Test_Utils.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/101/test/foo/.Test_Utils.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/102/test/foo/foo-bar.Test.js` | `test/filename-case.js` | derived |
@@ -124,6 +129,7 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/108/src/foo-bar/file.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/109/src/$userId/page.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/110/src/FooBar/file.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/110d8c7ba808.vue` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/111/src/meta/BadName.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/112/work/Src/fooBar.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/113/src/foo/foo_bar.js` | `test/filename-case.js` | derived |
@@ -133,6 +139,7 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/117/src/foo/Article.ts` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/118/Test/Foo/fooBar.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/119/Test/Foo/foo_bar.test.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/11d9c8e15dc7.vue` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/120/Test/Foo/foo-bar.test-utils.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/121/Src/Foo/PageFAQ.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/122/Src/Foo/FAQ-Page.js` | `test/filename-case.js` | derived |
@@ -172,6 +179,29 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/156/src/foo-js/.spec.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/157/foo.SPEC.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/158/.SPEC.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/2d26e87a0a23.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/33f30d1bf742.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/39b635d302fe.vue` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/3e9dd61f8fa5.vue` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/437dfa0cae52.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/450fdf6100cf.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/4ebfa70f8a0b.vue` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/53fba3fcf7dd.vue` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/602748334ecf.vue` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/603fe13a0b05` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/60588a1a1ca8.mjs` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/72c9766d8470.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/8bb73935d039.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/8c46ea638bb7.tsx` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/8e49ed877feb.vue` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/97a4a593102b` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/a7e0a6633b8a.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/b261ff7fac00.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/b66dfd152690.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/b69aa47eecea.vue` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/bb9f2aa9a984.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/bf6345e9bb57.js` | `test/filename-case.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/filename-case/c125bff6c234.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/no-null/001.js` | `test/no-null.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/no-null/002.js` | `test/no-null.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/no-null/003.js` | `test/no-null.js` | derived |
@@ -295,3 +325,10 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint-plugin-unicorn/fixtures/prefer-node-protocol/063.ts` | `test/prefer-node-protocol.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/prefer-node-protocol/064.ts` | `test/prefer-node-protocol.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/prefer-node-protocol/065.ts` | `test/prefer-node-protocol.js` | derived |
+
+> `recording.json` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
+> table above: the tool-pack's `recording.lock` names it and a GitHub release holds the bytes (docs/port-readiness.md).
+> It carries excerpts of this upstream's tests (`test/*.js`: the `code` of each RuleTester case), redistributed under
+> the licence above, together with Rerail's Apache-2.0; `LICENSE` beside this file is this upstream's own, at the pinned
+> commit.
+

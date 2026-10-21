@@ -1,0 +1,13 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "clippy-builtin-type-shadow",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't name a Rust generic type parameter after a primitive type such as u32 or bool; it shadows the real type inside the item.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [{
+    "id": "builtin-type-shadow",
+    "forbid": { "ast": { "language": "rust", "rule": { "kind": "type_identifier", "regex": "^(u8|u16|u32|u64|u128|usize|i8|i16|i32|i64|i128|isize|f32|f64|bool|char|str)$", "inside": { "kind": "type_parameter", "stopBy": "end" } } } },
+    "violation": { "suppress": { "clippy": { "lints": ["clippy::builtin_type_shadow", "clippy::all", "clippy::style", "warnings"] } }, "anchor": "witness.span", "code": "builtin_type_shadow", "message": "Rename this type parameter, e.g. T instead of u32, so it doesn't shadow the primitive type." }
+  }]
+}

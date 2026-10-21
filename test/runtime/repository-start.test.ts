@@ -7,7 +7,7 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   openRerailDatabase,
-  loadBundledCatalog,
+  loadRuleCatalog,
   repositoryIdentityLocation,
   lookupCheckout,
   recordCheckout,
@@ -20,21 +20,23 @@ import {
   isRerailStarted,
   readOnlyStartState,
   sessionNoteRules,
-  setUpWithRecommendedPacks,
   startStateReader,
   stopRerail,
   workspaceSetUp,
   workspaceStartState,
   type RepositorySetupIo,
 } from "../../src/runtime/repository-start.js";
+import { SqliteSessionStore } from "../../src/runtime/session-store.js";
 import { startRerail } from "../../src/cli/index.js";
 import { fakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { RerailRuntime } from "../../src/runtime/runtime.js";
 import { testEmbedder } from "../support/hook-events.js";
 import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
+import { installPack, removeInstalledPacks } from "../support/installed-packs.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
+  removeInstalledPacks();
   await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
 
@@ -61,7 +63,6 @@ function recorder(lane: RepositorySetupIo["lane"] = "agent"): RepositorySetupIo 
   return { lane, lines, say: text => { lines.push(text); } };
 }
 
-const complexityRuleCount = loadRulePacks().find(pack => pack.id === "complexity")!.rules.length;
 const NO_PACK_FITS = "  No rule pack fits this repository yet. Add rules on the rules page";
 
 function writeFiles(root: string, files: Record<string, string>): void {
@@ -76,7 +77,7 @@ function attachedPacks(workspace: string, databasePath: string): string[] {
   const database = openRerailDatabase(databasePath, { readonly: true });
   try {
     const checkout = lookupCheckout(database, workspace)!;
-    const { rules } = listRepositoryRules(database, loadBundledCatalog(), checkout.repositoryKey);
+    const { rules } = listRepositoryRules(database, loadRuleCatalog(), checkout.repositoryKey);
     return [...new Set(rules.map(rule => `${rule.source.packId}@${rule.attachmentFolder}`))].sort();
   } finally {
     database.$client.close();
@@ -85,8 +86,12 @@ function attachedPacks(workspace: string, databasePath: string): string[] {
 
 /** `rerail start` where the repository is set up: no question is asked, so the set-up environment is never used. */
 const started = (databasePath: string, extra: { repository?: boolean } = {}) => ({ databasePath, environment: fakeSetupEnvironment(), ...extra });
-/** `rerail start --answer <answer>` where the repository is not set up, as a coding agent relays the person's answer. */
-const answered = (databasePath: string, answer: "start" | "pick-myself") => ({ databasePath, answer, environment: fakeSetupEnvironment() });
+/**
+ * `rerail start --answer <answer>` where the repository is not set up, as a coding agent relays the person's answer:
+ * "pick-myself" picks no pack (`--packs none`).
+ */
+const answered = (databasePath: string, answer: "start" | "pick-myself") =>
+  ({ databasePath, answer, environment: fakeSetupEnvironment(), ...(answer === "pick-myself" ? { packs: [] } : {}) });
 
 describe("repository start state", () => {
   it("is off until started, leaves no trace while off, and keeps rules when started again", async () => {
@@ -116,7 +121,9 @@ describe("repository start state", () => {
     expect(stop.lines[0]).toMatch(/^○ Rerail is stopped in acme-web\. /u);
     expect(workspaceStartState(main, databasePath)).toBe("stopped");
 
-    // A pack added and a rule switched off while stopped stay as left: starting again does not run the set-up a second time.
+    // A pack installed and added and a rule switched off while stopped stay as left: starting again does not run the set-up a second time.
+    installPack("complexity");
+    const complexityRuleCount = loadRulePacks().find(pack => pack.id === "complexity")!.rules.length;
     const database = openRerailDatabase(databasePath);
     try {
       const { repositoryKey } = lookupCheckout(database, main)!;
@@ -135,7 +142,7 @@ describe("repository start state", () => {
     expect(sessionNoteRules(main, databasePath)).toEqual({ setUp: true, ruleCount: complexityRuleCount - 1 });
   });
 
-  it("sets a TypeScript repository up with no pack, since no pack core ships is recommended", async () => {
+  it("sets a TypeScript repository up with no pack when it installs none", async () => {
     const root = await temporary("rerail-start-packs-");
     const databasePath = join(root, "rerail.sqlite");
     const main = gitRepository(join(root, "acme"));
@@ -167,27 +174,6 @@ describe("repository start state", () => {
     stopRerail(main, recorder(), { databasePath });
     expect(await startRerail(main, recorder(), started(databasePath))).toMatchObject({ setUpRan: false, ruleCount: 0 });
     expect(attachedPacks(main, databasePath)).toEqual([]);
-  });
-
-  it("sets a repository up without asking with its recommended packs (none core ships), starting it only when nobody started or stopped it", async () => {
-    const root = await temporary("rerail-start-auto-");
-    const databasePath = join(root, "rerail.sqlite");
-    const fresh = gitRepository(join(root, "fresh"));
-    const stopped = gitRepository(join(root, "stopped"));
-    for (const checkout of [fresh, stopped]) writeFiles(checkout, { "web/src/main.tsx": "export {};\n" });
-    startTestRepository(stopped, databasePath);
-    stopRerail(stopped, recorder(), { databasePath, repository: true });
-
-    const database = openRerailDatabase(databasePath);
-    try {
-      expect(setUpWithRecommendedPacks(database, recordCheckout(database, fresh))).toEqual([]);
-      expect(setUpWithRecommendedPacks(database, recordCheckout(database, stopped))).toEqual([]);
-    } finally {
-      database.$client.close();
-    }
-    expect(workspaceStartState(fresh, databasePath)).toBe("started");
-    expect(workspaceStartState(stopped, databasePath)).toBe("stopped");
-    expect(attachedPacks(fresh, databasePath)).toEqual([]);
   });
 
   it("takes a checkout's own value, then the nearest containing checkout's, then the repository's", async () => {
@@ -418,6 +404,51 @@ describe("repository start state", () => {
     const io = recorder("terminal");
     expect(stopRerail(checkout, io, { databasePath: join(root, "rerail.sqlite") })).toBe("stopped");
     expect(io.lines).toEqual(["○ Rerail has not been started in landing-page, so there is nothing to stop. Start it with rerail start."]);
+  });
+
+  it("names the rules that steered the coding agent's session, each once, in the order they first steered", async () => {
+    const root = await temporary("rerail-stop-steered-");
+    const checkout = gitRepository(join(root, "acme-web"));
+    const databasePath = join(root, "rerail.sqlite");
+    await startRerail(checkout, recorder(), answered(databasePath, "pick-myself"));
+    const store = new SqliteSessionStore(databasePath);
+    const session = { host: "claude-code" as const, sessionId: "s1", cwd: checkout };
+    const stopped = (options: Parameters<typeof stopRerail>[2]): string => {
+      const io = recorder();
+      stopRerail(checkout, io, { databasePath, ...options });
+      return io.lines.join("\n");
+    };
+    const HEAD = "○ Rerail is stopped in acme-web. No rules run here, and nothing is logged.";
+    try {
+      store.openSession(session);
+      expect(stopped({ session })).toBe([
+        HEAD, "  Start it again with /rerail-start.", "",
+        "  To turn off only one rule instead, say “turn that rule off”.",
+      ].join("\n"));
+
+      store.recordSteer(session, "r1", ["ts:no-any"]);
+      store.recordSteer(session, "r2", ["ts:no-any"]);
+      expect(stopped({ session })).toBe([
+        HEAD, "  Start it again with /rerail-start.", "",
+        "  Rerail steered this session on one rule, ts:no-any.",
+        "  To turn off only that rule, say “turn that rule off”.",
+      ].join("\n"));
+
+      store.recordSteer(session, "r3", ["acme:no-print", "ts:no-any", "ts:no-unused"]);
+      expect(stopped({ session })).toBe([
+        HEAD, "  Start it again with /rerail-start.", "",
+        "  Rerail steered this session on ts:no-any, acme:no-print and ts:no-unused.",
+        "  To turn off only one rule instead, say “turn that rule off”.",
+      ].join("\n"));
+
+      // The same id under another coding agent is not this session; Codex names its own commands with `$`.
+      expect(stopped({ session: { host: "codex", sessionId: "s1" } })).toBe([
+        HEAD, "  Start it again with $rerail-start.", "",
+        "  To turn off only one rule instead, say “turn that rule off”.",
+      ].join("\n"));
+    } finally {
+      store.close();
+    }
   });
 
   it("reads a database whose creator has not committed its schema yet as stopped, without failing", async () => {

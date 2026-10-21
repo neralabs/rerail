@@ -1,10 +1,10 @@
 {
   "format": "rerail.policy/v1",
   "id": "typescript-eslint-prefer-enum-initializers",
-  "revision": 1,
+  "revision": 4,
   "mode": "steer",
-  "description": "Port of typescript-eslint's `prefer-enum-initializers` rule (https://typescript-eslint.io/rules/prefer-enum-initializers). Flags enum members without an initializer.",
-  "scope": { "include": ["**/*"], "exclude": [] },
+  "description": "Give every TypeScript enum member an explicit value; implicit numbering shifts when members are added or reordered.",
+  "scope": { "include": ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"], "exclude": [] },
   "clauses": [
     {
       "id": "enum-member-without-initializer",
@@ -20,7 +20,7 @@
           }
         }
       },
-      "violation": { "anchor": "witness.span", "code": "@typescript-eslint/prefer-enum-initializers", "message": "The value of the member '$NAME' should be explicitly defined." }
+      "violation": { "anchor": "witness.span", "code": "@typescript-eslint/prefer-enum-initializers", "message": "The value of the member '$NAME' should be explicitly defined.", "suppress": { "eslint": { "rules": ["@typescript-eslint/prefer-enum-initializers"] }, "oxlint": { "rules": ["prefer-enum-initializers"] }, "biome": { "rules": ["lint/style/useEnumInitializers"] } } }
     }
   ]
 }

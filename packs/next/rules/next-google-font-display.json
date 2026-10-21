@@ -1,0 +1,135 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-google-font-display",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Add a display value of swap or optional to Google Fonts stylesheet links; a missing, auto, block or fallback value can hide or shift text while the font loads.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "jsx_opening_element"
+                  },
+                  {
+                    "kind": "jsx_self_closing_element"
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^link$"
+                }
+              },
+              {
+                "has": {
+                  "kind": "jsx_attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "kind": "property_identifier",
+                        "regex": "^href$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "any": [
+                          {
+                            "kind": "string",
+                            "value": {
+                              "startsWith": "https://fonts.googleapis.com/css"
+                            },
+                            "any": [
+                              {
+                                "not": {
+                                  "value": {
+                                    "regex": "^[^?]*\\?(?:[^&?]*&)*display(?:=|&|\\?|$)"
+                                  }
+                                }
+                              },
+                              {
+                                "value": {
+                                  "regex": "^[^?]*\\?(?:[^&?]*&)*display=(?:auto|block|fallback)(?:&|\\?|$)"
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "kind": "jsx_expression",
+                            "has": {
+                              "kind": "string",
+                              "value": {
+                                "startsWith": "https://fonts.googleapis.com/css"
+                              },
+                              "any": [
+                                {
+                                  "not": {
+                                    "value": {
+                                      "regex": "^[^?]*\\?(?:[^&?]*&)*display(?:=|&|\\?|$)"
+                                    }
+                                  }
+                                },
+                                {
+                                  "value": {
+                                    "regex": "^[^?]*\\?(?:[^&?]*&)*display=(?:auto|block|fallback)(?:&|\\?|$)"
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@next/next/google-font-display",
+        "message": "Add display=swap or display=optional to this Google Fonts URL so text stays visible while the font loads.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@next/next/google-font-display"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "google-font-display"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/useGoogleFontDisplay"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

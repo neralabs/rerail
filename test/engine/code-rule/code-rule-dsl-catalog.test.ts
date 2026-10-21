@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadBundledCatalog } from "../../../src/engine/catalog/bundled-rules.js";
+import { loadRuleCatalog } from "../../../src/engine/catalog/rule-catalog.js";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { loadNativeBinding } from "../../../src/engine/native/native.js";
 import { bundledCodeRuleDslDirectory } from "../../../src/engine/code-rule/code-rule-compile.js";
@@ -129,7 +129,7 @@ describe("checkout code-rule catalog", () => {
     const database = openRerailDatabase(databasePath);
     const catalogs = new CheckoutCatalogs(databasePath, { capabilities });
     try {
-      upsertLibraryRule(database, loadBundledCatalog(), rule("test:api-only"), "code");
+      upsertLibraryRule(database, loadRuleCatalog(), rule("test:api-only"), "code");
       addAttachment(database, { repositoryKey: key, folder: "api", sourceKind: "library_rule", sourceId: "test:api-only" });
       setRuleSetting(database, { owner: { kind: "repository", repositoryKey: key }, folder: "legacy", targetKind: "rule", targetId: "test:everywhere", on: false, mode: null });
       setRuleSetting(database, { owner: { kind: "checkout", checkoutPath: root }, folder: "web", targetKind: "rule", targetId: "test:everywhere", on: null, mode: "log" });
@@ -172,6 +172,40 @@ describe("checkout code-rule catalog", () => {
       setRuleSetting(database, { owner: { kind: "repository", repositoryKey: key }, folder: "", targetKind: "rule", targetId: "test:placed", on: false, mode: null });
       expect(catalog.refresh()).toBe(true);
       expect(catalog.snapshot().codeRules).toEqual([]);
+    } finally {
+      catalogs.close();
+      database.$client.close();
+    }
+  });
+
+  it("places where suppression comments are ignored, changing its version but not the compiled body", () => {
+    const { root, databasePath } = checkout();
+    const capabilities = loadCodeRuleCapabilities(writeCapabilities(temporaryRoot()));
+    const key = setUpTestRepository(root, { library: [{ kind: "code", rule: rule("test:placed") }] }, databasePath);
+    const database = openRerailDatabase(databasePath);
+    const catalogs = new CheckoutCatalogs(databasePath, { capabilities });
+    try {
+      const catalog = catalogs.catalog(root);
+      const before = catalog.snapshot();
+      expect(before.codeRules[0]!.placement).toEqual([{ folder: "", mode: "block" }]);
+
+      const owner = { kind: "repository" as const, repositoryKey: key };
+      setRuleSetting(database, { owner, folder: "web", targetKind: "rule", targetId: "test:placed", on: null, mode: null, suppressions: "ignore" });
+      setRuleSetting(database, { owner, folder: "web/legacy", targetKind: "rule", targetId: "test:placed", on: false, mode: null });
+      setRuleSetting(database, { owner, folder: "web/vendor", targetKind: "rule", targetId: "test:placed", on: null, mode: null, suppressions: "honour" });
+      expect(catalog.refresh()).toBe(true);
+      const after = catalog.snapshot();
+      expect(after.codeRules[0]!.placement).toEqual([
+        { folder: "", mode: "block" },
+        { folder: "web", mode: "block", suppressions: "ignore" },
+        { folder: "web/legacy", mode: null, suppressions: "ignore" },
+        { folder: "web/vendor", mode: "block" },
+      ]);
+      expect(after.version).not.toBe(before.version);
+      expect(after.codeRules[0]!.executable).toBe(before.codeRules[0]!.executable);
+      expect(decisionFor({ ruleProvenance: [...after.provenance] }, { ruleId: "test:placed", path: "web/a.py" })).toMatchObject({
+        suppressions: "ignore", suppressionsFrom: { by: "repository", folder: "web", target: "rule" },
+      });
     } finally {
       catalogs.close();
       database.$client.close();
@@ -264,12 +298,16 @@ describe("code rule schema and engine agree on unsupported fields", () => {
     ["a non-boolean comments", ast({ kind: "identifier", layout: { after: { to: "token", comments: 1, breaks: { eq: 0 } } } }), /expected boolean/],
     ["an edge on a capture", ast({ pattern: "f($A)", layout: { after: { to: "capture.A", edge: true, breaks: { eq: 0 } } } }), /a capture names its node/],
     ["a layout inside a parsed tree", py({ kind: "string", parse: { grammar: "percentFormat", has: { kind: "placeholder", layout: { span: { eq: 0 } } } } }), /layout is not supported inside parse \(percentFormat trees\)/],
-    ["an empty suppress", ast({ kind: "identifier" }, {}, { suppress: {} }), /suppress must hold eslint, noqa, nosec, phpstan, psalm, or phpcs/],
+    ["an empty suppress", ast({ kind: "identifier" }, {}, { suppress: {} }), /suppress must hold eslint, noqa, nosec, oxlint, biome, phpstan, psalm, phpcs, clippy, or sqlfluff/],
     ["an unknown suppress key", ast({ kind: "identifier" }, {}, { suppress: { jshint: {} } }), /Unrecognized key: \\"jshint\\"/],
     ["an empty eslint rule list", ast({ kind: "identifier" }, {}, { suppress: { eslint: { rules: [] } } }), /Too small/],
     ["an eslint rule name with a comma", ast({ kind: "identifier" }, {}, { suppress: { eslint: { rules: ["a, b"] } } }), /Must be a rule name/],
+    ["an empty oxlint rule list", ast({ kind: "identifier" }, {}, { suppress: { oxlint: { rules: [] } } }), /Too small/],
+    ["an oxlint rule name with a plugin prefix", ast({ kind: "identifier" }, {}, { suppress: { oxlint: { rules: ["react-hooks/rules-of-hooks"] } } }), /Must be an oxlint rule name/],
+    ["a Biome rule name without its lint/ category", ast({ kind: "identifier" }, {}, { suppress: { biome: { rules: ["correctness/useHookAtTopLevel"] } } }), /Must be a Biome lint rule name/],
     ["a lowercase noqa code", py({ kind: "identifier" }, {}, { suppress: { noqa: { codes: ["f401"] } } }), /Must be a rule code/],
     ["a noqa parent other than statement", py({ kind: "identifier" }, {}, { suppress: { noqa: { codes: ["F401"], parent: "import" } } }), /Invalid input/],
+
     ["suppression on a regex query", document({ violation: { ...violation, suppress: { eslint: { rules: ["strict"] } } } }), /suppress removes an ast query's violations/],
     ["a cyclic transform", ast({ pattern: "f($A)" }, { transform: { B: { substring: { source: "$C" } }, C: { substring: { source: "$B" } } } }), /B has a cyclic dependency/],
     ["a transform in the string form", ast({ pattern: "f($A)" }, { transform: { B: "substring($A, startChar=1)" } }), /Invalid input/],
@@ -423,7 +461,7 @@ describe("code rule schema and engine agree on unsupported fields", () => {
     ["a lib name that is no name", ast({ kind: "identifier" }, { languageOptions: { lib: ["dom/iterable"] } }), /Must be a TypeScript lib name/],
     ["a non-boolean declaration", ast({ kind: "identifier" }, { file: { declaration: "yes" } }), /expected boolean/],
     ["a path file condition that is no object", ast({ kind: "identifier" }, { file: { path: "^src/" } }), /expected object/],
-    ["an empty file condition", document({ forbid: { ast: { language: "python", file: {}, rule: { kind: "module" } } } }), /Set path, declaration, module, moduleName, package or inPackage/],
+    ["an empty file condition", document({ forbid: { ast: { language: "python", file: {}, rule: { kind: "module" } } } }), /Set path, declaration, module, moduleName, package, inPackage or jsxRuntime/],
     ["an unknown file condition", document({ forbid: { ast: { language: "python", file: { paths: { regex: "a" } }, rule: { kind: "module" } } } }), /Unrecognized key/],
     ["a file module that is no object", document({ forbid: { ast: { language: "python", file: { module: "^a$" }, rule: { kind: "module" } } } }), /expected object/],
     ["a non-boolean inPackage", document({ forbid: { ast: { language: "python", file: { inPackage: "yes" }, rule: { kind: "module" } } } }), /expected boolean/],
@@ -488,6 +526,8 @@ describe("code rule schema and engine agree on unsupported fields", () => {
 
   it.each([
     ["eslint suppression on a Python query", py({ kind: "identifier" }, {}, { suppress: { eslint: { rules: ["strict"] } } }), /eslint-disable comments are ESLint's; a python query has none/],
+    ["oxlint suppression on a Python query", py({ kind: "identifier" }, {}, { suppress: { oxlint: { rules: ["no-console"] } } }), /oxlint-disable comments are Oxlint's; a python query has none/],
+    ["biome suppression on a Python query", py({ kind: "identifier" }, {}, { suppress: { biome: { rules: ["lint/suspicious/noConsole"] } } }), /biome-ignore comments are Biome's; a python query has none/],
     ["noqa suppression on a TypeScript query", ast({ kind: "identifier" }, {}, { suppress: { noqa: { codes: ["F401"] } } }), /noqa comments are Ruff's; a typescript query has none/],
     ["psalm suppression on a Python query", py({ kind: "identifier" }, {}, { suppress: { psalm: { issues: ["UndefinedVariable"] } } }), /@psalm-suppress tags are Psalm's; a python query has none/],
     ["phpcs suppression on a TypeScript query", ast({ kind: "identifier" }, {}, { suppress: { phpcs: { sniffs: ["Squiz.PHP.DiscouragedFunctions"] } } }), /phpcs: annotations are PHP_CodeSniffer's; a typescript query has none/],
@@ -533,6 +573,9 @@ describe("code rule schema and engine agree on unsupported fields", () => {
     ["a lib on a Python query", document({ forbid: { ast: { language: "python", languageOptions: { lib: ["dom"] }, rule: { kind: "identifier" } } } }), /unknown field `lib`/],
     ["a module file condition on a TypeScript query", ast({ kind: "identifier" }, { file: { module: { regex: "a" } } }), /module paths are Python's/],
     ["a declaration file condition on a Python query", document({ forbid: { ast: { language: "python", file: { declaration: true }, rule: { kind: "module" } } } }), /declaration files are TypeScript's/],
+    ["a JSX runtime on python", document({ forbid: { ast: { language: "python", file: { jsxRuntime: ["react"] }, rule: { kind: "module" } } } }), /JSX runtimes are TypeScript's/],
+    ["a package manifest condition on python", document({ forbid: { ast: { language: "python", file: { package: { bin: true } }, rule: { kind: "module" } } } }), /python's package is a regex or notRegex/],
+    ["a text package condition on typescript", ast({ kind: "identifier" }, { file: { package: { regex: "a" } } }), /typescript's package reads the nearest package.json/],
     ["this without language options", ast({ kind: "this", resolves: { this: "global" } }), /declare languageOptions/],
     ["declared without language options", ast({ kind: "identifier", resolves: { global: ["a"], declared: false } }), /declare languageOptions/],
     ["scriptDeclarations without language options", ast({ kind: "identifier", resolves: { global: ["a"], scriptDeclarations: true } }), /declare languageOptions/],
@@ -1202,6 +1245,7 @@ describe("code rule schema and engine agree on unsupported fields", () => {
     expect(kinds("brace.rs")).toEqual([...CODE_RULE_PARSE_KINDS.braceFormat]);
     expect(kinds("eslint_directive.rs")).toEqual([...CODE_RULE_PARSE_KINDS.eslintDirective]);
     expect(kinds("phpdoc.rs")).toEqual([...CODE_RULE_PARSE_KINDS.phpDoc]);
+    expect(kinds("rust_format.rs")).toEqual([...CODE_RULE_PARSE_KINDS.rustFormat]);
   });
 
 
@@ -1254,15 +1298,27 @@ describe("compiled rule cache", () => {
     const cache = new CompiledRuleCache();
     const capabilities = loadCodeRuleCapabilities();
     const first = cachedRule("cache:a", 1);
-    const outcome = cache.compile(capabilities, "cache:a", first.text, first.digest);
+    const outcome = cache.compile(capabilities, "cache:a", first.text, first.digest, "null");
     expect(outcome.ok).toBe(true);
-    expect(cache.compile(capabilities, "cache:a", first.text, first.digest)).toBe(outcome);
+    expect(cache.compile(capabilities, "cache:a", first.text, first.digest, "null")).toBe(outcome);
     for (let revision = 2; revision <= 5; revision += 1) {
       const edited = cachedRule("cache:a", revision);
-      expect(cache.compile(capabilities, "cache:a", edited.text, edited.digest).ok).toBe(true);
+      expect(cache.compile(capabilities, "cache:a", edited.text, edited.digest, "null").ok).toBe(true);
     }
     const other = cachedRule("cache:b", 1);
-    cache.compile(capabilities, "cache:b", other.text, other.digest);
+    cache.compile(capabilities, "cache:b", other.text, other.digest, "null");
+    expect(cache.size).toBe(2);
+  });
+
+  it("keeps one compiled version per config of a rule, so two repositories configuring it differently do not recompile in turn", () => {
+    const cache = new CompiledRuleCache();
+    const capabilities = loadCodeRuleCapabilities();
+    const plain = cachedRule("cache:c", 1);
+    const configured = cachedRule("cache:c", 2);
+    const plainOutcome = cache.compile(capabilities, "cache:c", plain.text, plain.digest, "null");
+    const configuredOutcome = cache.compile(capabilities, "cache:c", configured.text, configured.digest, "{\"option\":\"type\"}");
+    expect(cache.compile(capabilities, "cache:c", plain.text, plain.digest, "null")).toBe(plainOutcome);
+    expect(cache.compile(capabilities, "cache:c", configured.text, configured.digest, "{\"option\":\"type\"}")).toBe(configuredOutcome);
     expect(cache.size).toBe(2);
   });
 });

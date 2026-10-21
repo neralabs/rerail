@@ -3,7 +3,7 @@
   "id": "eslint-no-await-in-loop",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of ESLint's `no-await-in-loop` rule (https://eslint.org/docs/latest/rules/no-await-in-loop). Flags `await` expressions, `for await` loops and `await using` declarations that sit in a loop's test, update or body without a function or for-await-of loop in between.",
+  "description": "Avoid await inside loops; start the independent operations together and await them at once with Promise.all.",
   "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [
     {
@@ -42,7 +42,7 @@
           }
         }
       },
-      "violation": { "anchor": "witness.span", "code": "no-await-in-loop", "message": "Unexpected `await` inside a loop." }
+      "violation": { "anchor": "witness.span", "code": "no-await-in-loop", "message": "Unexpected `await` inside a loop.", "suppress": { "eslint": { "rules": ["no-await-in-loop"] }, "oxlint": { "rules": ["no-await-in-loop"] }, "biome": { "rules": ["lint/performance/noAwaitInLoops"] } } }
     }
   ]
 }

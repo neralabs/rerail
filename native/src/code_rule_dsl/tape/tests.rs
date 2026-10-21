@@ -44,7 +44,9 @@ fn fixture(
 ) -> (StrDoc<GrammarDialect>, TapeDoc, TapeImage, Arc<Grammar>) {
     let grammar = Grammar::new(lang).unwrap();
     let native = StrDoc::new(source, lang);
-    let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
+    let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false)
+        .unwrap()
+        .primary;
     let tape = TapeDoc::restore(
         Arc::new(source.to_owned()),
         Arc::clone(&grammar),
@@ -113,9 +115,167 @@ fn persisted_image_round_trips_without_parsing() {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
+    // The bytes number kinds by the grammar's symbol table: a grammar that adds a token (Patch 4's
+    // `out`, Patch 13's `_arrow_body_end`, Patch 14's `yield` name, Patch 21's
+    // `_jsx_closing_tag_lt`, Patch 24's `_no_line_terminator_here`,
+    // `grammars/tree-sitter-typescript/PATCHES.md`) renumbers them; a tape format (7: one
+    // document per tape) changes the header.
     assert_eq!(
         digest,
-        "6fe4a84d7213cb437802c2ed6f023ddc6f8a3c6531db28e16115908c3a4481a7"
+        "fb9639fc397bf7526c1bc4cbf11fa2e339b00a907de32aeec1ac286884c17158"
+    );
+}
+
+/// A file that embeds a program is two documents (`FileImage`): its own tape, which holds its
+/// tree alone, and beside it the derived program's text, tape, source map and host errors, kept
+/// as the store keeps them (`file_documents`) and restored as the file's guest. A derived
+/// document is refused whose embedding its parent's dialect has not, whose tape is of a dialect
+/// its parent does not embed, whose map reaches past its text, whose role is not its map's, or
+/// that is out of order.
+#[test]
+fn file_documents_persist_apart_and_are_checked() {
+    let source = "<script lang=\"tsx\">let x = <a />;</script>\n";
+    let grammar = Grammar::new(GrammarDialect::Html).unwrap();
+    let image = TapeImage::parse(&grammar, source, &|| false)
+        .unwrap()
+        .unwrap();
+    let [document] = &image.derived[..] else {
+        panic!("one program: {}", image.derived.len());
+    };
+    assert_eq!(document.tape.language, GrammarDialect::Tsx);
+    assert_eq!(document.parent, 0);
+    // The test embedder writes its program as well as copying it.
+    assert_eq!(document.role, DocumentRole::Generated);
+    // The file's tape is its own tree alone: the header and its tables, nothing after them.
+    let primary = image.primary.to_bytes().unwrap();
+    let aliases = image
+        .primary
+        .kind_aliases
+        .iter()
+        .map(|(name, _)| 5 + name.len())
+        .sum::<usize>();
+    let tables = &image.primary;
+    assert_eq!(
+        primary.len(),
+        HEADER_BYTES
+            + tables.rec.len()
+            + tables.spans.len()
+            + tables.checkpoints.len()
+            + 8 * (tables.par_overflow.len() + tables.size_overflow.len())
+            + 4 * (tables.extra.len() + tables.error.len() + tables.missing.len())
+            + aliases
+            + 6 * tables.kind_overrides.len()
+    );
+    assert_eq!(&primary[..8], TAPE_MAGIC);
+    let read = image.round_trip(&grammar).unwrap();
+    assert_eq!(read.primary.to_bytes().unwrap(), primary);
+    let tape = document.tape.to_bytes().unwrap();
+    assert_eq!(read.derived[0].tape.to_bytes().unwrap(), tape);
+    let restored = TapeDoc::restore(
+        Arc::new(source.to_owned()),
+        Arc::clone(&grammar),
+        &read,
+        &|| false,
+    )
+    .unwrap();
+    let guests = restored.guests().unwrap();
+    assert_eq!(
+        guests[0].via,
+        crate::code_rule_dsl::language::Via::TestScript
+    );
+    assert_eq!(guests[0].doc.get_source().as_str(), document.text.as_str());
+
+    let source_map = document.source_map_bytes();
+    let host_errors = document.host_error_bytes();
+    let via = via_code(document.via);
+    let role = document.role.code();
+    let read = |ordinal: i64, parent: i64, role: i64, via: i64, tape: &[u8], map: &[u8]| {
+        FileImage::read(
+            &primary,
+            &grammar,
+            &[StoredDerived {
+                ordinal,
+                parent,
+                role,
+                via,
+                text: document.text.as_bytes(),
+                source_map: map,
+                host_errors: &host_errors,
+                tape,
+            }],
+        )
+    };
+    assert!(read(1, 0, role, via, &tape, &source_map).is_ok());
+    assert!(
+        read(2, 0, role, via, &tape, &source_map).is_err(),
+        "numbered from 1"
+    );
+    assert!(
+        read(1, 1, role, via, &tape, &source_map).is_err(),
+        "an earlier parent"
+    );
+    let embedded = DocumentRole::Embedded.code();
+    assert!(
+        read(1, 0, embedded, via, &tape, &source_map).is_err(),
+        "its map's role"
+    );
+    assert!(
+        read(1, 0, 0, via, &tape, &source_map).is_err(),
+        "never the primary's"
+    );
+    assert!(
+        read(1, 0, role, via ^ 1, &tape, &source_map).is_err(),
+        "an embedding of HTML"
+    );
+    let mut python = tape.clone();
+    python[8] = crate::code_rule_dsl::language::tape_tag(GrammarDialect::Python).unwrap();
+    assert!(
+        read(1, 0, role, via, &python, &source_map).is_err(),
+        "HTML embeds no Python"
+    );
+    let mut past = source_map.clone();
+    past[4..8].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert!(
+        read(1, 0, role, via, &tape, &past).is_err(),
+        "a segment past the text"
+    );
+}
+
+/// A derived document is embedded where its text is one byte-exact slice of its parent's (one
+/// copied segment over the whole text), and generated otherwise.
+#[test]
+fn a_derived_documents_role_is_its_source_maps() {
+    let map = |segments: &[(usize, usize, Range<usize>, bool)]| {
+        let mut map = SegmentMap::new();
+        for (at, end, anchor, copied) in segments {
+            map.push(*at, *end, anchor.clone(), *copied, false);
+        }
+        map.index();
+        map
+    };
+    let text = "let x = 1;";
+    assert_eq!(
+        DocumentRole::derived(text, &map(&[(0, 10, 20..30, true)])),
+        DocumentRole::Embedded
+    );
+    assert_eq!(
+        DocumentRole::derived(text, &map(&[(0, 10, 20..30, false)])),
+        DocumentRole::Generated,
+        "written over its anchor"
+    );
+    assert_eq!(
+        DocumentRole::derived(text, &map(&[(0, 5, 20..25, true), (5, 10, 25..30, true)])),
+        DocumentRole::Generated,
+        "two stretches"
+    );
+    assert_eq!(
+        DocumentRole::derived(text, &map(&[(0, 9, 20..29, true), (9, 10, 29..29, false)])),
+        DocumentRole::Generated,
+        "a written end"
+    );
+    assert_eq!(
+        DocumentRole::derived("", &map(&[])),
+        DocumentRole::Generated
     );
 }
 
@@ -769,7 +929,7 @@ fn cancellation_interrupts_mid_encode_without_partial_image() {
             .unwrap()
             .data
             .len(),
-        image.node_count()
+        image.primary.node_count()
     );
 }
 
@@ -1198,5 +1358,179 @@ fn a_lookup_from_a_nearby_node_finds_what_a_lookup_from_the_root_finds() {
         let (native, tape, _, _) = fixture(source, lang);
         agree(native, &format!("{lang:?} native"));
         agree(tape, &format!("{lang:?} tape"));
+    }
+}
+
+/// A PHP template's tape is its view's tree (`php_view`) over the template: no syntax errors, every
+/// span reads the template, and inline text holds no node.
+#[test]
+fn a_php_template_tapes_its_php_view() {
+    let cases: [(&str, &[&str], &[&str]); 9] = [
+        (
+            "<?php\nprint(1);\n?>\n<script>\nx = eval('document.getElementById (option)');\n</script>\n",
+            &["<script>\nx = eval('document.getElementById (option)');\n</script>"],
+            &[],
+        ),
+        (
+            "<?php\neval('$a = 1;');\n?>\n<p>hi</p>\n<?php eval('$b = 2;'); ?>\n",
+            &["<p>hi</p>"],
+            &["eval('$a = 1;')", "eval('$b = 2;')"],
+        ),
+        (
+            "<html><?php foo(); ?></html>\n",
+            &["<html>", "</html>"],
+            &["foo()"],
+        ),
+        (
+            "<?php if ($a): ?>\n<p>x</p>\n<?php endif; ?>\n",
+            &["<p>x</p>"],
+            &[],
+        ),
+        ("<p><?= $x ?></p>\n", &["<p>", "</p>"], &[]),
+        (
+            "<p><?php $s = '?>'; $t = <<<EOT\n?>\nEOT;\nf($t) // c ?></p>\r\n<?php if ($a) { ?>é<?php } ?>\n",
+            &["</p>", "é"],
+            &["f($t)"],
+        ),
+        (
+            "<?php $s = \"{$o->{\"?>\"}}\"; $x = function() {} ?>html<?php eval(1);\n",
+            &["html"],
+            &["eval(1)"],
+        ),
+        (
+            "<p><?php $__halt_compiler = static fn() => 0; $__halt_compiler(); eval('1'); ?></p>\n",
+            &["<p>", "</p>"],
+            &["$__halt_compiler()", "eval('1')"],
+        ),
+        (
+            "<?php $a = 1; ?>html<?$x = eval('1');?>tail<?php $b = 2; ?>\n",
+            &["html", "tail"],
+            &["eval('1')"],
+        ),
+    ];
+    for (source, inline, calls) in cases {
+        let grammar = Grammar::new(GrammarDialect::Php).unwrap();
+        let image = TapeImage::parse(&grammar, source, &|| false)
+            .unwrap()
+            .unwrap();
+        let tape =
+            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+        assert_eq!(
+            tape.syntax_error_ranges(),
+            Vec::<Range<usize>>::new(),
+            "{source:?}"
+        );
+        let inline = inline
+            .iter()
+            .map(|text| {
+                let start = source.find(text).unwrap();
+                start..start + text.len()
+            })
+            .collect::<Vec<_>>();
+        let root = AstGrep::doc(tape);
+        // The view's tree, node for node, its texts read from the template.
+        let view = AstGrep::doc(StrDoc::new(
+            &super::super::php_view::view(source),
+            GrammarDialect::Php,
+        ));
+        let native = view
+            .root()
+            .dfs()
+            .map(|node| (node.kind_id(), node.range()))
+            .collect::<Vec<_>>();
+        let taped = root
+            .root()
+            .dfs()
+            .map(|node| (node.kind_id(), node.range()))
+            .collect::<Vec<_>>();
+        assert_eq!(native, taped, "{source:?}");
+        let mut found = Vec::new();
+        for node in root.root().dfs() {
+            let range = node.range();
+            assert_eq!(node.text(), &source[range.clone()], "{source:?}");
+            if node.children().next().is_none() {
+                assert!(
+                    inline
+                        .iter()
+                        .all(|text| range.end <= text.start || text.end <= range.start),
+                    "{source:?}: {} at {range:?} is inline text",
+                    node.kind()
+                );
+            }
+            if node.kind() == "function_call_expression" {
+                found.push(node.text().into_owned());
+            }
+        }
+        assert_eq!(found, calls, "{source:?}");
+    }
+}
+
+/// A lookup in a taped tree reads no child list one child at a time: an element of a 20,000-wide
+/// list, looked up from its first element, is found by searching the list's subtree, not by
+/// reading the elements before it (once per binding occurrence, that held one clause on jison's
+/// generated parser tables for seconds while it spent almost none of its work budget).
+#[test]
+fn a_taped_lookup_reads_no_wide_child_list_child_by_child() {
+    use crate::code_rule_dsl::value::{LINEAR_CHILDREN, NodeRef};
+
+    let source = format!(
+        "x = [{}]\n",
+        (0..20_000)
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let (_, tape, _, _) = fixture(&source, GrammarDialect::Python);
+    let root = AstGrep::doc(tape);
+    let numbers = root
+        .root()
+        .dfs()
+        .filter(|node| node.kind() == "integer")
+        .collect::<Vec<_>>();
+    assert_eq!(numbers.len(), 20_000);
+    let (first, last) = (&numbers[0], &numbers[19_999]);
+    LINEAR_CHILDREN.set(0);
+    let found = NodeRef::of(last)
+        .find_near(root.root(), first)
+        .expect("the element");
+    assert_eq!(found.node_id(), last.node_id());
+    assert_eq!(LINEAR_CHILDREN.get(), 0, "no child was read one by one");
+    // A node of another kind at the same range is in no taped tree: the search says so, and does
+    // not read the list child by child to find out.
+    let missing = NodeRef {
+        kind: last.kind_id().wrapping_add(1),
+        ..NodeRef::of(last)
+    };
+    LINEAR_CHILDREN.set(0);
+    assert!(missing.find_near(root.root(), first).is_none());
+    assert_eq!(LINEAR_CHILDREN.get(), 0, "a miss read children one by one");
+}
+
+/// A Blade tape's ERROR leaves are the template's syntax errors as Blade reads them: arguments
+/// Forte read after a line break are text to Blade, so an unclosed string in them is no error of
+/// the template's, with or without a view.
+#[test]
+fn a_blade_tapes_errors_are_blades_reading() {
+    for source in [
+        "@csrf\n(it's required)\n<p>{{ $x }}</p>\n",
+        "@csrf\n(it's required)\n<p>x</p>\n",
+    ] {
+        let tree = crate::code_rule_dsl::blade::forte::tree::parse_tree(source.as_bytes())
+            .expect("Forte parses it");
+        assert!(
+            !tree.error_ranges().is_empty(),
+            "Forte reads the parenthesis as arguments: {source:?}"
+        );
+        let grammar = Grammar::new(GrammarDialect::Blade).expect("grammar");
+        let image = TapeImage::parse(&grammar, source, &|| false)
+            .expect("parses")
+            .expect("encodes");
+        let tape = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)
+            .expect("restores");
+        assert_eq!(
+            tape.syntax_error_ranges(),
+            Vec::<Range<usize>>::new(),
+            "{source:?}"
+        );
     }
 }

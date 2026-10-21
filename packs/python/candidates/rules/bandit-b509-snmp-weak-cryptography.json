@@ -3,7 +3,7 @@
   "id": "bandit-b509-snmp-weak-cryptography",
   "revision": 1,
   "mode": "steer",
-  "description": "Flag resolved pysnmp.hlapi.UsmUserData calls with fewer than three supplied positional arguments",
+  "description": "Pass authentication and privacy keys to pysnmp UsmUserData; without them SNMPv3 runs with no authentication or encryption.",
   "scope": {
     "include": [
       "**/*.py"
@@ -43,7 +43,7 @@
       "violation": {
         "code": "B509",
         "anchor": "capture.F",
-        "message": "pysnmp.hlapi.UsmUserData should be called with at least three positional arguments",
+        "message": "Pass authentication and privacy keys to this UsmUserData call; without them SNMPv3 runs with no authentication or encryption.",
         "suppress": {
           "nosec": {
             "codes": [

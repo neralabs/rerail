@@ -1,6 +1,7 @@
-//! A code rule placed per folder of a checkout: where it runs, at which mode, and the result
-//! catalog its placement keys.
+//! A code rule placed per folder of a checkout: where it runs, at which mode, whether linters'
+//! suppression comments silence it, and the result catalog its placement keys.
 
+use super::super::test_support::CAPABILITIES;
 use super::super::{CodeRuleDslRuntime, CompiledCodeRuleDsl};
 use super::api::{CodeRuleDslWorkspace, WorkspaceApplyTask};
 use super::persisted::candidate_catalog;
@@ -49,16 +50,30 @@ fn placed(placement: Option<&str>) -> CodeRuleDslWorkspace {
     workspace
 }
 
-/// Each violation's path and mode after one apply of `paths`, every one holding the needle.
-fn violations(workspace: &CodeRuleDslWorkspace, paths: &[&str]) -> Vec<(String, String)> {
+/// Reports each TypeScript identifier as `names`, a rule ESLint comments can disable.
+fn names_code_rule() -> CompiledCodeRuleDsl {
+    CodeRuleDslRuntime::compile(
+        json!({
+            "format": "rerail.policy/v1", "id": "placed-names", "revision": 1,
+            "mode": "block",
+            "clauses": [{
+                "id": "names",
+                "forbid": { "ast": { "language": "typescript", "rule": { "kind": "identifier" } } },
+                "violation": { "anchor": "witness.span", "code": "NAMES", "message": "name",
+                    "suppress": { "eslint": { "rules": ["names"] } } }
+            }]
+        })
+        .to_string(),
+        "json".into(),
+        CAPABILITIES.to_owned(),
+    )
+    .unwrap()
+}
+
+/// One apply of `files` (`{path, language, source}` objects); its evaluation.
+fn apply(workspace: &CodeRuleDslWorkspace, files: Vec<Value>) -> Value {
     // `compute` refuses to wait for the process-wide CPU slot; serialize with the other tests.
-    let _slot = WORKSPACE_TEST_SLOT
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let files = paths
-        .iter()
-        .map(|path| json!({ "path": path, "language": "typescript", "source": "NEEDLE\n" }))
-        .collect::<Vec<_>>();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
@@ -67,7 +82,17 @@ fn violations(workspace: &CodeRuleDslWorkspace, paths: &[&str]) -> Vec<(String, 
         request_direct: None,
     };
     let result: Value = serde_json::from_str(&task.compute().unwrap()).unwrap();
-    let mut violations = result["evaluation"]["violations"]
+    result["evaluation"].clone()
+}
+
+/// Each violation's path and mode after one apply of `paths`, every one holding the needle.
+fn violations(workspace: &CodeRuleDslWorkspace, paths: &[&str]) -> Vec<(String, String)> {
+    let files = paths
+        .iter()
+        .map(|path| json!({ "path": path, "language": "typescript", "source": "NEEDLE\n" }))
+        .collect::<Vec<_>>();
+    let evaluation = apply(workspace, files);
+    let mut violations = evaluation["violations"]
         .as_array()
         .unwrap()
         .iter()
@@ -176,6 +201,74 @@ fn the_result_catalog_differs_when_only_the_placement_differs() {
     }
     assert_eq!(catalog(&again), catalogs[3]);
     for workspace in [steer, log, narrowed, unplaced, again] {
+        workspace.close();
+    }
+}
+
+#[test]
+fn the_deciding_folder_s_suppressions_choice_decides_whether_a_disable_comment_silences() {
+    const SOURCE: &str = "a; // eslint-disable-line names\nb;\n";
+    // Each placement, and the names it reports in `web/a.ts` and in `api/a.ts`.
+    let cases = [
+        (None, [vec!["b"], vec!["b"]]),
+        (
+            Some(r#"[{"folder": "", "mode": "log"}]"#),
+            [vec!["b"], vec!["b"]],
+        ),
+        (
+            Some(r#"[{"folder": "", "mode": "log", "suppressions": "honour"}]"#),
+            [vec!["b"], vec!["b"]],
+        ),
+        (
+            Some(r#"[{"folder": "", "mode": "log", "suppressions": "ignore"}]"#),
+            [vec!["a", "b"], vec!["a", "b"]],
+        ),
+        (
+            Some(
+                r#"[{"folder": "", "mode": "log", "suppressions": "honour"},
+                    {"folder": "web", "mode": "log", "suppressions": "ignore"}]"#,
+            ),
+            [vec!["a", "b"], vec!["b"]],
+        ),
+    ];
+    for (placement, expected) in cases {
+        let mut workspace = CodeRuleDslWorkspace::new();
+        workspace
+            .add_code_rule(&names_code_rule(), placement.map(str::to_owned))
+            .unwrap();
+        let files = ["web/a.ts", "api/a.ts"]
+            .map(|path| json!({ "path": path, "language": "typescript", "source": SOURCE }));
+        let evaluation = apply(&workspace, files.to_vec());
+        let reported = ["web/a.ts", "api/a.ts"].map(|path| {
+            evaluation["violations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|violation| violation["path"] == path)
+                .map(|violation| {
+                    let span = &violation["span"];
+                    &SOURCE[span["startByte"].as_u64().unwrap() as usize
+                        ..span["endByte"].as_u64().unwrap() as usize]
+                })
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(reported, expected, "{placement:?}: {evaluation}");
+        workspace.close();
+    }
+}
+
+#[test]
+fn the_result_catalog_differs_when_only_the_suppressions_choice_differs() {
+    let omitted = placed(Some(r#"[{"folder": "", "mode": "log"}]"#));
+    let honour = placed(Some(
+        r#"[{"folder": "", "mode": "log", "suppressions": "honour"}]"#,
+    ));
+    let ignore = placed(Some(
+        r#"[{"folder": "", "mode": "log", "suppressions": "ignore"}]"#,
+    ));
+    assert_eq!(catalog(&omitted), catalog(&honour));
+    assert_ne!(catalog(&honour), catalog(&ignore));
+    for workspace in [omitted, honour, ignore] {
         workspace.close();
     }
 }

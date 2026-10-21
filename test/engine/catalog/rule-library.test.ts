@@ -27,7 +27,7 @@ import {
   testBundle,
 } from "../../support/rule-configuration-builders.js";
 
-const bundle = testBundle();
+const ruleCatalog = testBundle();
 const CHECKOUT = "/work/app";
 
 async function repositoryWithLintPack(folders: readonly string[]) {
@@ -40,31 +40,31 @@ async function repositoryWithLintPack(folders: readonly string[]) {
 describe("library rules", () => {
   it("rejects a By Rerail rule id and keeps one kind per id", async () => {
     const db = await temporaryDatabase();
-    expect(() => upsertLibraryRule(db, bundle, codeRule("no-console"), "code")).toThrow(/By Rerail rule id/u);
+    expect(() => upsertLibraryRule(db, ruleCatalog, codeRule("no-console"), "code")).toThrow(/By Rerail rule id/u);
 
-    upsertLibraryRule(db, bundle, codeRule("mine"), "code");
-    expect(() => upsertLibraryRule(db, bundle, conversation("mine"), "conversation")).toThrow(/exists with kind code/u);
+    upsertLibraryRule(db, ruleCatalog, codeRule("mine"), "code");
+    expect(() => upsertLibraryRule(db, ruleCatalog, conversation("mine"), "conversation")).toThrow(/exists with kind code/u);
     expect(getLibraryRule(db, "mine")?.document.kind).toBe("code");
   });
 
   it("bumps a conversation rule's revision on each write and removes everything that points at a rule", async () => {
     const db = await repositoryWithLintPack([""]);
-    upsertLibraryRule(db, bundle, conversation("chat"), "conversation");
-    expect(upsertLibraryRule(db, bundle, conversation("chat"), "conversation").revision).toBe(2);
+    upsertLibraryRule(db, ruleCatalog, conversation("chat"), "conversation");
+    expect(upsertLibraryRule(db, ruleCatalog, conversation("chat"), "conversation").revision).toBe(2);
     addAttachment(db, { repositoryKey: REPOSITORY, folder: "api", sourceKind: "library_rule", sourceId: "chat" });
     setRuleSetting(db, { owner: { kind: "repository", repositoryKey: REPOSITORY }, folder: "api", targetKind: "rule", targetId: "chat", on: false, mode: null });
 
     expect(removeLibraryRule(db, "chat")).toBe(true);
     expect(db.select().from(ruleAttachments).all().map(row => row.sourceKind)).toEqual(["pack"]);
     expect(db.select().from(ruleSettings).all()).toEqual([]);
-    upsertLibraryRule(db, bundle, codeRule("chat"), "code");
+    upsertLibraryRule(db, ruleCatalog, codeRule("chat"), "code");
     expect(removeLibraryRule(db, "chat")).toBe(true);
     expect(removeLibraryRule(db, "chat")).toBe(false);
   });
 
   it("reports an unreadable row as quarantined and leaves it out of reads", async () => {
     const db = await temporaryDatabase();
-    upsertLibraryRule(db, bundle, codeRule("good"), "code");
+    upsertLibraryRule(db, ruleCatalog, codeRule("good"), "code");
     db.insert(libraryRules).values({
       ruleId: "broken", kind: "code", document: { kind: "code", rule: { id: "broken" } } as never,
       revision: 1, payloadHash: "x", createdAt: 1, updatedAt: 1,
@@ -76,7 +76,7 @@ describe("library rules", () => {
 
   it("quarantines a row the schema accepts and the engine refuses, and refuses to export it", async () => {
     const db = await temporaryDatabase();
-    upsertLibraryRule(db, bundle, codeRule("good"), "code");
+    upsertLibraryRule(db, ruleCatalog, codeRule("good"), "code");
     // Python has no `this`: the schema reads resolves.this as a shape, the engine refuses it for the language.
     const refused = {
       format: "rerail.policy/v1", id: "python-this", revision: 1, mode: "steer",
@@ -103,12 +103,12 @@ describe("copyRerailRuleToLibrary", () => {
     const db = await repositoryWithLintPack(["web", "api"]);
     const edited = codeRule("ignored", { message: "No print, ever" });
 
-    const copied = copyRerailRuleToLibrary(db, bundle, REPOSITORY, "no-console", edited);
+    const copied = copyRerailRuleToLibrary(db, ruleCatalog, REPOSITORY, "no-console", edited);
     expect(copied.rule).toMatchObject({ copiedFromRuleId: "no-console", document: { rule: { id: "no-console-copy" } } });
     expect(copied.folders).toEqual(["api", "web"]);
-    expect(copyRerailRuleToLibrary(db, bundle, REPOSITORY, "no-console", edited).rule.document.rule.id).toBe("no-console-copy-2");
+    expect(copyRerailRuleToLibrary(db, ruleCatalog, REPOSITORY, "no-console", edited).rule.document.rule.id).toBe("no-console-copy-2");
 
-    const rules = loadCheckoutRuleSet(db, bundle, checkout(CHECKOUT), RUNNING, []).rulesFor("web/a.ts");
+    const rules = loadCheckoutRuleSet(db, ruleCatalog, checkout(CHECKOUT), RUNNING, []).rulesFor("web/a.ts");
     expect(rules.map(rule => [rule.document.rule.id, rule.source.kind, rule.on])).toEqual([
       ["no-console", "pack", false],
       ["no-console-copy", "library_rule", true],
@@ -117,9 +117,9 @@ describe("copyRerailRuleToLibrary", () => {
     ]);
   });
 
-  it("leaves the original following the bundle", async () => {
+  it("leaves the original following the rule catalog", async () => {
     const db = await repositoryWithLintPack([""]);
-    copyRerailRuleToLibrary(db, bundle, REPOSITORY, "no-console", codeRule("x", { message: "edited" }));
+    copyRerailRuleToLibrary(db, ruleCatalog, REPOSITORY, "no-console", codeRule("x", { message: "edited" }));
 
     const updated = testBundle({ noConsoleRevision: 2 });
     const original = loadCheckoutRuleSet(db, updated, checkout(CHECKOUT), RUNNING, []).rulesFor("a.ts")
@@ -145,7 +145,7 @@ describe("copyRerailRuleToLibrary", () => {
 describe("rules dump", () => {
   it("round-trips the library and repository configuration, keeping this machine's start state", async () => {
     const source = await repositoryWithLintPack(["web"]);
-    upsertLibraryRule(source, bundle, codeRule("mine"), "code");
+    upsertLibraryRule(source, ruleCatalog, codeRule("mine"), "code");
     addAttachment(source, { repositoryKey: REPOSITORY, folder: "api", sourceKind: "library_rule", sourceId: "mine" });
     setRuleSetting(source, { owner: { kind: "repository", repositoryKey: REPOSITORY }, folder: "web", targetKind: "pack", targetId: "lint", on: null, mode: "log" });
     setRuleSetting(source, { owner: { kind: "checkout", checkoutPath: CHECKOUT }, folder: "", targetKind: "pack", targetId: "lint", on: false, mode: null });
@@ -155,12 +155,33 @@ describe("rules dump", () => {
     addRepository(target, REPOSITORY);
     target.update(repositories).set({ started: true }).run();
     addAttachment(target, { repositoryKey: REPOSITORY, folder: "", sourceKind: "rerail_rule", sourceId: "loose" });
-    expect(importRulesDump(target, bundle, dump)).toEqual({ library: 1, repositories: 1 });
+    expect(importRulesDump(target, ruleCatalog, dump)).toEqual({ library: 1, repositories: 1 });
 
     expect(exportRulesDump(target, new Date(0)).repositories).toEqual(exportRulesDump(source, new Date(0)).repositories);
     expect(getLibraryRule(target, "mine")?.document).toEqual(getLibraryRule(source, "mine")?.document);
     expect(target.select().from(repositories).get()?.started).toBe(true);
     expect(target.select().from(ruleSettings).all().map(row => row.ownerKind)).toEqual(["repository"]);
+  });
+
+  it("round-trips suppressions and config, writes neither when unset, and imports a setting from a dump that predates them", async () => {
+    const source = await repositoryWithLintPack(["web"]);
+    const owner = { kind: "repository" as const, repositoryKey: REPOSITORY };
+    setRuleSetting(source, { owner, folder: "web", targetKind: "pack", targetId: "lint", on: null, mode: null, suppressions: "ignore" });
+    setRuleSetting(source, { owner, folder: "", targetKind: "rule", targetId: "no-console", on: null, mode: "log", config: { word: "alert" } });
+    const exported = exportRulesDump(source, new Date(0));
+    expect(exported.repositories[0]!.settings).toEqual([
+      { folder: "", targetKind: "rule", targetId: "no-console", on: null, mode: "log", config: { word: "alert" } },
+      { folder: "web", targetKind: "pack", targetId: "lint", on: null, mode: null, suppressions: "ignore" },
+    ]);
+
+    const target = await temporaryDatabase();
+    importRulesDump(target, ruleCatalog, JSON.parse(JSON.stringify(exported)) as unknown);
+    expect(exportRulesDump(target, new Date(0)).repositories).toEqual(exported.repositories);
+
+    const older = { ...exported, repositories: [{ ...exported.repositories[0]!, settings: [{ folder: "web", targetKind: "pack", targetId: "lint", on: false, mode: null }] }] };
+    importRulesDump(target, ruleCatalog, JSON.parse(JSON.stringify(older)) as unknown);
+    expect(target.select({ suppressions: ruleSettings.suppressions, config: ruleSettings.config, on: ruleSettings.on }).from(ruleSettings).all())
+      .toEqual([{ suppressions: null, config: null, on: false }]);
   });
 
   it("keeps a library rule that a later release bundles editable, and round-trips it through a dump", async () => {
@@ -184,7 +205,7 @@ describe("rules dump", () => {
     addRepository(target, "remote:github.com/acme/app-renamed");
     target.update(repositories).set({ aliases: [REPOSITORY] }).run();
 
-    expect(importRulesDump(target, bundle, dump)).toEqual({ library: 0, repositories: 1 });
+    expect(importRulesDump(target, ruleCatalog, dump)).toEqual({ library: 0, repositories: 1 });
     expect(target.select({ key: repositories.repositoryKey, aliases: repositories.aliases }).from(repositories).all())
       .toEqual([{ key: "remote:github.com/acme/app-renamed", aliases: [REPOSITORY] }]);
     expect(target.select({ key: ruleAttachments.repositoryKey, folder: ruleAttachments.folder }).from(ruleAttachments).all())
@@ -203,12 +224,12 @@ describe("rules dump", () => {
       ],
       repositories: [],
     };
-    expect(() => importRulesDump(db, bundle, dump)).toThrow();
+    expect(() => importRulesDump(db, ruleCatalog, dump)).toThrow();
     expect(listLibraryRules(db)).toEqual([]);
   });
 
   it("rejects a dump of another version", async () => {
     const db = await temporaryDatabase();
-    expect(() => importRulesDump(db, bundle, { version: 5, exportedAt: "now", rules: [] })).toThrow(/v5 rules dump can't be imported/u);
+    expect(() => importRulesDump(db, ruleCatalog, { version: 5, exportedAt: "now", rules: [] })).toThrow(/v5 rules dump can't be imported/u);
   });
 });

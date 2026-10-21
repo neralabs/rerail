@@ -27,15 +27,18 @@ const notSetUpLines = ({ repositoryName, sigil }: RerailSummaryInput): string[] 
 
 const onLine = ({ repositoryName }: RerailSummaryInput): string => `● Rerail is on in this repo · ${repositoryName}`;
 
-/** The headline without a session (Cursor, or OMP/Pi where none is attached): from the repository's state. */
+/**
+ * The headline without a session (Cursor, or OMP/Pi where none is attached): from the repository's state. With no
+ * session to show, the link is to the rules this repository runs (design N8, Cursor).
+ */
 function repositoryHeadline(input: RerailSummaryInput): readonly string[] {
   const { repositoryState, ruleCount, rulesUrl } = input;
   if (repositoryState === null) return NOT_RUNNING;
   if (repositoryState === "not-set-up") return notSetUpLines(input);
   if (repositoryState === "stopped") return notOnLines(input);
   const lines = [onLine(input)];
-  if (ruleCount !== null) lines.push(`  ${plural(ruleCount, "rule")} on`);
-  if (rulesUrl !== null) lines.push(`  Dashboard → ${rulesUrl}`);
+  if (ruleCount !== null) lines.push(`  ${plural(ruleCount, "rule")}`);
+  if (rulesUrl !== null) lines.push(`  Manage rules → ${rulesUrl}`);
   return lines;
 }
 

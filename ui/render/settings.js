@@ -1,11 +1,11 @@
 /**
- * Settings (W6). General: theme, rule panel width, the status line, history and the daemon. Repos:
- * each Started or Stopped, with a switch. Coding agents: which are connected. Uninstall: the command
- * and where the backup goes. Rerail starts per repo; there is no every-repo setting.
+ * Settings (W6). General: theme, rule panel width, the status line, the scoped repo's Follow .gitignore, history
+ * and the daemon. Repos: each Started or Stopped, with a switch. Coding agents: which are connected. Uninstall: the
+ * command and where the backup goes. Rerail starts per repo; there is no every-repo setting.
  */
 import { h, setContent, icon } from "../dom.js";
 import { andList, fmt, plural } from "../format.js";
-import { data, ui } from "../state.js";
+import { data, ui, runningCount } from "../state.js";
 
 const UNINSTALL_COMMAND = "rerail install --remove";
 
@@ -27,6 +27,10 @@ function general() {
       row("Rule panel", "Wide gives long titles and rule pack lists more room.", seg("pwidth", [["0", "Default"], ["1", "Wide"]], ui.wide ? "1" : "0")),
       row("Status line", "Rerail’s line in your coding agent’s footer: how many rules are on, and how often it steered.",
         data.presence === null ? h("span.val", null, "…") : seg("presence", [["compact", "Show"], ["silent", "Do not show"]], data.presence)),
+      ui.scope === null ? null : row("Follow .gitignore",
+        ["Files git ignores (", h("code", null, ".gitignore"), ", ", h("code", null, ".git/info/exclude"), ", your global excludes) are not checked in ",
+          data.repository?.name ?? "this repo", ". Applies to sessions started after the change."],
+        data.followGitignore === null ? h("span.val", null, "…") : seg("gitignore", [["on", "On"], ["off", "Off"]], data.followGitignore ? "on" : "off")),
       row("History", health ? ["Kept in ", h("span.mono", null, health.database.path), " · nothing leaves your computer"] : "Nothing leaves your computer", null),
       row("Daemon", health ? [h("span.mono", null, location.origin), ` · v${health.version}`] : h("span.mono", null, location.origin),
         h("span.val", null, live ? "Running" : data.loaded ? "Not answering" : "Connecting…"))));
@@ -35,7 +39,7 @@ function general() {
 /** One repository (`GET /api/repositories`): set up or not, and a switch that starts or stops every checkout of it. */
 function repoRow(repo) {
   const current = repo.repositoryKey === data.repository?.repositoryKey;
-  const on = current ? [...data.rules.values()].filter(r => r.enabled).length : null;
+  const on = current ? runningCount() : null;
   const checkouts = `${fmt(repo.checkoutCount)} ${plural(repo.checkoutCount, "checkout")}`;
   const detail = !repo.setUp ? "not set up yet" : current ? `${fmt(on)} ${plural(on, "rule")} on` : "set up";
   const sub = [h("span.mono", null, repo.repositoryKey), ` · ${checkouts} · ${detail}`,
@@ -88,7 +92,7 @@ function uninstall() {
 }
 
 export function renderSettings(root) {
-  const sig = JSON.stringify([ui.theme, ui.wide, data.presence, data.health?.version, data.health?.database.path, data.loaded, data.disconnected,
-    data.repositories, data.repository?.repositoryKey, [...data.rules.values()].filter(r => r.enabled).length, data.agents, data.agentsError]);
+  const sig = JSON.stringify([ui.theme, ui.wide, data.presence, ui.scope, data.followGitignore, data.health?.version, data.health?.database.path, data.loaded,
+    data.disconnected, data.repositories, data.repository?.repositoryKey, data.repository?.name, runningCount(), data.agents, data.agentsError]);
   setContent(root, sig, () => h("div.settings", null, general(), repos(), agents(), uninstall()));
 }

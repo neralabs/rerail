@@ -57,3 +57,47 @@ it("says Rerail is not on here, without asking a daemon, where the host knows it
   expect(readPresentation).not.toHaveBeenCalled();
   expect(polling).toBe(false);
 });
+
+it("says session events are being dropped while the daemon's status still reads, and clears it when they stop", async () => {
+  const read = Promise.withResolvers<SessionPresentation>();
+  vi.mocked(readPresentation).mockReturnValueOnce(read.promise);
+  let visible: string[] | undefined;
+  const context = {
+    cwd: "/workspace", hasUI: true,
+    sessionManager: { getSessionId: () => "dropping" },
+    ui: { setWidget: (_key: string, lines: string[] | undefined) => { visible = lines; } },
+    setInterval: () => 1,
+    clearTimer: () => undefined,
+  } as unknown as ExtensionContext;
+  const hud = createOmpPresentation();
+  hud.start(context);
+  hud.dropped(1);
+  expect(visible).toEqual(["Rerail: 1 session event dropped — daemon not answering"]);
+  // `/healthz` may answer while the session's own requests do not: both lines show.
+  read.resolve({ status: "on", text: "Rerail ● 3 rules", parts: [], url: null, presence: "compact", repositoryState: "started", counts: null });
+  await read.promise;
+  hud.dropped(4);
+  expect(visible).toEqual(["Rerail ● 3 rules", "Rerail: 4 session events dropped — daemon not answering"]);
+  hud.dropped(0);
+  expect(visible).toEqual(["Rerail ● 3 rules"]);
+  hud.stop();
+});
+
+it("keeps a silent footer silent while session events are being dropped", async () => {
+  vi.mocked(readPresentation).mockResolvedValueOnce({ status: "on", text: "Rerail ● 3 rules", parts: [], url: null, presence: "silent", repositoryState: "started", counts: null });
+  let visible: string[] | undefined;
+  let painted = false;
+  const context = {
+    cwd: "/workspace", hasUI: true,
+    sessionManager: { getSessionId: () => "silent" },
+    ui: { setWidget: (_key: string, lines: string[] | undefined) => { visible = lines; painted = true; } },
+    setInterval: () => 1,
+    clearTimer: () => undefined,
+  } as unknown as ExtensionContext;
+  const hud = createOmpPresentation();
+  hud.start(context);
+  await vi.waitFor(() => expect(painted).toBe(true));
+  hud.dropped(2);
+  expect(visible).toBeUndefined();
+  hud.stop();
+});

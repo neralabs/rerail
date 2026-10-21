@@ -1,9 +1,10 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { constants, type Stats } from "node:fs";
-import { type FileHandle, lstat, mkdtemp, open, opendir, readFile, realpath, rm } from "node:fs/promises";
+import { type FileHandle, lstat, mkdtemp, open, opendir, readFile, realpath, rename, rm, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
+  AuditorCloseOptions,
   CodeRuleEdit,
   CodeRuleEditBatch,
   CodeRuleAuditor,
@@ -13,11 +14,15 @@ import type {
   CodeRuleSourceLanguage,
 } from "./code-rule.js";
 import type { AuditMode } from "../audit/audit.js";
+import { readGitBlobs } from "../git.js";
+import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { languageOfPath, SOURCE_LANGUAGES } from "./code-rule-languages.js";
 
 
 const MAX_SOURCE_BYTES = 1_000_000;
+/** The most source text the session keeps as later preimages (`#texts`); the least recently changed goes first. */
+const MAX_SESSION_TEXT_BYTES = 64 * 1024 * 1024;
 /** Paths observed per wave; on network or virtualised mounts each lstat/read is a round trip, so latency, not bandwidth, bounds the walk. */
 const OBSERVATION_CONCURRENCY = 16;
 const IGNORED_DIRECTORIES = new Set([
@@ -56,6 +61,16 @@ interface PendingEdit {
   readonly paths: readonly string[];
   readonly preimages: ReadonlyMap<string, Preimage>;
 }
+/** A finished edit `rewind` may still roll back: the revision its finish audited, and each path's digest after it (none when absent). */
+interface RewindableEdit {
+  readonly revision: number;
+  readonly preimages: ReadonlyMap<string, Preimage>;
+  readonly after: ReadonlyMap<string, string | undefined>;
+}
+/** The paths `rewind` put back, and the revision that audited them back (in `log` mode). */
+export interface RewoundEdit extends RewoundPaths {
+  readonly revision: number;
+}
 
 /** Which boundary asked for a discovery pass; a stronger request absorbs weaker ones queued behind the same walk. */
 type DiscoveryCheckpoint = "edit" | "turn" | "final";
@@ -80,6 +95,8 @@ interface SourceDiscovery {
   /** Subtrees whose first successful observation must still be a baseline. */
   baselineRoots: Set<string>;
   error: string | undefined;
+  /** A boundary answered while the current walk was running; closing before it finishes says so again. */
+  pendingReported: boolean;
 }
 
 /**
@@ -149,9 +166,16 @@ function sameSource(left: ObservedSource | undefined, right: Source | undefined)
 function emptyResponse(revision: number): CodeRuleResponse {
   return { revision, disposition: "continue", violations: [], failures: [] };
 }
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 function underBaselineRoot(roots: ReadonlySet<string>, path: string): boolean {
   for (const root of roots) if (root === "" || path.startsWith(`${root}/`)) return true;
   return false;
+}
+/** `absolute` relative to the walk's root (the session folder), `/`-separated, as the auditor names paths. */
+function sessionPath(root: string, absolute: string): string {
+  return relative(root, absolute).split(sep).join("/");
 }
 function uncapturedPreimage(baselinePath: boolean, before: ObservedSource | undefined): Pick<CodeRuleEdit, "previousReadError"> {
   if (baselinePath) return { previousReadError: "Source changed during initial discovery without a captured preimage" };
@@ -184,6 +208,17 @@ export function isCommandTool(toolName: string): boolean {
   return /bash|shell|exec|terminal|command|cmd/iu.test(toolName);
 }
 
+/**
+ * How long a turn checkpoint or a command result waits for a checkout-wide source walk, and a code-rule boundary
+ * waits for the session's evaluator to open, before answering with what it has. The work goes on, and what it finds
+ * is audited and delivered at a later boundary; waiting longer would hold the session's event lane past the host's
+ * per-event timeout.
+ */
+export const BOUNDARY_DISCOVERY_WAIT_MS = 10_000;
+
+/** A boundary answered while a source walk was still running: its shell writes are checked later, or never for `close`. */
+export type DiscoveryPendingBoundary = "turn" | "final" | "command" | "close";
+
 /** Captures only changed source snapshots; the startup snapshot is discovery state, never evaluator input. */
 export class CodeRuleBridge {
   readonly #cwd: string;
@@ -191,14 +226,25 @@ export class CodeRuleBridge {
   readonly #onRevision: ((sessionId: string, revision: number, paths: readonly string[]) => void) | undefined;
   readonly #observations: SourceObservationCache | undefined;
   readonly #pending = new Map<string, PendingEdit>();
+  /** Finished edits kept rewindable by their tool call, from `finish` until `release`. */
+  readonly #rewindable = new Map<string, RewindableEdit>();
   /** Command tool calls whose results must reconcile shell writes. */
   readonly #commands = new Set<string>();
   readonly #observed = new Map<string, ObservedSource>();
+  /**
+   * The text each source this session changed was last seen with: the preimage of its next change made without one
+   * captured, once its digest proves it (`#recoverPreimages`). Only changed sources are kept, never the baseline, and at
+   * most `MAX_SESSION_TEXT_BYTES` of them, the least recently changed evicted first: an evicted source falls back to Git.
+   */
+  readonly #texts = new Map<string, { text: string; bytes: number }>();
+  #textBytes = 0;
   #lastResponse = emptyResponse(0);
   #sessionId: string | undefined;
   #revision = 0;
   #queue: Promise<void> = Promise.resolve();
   #discovery: SourceDiscovery | undefined;
+  readonly #discoveryWaitMs: number;
+  readonly #onDiscoveryPending: ((boundary: DiscoveryPendingBoundary) => void) | undefined;
 
   constructor(
     cwd: string,
@@ -206,15 +252,21 @@ export class CodeRuleBridge {
     options: {
       onRevision?(sessionId: string, revision: number, paths: readonly string[]): void;
       observations?: SourceObservationCache;
+      /** How long a boundary waits for a source walk; `BOUNDARY_DISCOVERY_WAIT_MS` by default. */
+      discoveryWaitMs?: number;
+      /** Told when a boundary answers, or the bridge closes, while a source walk is still running. */
+      onDiscoveryPending?(boundary: DiscoveryPendingBoundary): void;
     } = {},
   ) {
     this.#cwd = resolve(cwd);
     this.#auditor = auditor;
     this.#onRevision = options.onRevision;
     this.#observations = options.observations;
+    this.#discoveryWaitMs = options.discoveryWaitMs ?? BOUNDARY_DISCOVERY_WAIT_MS;
+    this.#onDiscoveryPending = options.onDiscoveryPending;
   }
 
-  /** Resolves once the evaluator is open; the baseline walk runs behind it and blocks only the next checkpoint or command result. */
+  /** Resolves once the evaluator is open; the baseline walk runs behind it and delays only the next checkpoint or command result. */
   async openWorkspace(sessionId: string): Promise<void> {
     await this.#enqueue(async () => {
       const startedAt = await filesystemClock();
@@ -224,8 +276,11 @@ export class CodeRuleBridge {
         await this.#auditor.close();
       }
       this.#pending.clear();
+      this.#rewindable.clear();
       this.#commands.clear();
       this.#observed.clear();
+      this.#texts.clear();
+      this.#textBytes = 0;
       this.#discovery = undefined;
       const root = await realpath(this.#cwd);
       await this.#auditor.openWorkspace(sessionId);
@@ -234,7 +289,7 @@ export class CodeRuleBridge {
       this.#lastResponse = emptyResponse(0);
       const discovery: SourceDiscovery = {
         startedAt, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
-        versions: new Map(), baselineRoots: new Set(), error: undefined,
+        versions: new Map(), baselineRoots: new Set(), error: undefined, pendingReported: false,
       };
       this.#discovery = discovery;
       // The lowest priority: whichever boundary first waits on the baseline labels what it finds.
@@ -266,8 +321,11 @@ export class CodeRuleBridge {
     });
   }
 
-  /** A failed command may still have written files, so command results reconcile regardless of `failed`. */
-  async finish(toolCallId: string, failed = false): Promise<readonly CodeRuleResponse[]> {
+  /**
+   * A failed command may still have written files, so command results reconcile regardless of `failed`. With
+   * `rewindable` the edit's preimages are kept for `rewind` until `release`.
+   */
+  async finish(toolCallId: string, failed = false, options: { rewindable?: boolean } = {}): Promise<readonly CodeRuleResponse[]> {
     const discovery = this.#requireDiscovery();
     if (this.#commands.delete(toolCallId)) return await this.#reconcile(discovery);
     return await this.#enqueue(async () => {
@@ -276,15 +334,163 @@ export class CodeRuleBridge {
       this.#pending.delete(toolCallId);
       if (pending === undefined || failed) return [];
       this.refreshCodeRules();
-      const edits = await this.#readEdits(discovery, pending.paths, pending.preimages);
-      return edits.length === 0 ? [] : [await this.#auditEdits(edits, ["edit", "function"])];
+      const { edits, uncaptured } = await this.#readEdits(discovery, pending.paths, pending.preimages);
+      if (edits.length === 0) return [];
+      // Kept before the audit starts, so a steer its evaluation publishes finds it.
+      if (options.rewindable === true) {
+        const after = new Map([...pending.preimages.keys()].map(path => [path, this.#observed.get(path)?.digest]));
+        this.#rewindable.set(toolCallId, { revision: this.#revision + 1, preimages: pending.preimages, after });
+      }
+      return [await this.#auditEdits(discovery, edits, ["edit", "function"], uncaptured)];
     });
   }
 
-  /** Resolves after every requested walk has run, so the checkpoint's violations are delivered with this boundary. */
+  /** Ends the window in which `rewind` may roll the call's edit back. */
+  release(toolCallId: string): void {
+    this.#rewindable.delete(toolCallId);
+  }
+
+  /** Whether a steer at `revision` over `scope` is the check of the call's finished edit, from `finish` until `release`. */
+  checks(toolCallId: string, revision: number, scope: readonly string[]): boolean {
+    const rewindable = this.#rewindable.get(toolCallId);
+    return rewindable !== undefined && rewindable.revision === revision
+      && scope.length > 0 && scope.every(path => rewindable.preimages.has(path));
+  }
+
+  /**
+   * Rolls a finished, still rewindable edit back to its captured preimages, every file or none: a file that did not
+   * exist is deleted. Only for a steer at the revision its finish audited whose `scope` lies within the captured
+   * paths, while every preimage was read, every file still holds what the edit left, and no other call begun and
+   * unfinished, or still rewindable, covers any of them (rolling back over its write would undo it). Each file is
+   * replaced whole, so a failed write leaves it as it was; when putting already rolled-back files back fails too, those
+   * files stay rolled back and are reported. The rollback is observed as Rerail's own write, so no walk reports it as an
+   * uncaptured edit, and audited in `log` mode, so the evaluator holds the restored source without a steer for it; that
+   * audit failing is logged, never a reason to lose what was rolled back. Undefined when nothing was rolled back.
+   */
+  async rewind(toolCallId: string, revision: number, scope: readonly string[]): Promise<RewoundEdit | undefined> {
+    const rewindable = this.#rewindable.get(toolCallId);
+    if (rewindable === undefined || rewindable.revision !== revision) return undefined;
+    this.#rewindable.delete(toolCallId);
+    const { preimages, after } = rewindable;
+    if (scope.length === 0 || scope.some(path => !preimages.has(path))) return undefined;
+    if ([...preimages.values()].some(preimage => preimage.readError !== undefined)) return undefined;
+    const discovery = this.#discovery;
+    if (discovery === undefined || discovery.cancelled) return undefined;
+    return await this.#enqueue(async () => {
+      if (this.#discovery !== discovery || discovery.cancelled) return undefined;
+      if (this.#shared(toolCallId, preimages.keys())) return undefined;
+      const root = await realpath(this.#cwd);
+      const targets: Array<{ location: SourceLocation; preimage: Preimage; current: Source }> = [];
+      for (const [path, preimage] of preimages) {
+        const location = this.#sourceLocation(root, path);
+        const current = await this.#readSource(root, path);
+        if (location === undefined || current === undefined || current.readError !== undefined) return undefined;
+        if (current.digest !== after.get(path)) return undefined;
+        if (current.deleted && preimage.text !== undefined && !await this.#ownsFolder(root, location)) return undefined;
+        targets.push({ location, preimage, current });
+      }
+      let written: typeof targets = [];
+      try {
+        for (const target of targets) {
+          if (target.current.text === target.preimage.text) continue;
+          await this.#writeSource(target.location, target.preimage.text);
+          written.push(target);
+        }
+      } catch (error) {
+        // Every file or none: what was already put back takes the edit's text again.
+        const stuck: typeof targets = [];
+        let undoError: unknown;
+        for (const target of written) {
+          await this.#writeSource(target.location, target.current.text).catch((failure: unknown) => {
+            stuck.push(target);
+            undoError ??= failure;
+          });
+        }
+        const kept = stuck.length === 0
+          ? ""
+          : `; ${stuck.map(target => target.location.path).join(", ")} stay rolled back: ${errorMessage(undoError)}`;
+        process.stderr.write(`rerail: could not roll back tool call ${toolCallId}: ${errorMessage(error)}${kept}\n`);
+        if (stuck.length === 0) return undefined;
+        written = stuck;
+      }
+      try {
+        const edits: CodeRuleEdit[] = [];
+        for (const { location, current } of written) {
+          const source = await this.#readSource(root, location.path);
+          this.#touchSource(discovery, location.path);
+          if (source === undefined) continue;
+          this.#updateObservedSource(source);
+          const edit = this.#editFromToolSource(source, current.text === undefined ? {} : { text: current.text });
+          if (edit !== undefined) edits.push(edit);
+        }
+        // Every rolled-back file has its preimage (the edit's text), so nothing is left to recover.
+        if (edits.length > 0) await this.#auditEdits(discovery, edits, ["edit", "function"], new Map(), "log");
+      } catch (error) {
+        process.stderr.write(`rerail: could not audit the rollback of tool call ${toolCallId}: ${errorMessage(error)}\n`);
+      }
+      return {
+        revision: this.#revision,
+        restored: written.filter(target => target.preimage.text !== undefined).map(target => target.location.path),
+        deleted: written.filter(target => target.preimage.text === undefined).map(target => target.location.path),
+      };
+    });
+  }
+
+  /** Whether a call other than `toolCallId`, begun and unfinished or still rewindable, covers any of `paths`. */
+  #shared(toolCallId: string, paths: Iterable<string>): boolean {
+    const others = [...this.#pending, ...this.#rewindable].flatMap(([id, edit]) => (id === toolCallId ? [] : [edit.preimages]));
+    for (const path of paths) if (others.some(preimages => preimages.has(path))) return true;
+    return false;
+  }
+
+  /** Whether the folder a file is to be created in lies in the checkout that owns the file. */
+  async #ownsFolder(root: string, location: SourceLocation): Promise<boolean> {
+    const owner = this.#auditor.sourceRoot === undefined ? root : this.#auditor.sourceRoot(location.path);
+    if (owner === undefined) return false;
+    const folder = await realpath(dirname(location.absolute)).catch(() => undefined);
+    return folder !== undefined && (folder === owner || folder.startsWith(`${owner}${sep}`));
+  }
+
+  /**
+   * Replaces the file whole with `text`, written to a temporary file beside it and renamed over it, so a failed write
+   * leaves the file as it was; a symlink or other non-regular file there is refused, never followed or replaced. An
+   * existing file keeps its permissions. Without text the file is removed.
+   */
+  async #writeSource(location: SourceLocation, text: string | undefined): Promise<void> {
+    if (text === undefined) {
+      await unlink(location.absolute).catch((error: unknown) => {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+      });
+      return;
+    }
+    const existing = await lstat(location.absolute).catch((error: unknown) => {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+      throw error;
+    });
+    if (existing !== undefined && !existing.isFile()) throw new Error(`${location.path} is not a regular file`);
+    const temporary = join(dirname(location.absolute), `.${basename(location.absolute)}.rerail-${randomBytes(6).toString("hex")}.tmp`);
+    const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o666);
+    try {
+      try {
+        if (existing !== undefined) await handle.chmod(existing.mode & 0o7777);
+        await handle.writeFile(text, "utf8");
+      } finally {
+        await handle.close();
+      }
+      await rename(temporary, location.absolute);
+    } catch (error) {
+      await unlink(temporary).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  /**
+   * Resolves after every requested walk has run, so the checkpoint's violations are delivered with this boundary; a walk
+   * that outlasts the boundary's wait is reported pending, and what it finds reaches a later boundary.
+   */
   async checkpoint(checkpoint: Extract<CodeRuleCheckpoint, "turn" | "final">): Promise<CodeRuleResponse> {
     const discovery = this.#requireDiscovery();
-    await this.#requestDiscovery(discovery, checkpoint);
+    await this.#awaitDiscovery(discovery, checkpoint, checkpoint);
     this.#assertDiscovery(discovery);
     return this.#discoveryResponse(discovery);
   }
@@ -292,7 +498,7 @@ export class CodeRuleBridge {
   async #reconcile(discovery: SourceDiscovery): Promise<readonly CodeRuleResponse[]> {
     const revision = this.#revision;
     this.refreshCodeRules();
-    await this.#requestDiscovery(discovery, "edit");
+    await this.#awaitDiscovery(discovery, "edit", "command");
     this.#assertDiscovery(discovery);
     return this.#revision === revision ? [] : [this.#lastResponse];
   }
@@ -331,24 +537,30 @@ export class CodeRuleBridge {
     });
     return await work;
   }
-  interrupt(): void {
-    this.#auditor.interrupt?.();
+  interrupt(options?: AuditorCloseOptions): void {
+    this.#auditor.interrupt?.(options);
   }
 
 
-  async close(): Promise<void> {
+  async close(options?: AuditorCloseOptions): Promise<void> {
     const discovery = this.#discovery;
     if (discovery === undefined || discovery.cancelled) return;
-    // Cancel before joining the operation queue: a blocked filesystem read is not shutdown work.
+    // Cancel before reporting and before joining the operation queue: neither the report nor a blocked filesystem read
+    // may keep the walk going.
     discovery.cancelled = true;
+    // A walk a boundary already gave up on is abandoned here: what it had not reached is never checked.
+    if (discovery.idle !== undefined && discovery.pendingReported) this.#reportDiscoveryPending("close");
     await this.#enqueue(async () => {
       if (this.#discovery !== discovery) return;
       this.#sessionId = undefined;
       this.#pending.clear();
+      this.#rewindable.clear();
       this.#commands.clear();
       this.#observed.clear();
+      this.#texts.clear();
+      this.#textBytes = 0;
       this.#discovery = undefined;
-      await this.#auditor.close();
+      await this.#auditor.close(options);
     });
   }
   async #capturePreimages(paths: readonly string[]): Promise<ReadonlyMap<string, Preimage>> {
@@ -368,21 +580,27 @@ export class CodeRuleBridge {
     return preimages;
   }
 
+  /** The tool call's edits, and the digest each source had before it where the call's start captured no preimage. */
   async #readEdits(
     discovery: SourceDiscovery,
     paths: readonly string[],
     preimages: ReadonlyMap<string, Preimage>,
-  ): Promise<CodeRuleEdit[]> {
+  ): Promise<{ edits: CodeRuleEdit[]; uncaptured: Map<string, string> }> {
     const root = await realpath(this.#cwd);
     const edits: CodeRuleEdit[] = [];
+    const uncaptured = new Map<string, string>();
     for (const configuredPath of [...paths].sort(compareDeterministicStrings)) {
       const source = await this.#readSource(root, configuredPath);
       if (source === undefined) continue;
       this.#touchSource(discovery, source.path);
-      const edit = this.#readEdit(source, preimages.get(source.path));
-      if (edit !== undefined) edits.push(edit);
+      const preimage = preimages.get(source.path);
+      const before = this.#observed.get(source.path)?.digest;
+      const edit = this.#readEdit(source, preimage);
+      if (edit === undefined) continue;
+      edits.push(edit);
+      if (preimage === undefined && before !== undefined && edit.generatedText !== undefined) uncaptured.set(edit.path, before);
     }
-    return edits;
+    return { edits, uncaptured };
   }
 
   /** Queues a pass for `checkpoint` and resolves once the walk is idle, i.e. every pass requested so far has run. */
@@ -392,6 +610,34 @@ export class CodeRuleBridge {
     // The traversal never occupies #queue. Only completed snapshots join ordered tool revisions.
     discovery.idle ??= this.#runDiscovery(discovery);
     return discovery.idle;
+  }
+
+  /** A requested walk, waited for at most `#discoveryWaitMs`; a walk that outlasts it is reported pending at `boundary`. */
+  async #awaitDiscovery(
+    discovery: SourceDiscovery,
+    checkpoint: DiscoveryCheckpoint,
+    boundary: Exclude<DiscoveryPendingBoundary, "close">,
+  ): Promise<void> {
+    const budget = Promise.withResolvers<boolean>();
+    const timer = setTimeout(() => budget.resolve(false), this.#discoveryWaitMs);
+    try {
+      const walked = await Promise.race([this.#requestDiscovery(discovery, checkpoint).then(() => true), budget.promise]);
+      if (!walked && !discovery.cancelled) {
+        discovery.pendingReported = true;
+        this.#reportDiscoveryPending(boundary);
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /** Recording a boundary that answered before its shell-write check is best-effort: it never fails the boundary. */
+  #reportDiscoveryPending(boundary: DiscoveryPendingBoundary): void {
+    try {
+      this.#onDiscoveryPending?.(boundary);
+    } catch (error) {
+      process.stderr.write(`rerail: policy execution recording failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
   }
 
   async #runDiscovery(discovery: SourceDiscovery): Promise<void> {
@@ -406,6 +652,7 @@ export class CodeRuleBridge {
       }
     } finally {
       discovery.idle = undefined;
+      discovery.pendingReported = false;
     }
   }
 
@@ -424,10 +671,11 @@ export class CodeRuleBridge {
     if (discovery.cancelled || this.#discovery !== discovery) return;
     await this.#enqueue(async () => {
       if (discovery.cancelled || this.#discovery !== discovery) return;
-      const edits = this.#discoverEdits(discovery, scan.sources, previous, versions, baseline);
+      const uncaptured = new Map<string, string>();
+      const edits = this.#discoverEdits(discovery, scan.sources, previous, versions, baseline, uncaptured);
       try {
         if (edits.length > 0)
-          await this.#auditEdits(edits, discoveryCheckpoints(strongerCheckpoint(checkpoint, discovery.requested)));
+          await this.#auditEdits(discovery, edits, discoveryCheckpoints(strongerCheckpoint(checkpoint, discovery.requested)), uncaptured);
       } catch (error) {
         // A rejected evaluator submission is not an observation we have enforced.
         // Restore these baselines so the next requested scan can retry the changes.
@@ -447,12 +695,14 @@ export class CodeRuleBridge {
     if (baseline && discovery.requested === undefined) discovery.requested = checkpoint;
   }
 
+  /** The changes the walk found; `uncaptured` receives the digest each changed source was observed with before. */
   #discoverEdits(
     discovery: SourceDiscovery,
     current: ReadonlyMap<string, Source>,
     previous: ReadonlyMap<string, ObservedSource>,
     versions: ReadonlyMap<string, number>,
     baseline: boolean,
+    uncaptured: Map<string, string>,
   ): CodeRuleEdit[] {
     const pendingPaths = new Set<string>();
     for (const pending of this.#pending.values())
@@ -464,7 +714,11 @@ export class CodeRuleBridge {
       // A begin/finish after scan launch wins even when its bytes happen to match the old snapshot.
       if (discovery.versions.get(path) !== versions.get(path) || pendingPaths.has(path)) continue;
       const edit = this.#discoveredEdit(discovery, path, previous.get(path), current.get(path), baseline);
-      if (edit !== undefined) edits.push(edit);
+      if (edit === undefined) continue;
+      edits.push(edit);
+      const before = previous.get(path)?.digest;
+      if (edit.previousReadError !== undefined && edit.generatedText !== undefined && before !== undefined && !baseline)
+        uncaptured.set(path, before);
     }
     return edits;
   }
@@ -517,18 +771,23 @@ export class CodeRuleBridge {
     }
   }
 
+  /** Folders Git ignores (when the session follows `.gitignore`) are never entered, so nothing below them is observed. */
   async #expandDirectory(walk: SourceWalk, absolute: string): Promise<void> {
     for await (const entry of await opendir(absolute)) {
       if (walk.discovery.cancelled) return;
       if (entry.isSymbolicLink() || (entry.isDirectory() && IGNORED_DIRECTORIES.has(entry.name))) continue;
-      if (entry.isDirectory() || entry.isFile()) walk.stack.push(join(absolute, entry.name));
+      const child = join(absolute, entry.name);
+      if (entry.isDirectory() && this.#auditor.ignoresPath?.(sessionPath(walk.discovery.root, child), true)) continue;
+      if (entry.isDirectory() || entry.isFile()) walk.stack.push(child);
     }
   }
 
+  /** A file Git ignores is not observed at all: no baseline entry, so no later read or edit of it is audited. */
   async #observeRegularFile(walk: SourceWalk, absolute: string, info: Stats): Promise<void> {
-    const path = relative(walk.discovery.root, absolute).split(sep).join("/");
+    const path = sessionPath(walk.discovery.root, absolute);
     const language = languageOfPath(SOURCE_LANGUAGES, path);
-    if (language !== undefined) await this.#observeFile(walk, { absolute, path, language }, info);
+    if (language !== undefined && !this.#auditor.ignoresPath?.(path, false))
+      await this.#observeFile(walk, { absolute, path, language }, info);
   }
 
   async #observeFile(walk: SourceWalk, location: SourceLocation, info: Stats): Promise<void> {
@@ -572,7 +831,7 @@ export class CodeRuleBridge {
 
   #recordObservationFailure(walk: SourceWalk, absolute: string, error: unknown): void {
     const { discovery, previousSources, scan } = walk;
-    const path = relative(discovery.root, absolute).split(sep).join("/");
+    const path = sessionPath(discovery.root, absolute);
     const language = languageOfPath(SOURCE_LANGUAGES, path);
     const readError = error instanceof Error ? error.message : String(error);
     if (language !== undefined) {
@@ -681,13 +940,82 @@ export class CodeRuleBridge {
     };
   }
 
-  async #auditEdits(edits: CodeRuleEditBatch["edits"], checkpoints: CodeRuleCheckpoint[]): Promise<CodeRuleResponse> {
+  async #auditEdits(
+    discovery: SourceDiscovery,
+    captured: CodeRuleEditBatch["edits"],
+    checkpoints: CodeRuleCheckpoint[],
+    uncaptured: ReadonlyMap<string, string>,
+    mode?: AuditMode,
+  ): Promise<CodeRuleResponse> {
     const sessionId = this.#requireSession();
+    const edits = await this.#recoverPreimages(discovery.root, captured, uncaptured);
+    for (const edit of edits) {
+      this.#forgetText(edit.path);
+      if (edit.generatedText !== undefined) this.#rememberText(edit.path, edit.generatedText);
+    }
     const paths = edits.map(edit => edit.path).sort(compareDeterministicStrings);
     this.#revision += 1;
     this.#onRevision?.(sessionId, this.#revision, paths);
-    this.#lastResponse = await this.#auditor.auditGeneratedEdits(sessionId, { revision: this.#revision, checkpoints, edits });
+    this.#lastResponse = await this.#auditor.auditGeneratedEdits(sessionId, {
+      revision: this.#revision, checkpoints, edits, ...(mode === undefined ? {} : { mode }),
+    });
     return this.#lastResponse;
+  }
+
+  /**
+   * Gives each edit `uncaptured` names (made with no preimage captured: a shell write, a tool call whose start was not
+   * seen) the source it changed, where that is known exactly: the text this session last saw the file with, else its
+   * Git index or `HEAD` blob, each taken only when its SHA-256 is the digest observed before the change. Any other
+   * keeps its `previousReadError`, so the generated lines stay unknown rather than guessed.
+   */
+  async #recoverPreimages(
+    root: string,
+    edits: CodeRuleEditBatch["edits"],
+    uncaptured: ReadonlyMap<string, string>,
+  ): Promise<CodeRuleEditBatch["edits"]> {
+    if (uncaptured.size === 0) return edits;
+    const recovered = new Map<string, string>();
+    const unresolved: string[] = [];
+    for (const [path, digest] of uncaptured) {
+      const text = this.#texts.get(path)?.text;
+      if (text !== undefined && createHash("sha256").update(text).digest("hex") === digest) recovered.set(path, text);
+      else unresolved.push(path);
+    }
+    if (unresolved.length > 0) {
+      const revisions = unresolved.flatMap(path => [`:./${path}`, `HEAD:./${path}`]);
+      // A blob larger than a source could never match its digest: it is skipped, never read into memory.
+      const blobs = await readGitBlobs(root, revisions, { maxBlobBytes: MAX_SOURCE_BYTES });
+      for (const path of unresolved) {
+        const blob = [blobs.get(`:./${path}`), blobs.get(`HEAD:./${path}`)]
+          .find(candidate => candidate !== undefined && createHash("sha256").update(candidate).digest("hex") === uncaptured.get(path));
+        if (blob !== undefined) recovered.set(path, blob.toString("utf8"));
+      }
+    }
+    return edits.map(edit => {
+      const previousText = recovered.get(edit.path);
+      if (previousText === undefined) return edit;
+      const { previousReadError: _uncaptured, ...rest } = edit;
+      return { ...rest, previousText };
+    });
+  }
+
+  /** Keeps `text` as the source's latest; past `MAX_SESSION_TEXT_BYTES`, the least recently changed sources go. */
+  #rememberText(path: string, text: string): void {
+    const bytes = Buffer.byteLength(text);
+    this.#texts.set(path, { text, bytes });
+    this.#textBytes += bytes;
+    for (const [oldest, entry] of this.#texts) {
+      if (this.#textBytes <= MAX_SESSION_TEXT_BYTES) break;
+      this.#texts.delete(oldest);
+      this.#textBytes -= entry.bytes;
+    }
+  }
+
+  #forgetText(path: string): void {
+    const entry = this.#texts.get(path);
+    if (entry === undefined) return;
+    this.#texts.delete(path);
+    this.#textBytes -= entry.bytes;
   }
 
   #touchSource(discovery: SourceDiscovery, path: string): void {

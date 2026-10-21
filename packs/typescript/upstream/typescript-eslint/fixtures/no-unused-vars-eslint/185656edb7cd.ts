@@ -1,0 +1,11 @@
+
+const x = 1;
+function foo(
+  y = function () {
+    bar(x);
+  },
+) {
+  y();
+}
+foo();
+      

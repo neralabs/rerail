@@ -99,6 +99,10 @@ function readsToolFields(condition: MatchCondition | undefined): boolean {
   return "not" in condition && readsToolFields(condition.not);
 }
 
+/**
+ * Internal testing: conversation rules, both a similarity (cosine) match over a `reference` and a structural match over
+ * tool calls. Rerail 0.1.0 releases code rules only.
+ */
 export const conversationRuleSchema = z
   .object({
     id: nonEmptyString(MAX_ID_LENGTH),

@@ -1,0 +1,1946 @@
+{
+ "tool": "rustc",
+ "version": "rustc 1.99.0 (b940084d7 2026-09-28)",
+ "edition": "2024",
+ "source": {
+  "kind": "fixtures",
+  "origin": "Rerail-authored (Apache-2.0), fixtures/rust/matcher/format_args/rust.cases.json"
+ },
+ "cases": [
+  {
+   "name": "auto_one",
+   "src": "println!(\"{}\", 11)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "11\n",
+   "stderr": ""
+  },
+  {
+   "name": "auto_two",
+   "src": "println!(\"{} {}\", 11, 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "11 22\n",
+   "stderr": ""
+  },
+  {
+   "name": "explicit_swapped",
+   "src": "println!(\"{1} {0}\", 11, 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "22 11\n",
+   "stderr": ""
+  },
+  {
+   "name": "explicit_repeat_then_auto",
+   "src": "println!(\"{0} {0} {}\", 11, 22)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "argument never used",
+     "code": "",
+     "spans": [
+      {
+       "start": 27,
+       "end": 29,
+       "text": "22"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "auto_explicit_auto",
+   "src": "println!(\"{} {1} {}\", 11, 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "11 22 22\n",
+   "stderr": ""
+  },
+  {
+   "name": "named_two",
+   "src": "println!(\"{a} {b}\", a = 11, b = 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "11 22\n",
+   "stderr": ""
+  },
+  {
+   "name": "named_swapped",
+   "src": "println!(\"{b} {a}\", a = 11, b = 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "22 11\n",
+   "stderr": ""
+  },
+  {
+   "name": "auto_and_named",
+   "src": "println!(\"{} {x}\", 11, x = 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "11 22\n",
+   "stderr": ""
+  },
+  {
+   "name": "positional_after_named",
+   "src": "println!(\"{x} {}\", x = 22, 11)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "positional arguments cannot follow named arguments",
+     "code": "",
+     "spans": [
+      {
+       "start": 27,
+       "end": 29,
+       "text": "11"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "capture_one",
+   "src": "println!(\"{x}\")",
+   "accepted": true,
+   "errors": [],
+   "stdout": "11\n",
+   "stderr": ""
+  },
+  {
+   "name": "capture_and_named",
+   "src": "println!(\"{x} {y}\", y = 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "11 22\n",
+   "stderr": ""
+  },
+  {
+   "name": "capture_unknown",
+   "src": "println!(\"{x}\")",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "cannot find value `x` in this scope",
+     "code": "E0425",
+     "spans": [
+      {
+       "start": 11,
+       "end": 12,
+       "text": "x"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "capture_and_auto",
+   "src": "println!(\"{x} {}\", 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "11 22\n",
+   "stderr": ""
+  },
+  {
+   "name": "capture_debug",
+   "src": "println!(\"{x:?}\")",
+   "accepted": true,
+   "errors": [],
+   "stdout": "\"s\"\n",
+   "stderr": ""
+  },
+  {
+   "name": "capture_aligned",
+   "src": "println!(\"{x:>5}|\")",
+   "accepted": true,
+   "errors": [],
+   "stdout": "   11|\n",
+   "stderr": ""
+  },
+  {
+   "name": "capture_unknown_with_named",
+   "src": "println!(\"{x} {}\", 11, y = 3)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "named argument never used",
+     "code": "",
+     "spans": [
+      {
+       "start": 27,
+       "end": 28,
+       "text": "3"
+      }
+     ]
+    },
+    {
+     "message": "cannot find value `x` in this scope",
+     "code": "E0425",
+     "spans": [
+      {
+       "start": 11,
+       "end": 12,
+       "text": "x"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "named_positional_mixed",
+   "src": "println!(\"{0} {a}\", 11, a = 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "11 22\n",
+   "stderr": ""
+  },
+  {
+   "name": "named_by_index",
+   "src": "println!(\"{0} {1}\", 11, a = 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "11 22\n",
+   "stderr": ""
+  },
+  {
+   "name": "named_by_index_only",
+   "src": "println!(\"{1}\", 11, a = 22)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "argument never used",
+     "code": "",
+     "spans": [
+      {
+       "start": 16,
+       "end": 18,
+       "text": "11"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "named_then_index",
+   "src": "println!(\"{a} {0}\", 5, a = 2)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "2 5\n",
+   "stderr": ""
+  },
+  {
+   "name": "auto_reaches_named",
+   "src": "println!(\"{} {}\", 11, a = 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "11 22\n",
+   "stderr": ""
+  },
+  {
+   "name": "named_unused",
+   "src": "println!(\"{a}\", a = 11, b = 22)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "named argument never used",
+     "code": "",
+     "spans": [
+      {
+       "start": 28,
+       "end": 30,
+       "text": "22"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "named_unused_among_captures",
+   "src": "println!(\"{x}\", y = 1)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "named argument never used",
+     "code": "",
+     "spans": [
+      {
+       "start": 20,
+       "end": 21,
+       "text": "1"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "named_unused_with_width",
+   "src": "println!(\"{:w$}\", 11, w = 5, v = 3)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "named argument never used",
+     "code": "",
+     "spans": [
+      {
+       "start": 33,
+       "end": 34,
+       "text": "3"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "width_literal",
+   "src": "println!(\"{:5}|\", 11)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "   11|\n",
+   "stderr": ""
+  },
+  {
+   "name": "width_named",
+   "src": "println!(\"{:w$}|\", 11, w = 6)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "    11|\n",
+   "stderr": ""
+  },
+  {
+   "name": "width_index",
+   "src": "println!(\"{:1$}|\", 11, 6)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "    11|\n",
+   "stderr": ""
+  },
+  {
+   "name": "width_index_value_index",
+   "src": "println!(\"{0:1$}|\", 11, 5)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "   11|\n",
+   "stderr": ""
+  },
+  {
+   "name": "width_index_string",
+   "src": "println!(\"{:>1$}|\", \"a\", 4)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "   a|\n",
+   "stderr": ""
+  },
+  {
+   "name": "width_precision_named",
+   "src": "println!(\"{:w$.p$}|\", \"abcdef\", w = 6, p = 2)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "ab    |\n",
+   "stderr": ""
+  },
+  {
+   "name": "width_capture",
+   "src": "println!(\"{:w$}|\", 11)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "    11|\n",
+   "stderr": ""
+  },
+  {
+   "name": "width_capture_unknown",
+   "src": "println!(\"{:w$}|\", 11)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "cannot find value `w` in this scope",
+     "code": "E0425",
+     "spans": [
+      {
+       "start": 12,
+       "end": 13,
+       "text": "w"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "width_index_unused_value",
+   "src": "println!(\"{1:1$}|\", 1, 2)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "argument never used",
+     "code": "",
+     "spans": [
+      {
+       "start": 20,
+       "end": 21,
+       "text": "1"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "width_index_extra",
+   "src": "println!(\"{:1$}\", 1, 2, 4)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "argument never used",
+     "code": "",
+     "spans": [
+      {
+       "start": 24,
+       "end": 25,
+       "text": "4"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "width_index_missing",
+   "src": "println!(\"{:5$}\", 11)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "invalid reference to positional argument 5 (there is 1 argument)",
+     "code": "",
+     "spans": [
+      {
+       "start": 12,
+       "end": 14,
+       "text": "5$"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "width_zero_index",
+   "src": "println!(\"{:0$}|\", 4)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "   4|\n",
+   "stderr": ""
+  },
+  {
+   "name": "precision_star",
+   "src": "println!(\"{:.*}|\", 2, \"abcdef\")",
+   "accepted": true,
+   "errors": [],
+   "stdout": "ab|\n",
+   "stderr": ""
+  },
+  {
+   "name": "precision_star_then_auto",
+   "src": "println!(\"{:.*} {}\", 1, \"xyz\", 33)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "x 33\n",
+   "stderr": ""
+  },
+  {
+   "name": "precision_star_explicit_value",
+   "src": "println!(\"{1:.*}|\", 2, \"abcdef\")",
+   "accepted": true,
+   "errors": [],
+   "stdout": "ab|\n",
+   "stderr": ""
+  },
+  {
+   "name": "precision_star_value_zero",
+   "src": "println!(\"{0:.*}\", 2, \"abcdef\")",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "argument never used",
+     "code": "",
+     "spans": [
+      {
+       "start": 22,
+       "end": 30,
+       "text": "\"abcdef\""
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "precision_star_missing_value",
+   "src": "println!(\"{:.*}\", 2)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "2 positional arguments in format string, but there is 1 argument",
+     "code": "",
+     "spans": [
+      {
+       "start": 10,
+       "end": 15,
+       "text": "{:.*}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "precision_star_two_fields",
+   "src": "println!(\"{:.*} {}\", 1, 2)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "3 positional arguments in format string, but there are 2 arguments",
+     "code": "",
+     "spans": [
+      {
+       "start": 10,
+       "end": 15,
+       "text": "{:.*}"
+      },
+      {
+       "start": 16,
+       "end": 18,
+       "text": "{}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "precision_star_extra",
+   "src": "println!(\"{:.*}\", 1, 2, 3)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "argument never used",
+     "code": "",
+     "spans": [
+      {
+       "start": 24,
+       "end": 25,
+       "text": "3"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "precision_named",
+   "src": "println!(\"{:.p$}|\", \"abcdef\", p = 3)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "abc|\n",
+   "stderr": ""
+  },
+  {
+   "name": "precision_index",
+   "src": "println!(\"{:.1$}|\", \"abcdef\", 4)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "abcd|\n",
+   "stderr": ""
+  },
+  {
+   "name": "precision_literal_width_align",
+   "src": "println!(\"{:>8.3}|\", \"abcdef\")",
+   "accepted": true,
+   "errors": [],
+   "stdout": "     abc|\n",
+   "stderr": ""
+  },
+  {
+   "name": "precision_literal_float",
+   "src": "println!(\"{:.2}\", 1.5)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "1.50\n",
+   "stderr": ""
+  },
+  {
+   "name": "width_and_precision_star_width",
+   "src": "println!(\"{:2$.*}|\", 3, \"abcdefg\", 6)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "abc   |\n",
+   "stderr": ""
+  },
+  {
+   "name": "debug_string",
+   "src": "println!(\"{:?}\", \"a\")",
+   "accepted": true,
+   "errors": [],
+   "stdout": "\"a\"\n",
+   "stderr": ""
+  },
+  {
+   "name": "debug_twice",
+   "src": "println!(\"{0:?} {0}\", \"a\")",
+   "accepted": true,
+   "errors": [],
+   "stdout": "\"a\" a\n",
+   "stderr": ""
+  },
+  {
+   "name": "pretty_debug",
+   "src": "println!(\"{:#?}\", 11)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "11\n",
+   "stderr": ""
+  },
+  {
+   "name": "alternate_hex",
+   "src": "println!(\"{:#x} {:#b} {:o}\", 255, 5, 8)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "0xff 0b101 10\n",
+   "stderr": ""
+  },
+  {
+   "name": "upper_hex_exp",
+   "src": "println!(\"{:X} {:e}\", 255, 1500.0)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "FF 1.5e3\n",
+   "stderr": ""
+  },
+  {
+   "name": "sign_plus",
+   "src": "println!(\"{:+}\", 11)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "+11\n",
+   "stderr": ""
+  },
+  {
+   "name": "zero_pad_width",
+   "src": "println!(\"{:05}|\", 11)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "00011|\n",
+   "stderr": ""
+  },
+  {
+   "name": "left_align_int",
+   "src": "println!(\"{:<5}|\", 11)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "11   |\n",
+   "stderr": ""
+  },
+  {
+   "name": "fill_center",
+   "src": "println!(\"{:*^9}|\", \"ab\")",
+   "accepted": true,
+   "errors": [],
+   "stdout": "***ab****|\n",
+   "stderr": ""
+  },
+  {
+   "name": "fill_unicode",
+   "src": "println!(\"{:é^7}|\", \"ab\")",
+   "accepted": true,
+   "errors": [],
+   "stdout": "ééabééé|\n",
+   "stderr": ""
+  },
+  {
+   "name": "fill_space_align",
+   "src": "println!(\"{: >4}|\", \"ab\")",
+   "accepted": true,
+   "errors": [],
+   "stdout": "  ab|\n",
+   "stderr": ""
+  },
+  {
+   "name": "debug_hex_flag",
+   "src": "println!(\"{:x?}\", 255)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "ff\n",
+   "stderr": ""
+  },
+  {
+   "name": "whitespace_in_field",
+   "src": "println!(\"{ }|{0 }|{ :?}\", 11)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "invalid reference to positional argument 1 (there is 1 argument)",
+     "code": "",
+     "spans": [
+      {
+       "start": 20,
+       "end": 21,
+       "text": " "
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "whitespace_before_name",
+   "src": "println!(\"{ 0}\", 11)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "invalid format string: expected `}`, found `0`",
+     "code": "",
+     "spans": [
+      {
+       "start": 12,
+       "end": 12,
+       "text": ""
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "unknown_trait",
+   "src": "println!(\"{:?} {:z}\", 1, 2)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "unknown format trait `z`",
+     "code": "",
+     "spans": [
+      {
+       "start": 17,
+       "end": 18,
+       "text": "z"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "unknown_trait_word",
+   "src": "println!(\"{:w}\", 1)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "unknown format trait `w`",
+     "code": "",
+     "spans": [
+      {
+       "start": 12,
+       "end": 13,
+       "text": "w"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "debug_then_hash",
+   "src": "println!(\"{:?#}\", 1)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "invalid format string: expected `}`, found `#`",
+     "code": "",
+     "spans": [
+      {
+       "start": 13,
+       "end": 14,
+       "text": "#"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "missing_colon",
+   "src": "println!(\"{0?}\", 1)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "invalid format string: expected `}`, found `?`",
+     "code": "",
+     "spans": [
+      {
+       "start": 12,
+       "end": 13,
+       "text": "?"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "dot_without_count",
+   "src": "println!(\"{:.}\", 1.5)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "1.5\n",
+   "stderr": ""
+  },
+  {
+   "name": "width_overflow",
+   "src": "println!(\"{:99999}\", 1)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "invalid format string: integer `99999` does not fit into the type `u16` whose range is `0..=65535`",
+     "code": "",
+     "spans": [
+      {
+       "start": 12,
+       "end": 18,
+       "text": "99999}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "width_param_overflow",
+   "src": "println!(\"{:70000$}\", 1)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "invalid format string: integer `70000` does not fit into the type `u16` whose range is `0..=65535`",
+     "code": "",
+     "spans": [
+      {
+       "start": 12,
+       "end": 18,
+       "text": "70000$"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "name_underscore",
+   "src": "println!(\"{_}\", 1)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "invalid format string: invalid argument name `_`",
+     "code": "",
+     "spans": [
+      {
+       "start": 11,
+       "end": 12,
+       "text": "_"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "raw_ident_name",
+   "src": "println!(\"{r#x}\", x = 1)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "invalid format string: raw identifiers are not supported",
+     "code": "",
+     "spans": [
+      {
+       "start": 11,
+       "end": 14,
+       "text": "r#x"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "escape_braces",
+   "src": "println!(\"{{}}\")",
+   "accepted": true,
+   "errors": [],
+   "stdout": "{}\n",
+   "stderr": ""
+  },
+  {
+   "name": "escape_around_field",
+   "src": "println!(\"{{{}}}\", 11)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "{11}\n",
+   "stderr": ""
+  },
+  {
+   "name": "escape_close_open",
+   "src": "println!(\"}}{{ {}\", 11)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "}{ 11\n",
+   "stderr": ""
+  },
+  {
+   "name": "unmatched_close",
+   "src": "println!(\"a } b\", 1)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "invalid format string: unmatched `}` found",
+     "code": "",
+     "spans": [
+      {
+       "start": 12,
+       "end": 13,
+       "text": "}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "unmatched_open",
+   "src": "println!(\"a {\", 1)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "invalid format string: expected `}` but string was terminated",
+     "code": "",
+     "spans": [
+      {
+       "start": 13,
+       "end": 13,
+       "text": ""
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "unterminated_field",
+   "src": "println!(\"{0\", 1)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "invalid format string: expected `}` but string was terminated",
+     "code": "",
+     "spans": [
+      {
+       "start": 12,
+       "end": 12,
+       "text": ""
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "unterminated_spec",
+   "src": "println!(\"{:5\", 1)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "invalid format string: expected `}` but string was terminated",
+     "code": "",
+     "spans": [
+      {
+       "start": 13,
+       "end": 13,
+       "text": ""
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "braces_via_hex_escape",
+   "src": "println!(\"\\x7b}\", 11)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "11\n",
+   "stderr": ""
+  },
+  {
+   "name": "braces_via_unicode_escape",
+   "src": "println!(\"\\u{7b}{}\\u{7d}\", 11)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "argument never used",
+     "code": "",
+     "spans": [
+      {
+       "start": 27,
+       "end": 29,
+       "text": "11"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "string_escapes",
+   "src": "println!(\"a\\n{}\\t{}\", 11, 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "a\n11\t22\n",
+   "stderr": ""
+  },
+  {
+   "name": "line_continuation",
+   "src": "println!(\"a \\\n      {}\", 11)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "a 11\n",
+   "stderr": ""
+  },
+  {
+   "name": "unicode_text",
+   "src": "println!(\"é {} ü {}\", 11, 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "é 11 ü 22\n",
+   "stderr": ""
+  },
+  {
+   "name": "raw_string",
+   "src": "println!(r\"{}\\n\", 11)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "11\\n\n",
+   "stderr": ""
+  },
+  {
+   "name": "raw_string_hashes",
+   "src": "println!(r#\"{} \"q\" {}\"#, 11, 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "11 \"q\" 22\n",
+   "stderr": ""
+  },
+  {
+   "name": "raw_string_unused",
+   "src": "println!(r\"hi\", 11)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "argument never used",
+     "code": "",
+     "spans": [
+      {
+       "start": 16,
+       "end": 18,
+       "text": "11"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "too_few_one",
+   "src": "println!(\"{} {}\", 11)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "2 positional arguments in format string, but there is 1 argument",
+     "code": "",
+     "spans": [
+      {
+       "start": 10,
+       "end": 12,
+       "text": "{}"
+      },
+      {
+       "start": 13,
+       "end": 15,
+       "text": "{}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "too_few_none",
+   "src": "println!(\"{}\")",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "1 positional argument in format string, but no arguments were given",
+     "code": "",
+     "spans": [
+      {
+       "start": 10,
+       "end": 12,
+       "text": "{}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "too_few_three",
+   "src": "println!(\"{} {} {}\", 1)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "3 positional arguments in format string, but there is 1 argument",
+     "code": "",
+     "spans": [
+      {
+       "start": 10,
+       "end": 12,
+       "text": "{}"
+      },
+      {
+       "start": 13,
+       "end": 15,
+       "text": "{}"
+      },
+      {
+       "start": 16,
+       "end": 18,
+       "text": "{}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "invalid_explicit",
+   "src": "println!(\"{3}\", 11, 22)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "invalid reference to positional argument 3 (there are 2 arguments)",
+     "code": "",
+     "spans": [
+      {
+       "start": 11,
+       "end": 12,
+       "text": "3"
+      }
+     ]
+    },
+    {
+     "message": "multiple unused formatting arguments",
+     "code": "",
+     "spans": [
+      {
+       "start": 16,
+       "end": 18,
+       "text": "11"
+      },
+      {
+       "start": 20,
+       "end": 22,
+       "text": "22"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "invalid_among_valid",
+   "src": "println!(\"{} {3} {}\", 1, 2)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "invalid reference to positional argument 3 (there are 2 arguments)",
+     "code": "",
+     "spans": [
+      {
+       "start": 14,
+       "end": 15,
+       "text": "3"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "invalid_mixed_implicit",
+   "src": "println!(\"{} {} {9}\", 1)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "invalid reference to positional arguments 1 and 9 (there is 1 argument)",
+     "code": "",
+     "spans": [
+      {
+       "start": 14,
+       "end": 14,
+       "text": ""
+      },
+      {
+       "start": 17,
+       "end": 18,
+       "text": "9"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "invalid_two_explicit",
+   "src": "println!(\"{9} {7}\", 1)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "invalid reference to positional arguments 7 and 9 (there is 1 argument)",
+     "code": "",
+     "spans": [
+      {
+       "start": 11,
+       "end": 12,
+       "text": "9"
+      },
+      {
+       "start": 15,
+       "end": 16,
+       "text": "7"
+      }
+     ]
+    },
+    {
+     "message": "argument never used",
+     "code": "",
+     "spans": [
+      {
+       "start": 20,
+       "end": 21,
+       "text": "1"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "unused_no_fields",
+   "src": "println!(\"hello\", 11)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "argument never used",
+     "code": "",
+     "spans": [
+      {
+       "start": 18,
+       "end": 20,
+       "text": "11"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "unused_one",
+   "src": "println!(\"{}\", 11, 22)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "argument never used",
+     "code": "",
+     "spans": [
+      {
+       "start": 19,
+       "end": 21,
+       "text": "22"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "unused_explicit",
+   "src": "println!(\"{0}\", 11, 22)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "argument never used",
+     "code": "",
+     "spans": [
+      {
+       "start": 20,
+       "end": 22,
+       "text": "22"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "unused_two",
+   "src": "println!(\"{} {}\", 1, 2, 3, 4)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "multiple unused formatting arguments",
+     "code": "",
+     "spans": [
+      {
+       "start": 24,
+       "end": 25,
+       "text": "3"
+      },
+      {
+       "start": 27,
+       "end": 28,
+       "text": "4"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "unused_gap",
+   "src": "println!(\"{0} {2}\", 1, 2, 3, 4)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "multiple unused formatting arguments",
+     "code": "",
+     "spans": [
+      {
+       "start": 23,
+       "end": 24,
+       "text": "2"
+      },
+      {
+       "start": 29,
+       "end": 30,
+       "text": "4"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "unused_by_explicit_repeat",
+   "src": "println!(\"{0} {0} {}\", 11, 22)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "argument never used",
+     "code": "",
+     "spans": [
+      {
+       "start": 27,
+       "end": 29,
+       "text": "22"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "trailing_comma",
+   "src": "println!(\"{}\", 11,)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "11\n",
+   "stderr": ""
+  },
+  {
+   "name": "empty_println",
+   "src": "println!()",
+   "accepted": true,
+   "errors": [],
+   "calls": false,
+   "stdout": "\n",
+   "stderr": ""
+  },
+  {
+   "name": "dynamic_template",
+   "src": "println!(concat!(\"{}\", \"x\"), 11)",
+   "accepted": true,
+   "errors": [],
+   "calls": false,
+   "stdout": "11x\n",
+   "stderr": ""
+  },
+  {
+   "name": "not_a_template",
+   "src": "println!(11)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "format argument must be a string literal",
+     "code": "",
+     "spans": [
+      {
+       "start": 9,
+       "end": 11,
+       "text": "11"
+      }
+     ]
+    }
+   ],
+   "calls": false
+  },
+  {
+   "name": "nested_commas",
+   "src": "println!(\"{} {}\", f(1, 2), [3, 4].len())",
+   "accepted": true,
+   "errors": [],
+   "stdout": "3 2\n",
+   "stderr": ""
+  },
+  {
+   "name": "turbofish_commas",
+   "src": "println!(\"{}\", std::collections::HashMap::<i32, i32>::new().len())",
+   "accepted": true,
+   "errors": [],
+   "stdout": "0\n",
+   "stderr": ""
+  },
+  {
+   "name": "nested_macro_argument",
+   "src": "println!(\"{} {}\", format!(\"{}-{}\", 1, 2), 3)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "1-2 3\n",
+   "stderr": ""
+  },
+  {
+   "name": "print",
+   "src": "print!(\"{}-{}\", 11, 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "11-22",
+   "stderr": ""
+  },
+  {
+   "name": "eprint",
+   "src": "eprint!(\"{}-{}\", 11, 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "",
+   "stderr": "11-22"
+  },
+  {
+   "name": "eprintln",
+   "src": "eprintln!(\"{1}-{0}\", 11, 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "",
+   "stderr": "22-11\n"
+  },
+  {
+   "name": "format",
+   "src": "format!(\"{}-{}\", \"a\", \"b\")",
+   "accepted": true,
+   "errors": [],
+   "stdout": "a-b",
+   "stderr": ""
+  },
+  {
+   "name": "format_named",
+   "src": "format!(\"{b}{a}\", a = \"x\", b = \"y\")",
+   "accepted": true,
+   "errors": [],
+   "stdout": "yx",
+   "stderr": ""
+  },
+  {
+   "name": "format_unused",
+   "src": "format!(\"{}\", \"a\", \"b\")",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "argument never used",
+     "code": "",
+     "spans": [
+      {
+       "start": 19,
+       "end": 22,
+       "text": "\"b\""
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "format_args",
+   "src": "format_args!(\"{1}{0}\", \"a\", \"b\")",
+   "accepted": true,
+   "errors": [],
+   "stdout": "ba",
+   "stderr": ""
+  },
+  {
+   "name": "format_args_missing",
+   "src": "format_args!(\"{}{}\", \"a\")",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "2 positional arguments in format string, but there is 1 argument",
+     "code": "",
+     "spans": [
+      {
+       "start": 14,
+       "end": 16,
+       "text": "{}"
+      },
+      {
+       "start": 16,
+       "end": 18,
+       "text": "{}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "write",
+   "src": "write!(s, \"{}-{}\", 11, 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "11-22",
+   "stderr": ""
+  },
+  {
+   "name": "write_swapped",
+   "src": "write!(s, \"{1}-{0}\", 11, 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "22-11",
+   "stderr": ""
+  },
+  {
+   "name": "write_capture",
+   "src": "write!(s, \"{x}-{}\", 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "11-22",
+   "stderr": ""
+  },
+  {
+   "name": "write_unused",
+   "src": "write!(s, \"{}\", 1, 2)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "argument never used",
+     "code": "",
+     "spans": [
+      {
+       "start": 19,
+       "end": 20,
+       "text": "2"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "write_missing",
+   "src": "write!(s, \"{}\")",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "1 positional argument in format string, but no arguments were given",
+     "code": "",
+     "spans": [
+      {
+       "start": 11,
+       "end": 13,
+       "text": "{}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "write_commas_in_destination",
+   "src": "write!(v.get_mut(0).unwrap(), \"{}\", 11)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "11",
+   "stderr": ""
+  },
+  {
+   "name": "writeln",
+   "src": "writeln!(s, \"{}-{}\", 11, 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "11-22\n",
+   "stderr": ""
+  },
+  {
+   "name": "writeln_unused",
+   "src": "writeln!(s, \"{}\", 1, 2)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "argument never used",
+     "code": "",
+     "spans": [
+      {
+       "start": 21,
+       "end": 22,
+       "text": "2"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "writeln_no_template",
+   "src": "writeln!(s)",
+   "accepted": true,
+   "errors": [],
+   "calls": false,
+   "stdout": "\n",
+   "stderr": ""
+  },
+  {
+   "name": "panic",
+   "src": "panic!(\"{}-{}\", 11, 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "11-22\n",
+   "stderr": ""
+  },
+  {
+   "name": "panic_swapped",
+   "src": "panic!(\"{1}-{0}\", 11, 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "22-11\n",
+   "stderr": ""
+  },
+  {
+   "name": "panic_unused",
+   "src": "panic!(\"{}\", 1, 2)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "argument never used",
+     "code": "",
+     "spans": [
+      {
+       "start": 16,
+       "end": 17,
+       "text": "2"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "panic_missing",
+   "src": "panic!(\"{}\")",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "1 positional argument in format string, but no arguments were given",
+     "code": "",
+     "spans": [
+      {
+       "start": 8,
+       "end": 10,
+       "text": "{}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "panic_braces_literal",
+   "src": "panic!(\"{{}}\")",
+   "accepted": true,
+   "errors": [],
+   "stdout": "{}\n",
+   "stderr": ""
+  },
+  {
+   "name": "unreachable",
+   "src": "unreachable!(\"{}-{}\", 11, 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "internal error: entered unreachable code: 11-22\n",
+   "stderr": ""
+  },
+  {
+   "name": "unreachable_unused",
+   "src": "unreachable!(\"{}\", 1, 2)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "argument never used",
+     "code": "",
+     "spans": [
+      {
+       "start": 22,
+       "end": 23,
+       "text": "2"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "todo",
+   "src": "todo!(\"{}-{}\", 11, 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "not yet implemented: 11-22\n",
+   "stderr": ""
+  },
+  {
+   "name": "todo_missing",
+   "src": "todo!(\"{}\")",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "1 positional argument in format string, but no arguments were given",
+     "code": "",
+     "spans": [
+      {
+       "start": 7,
+       "end": 9,
+       "text": "{}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "unimplemented",
+   "src": "unimplemented!(\"{1}-{0}\", 11, 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "not implemented: 22-11\n",
+   "stderr": ""
+  },
+  {
+   "name": "unimplemented_unused",
+   "src": "unimplemented!(\"x\", 1)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "argument never used",
+     "code": "",
+     "spans": [
+      {
+       "start": 20,
+       "end": 21,
+       "text": "1"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "assert_message",
+   "src": "assert!(1 == 2, \"{}-{}\", 11, 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "11-22\n",
+   "stderr": ""
+  },
+  {
+   "name": "assert_named",
+   "src": "assert!(1 == 2, \"{b}-{a}\", a = 11, b = 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "22-11\n",
+   "stderr": ""
+  },
+  {
+   "name": "assert_no_message",
+   "src": "assert!(1 == 2)",
+   "accepted": true,
+   "errors": [],
+   "calls": false,
+   "stdout": "assertion failed: 1 == 2\n",
+   "stderr": ""
+  },
+  {
+   "name": "assert_unused",
+   "src": "assert!(1 == 1, \"{}\", 1, 2)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "argument never used",
+     "code": "",
+     "spans": [
+      {
+       "start": 25,
+       "end": 26,
+       "text": "2"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "assert_missing",
+   "src": "assert!(1 == 1, \"{}\")",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "1 positional argument in format string, but no arguments were given",
+     "code": "",
+     "spans": [
+      {
+       "start": 17,
+       "end": 19,
+       "text": "{}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "assert_condition_commas",
+   "src": "assert!(f(1, 2) == 4, \"{}-{}\", 11, 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "11-22\n",
+   "stderr": ""
+  },
+  {
+   "name": "assert_eq_message",
+   "src": "assert_eq!(1, 2, \"{}-{}\", 11, 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "assertion `left == right` failed: 11-22\n  left: 1\n right: 2\n",
+   "stderr": ""
+  },
+  {
+   "name": "assert_eq_no_message",
+   "src": "assert_eq!(1, 2)",
+   "accepted": true,
+   "errors": [],
+   "calls": false,
+   "stdout": "assertion `left == right` failed\n  left: 1\n right: 2\n",
+   "stderr": ""
+  },
+  {
+   "name": "assert_eq_missing",
+   "src": "assert_eq!(1, 1, \"{}\")",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "1 positional argument in format string, but no arguments were given",
+     "code": "",
+     "spans": [
+      {
+       "start": 18,
+       "end": 20,
+       "text": "{}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "assert_eq_unused",
+   "src": "assert_eq!(1, 1, \"x\", 5)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "argument never used",
+     "code": "",
+     "spans": [
+      {
+       "start": 22,
+       "end": 23,
+       "text": "5"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "assert_ne_message",
+   "src": "assert_ne!(1, 1, \"{1}-{0}\", 11, 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "assertion `left != right` failed: 22-11\n  left: 1\n right: 1\n",
+   "stderr": ""
+  },
+  {
+   "name": "assert_ne_capture",
+   "src": "assert_ne!(1, 1, \"{x}\")",
+   "accepted": true,
+   "errors": [],
+   "stdout": "assertion `left != right` failed: 11\n  left: 1\n right: 1\n",
+   "stderr": ""
+  },
+  {
+   "name": "debug_assert_message",
+   "src": "debug_assert!(1 == 2, \"{}-{}\", 11, 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "11-22\n",
+   "stderr": ""
+  },
+  {
+   "name": "debug_assert_missing",
+   "src": "debug_assert!(1 == 1, \"{}\")",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "1 positional argument in format string, but no arguments were given",
+     "code": "",
+     "spans": [
+      {
+       "start": 23,
+       "end": 25,
+       "text": "{}"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "debug_assert_eq_message",
+   "src": "debug_assert_eq!(1, 2, \"{}-{}\", 11, 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "assertion `left == right` failed: 11-22\n  left: 1\n right: 2\n",
+   "stderr": ""
+  },
+  {
+   "name": "debug_assert_eq_unused",
+   "src": "debug_assert_eq!(1, 1, \"x\", 5)",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "argument never used",
+     "code": "",
+     "spans": [
+      {
+       "start": 28,
+       "end": 29,
+       "text": "5"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "debug_assert_ne_message",
+   "src": "debug_assert_ne!(1, 1, \"{1}-{0}\", 11, 22)",
+   "accepted": true,
+   "errors": [],
+   "stdout": "assertion `left != right` failed: 22-11\n  left: 1\n right: 1\n",
+   "stderr": ""
+  },
+  {
+   "name": "debug_assert_ne_missing",
+   "src": "debug_assert_ne!(1, 2, \"{}\")",
+   "accepted": false,
+   "errors": [
+    {
+     "message": "1 positional argument in format string, but no arguments were given",
+     "code": "",
+     "spans": [
+      {
+       "start": 24,
+       "end": 26,
+       "text": "{}"
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

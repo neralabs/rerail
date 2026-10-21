@@ -3,7 +3,7 @@
   "id": "bladestan-identical-always-true",
   "revision": 1,
   "mode": "steer",
-  "description": "Bladestan 0.11.7 identical.alwaysTrue (PHPStan 2.2.16 StrictComparisonOfDifferentTypesRule over the compiled template): a `===` comparison PHP's constant evaluation (variables followed through their one reaching binding) finds always true; not the condition of the last @elseif of a chain with no @else, which PHPStan leaves unreported (reportAlwaysTrueInLastCondition: false).",
+  "description": "Remove strict === comparisons in Blade templates that are always true from values the template itself sets; the check is dead logic or hides a bug.",
   "scope": {
     "include": [
       "**/*.blade.php"
@@ -16,6 +16,7 @@
       "forbid": {
         "ast": {
           "language": "blade",
+          "embedded": "compiled-view",
           "rule": {
             "kind": "binary_expression",
             "has": {

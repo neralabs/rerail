@@ -92,6 +92,11 @@ fn walk(matcher: &AstMatcher, negated: bool, seen: &mut BTreeSet<usize>, out: &m
         }
         AstMatcher::Semantic(Semantic::Parse(test)) => both(&test.rule, seen, out),
         AstMatcher::Semantic(Semantic::Host(test)) => both(&test.rule, seen, out),
+        AstMatcher::Semantic(Semantic::Embedded(test)) => {
+            for rule in test.rules() {
+                both(rule, seen, out);
+            }
+        }
         AstMatcher::Pattern(_)
         | AstMatcher::Kind(_)
         | AstMatcher::Regex(_)

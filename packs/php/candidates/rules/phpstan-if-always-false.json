@@ -1,0 +1,190 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "phpstan-if-always-false",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Remove PHP if statements whose condition is always false, except declaration stubs kept for autoloaders and IDEs; the block is dead code.",
+  "scope": {
+    "include": [
+      "**/*.php"
+    ],
+    "exclude": [
+      "**/*.blade.php"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "all": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "if_statement",
+                    "field": "condition",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "kind": "comment",
+                        "parse": {
+                          "grammar": "phpDoc",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "var_tag_value"
+                          }
+                        }
+                      }
+                    },
+                    "all": [
+                      {
+                        "not": {
+                          "has": {
+                            "field": "body",
+                            "kind": "compound_statement",
+                            "all": [
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "any": [
+                                    {
+                                      "kind": "class_declaration"
+                                    },
+                                    {
+                                      "kind": "interface_declaration"
+                                    },
+                                    {
+                                      "kind": "trait_declaration"
+                                    },
+                                    {
+                                      "kind": "enum_declaration"
+                                    },
+                                    {
+                                      "kind": "function_definition"
+                                    },
+                                    {
+                                      "kind": "expression_statement",
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "kind": "function_call_expression",
+                                        "has": {
+                                          "field": "function",
+                                          "regex": "^\\\\?(?i:class_alias)$"
+                                        }
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "not": {
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "not": {
+                                      "any": [
+                                        {
+                                          "kind": "class_declaration"
+                                        },
+                                        {
+                                          "kind": "interface_declaration"
+                                        },
+                                        {
+                                          "kind": "trait_declaration"
+                                        },
+                                        {
+                                          "kind": "enum_declaration"
+                                        },
+                                        {
+                                          "kind": "function_definition"
+                                        },
+                                        {
+                                          "kind": "expression_statement",
+                                          "has": {
+                                            "stopBy": "neighbor",
+                                            "kind": "function_call_expression",
+                                            "has": {
+                                              "field": "function",
+                                              "regex": "^\\\\?(?i:class_alias)$"
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "kind": "comment"
+                                        },
+                                        {
+                                          "regex": "^[{}]$"
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                "value": {
+                  "truthy": false,
+                  "follow": true
+                },
+                "not": {
+                  "any": [
+                    {
+                      "kind": "binary_expression",
+                      "has": {
+                        "field": "operator",
+                        "regex": "^(==|!=|<>|===|!==|\\&\\&|\\|\\||<|>|<=|>=|instanceof)$"
+                      }
+                    },
+                    {
+                      "kind": "unary_op_expression",
+                      "regex": "^!"
+                    },
+                    {
+                      "kind": "conditional_expression"
+                    },
+                    {
+                      "kind": "function_call_expression",
+                      "has": {
+                        "field": "function",
+                        "regex": "^(?i:isset|empty)$"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "trait_declaration"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "if.alwaysFalse",
+        "message": "If condition is always false.",
+        "suppress": {
+          "phpstan": {
+            "identifiers": [
+              "if.alwaysFalse"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

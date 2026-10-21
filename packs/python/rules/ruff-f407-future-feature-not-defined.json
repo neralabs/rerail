@@ -3,7 +3,7 @@
   "id": "ruff-f407-future-feature-not-defined",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F407 (future-feature-not-defined): a name imported from `__future__` (also through a relative `from .__future__`, matched by the module's text with `resolves.imported` and `relative: \"text\"`, as Ruff ignores the level) that is not one of CPython's future features (`is_known_future_feature` in ruff_python_parser's semantic_errors.rs), reported on the alias (`name as alias` included) or on the `*` of a star import.",
+  "description": "Import only real feature names from __future__; an unknown feature name is a syntax error.",
   "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [
     {

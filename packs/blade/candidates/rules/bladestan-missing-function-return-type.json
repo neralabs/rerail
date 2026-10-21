@@ -1,0 +1,59 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bladestan-missing-function-return-type",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Declare a return type, native or as a @return doc tag, on every named function defined in a Blade template.",
+  "scope": {
+    "include": [
+      "**/*.blade.php"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "blade",
+          "embedded": "compiled-view",
+          "rule": {
+            "kind": "function_definition",
+            "not": {
+              "has": {
+                "field": "return_type",
+                "regex": "."
+              }
+            },
+            "all": [
+              {
+                "not": {
+                  "follows": {
+                    "stopBy": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    },
+                    "kind": "comment",
+                    "parse": {
+                      "grammar": "phpDoc",
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "return_tag_value"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "missingType.return",
+        "message": "Declare a return type on this function, natively or with a @return doc tag."
+      }
+    }
+  ]
+}

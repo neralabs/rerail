@@ -1,8 +1,11 @@
 import { rm } from "node:fs/promises";
-import { hookText, type AdapterDelivery, type AdapterEvent, type AdapterSession, type RerailEventLoop } from "../../engine/adapter-contract.js";
+import { z } from "zod/v4";
+import { hookText, type AdapterDelivery, type AdapterEvent, type AdapterSession, type RerailEventLoop, type SteerRule } from "../../engine/adapter-contract.js";
+import { missedSteerDigestEnabled } from "../../engine/experimental-features.js";
 import { ingestCursorTranscript } from "./cursor-transcript.js";
 import {
   deliveryRuleIds,
+  deliveryRules,
   deliveryText,
   pendingPath,
   persistPending,
@@ -11,7 +14,7 @@ import {
   type HookInput,
   type HookOutput,
 } from "../../harness/hook-adapter.js";
-import { sessionStartNote, steerHeadlines } from "../../engine/code-rule/rerail-steer.js";
+import { headlineText, sessionStartNote, steerHeadlines } from "../../engine/code-rule/rerail-steer.js";
 import { dashboardOrigin, linkDeliveries, presentedSessionNoteRules } from "../../presentation/session-presentation.js";
 import { steers } from "../../engine/catalog/rule-mode.js";
 
@@ -19,6 +22,16 @@ export type CursorHookInput = HookInput;
 export type CursorHookOutput = HookOutput;
 
 const { required: requiredText, optional: optionalText } = hookText("Cursor");
+
+/**
+ * The `stop` hook's `loop_count` (how many follow-ups its stop hooks have already submitted in a row) at which Rerail
+ * adds no more: a follow-up whose fix brings new findings could otherwise loop until Cursor's own `loop_limit` (5 by
+ * default) ends it. Steers not followed up wait in the pending file for the next tool result or session start.
+ */
+export const CURSOR_FOLLOWUP_LOOP_LIMIT = 3;
+
+/** 0 on a run's first stop; a missing or malformed count reads as that. */
+const loopCountSchema = z.number().int().nonnegative().catch(0);
 
 export function cursorWorkspace(input: CursorHookInput): string {
   const cwd = optionalText(input, "cwd");
@@ -119,11 +132,14 @@ export function cursorHookEvent(input: CursorHookInput): AdapterEvent {
   throw new Error(`Unsupported Cursor hook event: ${hook}`);
 }
 
-/** Cursor has no message line for the person, so the model is asked to relay each steer's one line itself. */
-function relayedSteer(content: string): string {
-  const headlines = steerHeadlines(content);
-  if (headlines.length === 0) return content;
-  return `${content}\n\nCursor shows the person none of this. Start your next reply to them with:\n${headlines.join("\n")}`;
+/**
+ * Cursor shows the person nothing from a hook, so the model is asked to relay each steer's one line itself. Cursor's
+ * chat renders markdown, so the `why?` link sits on the word.
+ */
+function relayedSteer(content: string, rules: readonly SteerRule[]): string {
+  const lines = steerHeadlines(rules).map(headline => headlineText(headline, "markdown"));
+  if (lines.length === 0) return content;
+  return `${content}\n\nCursor shows the user none of this. Begin your next reply with these lines, exactly as written:\n${lines.join("\n")}`;
 }
 
 /** `note` is the session-start note, which only the model sees. */
@@ -133,10 +149,12 @@ export function cursorHookOutput(hook: string, deliveries: readonly AdapterDeliv
   const content = deliveryText(deliveries);
   const ruleIds = deliveryRuleIds(deliveries);
   if (hook === "sessionStart" || hook === "postToolUse") {
-    const context = [note, content === undefined ? undefined : relayedSteer(content)].filter(text => text !== undefined).join("\n\n");
+    const context = [note, content === undefined ? undefined : relayedSteer(content, deliveryRules(deliveries))].filter(text => text !== undefined).join("\n\n");
     if (context === "") return {};
     return content === undefined ? { additional_context: context } : prepareGuidanceOutput({ additional_context: context }, ruleIds);
   }
+  // Cursor submits a stop hook's follow-up as the person's next message, so the agent acts on the steers before it yields.
+  if (hook === "stop" && content !== undefined) return prepareGuidanceOutput({ followup_message: relayedSteer(content, deliveryRules(deliveries)) }, ruleIds);
 
   return {};
 }
@@ -166,8 +184,12 @@ export async function handleCursorEvent(
     // Cursor only exposes preToolUse.agent_message when a tool is denied.
     // Preserve the steer until a post-tool result can actually carry it.
     sessionStart: true, postToolUse: true,
+    // Experimental, with the missed-steer digest: the end of the agent's run carries what is waiting, the turn end's
+    // digest included (from the transcript too, which records it among the pending steers), until the follow-ups reach
+    // the bound.
+    ...(missedSteerDigestEnabled() && loopCountSchema.parse(input.loop_count) < CURSOR_FOLLOWUP_LOOP_LIMIT ? { stop: true } : {}),
   });
-  // The runtime keeps steer links relative; they point at this checkout's dashboard only here.
+  // The runtime records no links; the rules point at this checkout's dashboard only here.
   const note = hook === "sessionStart" ? sessionStartNote(await dashboardOrigin(descriptor.cwd), "cursor", descriptor.sessionId, await presentedSessionNoteRules(descriptor)) : undefined;
   return cursorHookOutput(hook, await linkDeliveries(available, descriptor.cwd), note);
 }

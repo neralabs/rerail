@@ -1,12 +1,15 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-with",
-  "revision": 1,
+  "revision": 4,
   "mode": "steer",
-  "description": "Port of ESLint's `no-with` rule (https://eslint.org/docs/latest/rules/no-with). Reports every `with` statement, at its `with` keyword.",
+  "description": "Don't use with statements in JavaScript; they make variable lookup ambiguous and are forbidden in strict mode.",
   "scope": {
     "include": [
-      "**/*"
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
     ],
     "exclude": []
   },
@@ -27,7 +30,24 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-with",
-        "message": "Unexpected use of 'with' statement."
+        "message": "Remove this with statement and reference the object's properties explicitly through a variable.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-with"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-with"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noWith"
+            ]
+          }
+        }
       }
     }
   ]

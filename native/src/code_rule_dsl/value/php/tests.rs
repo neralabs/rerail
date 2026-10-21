@@ -1,7 +1,7 @@
 use super::*;
+use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::oracle;
-use crate::code_rule_dsl::value::Lang;
 use ast_grep_core::tree_sitter::LanguageExt;
 use serde_json::Value as Json;
 use std::collections::BTreeMap;
@@ -167,18 +167,18 @@ fn php_comparisons_agree_with_php() {
             let identical = result[0].as_bool().expect("===");
             let loose = result[1].as_bool().expect("==");
             let spaceship = result[2].as_i64().expect("<=>");
-            let order = left.order(right, Lang::Php).expect("known operands");
+            let order = left.order(right, Family::Php).expect("known operands");
             let rerail_spaceship = match order {
                 None => 1,
                 Some(order) => order as i64,
             };
-            if left.equals(right, Lang::Php) != Some(identical)
+            if left.equals(right, Family::Php) != Some(identical)
                 || (order == Some(Ordering::Equal)) != loose
                 || rerail_spaceship != spaceship
             {
                 failures.push(format!(
                     "{left:?} vs {right:?}: PHP ===, ==, <=> give {result}, Rerail {:?}, {order:?}",
-                    left.equals(right, Lang::Php)
+                    left.equals(right, Family::Php)
                 ));
             }
         }

@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-new-wrappers",
-  "revision": 1,
+  "revision": 3,
   "mode": "steer",
-  "description": "ESLint 10.11.0 no-new-wrappers, default options. Port of ESLint's `no-new-wrappers` rule (https://eslint.org/docs/latest/rules/no-new-wrappers). Flags `new` of the global String, Number or Boolean (resolved with `resolves`).",
+  "description": "Don't use new with String, Number or Boolean; it creates wrapper objects that behave unlike primitives.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -70,6 +70,16 @@
           "eslint": {
             "rules": [
               "no-new-wrappers"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-new-wrappers"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/useConsistentBuiltinInstantiation"
             ]
           }
         }

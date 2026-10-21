@@ -3,14 +3,17 @@
   "id": "next",
   "name": "Next.js",
   "category": "framework",
-  "covers": "17 @next/eslint-plugin-next rules ported to Rerail, each scored against the plugin's own recorded findings on its rule tests.",
+  "covers": "21 @next/eslint-plugin-next rules ported to Rerail, each scored against the plugin's own recorded findings on its rule tests.",
   "reason": "matches Next.js",
   "match": {
     "any": [
       {
-        "npmDependencies": [
-          "next"
-        ]
+        "dependencies": {
+          "ecosystem": "npm",
+          "names": [
+            "next"
+          ]
+        }
       }
     ]
   },
@@ -32,6 +35,12 @@
       }
     },
     {
+      "id": "next-no-head-element",
+      "document": "rules/next-no-head-element.json",
+      "title": "No head element",
+      "group": "Next.js"
+    },
+    {
       "id": "next-no-sync-scripts",
       "document": "rules/next-no-sync-scripts.json",
       "title": "No sync scripts",
@@ -51,6 +60,12 @@
       "id": "next-no-css-tags",
       "document": "rules/next-no-css-tags.json",
       "title": "No css tags",
+      "group": "Next.js"
+    },
+    {
+      "id": "next-google-font-display",
+      "document": "rules/next-google-font-display.json",
+      "title": "Google font display",
       "group": "Next.js"
     },
     {
@@ -175,6 +190,18 @@
       "id": "next-no-typos",
       "document": "rules/next-no-typos.json",
       "title": "No typos",
+      "group": "Next.js"
+    },
+    {
+      "id": "next-no-page-custom-font",
+      "document": "rules/next-no-page-custom-font.json",
+      "title": "No page custom font",
+      "group": "Next.js"
+    },
+    {
+      "id": "next-no-location-assign-relative-destination",
+      "document": "rules/next-no-location-assign-relative-destination.json",
+      "title": "No location assign relative destination",
       "group": "Next.js"
     }
   ]

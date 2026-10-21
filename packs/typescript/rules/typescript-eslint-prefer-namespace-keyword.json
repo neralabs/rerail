@@ -1,12 +1,15 @@
 {
   "format": "rerail.policy/v1",
   "id": "typescript-eslint-prefer-namespace-keyword",
-  "revision": 1,
+  "revision": 4,
   "mode": "steer",
-  "description": "Port of typescript-eslint's `prefer-namespace-keyword` rule (https://typescript-eslint.io/rules/prefer-namespace-keyword). Flags `module Name {}` declarations with an identifier name; reports the whole declaration (from `declare` when present) and fixes the keyword.",
+  "description": "Use the namespace keyword instead of module to declare custom TypeScript namespaces; module is reserved for external module declarations.",
   "scope": {
     "include": [
-      "**/*"
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
     ],
     "exclude": []
   },
@@ -49,7 +52,24 @@
         "anchor": "capture.D",
         "code": "@typescript-eslint/prefer-namespace-keyword",
         "message": "Use 'namespace' instead of 'module' to declare custom TypeScript modules.",
-        "fix": "namespace"
+        "fix": "namespace",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/prefer-namespace-keyword"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "prefer-namespace-keyword"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/useNamespaceKeyword"
+            ]
+          }
+        }
       }
     },
     {
@@ -91,7 +111,24 @@
         "anchor": "capture.M",
         "code": "@typescript-eslint/prefer-namespace-keyword",
         "message": "Use 'namespace' instead of 'module' to declare custom TypeScript modules.",
-        "fix": "namespace"
+        "fix": "namespace",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/prefer-namespace-keyword"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "prefer-namespace-keyword"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/useNamespaceKeyword"
+            ]
+          }
+        }
       }
     }
   ]

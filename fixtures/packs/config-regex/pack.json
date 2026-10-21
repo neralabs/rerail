@@ -1,0 +1,36 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "config-regex",
+  "name": "Config regex",
+  "category": "repository",
+  "covers": "A fixture pack whose rule writes a string option into a regex.",
+  "reason": "a fixture pack, added by hand",
+  "match": {
+    "any": [
+      {
+        "files": [
+          "**/*.ts"
+        ],
+        "label": "*.ts files"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "comment-pattern",
+      "document": "rules/comment-pattern.json",
+      "title": "Comment pattern",
+      "group": "Comments",
+      "examples": {
+        "caught": {
+          "path": "src/a.ts",
+          "text": "// TODO later\n"
+        },
+        "passes": {
+          "path": "src/a.ts",
+          "text": "// done\n"
+        }
+      }
+    }
+  ]
+}

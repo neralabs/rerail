@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "psalm-forbidden-code",
-  "revision": 1,
+  "revision": 3,
   "mode": "steer",
-  "description": "Psalm 6.19.1 ForbiddenCode with no forbiddenFunctions configured: a call PHP resolves to var_dump or shell_exec (not a first-class callable), and a backtick shell command, which Psalm reads as a shell_exec call.",
+  "description": "Remove var_dump(), shell_exec() and backtick shell commands from PHP code; they leak debug output or open the door to command injection.",
   "scope": {
     "include": [
       "**/*.php"
@@ -32,12 +32,94 @@
                   }
                 },
                 "not": {
-                  "has": {
-                    "field": "arguments",
-                    "has": {
-                      "kind": "variadic_placeholder"
+                  "any": [
+                    {
+                      "has": {
+                        "field": "arguments",
+                        "has": {
+                          "kind": "variadic_placeholder"
+                        }
+                      }
+                    },
+                    {
+                      "all": [
+                        {
+                          "has": {
+                            "field": "function",
+                            "resolves": {
+                              "import": [
+                                "var_dump"
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "any": [
+                            {
+                              "inside": {
+                                "stopBy": "neighbor",
+                                "kind": "expression_statement",
+                                "all": [
+                                  {
+                                    "follows": {
+                                      "stopBy": "end",
+                                      "kind": "expression_statement",
+                                      "has": {
+                                        "kind": "function_call_expression",
+                                        "has": {
+                                          "field": "function",
+                                          "resolves": {
+                                            "import": [
+                                              "ob_start"
+                                            ]
+                                          }
+                                        }
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "precedes": {
+                                      "stopBy": "end",
+                                      "has": {
+                                        "kind": "function_call_expression",
+                                        "has": {
+                                          "field": "function",
+                                          "resolves": {
+                                            "import": [
+                                              "ob_get_clean",
+                                              "ob_get_contents"
+                                            ]
+                                          }
+                                        },
+                                        "stopBy": "end"
+                                      }
+                                    }
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "inside": {
+                                "stopBy": "end",
+                                "any": [
+                                  {
+                                    "kind": "function_definition"
+                                  },
+                                  {
+                                    "kind": "method_declaration"
+                                  }
+                                ],
+                                "has": {
+                                  "field": "name",
+                                  "regex": "^(?i:dump|dd)$"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      ]
                     }
-                  }
+                  ]
                 }
               },
               {
@@ -48,9 +130,9 @@
         }
       },
       "violation": {
-        "anchor": "witness.start",
+        "anchor": "witness.span",
         "code": "ForbiddenCode",
-        "message": "Unsafe var_dump or shell_exec",
+        "message": "Remove this var_dump() or shell command; log debug output instead, and run commands with proc_open() given an argument array.",
         "suppress": {
           "psalm": {
             "issues": [

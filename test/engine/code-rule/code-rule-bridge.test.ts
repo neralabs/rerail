@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { lstat, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -208,13 +209,11 @@ describe("CodeRuleBridge", () => {
         checkpoints: ["edit", "function"],
         edits: [{ path: "src/a.py", language: "python", previousText: "before\n", generatedText: "tool edit\n" }],
       }],
+      // The session saw the file as its tool edit left it: that is the external edit's preimage.
       ["session-1", {
         revision: 2,
         checkpoints: ["final"],
-        edits: [{
-          path: "src/a.py", language: "python",
-          previousReadError: "Source changed outside a tool with a captured preimage", generatedText: "external edit\n",
-        }],
+        edits: [{ path: "src/a.py", language: "python", previousText: "tool edit\n", generatedText: "external edit\n" }],
       }],
     ]);
   });
@@ -257,6 +256,44 @@ describe("CodeRuleBridge", () => {
       revision: 2,
       edits: [expect.objectContaining({ path: "src/a.py", generatedText: "cursor.execute('SELECT 2')\n" })],
     }));
+  });
+
+  it("gives a shell write the preimage Git or the session holds only when its digest is the file's before the write", async () => {
+    const root = await workspace();
+    const clean = join(root, "src", "clean.py");
+    const dirty = join(root, "src", "dirty.py");
+    await writeFile(clean, "one\n");
+    await writeFile(dirty, "committed\n");
+    execFileSync("git", ["init", "--quiet"], { cwd: root });
+    execFileSync("git", ["add", "."], { cwd: root });
+    execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
+    // Changed before the session and never staged: neither the index nor HEAD holds what the session first saw.
+    await writeFile(dirty, "uncommitted\n");
+    await awaitClockAfter(clean, dirty);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits));
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+
+    await bridge.begin("shell-1", "shell", { command: "./rewrite.sh" });
+    await writeFile(clean, "one\ntwo\n");
+    await writeFile(dirty, "uncommitted\nmore\n");
+    await bridge.finish("shell-1");
+    expect(auditGeneratedEdits.mock.calls.at(-1)?.[1].edits).toEqual([
+      { path: "src/clean.py", language: "python", previousText: "one\n", generatedText: "one\ntwo\n" },
+      {
+        path: "src/dirty.py", language: "python",
+        previousReadError: "Source changed outside a tool with a captured preimage", generatedText: "uncommitted\nmore\n",
+      },
+    ]);
+
+    // The session saw what the first write made of the file, so the next write knows its preimage.
+    await bridge.begin("shell-2", "shell", { command: "./rewrite.sh" });
+    await writeFile(dirty, "uncommitted\nmore\nagain\n");
+    await bridge.finish("shell-2");
+    expect(auditGeneratedEdits.mock.calls.at(-1)?.[1].edits).toEqual([
+      { path: "src/dirty.py", language: "python", previousText: "uncommitted\nmore\n", generatedText: "uncommitted\nmore\nagain\n" },
+    ]);
   });
 
   it("closes and reopens without waiting for an abandoned baseline read", async () => {
@@ -358,6 +395,76 @@ describe("CodeRuleBridge", () => {
     }]]);
   });
 
+  it("answers a turn checkpoint once its wait runs out on a baseline walk, and audits what the walk finds behind it", async () => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "before\n");
+    await awaitClockAfter(path);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits), { discoveryWaitMs: 50 });
+    const baseline = holdDiscovery("directories", root);
+    await bridge.openWorkspace("session-1");
+    await baseline.entered;
+    await writeFile(path, "shell write\n");
+
+    await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({
+      failures: [expect.objectContaining({ code: "source-incomplete", message: "Initial source discovery is still pending" })],
+    }));
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+    baseline.release();
+    await vi.waitFor(() => expect(auditGeneratedEdits).toHaveBeenCalledTimes(1));
+    expect(auditGeneratedEdits.mock.calls).toEqual([["session-1", expect.objectContaining({
+      edits: [expect.objectContaining({ path: "src/a.py", generatedText: "shell write\n" })],
+    })]]);
+  });
+
+  it("answers a shell result once its wait runs out on a baseline walk, marks the command boundary, and audits the write behind it", async () => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "before\n");
+    await awaitClockAfter(path);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const pending: string[] = [];
+    const bridge = createBridge(root, auditor(auditGeneratedEdits), { discoveryWaitMs: 50, onDiscoveryPending: boundary => { pending.push(boundary); } });
+    const baseline = holdDiscovery("directories", root);
+    await bridge.openWorkspace("session-1");
+    await baseline.entered;
+
+    await bridge.begin("shell-1", "Bash", { command: "python3 -c \"...write_text(...)\"" });
+    await writeFile(path, "shell write\n");
+    await expect(bridge.finish("shell-1")).resolves.toEqual([]);
+    expect(pending).toEqual(["command"]);
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+    baseline.release();
+    await vi.waitFor(() => expect(auditGeneratedEdits).toHaveBeenCalledTimes(1));
+    expect(auditGeneratedEdits.mock.calls).toEqual([["session-1", expect.objectContaining({
+      edits: [expect.objectContaining({ path: "src/a.py", generatedText: "shell write\n" })],
+    })]]);
+  });
+
+  it("answers a boundary and still closes the evaluator when recording that the walk is still pending fails", async () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const root = await workspace();
+    const evaluator = auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch)));
+    const onDiscoveryPending = vi.fn(() => { throw new Error("database is locked"); });
+    const bridge = createBridge(root, evaluator, { discoveryWaitMs: 50, onDiscoveryPending });
+    const baseline = holdDiscovery("directories", root);
+    try {
+      await bridge.openWorkspace("session-1");
+      await baseline.entered;
+
+      await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({
+        failures: [expect.objectContaining({ code: "source-incomplete" })],
+      }));
+      await expect(bridge.close()).resolves.toBeUndefined();
+      expect(onDiscoveryPending.mock.calls).toEqual([["turn"], ["close"]]);
+      expect(evaluator.close).toHaveBeenCalledTimes(1);
+      expect(stderr).toHaveBeenCalledWith(expect.stringContaining("recording failed: database is locked"));
+    } finally {
+      stderr.mockRestore();
+    }
+  });
+
   it("discovers a shell write that races the startup snapshot read", async () => {
     const root = await workspace();
     const path = join(root, "src", "a.py");
@@ -400,7 +507,7 @@ describe("CodeRuleBridge", () => {
       checkpoints: ["edit", "function"],
       edits: [
         { path: "src/a.py", language: "python", previousText: "before\n", generatedText: "after\n" },
-        { path: "src/b.rs", language: "text", previousText: "fn before() {}\n", generatedText: "fn after() {}\n" },
+        { path: "src/b.rs", language: "rust", previousText: "fn before() {}\n", generatedText: "fn after() {}\n" },
       ],
     });
   });

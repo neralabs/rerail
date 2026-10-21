@@ -1,0 +1,83 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-no-unused-private-class-members",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Remove private class fields, methods and accessors that are never used inside the class; assignments alone don't count as use.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unused-private-member",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "private_property_identifier",
+            "pattern": "$N",
+            "binds": {
+              "used": false
+            },
+            "not": {
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "public_field_definition"
+                  },
+                  {
+                    "kind": "method_definition"
+                  }
+                ],
+                "precedes": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "kind": "public_field_definition"
+                    },
+                    {
+                      "kind": "method_definition"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "private_property_identifier",
+                    "pattern": "$N"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "no-unused-private-class-members",
+        "message": "'$N' is defined but never used.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-unused-private-class-members"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unused-private-class-members"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

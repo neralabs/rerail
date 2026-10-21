@@ -1,13 +1,13 @@
 //! The shared content store: the process-wide store registry, background maintenance (search-index
 //! backlog) and a workspace's storage context.
 
-use super::persisted::{grammar_set, grammar_version};
+use super::persisted::{grammar_set, grammar_version, tape_dialect};
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
-use crate::code_rule_dsl::{language, tape};
+use crate::code_rule_dsl::tape;
 use crate::content_store::{
-    CapacityState, ContentStore, MAX_COLLECTION_BATCH, SnapshotId, WorkspaceId,
-    WorkspaceRegistration,
+    CapacityState, ContentStore, MAX_COLLECTION_BATCH, OperationDeadline, SnapshotId, StoreError,
+    StoreResult, WorkspaceId, WorkspaceRegistration,
 };
 use crate::git_workspace;
 use napi::Result;
@@ -26,10 +26,10 @@ pub(super) static CONTENT_STORES: LazyLock<Mutex<HashMap<std::path::PathBuf, Sto
 
 pub(super) fn shared_content_store(
     path: std::path::PathBuf,
-) -> Result<(StdArc<ContentStore>, StdArc<StorageMaintenance>)> {
+) -> StoreResult<(StdArc<ContentStore>, StdArc<StorageMaintenance>)> {
     let mut stores = CONTENT_STORES
         .lock()
-        .map_err(|_| invalid("content store registry mutex poisoned"))?;
+        .map_err(|_| StoreError::Invalid("content store registry mutex poisoned".to_owned()))?;
     if let Some(store) = stores.get(&path).and_then(|entry| entry.store.upgrade()) {
         let maintenance = stores
             .get(&path)
@@ -45,7 +45,7 @@ pub(super) fn shared_content_store(
         return Ok((store, maintenance));
     }
     stores.retain(|_, entry| entry.store.strong_count() > 0);
-    let store = StdArc::new(ContentStore::open(&path).map_err(|error| invalid(error.to_string()))?);
+    let store = StdArc::new(ContentStore::open(&path)?);
     let maintenance = StdArc::new(StorageMaintenance::start(StdArc::clone(&store)));
     stores.insert(
         path,
@@ -200,15 +200,15 @@ pub(super) fn index_stored_tapes(
 }
 
 /// The tape document of one backlog tape, or `None` when this build cannot decode it: an unknown
-/// grammar tag, a source that is not UTF-8, or a tape image this grammar rejects.
+/// grammar tag, a source that is not UTF-8, or a tape image this grammar rejects. A derived
+/// document's tape (`file_documents`) is an ordinary row: it decodes in its own dialect over its
+/// own text, and gets a search index of its own.
 fn decode_stored_tape(
     unindexed: crate::content_store::UnindexedTape,
     grammars: &mut HashMap<i64, Arc<tape::Grammar>>,
     stop: &AtomicBool,
 ) -> Option<tape::TapeDoc> {
-    let language = u8::try_from(unindexed.grammar)
-        .ok()
-        .and_then(language::from_tape_tag)?;
+    let language = tape_dialect(unindexed.grammar)?;
     let grammar = match grammars.get(&unindexed.grammar) {
         Some(grammar) => Arc::clone(grammar),
         None => {
@@ -220,9 +220,13 @@ fn decode_stored_tape(
     let source = String::from_utf8(unindexed.source).ok()?;
     let image = tape::TapeImage::from_bytes(&unindexed.image, &grammar).ok()?;
     let lines = Arc::new(LineTable::new(&source, Terminators::of(language)));
-    tape::TapeDoc::restore_with_lines(Arc::new(source), grammar, &image, lines, &|| {
-        stop.load(Ordering::Acquire)
-    })
+    tape::TapeDoc::restore_with_lines(
+        Arc::new(source),
+        grammar,
+        &tape::FileImage::single(image),
+        lines,
+        &|| stop.load(Ordering::Acquire),
+    )
     .ok()
 }
 
@@ -272,44 +276,74 @@ pub(super) fn storage_context_in(
 ) -> Result<StorageContext> {
     let discovered = git_workspace::discover(std::path::Path::new(root))
         .map_err(|error| invalid(error.to_string()))?;
-    attach_storage(root, discovered, store_path)
+    match attach_storage(root, discovered, store_path)? {
+        Attached::Storage(context) => Ok(context),
+        Attached::Busy(reason) => Err(invalid(reason)),
+    }
+}
+
+/// What a storage attach produced.
+pub(super) enum Attached {
+    Storage(StorageContext),
+    /// Another writer held the store past the write deadline, so the workspace runs without
+    /// reuse: the store is a cache, and waiting on it costs time, never results. Says why.
+    Busy(String),
 }
 
 /// The storage context of the workspace at `root` in the `discovered` Git worktree, over an
-/// explicit store file.
+/// explicit store file; `Attached::Busy` when the store stays busy.
 pub(super) fn attach_storage(
     root: &str,
     discovered: git_workspace::GitWorkspace,
     store_path: std::path::PathBuf,
-) -> Result<StorageContext> {
+) -> Result<Attached> {
+    let busy = |during: &str| {
+        Attached::Busy(format!(
+            "content store busy: another writer held it past the write deadline {during}"
+        ))
+    };
+    // One write deadline for the whole attach: the open's schema setup and the snapshot
+    // publication share it (`publish_snapshot` joins it).
+    let _deadline = OperationDeadline::enter();
     let repository_prefix = repository_prefix(root, &discovered.worktree_root)?;
-    let (store, maintenance) = shared_content_store(store_path)?;
+    let (store, maintenance) = match shared_content_store(store_path) {
+        Ok(shared) => shared,
+        Err(StoreError::Busy) => return Ok(busy("while opening the store")),
+        Err(error) => return Err(invalid(error.to_string())),
+    };
     let owner = format!(
         "rerail:{}:{}",
         std::process::id(),
         discovered.worktree_root.to_string_lossy()
     );
-    let (snapshot, workspace_id) = discovered
-        .publish_snapshot(
-            &store,
-            1,
-            grammar_set(),
-            i64::from(tape::TAPE_FORMAT_VERSION),
-            &WorkspaceRegistration {
-                root: discovered.worktree_root.to_string_lossy().as_ref(),
-                repository: discovered.common_directory.to_string_lossy().as_ref(),
-                owner: &owner,
-                generation: 1,
-                lease_seconds: 120,
-            },
-        )
-        .map_err(|error| invalid(format!("snapshot publication failed: {error}")))?;
+    let published = discovered.publish_snapshot(
+        &store,
+        1,
+        grammar_set(),
+        i64::from(tape::TAPE_FORMAT_VERSION),
+        &WorkspaceRegistration {
+            root: discovered.worktree_root.to_string_lossy().as_ref(),
+            repository: discovered.common_directory.to_string_lossy().as_ref(),
+            owner: &owner,
+            generation: 1,
+            lease_seconds: 120,
+        },
+    );
+    let (snapshot, workspace_id) = match published {
+        Ok(published) => published,
+        Err(StoreError::Busy) => return Ok(busy("while publishing the Git snapshot")),
+        Err(error) => {
+            return Err(invalid(format!(
+                "snapshot publication failed: cannot persist Git snapshot: {error}"
+            )));
+        }
+    };
     maintenance.register(workspace_id, &owner);
     let registration = StdArc::new(StorageRegistration {
         maintenance,
         workspace_id,
     });
-    Ok(StorageContext {
+    Ok(Attached::Storage(StorageContext {
         store,
         repository: Some(StdArc::new(discovered)),
         repository_prefix,
@@ -317,7 +351,7 @@ pub(super) fn attach_storage(
         snapshot_id: snapshot,
         owner,
         _maintenance: Some(registration),
-    })
+    }))
 }
 
 /// `root` relative to `worktree` as a path prefix: `""` at the worktree root, else `dir/`.

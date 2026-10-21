@@ -10,7 +10,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { defaultRerailDatabasePath } from "../../src/engine/index.js";
 import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../../src/runtime/event-protocol.js";
-import { isPreSetupHealthCheck } from "../../src/runtime/pre-setup-health-check.js";
+import { isPreSetupHealthCheck, skipsSessionsApproval } from "../../src/runtime/pre-setup-health-check.js";
 import { workspaceStartState } from "../../src/runtime/repository-start.js";
 
 const SOURCE = resolve(import.meta.dirname, "../../src");
@@ -83,6 +83,37 @@ describe("a release from before set-up checking an update to this one", () => {
     expect(existsSync(join(env.RERAIL_HOME, "daemon.json"))).toBe(false);
   }, 60_000);
 
+  it("starts Rerail with no rule packs from a later release's check, fetching none, so its session is recorded", async () => {
+    // `startHealthRepository` in updater.ts: state, then `start --answer pick-myself`, in a scratch place with no
+    // coding agent found. npm points nowhere: a run that fetched packs would fail to, and ask rather than start.
+    const root = await scratch("rerail-update-health-");
+    const workspace = join(root, "workspace");
+    const storageRoot = join(root, "sessions");
+    const user = join(root, "user");
+    await mkdir(user);
+    const env = {
+      ...process.env,
+      HOME: user,
+      USERPROFILE: user,
+      RERAIL_HOME: join(root, "home"),
+      RERAIL_STORAGE_ROOT: storageRoot,
+      RERAIL_AUTOSTART: "0",
+      NPM_CONFIG_REGISTRY: "http://127.0.0.1:9/",
+    };
+    await mkdir(workspace);
+    const run = (args: readonly string[]) => promisify(execFile)(
+      process.execPath, ["--import", TSX, join(SOURCE, "cli", "cli.ts"), ...args], { cwd: workspace, env, timeout: 30_000 },
+    );
+
+    await run(["start", "--repo", workspace, "--answer", "pick-myself"]);
+
+    const { code, stderr } = await sessionStart(workspace, env);
+    expect({ code, stderr }).toEqual({ code: 0, stderr: "" });
+    expect(await readdir(storageRoot)).not.toEqual([]);
+    expect(workspaceStartState(workspace, defaultRerailDatabasePath(env))).toBe("started");
+    expect(existsSync(join(env.RERAIL_HOME, "packs"))).toBe(false);
+  }, 60_000);
+
   it("leaves every other start to set-up", async () => {
     const root = await scratch("rerail-pre-setup-");
     const empty = join(root, "empty");
@@ -103,5 +134,27 @@ describe("a release from before set-up checking an update to this one", () => {
     expect(isPreSetupHealthCheck(["--repo", empty, "--answer", "start"], "agent", empty, env)).toBe(false);
     expect(isPreSetupHealthCheck(["--repo", empty, "--repository"], "agent", empty, env)).toBe(false);
     expect(isPreSetupHealthCheck(["--repo", empty], "terminal", empty, env)).toBe(false);
+  });
+});
+
+describe("an update's health check and the sessions question", () => {
+  it("is not asked only in the scratch place with no coding agent found; anywhere an agent is found, it is", async () => {
+    const root = await scratch("rerail-update-health-");
+    const empty = join(root, "empty");
+    const filled = join(root, "filled");
+    await Promise.all([mkdir(empty), mkdir(filled)]);
+    await writeFile(join(filled, "index.ts"), "export {};\n");
+    const env = { RERAIL_HOME: join(root, "home"), RERAIL_STORAGE_ROOT: join(root, "sessions"), RERAIL_AUTOSTART: "0" };
+    const check = ["--repo", empty, "--answer", "pick-myself"];
+    const none = () => [];
+
+    expect(skipsSessionsApproval(check, "agent", empty, none, env)).toBe(true);
+    // The same check on a computer with a coding agent would connect it: it asks.
+    expect(skipsSessionsApproval(check, "agent", empty, () => ["claude-code"], env)).toBe(false);
+    // Any other answer, folder, lane or environment is set-up's, which asks.
+    expect(skipsSessionsApproval(["--repo", empty, "--answer", "start"], "agent", empty, none, env)).toBe(false);
+    expect(skipsSessionsApproval(["--repo", filled, "--answer", "pick-myself"], "agent", filled, none, env)).toBe(false);
+    expect(skipsSessionsApproval(check, "terminal", empty, none, env)).toBe(false);
+    expect(skipsSessionsApproval(check, "agent", empty, none, { ...env, RERAIL_AUTOSTART: undefined })).toBe(false);
   });
 });

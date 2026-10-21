@@ -11,9 +11,11 @@ pub(crate) mod percent;
 pub(crate) mod php_string;
 pub(crate) mod phpdoc;
 pub(crate) mod printf;
+pub(crate) mod rust_format;
 pub(crate) mod scanf;
 pub(crate) mod semantic;
 
+use crate::code_rule_dsl::embed::segments::FileRanges;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::value::Value;
 use ast_grep_core::Position;
@@ -45,6 +47,8 @@ pub(crate) enum Grammar {
     Scanf,
     /// PHP doc comments as PHPStan's phpdoc-parser reads them (`phpDoc`).
     PhpDoc,
+    /// Rust's `format_args!` templates as rustc reads them (`rustFormat`).
+    RustFormat,
     /// Test-only: every decoded character is a `char` node under a `text` root.
     #[cfg(test)]
     Chars,
@@ -62,6 +66,8 @@ pub(crate) enum LiteralHost {
     PhpString,
     /// PHP doc comments (`comment` nodes PHP lexes as `T_DOC_COMMENT`).
     PhpComment,
+    /// Rust `str` literals (`string_literal`, `raw_string_literal`), decoded as rustc reads them.
+    RustString,
 }
 
 impl Grammar {
@@ -74,6 +80,7 @@ impl Grammar {
         Self::Printf,
         Self::Scanf,
         Self::PhpDoc,
+        Self::RustFormat,
         #[cfg(test)]
         Self::Chars,
     ];
@@ -93,6 +100,7 @@ impl Grammar {
             "printfFormat" => Some(Self::Printf),
             "scanfFormat" => Some(Self::Scanf),
             "phpDoc" => Some(Self::PhpDoc),
+            "rustFormat" => Some(Self::RustFormat),
             #[cfg(test)]
             "testChars" => Some(Self::Chars),
             _ => None,
@@ -108,6 +116,7 @@ impl Grammar {
             Self::Printf => "printfFormat",
             Self::Scanf => "scanfFormat",
             Self::PhpDoc => "phpDoc",
+            Self::RustFormat => "rustFormat",
             #[cfg(test)]
             Self::Chars => "testChars",
         }
@@ -124,6 +133,7 @@ impl Grammar {
             Self::Printf => printf::KINDS,
             Self::Scanf => scanf::KINDS,
             Self::PhpDoc => phpdoc::KINDS,
+            Self::RustFormat => rust_format::KINDS,
             #[cfg(test)]
             Self::Chars => &["text", "char", "error"],
         }
@@ -136,6 +146,7 @@ impl Grammar {
             Self::EslintDirective => LiteralHost::EcmaComment,
             Self::Printf | Self::Scanf => LiteralHost::PhpString,
             Self::PhpDoc => LiteralHost::PhpComment,
+            Self::RustFormat => LiteralHost::RustString,
             #[cfg(test)]
             Self::Chars => LiteralHost::PythonString,
         }
@@ -147,6 +158,7 @@ impl Grammar {
             LiteralHost::PythonString => GrammarDialect::Python,
             LiteralHost::EcmaComment => GrammarDialect::TypeScript,
             LiteralHost::PhpString | LiteralHost::PhpComment => GrammarDialect::Php,
+            LiteralHost::RustString => GrammarDialect::Rust,
         }
     }
 
@@ -157,6 +169,7 @@ impl Grammar {
             LiteralHost::EcmaComment => "TypeScript comments",
             LiteralHost::PhpString => "PHP strings",
             LiteralHost::PhpComment => "PHP doc comments",
+            LiteralHost::RustString => "Rust strings",
         }
     }
 
@@ -193,6 +206,7 @@ impl Grammar {
             Self::Brace => brace::parse(text),
             Self::Printf => printf::parse(text),
             Self::Scanf => scanf::parse(text),
+            Self::RustFormat => rust_format::tree(text),
             // Past the nesting bound an error root (`parse_php_comment` reads it as unknown).
             Self::PhpDoc => phpdoc::parse(text).unwrap_or_else(|| {
                 let mut root = PNode::new(self, "php_doc", 0, text.len());
@@ -318,6 +332,32 @@ pub(crate) struct SubTree {
     base: usize,
 }
 
+/// A parsed tree's bytes are the literal's decoded text: a node stands for the source bytes of its
+/// characters (`HostMap`), in the document the literal was parsed from.
+impl crate::code_rule_dsl::origin::Origin for SubTree {
+    /// A literal's characters stand in source order, so a node stands for one source range.
+    fn of_node(&self, id: usize, _: Range<usize>) -> Option<FileRanges> {
+        let rec = self.nodes.get(self.index_of(id)?)?;
+        Some(FileRanges::one(
+            self.map_range(rec.start as usize..rec.end as usize),
+        ))
+    }
+
+    fn of_range(&self, range: Range<usize>) -> Option<FileRanges> {
+        Some(FileRanges::one(self.map_range(self.decoded(range)?)))
+    }
+
+    fn bounds(&self, id: usize, range: Range<usize>) -> Option<Range<usize>> {
+        Some(self.of_node(id, range)?.primary())
+    }
+
+    /// Only an exact literal's bytes are copied: elsewhere decoding rewrote them.
+    fn copied(&self, range: Range<usize>) -> Option<Range<usize>> {
+        let range = self.decoded(range)?;
+        matches!(self.map, HostMap::Exact(_)).then(|| self.map_range(range))
+    }
+}
+
 /// Node ids of sub-trees have the top bit set; tapes use small indices, tree-sitter addresses.
 /// Blade trees (`blade::forte::tree`) draw their ids from the same counter.
 pub(crate) const ID_FLAG: usize = 1 << 63;
@@ -390,19 +430,12 @@ impl SubTree {
             .filter(|index| *index < self.nodes.len())
     }
 
-    /// The source range of the node with this id.
-    pub(crate) fn host_range(&self, node_id: usize) -> Option<Range<usize>> {
-        let rec = self.nodes.get(self.index_of(node_id)?)?;
-        Some(self.map_range(rec.start as usize..rec.end as usize))
-    }
-
-    /// The source range of a range of this tree's nodes (offset included): a capture a nested
-    /// tree exported.
-    pub(crate) fn host_span(&self, range: Range<usize>) -> Option<Range<usize>> {
+    /// A range of this tree's nodes (offset included) as decoded bytes.
+    fn decoded(&self, range: Range<usize>) -> Option<Range<usize>> {
         let offset = self.source.offset;
         let start = range.start.checked_sub(offset)?;
         let end = range.end.checked_sub(offset)?;
-        (end <= self.source.text.len()).then(|| self.map_range(start..end))
+        (end <= self.source.text.len()).then_some(start..end)
     }
 
     /// The source range of decoded bytes `range`.
@@ -754,6 +787,35 @@ pub(crate) fn parse_string<D: Doc>(
     ))))
 }
 
+/// Parses a Rust `str` literal with a text grammar (`rustFormat`). Spends one step of `spend` per
+/// byte and tree node; `None` when the budget ran out.
+pub(crate) fn parse_rust_string<D: Doc>(
+    node: &ast_grep_core::Node<'_, D>,
+    grammar: Grammar,
+    spend: &mut dyn FnMut(usize) -> bool,
+) -> Option<Parsed> {
+    let decoded = match rust_format::decode(node) {
+        offsets::Decode::Known(decoded) => decoded,
+        offsets::Decode::Unknown => return Some(Parsed::Unknown),
+        offsets::Decode::NotString => return Some(Parsed::NotString),
+    };
+    if !spend(decoded.text.len() + 1) {
+        return None;
+    }
+    let root = grammar.parse(&decoded.text);
+    if !spend(root.size()) {
+        return None;
+    }
+    let text = decoded.text.clone();
+    Some(Parsed::Tree(Arc::new(SubTree::new(
+        grammar,
+        text,
+        0,
+        root,
+        HostMap::Spans(decoded),
+    ))))
+}
+
 /// Parses a PHP string literal with a text grammar (`printfFormat`, `scanfFormat`). Spends one
 /// step of `spend` per byte and tree node; `None` when the budget ran out.
 pub(crate) fn parse_php_string<D: Doc>(
@@ -845,7 +907,13 @@ mod tests {
             chars[2].parent().map(|node| node.kind().into_owned()),
             Some("text".into())
         );
-        let host = tree.host_range(chars[1].node_id()).expect("mapped");
+        let host = crate::code_rule_dsl::origin::Origin::of_node(
+            &*tree,
+            chars[1].node_id(),
+            chars[1].range(),
+        )
+        .expect("mapped")
+        .primary();
         assert_eq!(&source[host], "\\x62");
         assert_eq!(
             tree.value(chars[2].node_id()),

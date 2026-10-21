@@ -24,11 +24,11 @@ use serde_json::Value as Json;
 fn tree_of(source: &[u8], tree: &Json) -> BladeTree {
     BladeTree::new(
         source.to_vec(),
-        Ok(Parsed {
+        Parsed {
             tokens: oracle_tokens(tree),
             nodes: oracle_nodes(tree),
             errors: oracle_errors(tree),
-        }),
+        },
     )
 }
 
@@ -358,7 +358,11 @@ fn trees_views_and_tapes_survive_random_and_truncated_templates() {
             DepthLimits::default(),
             &mut Budget::for_template(bytes.len()),
         );
-        let flat = parsed.as_ref().ok().map(|parsed| reachable(&parsed.nodes));
+        // A template Forte stops on at a limit has no tree (`parse_tree`).
+        let Ok(parsed) = parsed else {
+            continue;
+        };
+        let reachable = reachable(&parsed.nodes);
         let tree = BladeTree::new(bytes.to_vec(), parsed);
         let mut fail = |error: String| {
             if failures.len() < 20 {
@@ -368,9 +372,7 @@ fn trees_views_and_tapes_survive_random_and_truncated_templates() {
                 ));
             }
         };
-        if let Some(reachable) = flat
-            && let Err(error) = check(&tree, reachable)
-        {
+        if let Err(error) = check(&tree, reachable) {
             fail(error);
         }
         if let Some(range) = tree
@@ -380,10 +382,11 @@ fn trees_views_and_tapes_survive_random_and_truncated_templates() {
         {
             fail(format!("syntax error {range:?} outside the template"));
         }
-        let round_trip =
-            TapeImage::encode_template(&grammar, &source, &|| false).and_then(|image| {
-                let encoded = image.to_bytes()?;
-                let decoded = TapeImage::from_bytes(&encoded, &grammar)?.to_bytes()?;
+        let round_trip = TapeImage::encode_template(&grammar, &source, &|| false)
+            .map_err(|error| format!("{error:?}"))
+            .and_then(|image| {
+                let encoded = image.primary.to_bytes()?;
+                let decoded = image.round_trip(&grammar)?.primary.to_bytes()?;
                 (decoded == encoded)
                     .then_some(())
                     .ok_or_else(|| "the tape did not round-trip".to_owned())
@@ -403,7 +406,7 @@ const TEMPLATE: &str = "<div>{{ $user->name }}</div>\n@include('partials.header'
 
 /// Each match's kind, text and the text of `var`.
 fn matches(pattern: &str, var: &str) -> Vec<(String, String, Option<String>)> {
-    let root = AstGrep::doc(lang().doc(TEMPLATE.as_bytes()));
+    let root = AstGrep::doc(lang().doc(TEMPLATE.as_bytes()).expect("parses"));
     let pattern = Pattern::try_new(pattern, lang()).expect("pattern");
     root.root()
         .find_all(&pattern)
@@ -459,7 +462,7 @@ fn exact_blade_patterns_match() {
 fn fields_name_the_parts() {
     let source =
         "<a href=\"x\">{{ $y }}</a>@if($a) b @else c @endif<?php echo 1; ?>@php $z = 2; @endphp";
-    let root = AstGrep::doc(lang().doc(source.as_bytes()));
+    let root = AstGrep::doc(lang().doc(source.as_bytes()).expect("parses"));
     let doc = root.root();
     let kinds: Vec<String> = doc
         .children()
@@ -509,19 +512,52 @@ fn fields_name_the_parts() {
         Some("$z = 2;")
     );
     // Two trees never share node ids.
-    let other = AstGrep::doc(lang().doc(source.as_bytes()));
+    let other = AstGrep::doc(lang().doc(source.as_bytes()).expect("parses"));
     assert_ne!(other.root().node_id(), doc.node_id());
 }
 
 #[test]
 fn errors_are_ranges_not_nodes() {
-    let tree = parse_tree(b"{{ $a");
+    let tree = parse_tree(b"{{ $a").expect("parses");
     assert_eq!(tree.error_ranges(), vec![5..5]);
     let doc = BladeDoc::new(tree, lang());
     let root = AstGrep::doc(doc);
     assert!(root.root().dfs().all(|node| !node.is_error()));
-    let failed = BladeTree::new(b"<div>".to_vec(), Err(ParseError::Budget));
-    assert_eq!(failed.error_ranges(), vec![0..5]);
-    assert_eq!(failed.len(), 1);
-    assert_eq!(failed.parse_error(), Some(&ParseError::Budget));
+}
+
+/// Forte stopping at a limit is no syntax error of the template: it has no tree, and no tape, so
+/// no clause reads it, in the workspace and the stateless path alike.
+#[test]
+fn a_parser_limit_leaves_no_tree_and_no_tape() {
+    let deep = "@if($a)".repeat(4096);
+    let error = parse_tree(deep.as_bytes())
+        .err()
+        .expect("Forte stops at its nesting limit");
+    assert!(
+        matches!(error, ParseError::Depth(_) | ParseError::Budget),
+        "{error:?}"
+    );
+    let grammar = Grammar::new(GrammarDialect::Blade).expect("grammar");
+    assert!(TapeImage::parse(&grammar, &deep, &|| false).is_none());
+    let document = serde_json::json!({
+        "format": "rerail.policy/v1", "id": "deep", "revision": 1, "mode": "block",
+        "clauses": [{ "id": "c", "forbid": { "ast": { "language": "blade", "rule": { "kind": "directive" } } },
+            "violation": { "anchor": "witness.span", "code": "X", "message": "x" } }]
+    });
+    let compiled = crate::code_rule_dsl::test_support::compile_document_with(
+        document,
+        &serde_json::from_str::<Json>(crate::code_rule_dsl::test_support::CAPABILITIES)
+            .expect("capabilities"),
+    )
+    .unwrap_or_else(|error| panic!("{}", error.reason));
+    let result = crate::code_rule_dsl::test_support::evaluate_file(
+        &compiled,
+        "blade",
+        "deep.blade.php",
+        &deep,
+    );
+    assert_eq!(result["violations"], serde_json::json!([]), "{result}");
+    let failures = result["failures"].as_array().expect("failures");
+    assert_eq!(failures.len(), 1, "{result}");
+    assert_eq!(failures[0]["code"], "budget-exceeded", "{result}");
 }

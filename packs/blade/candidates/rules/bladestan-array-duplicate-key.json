@@ -1,0 +1,106 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bladestan-array-duplicate-key",
+  "revision": 3,
+  "mode": "steer",
+  "description": "Avoid array literals in Blade templates whose keys resolve to the same value; PHP silently keeps only the last one.",
+  "scope": {
+    "include": [
+      "**/*.blade.php"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "blade",
+          "embedded": "compiled-view",
+          "rule": {
+            "all": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "array_creation_expression",
+                  "layout": {
+                    "span": {
+                      "max": 256
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "array_element_initializer",
+                "pattern": {
+                  "context": "[$E => $V]",
+                  "selector": "array_element_initializer"
+                }
+              },
+              {
+                "pattern": "$P"
+              },
+              {
+                "precedes": {
+                  "stopBy": "end",
+                  "all": [
+                    {
+                      "kind": "array_element_initializer",
+                      "pattern": {
+                        "context": "[$E2 => $V2]",
+                        "selector": "array_element_initializer"
+                      }
+                    },
+                    {
+                      "pattern": "$P2"
+                    },
+                    {
+                      "compare": {
+                        "left": "P",
+                        "op": "eq",
+                        "right": "P2",
+                        "text": "key"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "follows": {
+                    "stopBy": "end",
+                    "all": [
+                      {
+                        "kind": "array_element_initializer",
+                        "pattern": {
+                          "context": "[$E0 => $V0]",
+                          "selector": "array_element_initializer"
+                        }
+                      },
+                      {
+                        "pattern": "$P0"
+                      },
+                      {
+                        "compare": {
+                          "left": "P0",
+                          "op": "eq",
+                          "right": "P",
+                          "text": "key"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "array.duplicateKey",
+        "message": "Rename or remove one of the entries with key $E in this array; PHP keeps only the last one."
+      }
+    }
+  ]
+}

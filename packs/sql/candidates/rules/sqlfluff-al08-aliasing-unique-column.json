@@ -1,0 +1,116 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "sqlfluff-al08-aliasing-unique-column",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Keep column names and aliases unique within a SQL SELECT list, ignoring case and quotes; duplicate output columns are ambiguous.",
+  "scope": {
+    "include": [
+      "**/*.sql"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "duplicate-column-name",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "rule": {
+            "kind": "term",
+            "inside": {
+              "kind": "select_expression",
+              "stopBy": "neighbor"
+            },
+            "all": [
+              {
+                "any": [
+                  {
+                    "has": {
+                      "field": "alias",
+                      "kind": "identifier",
+                      "pattern": "$A"
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "field": "alias",
+                        "regex": "."
+                      }
+                    },
+                    "has": {
+                      "field": "value",
+                      "kind": "field",
+                      "has": {
+                        "field": "name",
+                        "kind": "identifier",
+                        "pattern": "$A"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "follows": {
+                  "kind": "term",
+                  "stopBy": "end",
+                  "compare": {
+                    "left": "A",
+                    "op": "eq",
+                    "right": "B",
+                    "text": "unquoted",
+                    "collation": "fold-upper"
+                  },
+                  "any": [
+                    {
+                      "has": {
+                        "field": "alias",
+                        "kind": "identifier",
+                        "pattern": "$B"
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "field": "alias",
+                          "regex": "."
+                        }
+                      },
+                      "has": {
+                        "field": "value",
+                        "kind": "field",
+                        "has": {
+                          "field": "name",
+                          "kind": "identifier",
+                          "pattern": "$B"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.A",
+        "code": "AL08",
+        "message": "Reuse of column alias.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "AL08",
+              "aliasing",
+              "aliasing.unique",
+              "aliasing.unique.column",
+              "all",
+              "core"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

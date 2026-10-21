@@ -1,0 +1,35 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bladestan-variable-undefined",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid reading variables in Blade templates that no code path defines, such as a closure variable missing from its use list; data passed to the view is not flagged.",
+  "scope": {
+    "include": [
+      "**/*.blade.php"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "blade",
+          "embedded": "compiled-view",
+          "rule": {
+            "kind": "variable_name",
+            "resolves": {
+              "unresolved": true
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "variable.undefined",
+        "message": "Define this variable before reading it, or add it to the closure's use list if it comes from outside."
+      }
+    }
+  ]
+}

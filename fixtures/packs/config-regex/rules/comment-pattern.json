@@ -1,0 +1,46 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "comment-pattern",
+  "revision": 1,
+  "mode": "log",
+  "description": "A comment that matches the pattern option, a regex.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "options",
+      "define": {
+        "options": {
+          "pattern": {
+            "type": "string",
+            "default": "^// TODO",
+            "description": "The regex a reported comment matches."
+          }
+        }
+      }
+    },
+    {
+      "id": "comment",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "comment",
+            "regex": {
+              "$option": "pattern"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "COMMENT-PATTERN",
+        "message": "Remove this comment; it matches the pattern."
+      }
+    }
+  ]
+}

@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { and, eq, inArray, or } from "drizzle-orm";
-import { loadBundledCatalog } from "../catalog/bundled-rules.js";
+import { loadRuleCatalog } from "../catalog/rule-catalog.js";
 import { physicalPath, withinCheckout } from "../catalog/checkout-control.js";
 import { CheckoutOwners, type CheckoutOwner } from "../catalog/checkout-owner.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../storage/database.js";
@@ -18,7 +18,7 @@ import type { RepositoryAuditRuleProvenance, AuditRuleProvenance, RulePlacementD
 import { bundledCodeRuleDslDirectory } from "./code-rule-compile.js";
 import {
   folderContains,
-  type BundledCatalog,
+  type RuleCatalog,
   type CheckoutContext,
   type CheckoutRuleSet,
   type EffectiveRule,
@@ -31,7 +31,7 @@ import { checkoutStatus, parentCheckouts, recordedCheckoutsVersion } from "../ca
 import { loadCheckoutRuleSet, ruleConfigurationSignature } from "../catalog/rule-configuration.js";
 import { LIBRARY_OWNER, quarantinedLibraryRules } from "../catalog/rule-library.js";
 import type { ConversationRule } from "../catalog/rule-schema.js";
-import { checkouts, ruleAttachments, ruleSettings } from "../storage/schema.js";
+import { checkouts, repositories, ruleAttachments, ruleSettings } from "../storage/schema.js";
 import { compareDeterministicStrings, stableJsonText } from "../stable-json.js";
 
 export { bundledCodeRuleDslDirectory };
@@ -58,19 +58,21 @@ export function loadCodeRuleCapabilities(path: string = resolve(bundledCodeRuleD
 type CompileOutcome = { readonly ok: true; readonly executable: NativeCompiledCodeRuleDsl } | { readonly ok: false; readonly reason: string };
 
 /**
- * Compiled executables shared by every checkout of the process: one per rule id and capabilities, for the source last
- * compiled. Editing a rule replaces its entry, so a long-running daemon keeps no earlier versions.
+ * Compiled executables shared by every checkout of the process: one per rule id, capabilities and `config` (a
+ * repository's option values), for the source last compiled. Editing a rule replaces its entries, so a long-running
+ * daemon keeps no earlier versions; two repositories configuring one rule differently each keep theirs.
  */
 export class CompiledRuleCache {
   readonly #outcomes = new Map<string, { readonly sourceDigest: string; readonly outcome: CompileOutcome }>();
 
-  /** Rules (per capabilities) with a compiled version held. */
+  /** Rules (per capabilities and config) with a compiled version held. */
   get size(): number {
     return this.#outcomes.size;
   }
 
-  compile(capabilities: CodeRuleCapabilities, policyId: string, sourceText: string, sourceDigest: string): CompileOutcome {
-    const key = `${capabilities.digest}\0${policyId}`;
+  /** `config` is the stable JSON of the rule's option values (`null` for none): it names the variant. */
+  compile(capabilities: CodeRuleCapabilities, policyId: string, sourceText: string, sourceDigest: string, config: string): CompileOutcome {
+    const key = `${capabilities.digest}\0${policyId}\0${config}`;
     const cached = this.#outcomes.get(key);
     let outcome = cached?.sourceDigest === sourceDigest ? cached.outcome : undefined;
     if (outcome === undefined) {
@@ -94,7 +96,7 @@ const compiledRules = new CompiledRuleCache();
 export interface CompiledCodeRuleDslEntry {
   readonly id: string;
   readonly executable: NativeCompiledCodeRuleDsl;
-  /** Where the code rule runs in the checkout, and at which mode; passed to the native workspace. */
+  /** Where the code rule runs in the checkout, at which mode, and where suppression comments are ignored; passed to the native workspace. */
   readonly placement: CodeRulePlacement;
 }
 
@@ -129,7 +131,7 @@ export interface CodeRuleDslCatalog {
 export interface LoadedCheckoutRules {
   /** The checkout's configuration; undefined when it may run nothing (unrecorded). */
   readonly ruleSet: CheckoutRuleSet | undefined;
-  /** Every folder where presence, `on` or `mode` can change: attachment and setting folders, and `""`. */
+  /** Every folder where presence, `on`, `mode` or `suppressions` can change: attachment and setting folders, and `""`. */
   readonly folders: readonly string[];
   /** Library rules this checkout adds that fail validation. */
   readonly quarantined: readonly QuarantinedRule[];
@@ -160,15 +162,19 @@ function placedRules(ruleSet: CheckoutRuleSet, folders: readonly string[]): Map<
         entry = { rule, decisions: [] };
         placed.set(id, entry);
       }
-      entry.decisions.push({ folder, on: rule.on, mode: rule.mode, onFrom: rule.decidedBy.on, modeFrom: rule.decidedBy.mode });
+      entry.decisions.push({
+        folder, on: rule.on, mode: rule.mode, onFrom: rule.decidedBy.on, modeFrom: rule.decidedBy.mode,
+        suppressions: rule.suppressions, suppressionsFrom: rule.decidedBy.suppressions,
+      });
     }
   }
   return placed;
 }
 
 /**
- * The native placement: per folder the mode (or null, off; a folder the rule is absent from is off), keeping only
- * folders that differ from the deepest kept folder containing them. A rule off everywhere has no entries.
+ * The native placement: per folder the mode (or null, off; a folder the rule is absent from is off) and whether
+ * suppression comments are ignored there, keeping only folders that differ from the deepest kept folder containing
+ * them. Where the rule is off, suppressions are left as the parent has them. A rule off everywhere has no entries.
  */
 function placementOf(decisions: readonly RulePlacementDecision[], folders: readonly string[]): CodeRulePlacement {
   const kept: CodeRulePlacementEntry[] = [];
@@ -179,7 +185,10 @@ function placementOf(decisions: readonly RulePlacementDecision[], folders: reado
     for (const entry of kept) {
       if (folderContains(entry.folder, folder) && (parent === undefined || entry.folder.length > parent.folder.length)) parent = entry;
     }
-    if (parent === undefined ? mode !== null : parent.mode !== mode) kept.push({ folder, mode });
+    const ignore = mode === null ? parent?.suppressions === "ignore" : decision?.suppressions === "ignore";
+    const entry: CodeRulePlacementEntry = ignore ? { folder, mode, suppressions: "ignore" } : { folder, mode };
+    const differs = parent === undefined ? mode !== null : parent.mode !== mode || parent.suppressions !== entry.suppressions;
+    if (differs) kept.push(entry);
   }
   return kept;
 }
@@ -241,10 +250,14 @@ export class CheckoutCodeRuleCatalog implements CodeRuleDslCatalog {
       const { rule, decisions } = placed.get(id)!;
       const placement = placementOf(decisions, loaded.folders);
       if (placement.length === 0) continue;
+      if (rule.configError !== null) {
+        quarantined.push({ ruleId: id, kind: "code", owner: RERAIL_OWNER, reason: `The repository's config for this rule does not apply: ${rule.configError}` });
+        continue;
+      }
       const sourceText = stableJsonText(rule.document.rule);
       if (sourceText === undefined) throw new Error(`Policy ${id} is not JSON representable`);
       const sourceDigest = digest(sourceText);
-      const outcome = compiledRules.compile(this.#capabilities, id, sourceText, sourceDigest);
+      const outcome = compiledRules.compile(this.#capabilities, id, sourceText, sourceDigest, stableJsonText(rule.config) ?? "");
       if (!outcome.ok) {
         // A rule naming a language the engine does not read yet is inactive by design: quarantined with that code, not reported.
         const unsupported = languageNotSupportedOf(outcome.reason);
@@ -307,15 +320,24 @@ interface CheckoutEntry {
 export class CheckoutCatalogs {
   readonly databasePath: string;
   readonly database: RerailDatabase;
-  readonly bundle: BundledCatalog;
+  readonly #ruleCatalog: RuleCatalog | undefined;
   readonly #capabilities: CodeRuleCapabilities;
   readonly #entries = new Map<string, CheckoutEntry>();
 
-  constructor(databasePath: string = defaultRerailDatabasePath(), options: { capabilities?: CodeRuleCapabilities; bundle?: BundledCatalog } = {}) {
+  /** `options.ruleCatalog` fixes the catalog; without it each read follows the installed packs (`loadRuleCatalog`). */
+  constructor(databasePath: string = defaultRerailDatabasePath(), options: { capabilities?: CodeRuleCapabilities; ruleCatalog?: RuleCatalog } = {}) {
     this.databasePath = resolve(databasePath);
     this.database = openRerailDatabase(this.databasePath);
-    this.bundle = options.bundle ?? loadBundledCatalog();
+    this.#ruleCatalog = options.ruleCatalog;
     this.#capabilities = options.capabilities ?? loadCodeRuleCapabilities();
+  }
+
+  /**
+   * The catalog the checkouts' rules come from. A pack installed or removed changes its digest, and with it every
+   * checkout's configuration signature, so the next refresh rebuilds their rules.
+   */
+  get ruleCatalog(): RuleCatalog {
+    return this.#ruleCatalog ?? loadRuleCatalog();
   }
 
   /** The checkout at `root` (a physical checkout top level) as last read; refreshed with `refresh`. */
@@ -325,6 +347,14 @@ export class CheckoutCatalogs {
 
   eligibility(root: string): CheckoutEligibility {
     return this.#entry(root).eligibility;
+  }
+
+  /** Whether audits in `root` leave out files Git ignores: its repository's setting, on for a checkout not recorded. */
+  followsGitignore(root: string): boolean {
+    const repositoryKey = this.#entry(root).checkout?.repositoryKey;
+    if (repositoryKey === undefined) return true;
+    return this.database.select({ followGitignore: repositories.followGitignore }).from(repositories)
+      .where(eq(repositories.repositoryKey, repositoryKey)).get()?.followGitignore ?? true;
   }
 
   /** The checkout and its recorded parent checkouts, whose settings apply in it. */
@@ -423,13 +453,13 @@ export class CheckoutCatalogs {
   #signature(entry: CheckoutEntry): string {
     this.#read(entry);
     if (entry.checkout === undefined) return entry.eligibility;
-    const signature = ruleConfigurationSignature(this.database, this.bundle, entry.checkout.repositoryKey, this.ownerCheckoutPaths(entry.root));
+    const signature = ruleConfigurationSignature(this.database, this.ruleCatalog, entry.checkout.repositoryKey, this.ownerCheckoutPaths(entry.root));
     return `${entry.eligibility}\0${signature}`;
   }
 
   #ruleSet(entry: CheckoutEntry): CheckoutRuleSet | undefined {
     if (entry.checkout === undefined || entry.status === undefined) return undefined;
-    return loadCheckoutRuleSet(this.database, this.bundle, entry.checkout, entry.status, entry.parents);
+    return loadCheckoutRuleSet(this.database, this.ruleCatalog, entry.checkout, entry.status, entry.parents);
   }
 
   #load(entry: CheckoutEntry): LoadedCheckoutRules {

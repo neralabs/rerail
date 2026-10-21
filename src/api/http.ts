@@ -76,21 +76,32 @@ const jsonContent = (schema: z.ZodType, description: string) => ({
 });
 
 /**
- * GET operations answered entirely from the database, so its change token dates them without running the
- * handler. Conditional requests are an HTTP concern, so they live here rather than in the shared operation
- * shape that MCP tools also read.
+ * GET operations answered entirely from the database and the rule catalog, so the database's change token and the
+ * catalog's digest date them without running the handler. The catalog changes when packs are installed or removed,
+ * with or without a database write. Conditional requests are an HTTP concern, so they live here rather than in the
+ * shared operation shape that MCP tools also read.
  */
 const DATABASE_ETAG_OPERATIONS: ReadonlySet<string> = new Set([
   "repositories_list", "repository_rules_get", "library_rules_list", "library_rules_get", "rerail_rules_list",
 ]);
 
 /**
- * GET operations that read audit history, which has no cheap change token: their tag is a
- * digest of the result, so the handler runs and only the response body is saved.
+ * GET operations that read audit history. Their tag is a digest of the result, so a result is computed once per
+ * change of the database (`historyVersion`) and every poll in between, from any number of dashboard tabs, is answered
+ * from it without running the handler.
  */
 const RESULT_ETAG_OPERATIONS: ReadonlySet<string> = new Set(["rules_activity", "violations_list", "sessions_list"]);
 
 const ETAG_OPERATIONS: ReadonlySet<string> = new Set([...DATABASE_ETAG_OPERATIONS, ...RESULT_ETAG_OPERATIONS]);
+
+/** Remembered history results; the dashboard asks for a handful of distinct reads per repository and range. */
+const REMEMBERED_RESULTS = 64;
+
+interface RememberedResult {
+  readonly version: string;
+  readonly etag: string;
+  readonly result: unknown;
+}
 
 /** Key order in a query string must not change the tag; two filters that differ must. */
 function normalizedInput(input: Record<string, unknown>): string {
@@ -196,6 +207,8 @@ export function createRerailApi(
   // `PRAGMA data_version` counts from zero on each new SQLite connection, so a catalog tag minted
   // before a restart could otherwise match one minted after.
   const instanceSalt = randomBytes(8).toString("hex");
+  /** `RESULT_ETAG_OPERATIONS` results by operation and input, oldest first. */
+  const remembered = new Map<string, RememberedResult>();
   const publicHosts = info.publicHosts ?? new Set<string>();
   const app = new OpenAPIHono({
     defaultHook: (result, context) =>
@@ -257,15 +270,28 @@ export function createRerailApi(
         if (DATABASE_ETAG_OPERATIONS.has(operation.id)) {
           // `dataVersion()` is a `PRAGMA data_version` read plus a local write counter, so it
           // catches commits from other processes as well as this daemon's own, at constant cost.
-          const unchanged = conditional(entityTag(operation.id, instanceSalt, normalizedInput(input), stores.dataVersion()));
+          const unchanged = conditional(entityTag(operation.id, instanceSalt, normalizedInput(input), stores.dataVersion(), stores.ruleCatalog().digest));
           if (unchanged !== undefined) return unchanged;
+        }
+        if (RESULT_ETAG_OPERATIONS.has(operation.id)) {
+          const key = `${operation.id}\u0000${normalizedInput(input)}`;
+          // The history a result reads, and the rule catalog (`rules_activity` lists the installed packs' rules), so
+          // a pack installed or removed shows without waiting for a session to write.
+          const history = stores.historyVersion();
+          const version = history === undefined ? undefined : `${history}\u0000${stores.ruleCatalog().digest}`;
+          const known = remembered.get(key);
+          if (known !== undefined && known.version === version) {
+            return conditional(known.etag) ?? context.json(known.result, 200);
+          }
+          const result = await invokeOperation(operation, stores, input, { kind: "person" });
+          const etag = entityTag(operation.id, JSON.stringify(result) ?? "");
+          remembered.delete(key);
+          if (version !== undefined) remembered.set(key, { version, etag, result });
+          if (remembered.size > REMEMBERED_RESULTS) remembered.delete(remembered.keys().next().value!);
+          return conditional(etag) ?? context.json(result, 200);
         }
         // `/api` callers are people (the dashboard, the CLI); coding agents come through `/mcp`.
         const result = await invokeOperation(operation, stores, input, { kind: "person" });
-        if (RESULT_ETAG_OPERATIONS.has(operation.id)) {
-          const unchanged = conditional(entityTag(operation.id, JSON.stringify(result) ?? ""));
-          if (unchanged !== undefined) return unchanged;
-        }
         return context.json(result, 200);
       } catch (error) {
         if (error instanceof ApiError) return context.json({ error: error.code, message: error.message }, error.status as 400);

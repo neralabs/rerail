@@ -1,0 +1,5 @@
+
+function foox() {
+  return foox();
+}
+      

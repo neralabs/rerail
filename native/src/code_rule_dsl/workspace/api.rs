@@ -13,21 +13,28 @@ use super::ingest::{
 #[cfg(feature = "code-rule-profile")]
 use super::memory::record_workspace_residency;
 use super::memory::workspace_memory_profile;
-use super::persisted::{candidate_catalog, persist_files};
+use super::persisted::{Persisted, candidate_catalog, persist_files};
 use super::results::{
-    ResultText, profile_result, replace_global_changes, serialize_result, serialize_result_page,
+    ResultText, evicted_file_states, profile_result, replace_global_changes, serialize_result,
+    serialize_result_page,
 };
-use super::storage::{attach_storage, unix_seconds};
-use super::{CandidateSets, FILE_WORK_BUDGET, WorkspaceState, check_closed};
+use super::storage::{Attached, StorageContext, attach_storage, unix_seconds};
+use super::{
+    CLAUSE_WORK_BUDGET, CandidateSets, STORED_RESULT_UNAVAILABLE, WorkspaceState, check_closed,
+};
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use crate::code_rule_dsl::budget::MatchBudget;
+use crate::code_rule_dsl::eval::evidence::Side;
 use crate::code_rule_dsl::eval::{evaluation_json, overflow_evaluation};
 use crate::code_rule_dsl::json::{invalid, json_error};
-use crate::code_rule_dsl::model::{ClauseKind, CodeRuleScope, Evaluation, Metrics, Snapshot};
+use crate::code_rule_dsl::language::{self, adapter::package_manifests};
+use crate::code_rule_dsl::model::{
+    ClauseKind, CodeRuleScope, CompiledCodeRule, Evaluation, Metrics, Query, Snapshot,
+};
 use crate::code_rule_dsl::placement::parse_placement;
 #[cfg(feature = "code-rule-profile")]
-use crate::code_rule_dsl::{matcher::GrammarMatcher, model::Query, profile};
-use crate::content_store::WorkspaceCompletion;
+use crate::code_rule_dsl::{matcher::GrammarMatcher, profile};
+use crate::content_store::{OperationDeadline, StoreError, WorkspaceCompletion};
 use crate::release_allocator_memory;
 use napi::bindgen_prelude::{AsyncTask, Buffer};
 use napi::{Env, Result, Task};
@@ -48,6 +55,11 @@ static WORKSPACE_INSTANCES: std::sync::atomic::AtomicU64 = std::sync::atomic::At
 pub struct CodeRuleDslWorkspace {
     pub(super) state: Arc<Mutex<WorkspaceState>>,
     pub(super) scopes: Mutex<Vec<CodeRuleScope>>,
+    /// Whether a code rule reads `file.package.serverGraph`, answered without the state lock.
+    pub(super) server_graph: AtomicBool,
+    /// Whether a code rule has an AST clause in a family whose files read their nearest
+    /// `package.json`, answered without the state lock.
+    pub(super) package_manifests: AtomicBool,
     pub(super) closed: Arc<AtomicBool>,
 }
 
@@ -68,6 +80,8 @@ impl CodeRuleDslWorkspace {
         Self {
             state: Arc::new(Mutex::new(state)),
             scopes: Mutex::new(Vec::new()),
+            server_graph: AtomicBool::new(false),
+            package_manifests: AtomicBool::new(false),
             closed: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -100,8 +114,10 @@ impl CodeRuleDslWorkspace {
     }
 
     /// Registers `compiled` with this workspace. `placement`, when given, is the JSON array of
-    /// `{"folder", "mode"}` entries that places this workspace's copy of the code rule per folder
-    /// of the checkout (`mode: null` is off there); the compiled code rule itself is never changed.
+    /// `{"folder", "mode", "suppressions"?}` entries that places this workspace's copy of the code
+    /// rule per folder of the checkout (`mode: null` is off there; `suppressions: "ignore"` reports
+    /// violations a linter's suppression comment would silence, `"honour"` or no `suppressions`
+    /// lets the comment silence them); the compiled code rule itself is never changed.
     #[napi]
     pub fn add_code_rule(
         &mut self,
@@ -155,15 +171,32 @@ impl CodeRuleDslWorkspace {
                         state.query_plans.insert((index, clause.id.clone()), plan);
                     }
                     ClauseKind::RequireEach { subject, evidence } => {
-                        let subject = compile_relation_producer(subject, clause, index, code_rule);
-                        let evidence =
-                            compile_relation_producer(evidence, clause, index, code_rule);
+                        let subject = compile_relation_producer(
+                            subject,
+                            Side::Subject,
+                            clause,
+                            index,
+                            code_rule,
+                        );
+                        let evidence = compile_relation_producer(
+                            evidence,
+                            Side::Evidence,
+                            clause,
+                            index,
+                            code_rule,
+                        );
                         state
                             .relation_plans
                             .insert((index, clause.id.clone()), vec![subject, evidence]);
                     }
                     ClauseKind::Budget { query, .. } => {
-                        let id = compile_relation_producer(query, clause, index, code_rule);
+                        let id = compile_relation_producer(
+                            query,
+                            Side::Counted,
+                            clause,
+                            index,
+                            code_rule,
+                        );
                         state
                             .relation_plans
                             .insert((index, clause.id.clone()), vec![id]);
@@ -178,6 +211,12 @@ impl CodeRuleDslWorkspace {
             .lock()
             .map_err(|_| invalid("policy workspace is unavailable"))?
             .push(resident.scope.clone());
+        if resident.reads_server_graph() {
+            self.server_graph.store(true, Ordering::Release);
+        }
+        if reads_package_manifests(&resident) {
+            self.package_manifests.store(true, Ordering::Release);
+        }
         #[cfg(feature = "code-rule-profile")]
         for clause in &resident.clauses {
             if let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &clause.kind {
@@ -217,6 +256,21 @@ impl CodeRuleDslWorkspace {
                 .scopes
                 .lock()
                 .is_ok_and(|scopes| scopes.iter().any(|scope| scope.matches(&path)))
+    }
+
+    /// Whether a code rule reads `file.package.serverGraph`: a host then sends each file of a
+    /// package naming `next` its membership (`serverGraph`).
+    #[napi]
+    pub fn reads_server_graph(&self) -> bool {
+        self.server_graph.load(Ordering::Acquire)
+    }
+
+    /// Whether a code rule has an AST clause in a family whose files read their nearest
+    /// `package.json` (ECMA): a host then treats `package.json` and `tsconfig`/`jsconfig` edits as
+    /// inputs, since they change those files' `package` facts.
+    #[napi]
+    pub fn reads_package_manifests(&self) -> bool {
+        self.package_manifests.load(Ordering::Acquire)
     }
 
     #[napi]
@@ -284,6 +338,7 @@ impl CodeRuleDslWorkspace {
                 code_rules,
                 grammars,
                 &self.closed,
+                false,
                 &budget,
                 &mut None,
             )?;
@@ -404,43 +459,6 @@ impl CodeRuleDslWorkspace {
     }
 
     #[napi]
-    pub fn maintain_storage(&self) -> Result<String> {
-        let storage = self
-            .state
-            .lock()
-            .map_err(|_| invalid("policy workspace is unavailable"))?
-            .storage
-            .clone();
-        let Some(storage) = storage else {
-            return Ok(json!({ "enabled": false }).to_string());
-        };
-        let now = unix_seconds()?;
-        storage
-            .store
-            .renew_workspace_lease(storage.workspace_id, &storage.owner, now + 120)
-            .map_err(|error| invalid(error.to_string()))?;
-        let report = storage
-            .store
-            .collect(now, crate::content_store::MAX_COLLECTION_BATCH)
-            .map_err(|error| invalid(error.to_string()))?;
-        Ok(json!({
-            "enabled": true,
-            "collected": {
-                "expiredPins": report.expired_pins,
-                "retiredWorkspaces": report.retired_workspaces,
-                "snapshotFiles": report.snapshot_files,
-                "snapshots": report.snapshots,
-                "candidateRows": report.candidate_rows,
-                "candidateChecks": report.candidate_checks,
-                "candidateCatalogs": report.candidate_catalogs,
-                "tapes": report.tapes,
-                "sources": report.sources,
-            }
-        })
-        .to_string())
-    }
-
-    #[napi]
     pub fn evict_inactive(&self) -> Result<bool> {
         let mut state = self
             .state
@@ -448,14 +466,21 @@ impl CodeRuleDslWorkspace {
             .map_err(|_| invalid("policy workspace is evaluating"))?;
         // Cross-file clauses read the evidence index and the call graph, which eviction keeps: they
         // are summaries of the files, and an edit after eviction updates the graph in place.
-        if state.storage.is_none() || state.files.values().any(|file| file.stored.is_none()) {
+        // A file without stored results stays only when a busy store left it unpublished.
+        if state.storage.is_none()
+            || state
+                .files
+                .values()
+                .any(|file| file.stored.is_none() && !file.unpublished)
+        {
             return Ok(false);
         }
-        // A file whose last evaluation was transient has no stored results to page; it stays.
+        // A file the store lacks results of (`FileState::stays_resident`: a transient evaluation,
+        // an unstored clause, or results a busy store left unpublished) has none to page; it stays.
         let evicted = state
             .files
             .values()
-            .filter(|file| !file.transient_failure)
+            .filter(|file| !file.stays_resident())
             .map(|file| {
                 let mut input = file.input.clone();
                 input.source = Arc::new(String::new());
@@ -466,7 +491,7 @@ impl CodeRuleDslWorkspace {
             state.versions.insert(input.path.clone(), version);
             state.evicted_inputs.insert(input.path.clone(), input);
         }
-        state.files.retain(|_, file| file.transient_failure);
+        state.files.retain(|_, file| file.stays_resident());
         state.documents.clear();
         state.candidate_sets = CandidateSets::new();
         state.grammars.clear();
@@ -522,11 +547,53 @@ impl CodeRuleDslWorkspace {
     }
 }
 
+/// Whether an AST clause of `code_rule` matches in a family whose files read their nearest
+/// `package.json` (`Adapter::PACKAGE_MANIFESTS`).
+fn reads_package_manifests(code_rule: &CompiledCodeRule) -> bool {
+    fn in_manifest_family(query: &Query) -> bool {
+        match query {
+            Query::Ast { matchers, .. } => matchers
+                .iter()
+                .any(|matcher| language::label(matcher.language).is_some_and(package_manifests)),
+            Query::SelectWhen { select, exists } => {
+                in_manifest_family(select) || in_manifest_family(exists)
+            }
+            Query::Regex { .. } => false,
+        }
+    }
+    code_rule.clauses.iter().any(|clause| match &clause.kind {
+        ClauseKind::Forbid(query) => in_manifest_family(query),
+        ClauseKind::RequireEach { subject, evidence } => {
+            in_manifest_family(&subject.ast.query) || in_manifest_family(&evidence.ast.query)
+        }
+        ClauseKind::Budget { query, .. } => in_manifest_family(&query.ast.query),
+        ClauseKind::Llm => false,
+    })
+}
+
 // Closing never waits on the JS thread. When close sees a busy lock, the
 // current lease clears it after unlocking; a new lease taking the lock first
 // inherits that responsibility. The post-unlock check closes the handoff gap.
 fn clear_if_unlocked(mutex: &Mutex<WorkspaceState>) {
     let clear = |state: &mut WorkspaceState| {
+        // Removals a busy store kept would leave rows no later session collects: one attempt that
+        // never waits, since close runs on the host's thread.
+        if let Some(storage) = &state.storage
+            && !state.pending_removals.is_empty()
+        {
+            let pending = state.pending_removals.iter().cloned().collect::<Vec<_>>();
+            if let Err(error) = storage
+                .store
+                .remove_overlay_files_no_wait(storage.workspace_id, &pending)
+                && !matches!(error, StoreError::Busy)
+            {
+                eprintln!(
+                    "rerail: removing {} overlay files of workspace {:?} at close failed: {error}",
+                    pending.len(),
+                    storage.workspace_id
+                );
+            }
+        }
         let storage = state.storage.take();
         *state = WorkspaceState::default();
         if let Some(storage) = storage {
@@ -588,13 +655,29 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-/// What a storage attach did. No store attaches where Git cannot describe the workspace; `reason`
-/// then says why, unless the root is simply outside any Git repository.
+#[cfg(test)]
+thread_local! {
+    /// The storage retries and the retry wait (nanoseconds) the last apply on this thread
+    /// reported: they reach the host only in profile output.
+    pub(super) static LAST_APPLY_STORAGE_RETRIES: std::cell::Cell<(usize, u64)> =
+        const { std::cell::Cell::new((0, 0)) };
+    /// The files the last apply on this thread left unpublished because the store was busy.
+    pub(super) static LAST_APPLY_UNPUBLISHED_FILES: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+/// What a storage attach did. No store attaches where Git cannot describe the workspace, nor
+/// where the store stays busy past its write deadline; `reason` then says why, unless the root is
+/// simply outside any Git repository. The milliseconds are the wall time the attach spent
+/// discovering the Git checkout and opening the store to publish its snapshot (0 for a phase that
+/// did not run), so a slow attach shows which phase it waited in.
 #[napi(object)]
 #[derive(Debug)]
 pub struct StorageAttachment {
     pub attached: bool,
     pub reason: Option<String>,
+    pub discovery_milliseconds: f64,
+    pub publication_milliseconds: f64,
 }
 
 /// Attaches the content store to a workspace whose code rules may already be registered, any time
@@ -618,16 +701,36 @@ impl Task for WorkspaceStorageTask {
         // corrupt index) attaches no store: the host walks it, reporting what it cannot read,
         // and interactive edits evaluate without reuse. Only a root outside any repository is
         // expected; any other cause is reported, so reuse is never lost silently.
-        let discovered = match crate::git_workspace::discover(std::path::Path::new(&self.root)) {
+        let discovery_started = Instant::now();
+        let discovered = crate::git_workspace::discover(std::path::Path::new(&self.root));
+        let discovery_milliseconds = discovery_started.elapsed().as_secs_f64() * 1000.0;
+        let discovered = match discovered {
             Ok(discovered) => discovered,
             Err(error) => {
                 return Ok(StorageAttachment {
                     attached: false,
                     reason: (!error.is_no_repository()).then(|| error.to_string()),
+                    discovery_milliseconds,
+                    publication_milliseconds: 0.0,
                 });
             }
         };
-        let context = attach_storage(&self.root, discovered, std::mem::take(&mut self.store_path))?;
+        // A busy store is a cache miss: the workspace runs without reuse, and says why.
+        let publication_started = Instant::now();
+        let attached =
+            attach_storage(&self.root, discovered, std::mem::take(&mut self.store_path))?;
+        let publication_milliseconds = publication_started.elapsed().as_secs_f64() * 1000.0;
+        let context = match attached {
+            Attached::Storage(context) => context,
+            Attached::Busy(reason) => {
+                return Ok(StorageAttachment {
+                    attached: false,
+                    reason: Some(reason),
+                    discovery_milliseconds,
+                    publication_milliseconds,
+                });
+            }
+        };
         let guard = match self.state.lock() {
             Ok(guard) => guard,
             Err(error) => {
@@ -655,6 +758,8 @@ impl Task for WorkspaceStorageTask {
         Ok(StorageAttachment {
             attached: true,
             reason: None,
+            discovery_milliseconds,
+            publication_milliseconds,
         })
     }
 
@@ -735,6 +840,9 @@ impl WorkspaceApplyTask {
             closed: &self.closed,
         };
         check_closed(&self.closed)?;
+        // One write deadline for everything this apply writes to the store: removals, each
+        // publication pass, promotion, lease renewal.
+        let _busy_deadline = OperationDeadline::enter();
         let deferred = request.defer_global;
         let quiet = request.quiet;
         let mut replaced = request
@@ -743,7 +851,7 @@ impl WorkspaceApplyTask {
             .map(|file| file.path.clone())
             .chain(request.removed.iter().cloned())
             .collect::<BTreeSet<_>>();
-        let refreshed = apply_request(&mut state, request)?;
+        let (refreshed, removal_busy) = apply_request(&mut state, request)?;
         replaced.extend(refreshed);
         let mut metrics = Metrics::default();
         let dirty = std::mem::take(&mut state.dirty_files);
@@ -814,17 +922,93 @@ impl WorkspaceApplyTask {
         #[cfg(feature = "code-rule-profile")]
         let _storage_write_timer = profile::PhaseTimer::start(profile::Phase::StoreWrite);
         let storage_write_started = Instant::now();
+        // A file a busy store left unpublished stays resident with its results, flagged until a
+        // later apply publishes them: only their reuse is lost. An apply that finds the store
+        // free deletes the removals earlier applies left in `pending_removals` first, so no
+        // deletion lands on rows it publishes, even when it publishes nothing; one that
+        // retries the files earlier applies left unpublished, so they can be evicted again,
+        // even when it publishes nothing of its own. Once a removal or one chunk waited out the
+        // deadline, later chunks do not wait, nor do later applies until the workspace's busy
+        // window passes (`note_store_busy`).
+        if !removal_busy || !persistence_paths.is_empty() {
+            let listed = persistence_paths.iter().cloned().collect::<BTreeSet<_>>();
+            persistence_paths.extend(
+                state
+                    .files
+                    .iter()
+                    .filter(|(path, file)| {
+                        file.unpublished && !file.results_only && !listed.contains(*path)
+                    })
+                    .map(|(path, _)| path.clone()),
+            );
+        }
         if let Some(storage) = state.storage.clone() {
+            let mut busy = removal_busy;
+            if !busy && !state.pending_removals.is_empty() {
+                check_closed(&self.closed)?;
+                let pending = std::mem::take(&mut state.pending_removals)
+                    .into_iter()
+                    .collect::<Vec<_>>();
+                if let Err(error) = storage
+                    .store
+                    .remove_overlay_files(storage.workspace_id, &pending)
+                {
+                    state.pending_removals.extend(pending);
+                    if !matches!(error, StoreError::Busy) {
+                        return Err(invalid(error.to_string()));
+                    }
+                    busy = true;
+                    state.note_store_busy("while deleting removed files");
+                }
+            }
             for paths in persistence_paths.chunks(64) {
                 check_closed(&self.closed)?;
-                let publication = persist_files(
-                    &storage,
-                    paths,
-                    &state.files,
-                    &state.code_rules,
-                    CrossFileScheduler::consumers(&state),
-                    &self.closed,
-                )?;
+                let persisted = if busy {
+                    None
+                } else {
+                    Some(persist_files(
+                        &storage,
+                        paths,
+                        &state.files,
+                        &state.code_rules,
+                        CrossFileScheduler::consumers(&state),
+                        &self.closed,
+                    )?)
+                };
+                let mut published = None;
+                match persisted {
+                    None => {}
+                    // A publication that waited out the deadline still spent that time: its
+                    // retries count though it stored nothing.
+                    Some(Persisted::Busy { retries }) => {
+                        metrics.storage_retries += retries.retries;
+                        metrics.storage_retry_wait_nanoseconds += retries.wait_nanoseconds;
+                        state.note_store_busy("while publishing results");
+                    }
+                    Some(Persisted::Published {
+                        result,
+                        busy_during,
+                    }) => {
+                        match busy_during {
+                            Some(during) => {
+                                state.note_store_busy(during);
+                                busy = true;
+                            }
+                            None => state.note_store_published(),
+                        }
+                        published = Some(result);
+                    }
+                }
+                let Some(publication) = published else {
+                    busy = true;
+                    metrics.storage_unpublished_files += paths.len();
+                    for path in paths {
+                        if let Some(file) = state.files.get_mut(path) {
+                            file.unpublished = true;
+                        }
+                    }
+                    continue;
+                };
                 metrics.storage_retries += publication.retries;
                 metrics.storage_retry_wait_nanoseconds += publication.retry_wait_nanoseconds;
                 metrics.storage_transaction_nanoseconds += publication.transaction_nanoseconds;
@@ -847,22 +1031,65 @@ impl WorkspaceApplyTask {
                 for (path, stored) in paths.iter().zip(publication.files) {
                     if let Some(file) = state.files.get_mut(path) {
                         file.stored = Some(stored);
+                        file.unpublished = false;
                         CrossFileScheduler::mark_persisted(file);
                         file.input.source = Arc::new(String::new());
                         file.tape = None;
                     }
                 }
             }
+            // A store that stayed busy keeps the files it was given, so what they hold resident
+            // is bounded: past the budget their sources and tapes are freed.
+            if busy {
+                metrics.storage_released_files += state.release_unpublished_over_budget();
+            }
+        }
+        #[cfg(test)]
+        {
+            LAST_APPLY_STORAGE_RETRIES.set((
+                metrics.storage_retries,
+                metrics.storage_retry_wait_nanoseconds,
+            ));
+            LAST_APPLY_UNPUBLISHED_FILES.set(metrics.storage_unpublished_files);
         }
         // Files made resident only for their consumers are evicted again once their results are
-        // stored; a transient evaluation stays resident, as eviction would leave it.
+        // stored. One the store lacks results of (a transient evaluation, an unstored clause, or an
+        // unpublished file) stays resident, as eviction would leave it; rebuilt for its consumers
+        // alone, it holds their results only, so its other clauses' stored results join them and it
+        // stays resident whole. A clause the store does not answer (a result it no longer holds, or
+        // a read that fails) fails, unstored, and the file is transient, so the next apply that
+        // offers it evaluates it in full.
         for path in crossfile_evicted {
-            if state
-                .files
-                .get(&path)
-                .is_some_and(|file| file.stored.is_some() && !file.transient_failure)
-            {
-                state.files.remove(&path);
+            let Some(file) = state.files.get(&path) else {
+                continue;
+            };
+            if file.stored.is_none() {
+                continue;
+            }
+            let mut file = state.files.remove(&path).expect("checked above");
+            if file.stays_resident() {
+                let only = BTreeSet::from([path.clone()]);
+                if let Ok(Some(stored)) =
+                    evicted_file_states(&state, Some(&only), false).map(|mut stored| stored.pop())
+                {
+                    file.join_other_clauses(stored);
+                }
+                let all = make_file(
+                    file.input.clone(),
+                    state.revision.max(1),
+                    &state.code_rules,
+                    &mut CandidateSets::new(),
+                )
+                .candidates;
+                for &id in all.regex.iter().chain(&all.ast) {
+                    if !file.witnesses.contains_key(&id) && !file.failures.contains_key(&id) {
+                        file.failures
+                            .insert(id, ("adapter-error", STORED_RESULT_UNAVAILABLE));
+                        file.unstored.insert(id);
+                        file.transient_failure = true;
+                    }
+                }
+                state.files.insert(path, file);
             }
         }
         metrics.storage_write_nanoseconds = storage_write_started.elapsed().as_nanos() as u64;
@@ -878,7 +1105,7 @@ impl WorkspaceApplyTask {
             let dirty = std::mem::take(&mut state.dirty_globals);
             for index in dirty {
                 check_closed(&self.closed)?;
-                let budget = MatchBudget::work(&self.closed, FILE_WORK_BUDGET);
+                let budget = MatchBudget::work(&self.closed, CLAUSE_WORK_BUDGET);
                 let mut evaluation = evaluate_global(&state, index, &snapshot)?;
                 #[cfg(test)]
                 super::pass_deadline_at_test_phase("global-done");
@@ -969,12 +1196,106 @@ impl Task for WorkspaceResultPageTask {
 }
 
 /// Records a finished evaluation as reusable: the clean directories under the workspace root (or,
-/// outside Git, the revision) are complete for the code rules' catalog. The write waits on the
-/// shared store's writer, which another process may hold for seconds, so it runs on a libuv pool
-/// thread and holds the workspace lock only to read what it records.
+/// outside Git, the revision) are complete for the code rules' catalog. The writes wait on the
+/// shared store's writer, which another process may hold for seconds, so the task runs on a libuv
+/// pool thread, and all of them (the publication of files a busy store left unpublished, which
+/// holds the workspace lock, and the completion) share one write deadline. Inside the
+/// workspace's busy window (`note_store_busy`) it makes no write: it fails as a busy store does,
+/// so the host still says the reuse was not recorded, and a write that finds the store busy
+/// opens the window.
 pub struct WorkspaceCompletionTask {
     state: Arc<Mutex<WorkspaceState>>,
     closed: Arc<AtomicBool>,
+}
+
+impl WorkspaceCompletionTask {
+    fn lock_state(&self) -> Result<StateLease<'_>> {
+        let guard = match self.state.lock() {
+            Ok(guard) => guard,
+            Err(error) => {
+                discard_poisoned_guard(error.into_inner(), &self.state, &self.closed);
+                return Err(invalid("policy workspace is unavailable"));
+            }
+        };
+        let state = StateLease {
+            guard: Some(guard),
+            mutex: &self.state,
+            closed: &self.closed,
+        };
+        check_closed(&self.closed)?;
+        Ok(state)
+    }
+}
+
+/// Publishes the files a busy store left unpublished, after the removals earlier applies left
+/// pending. A store still busy past its deadline opens the busy window and keeps them flagged.
+fn publish_unpublished(
+    state: &mut WorkspaceState,
+    storage: &StorageContext,
+    closed: &AtomicBool,
+) -> Result<()> {
+    let paths = state
+        .files
+        .iter()
+        .filter(|(_, file)| file.unpublished && !file.results_only)
+        .map(|(path, _)| path.clone())
+        .collect::<Vec<_>>();
+    if paths.is_empty() {
+        return Ok(());
+    }
+    if !state.pending_removals.is_empty() {
+        let pending = state.pending_removals.iter().cloned().collect::<Vec<_>>();
+        match storage
+            .store
+            .remove_overlay_files(storage.workspace_id, &pending)
+        {
+            Ok(()) => state.pending_removals.clear(),
+            Err(StoreError::Busy) => {
+                state.note_store_busy("while deleting removed files");
+                return Ok(());
+            }
+            Err(error) => return Err(invalid(error.to_string())),
+        }
+    }
+    for chunk in paths.chunks(64) {
+        check_closed(closed)?;
+        let persisted = persist_files(
+            storage,
+            chunk,
+            &state.files,
+            &state.code_rules,
+            CrossFileScheduler::consumers(state),
+            closed,
+        )?;
+        let (publication, busy_during) = match persisted {
+            Persisted::Busy { .. } => {
+                state.note_store_busy("while publishing results");
+                return Ok(());
+            }
+            Persisted::Published {
+                result,
+                busy_during,
+            } => (result, busy_during),
+        };
+        check_closed(closed)?;
+        for (path, stored) in chunk.iter().zip(publication.files) {
+            if let Some(file) = state.files.get_mut(path) {
+                file.stored = Some(stored);
+                file.unpublished = false;
+                CrossFileScheduler::mark_persisted(file);
+                file.input.source = Arc::new(String::new());
+                file.tape = None;
+            }
+        }
+        match busy_during {
+            Some(during) => {
+                state.note_store_busy(during);
+                return Ok(());
+            }
+            None => state.note_store_published(),
+        }
+    }
+    Ok(())
 }
 
 impl Task for WorkspaceCompletionTask {
@@ -983,29 +1304,38 @@ impl Task for WorkspaceCompletionTask {
 
     fn compute(&mut self) -> Result<()> {
         check_closed(&self.closed)?;
-        let (storage, catalog, revision) = {
-            let guard = match self.state.lock() {
-                Ok(guard) => guard,
-                Err(error) => {
-                    discard_poisoned_guard(error.into_inner(), &self.state, &self.closed);
-                    return Err(invalid("policy workspace is unavailable"));
-                }
-            };
-            let state = StateLease {
-                guard: Some(guard),
-                mutex: &self.state,
-                closed: &self.closed,
-            };
-            check_closed(&self.closed)?;
+        // One deadline for the publication under the lock and the completion write after it,
+        // so an apply waiting on the lock waits at most one.
+        let _deadline = OperationDeadline::enter();
+        let (storage, catalog, revision, server_graph) = {
+            let mut state = self.lock_state()?;
             let Some(storage) = state.storage.clone() else {
                 return Ok(());
             };
+            if state.store_cooling_down() {
+                return Err(invalid(StoreError::Busy.to_string()));
+            }
             let catalog = candidate_catalog(&state.code_rules)?;
-            (storage, catalog, i64::from(state.revision))
+            // Files a busy store left unpublished are published before the completion is
+            // recorded; a store that stays busy keeps them unpublished and reports busy.
+            publish_unpublished(&mut state, &storage, &self.closed)?;
+            if state.store_cooling_down() {
+                return Err(invalid(StoreError::Busy.to_string()));
+            }
+            let server_graph = state
+                .code_rules
+                .iter()
+                .any(|code_rule| code_rule.reads_server_graph());
+            (storage, catalog, i64::from(state.revision), server_graph)
         };
         let completed_at = unix_seconds()?;
-        if let Some(repository) = &storage.repository {
-            let directories = reusable_directories(repository, &storage.repository_prefix);
+        let written = if let Some(repository) = &storage.repository {
+            let mut manifests = crate::code_rule_dsl::package_manifest::Manifests::new(
+                repository.worktree_root.join(&storage.repository_prefix),
+            )
+            .reading_server_graphs(server_graph);
+            let directories =
+                reusable_directories(repository, &storage.repository_prefix, &mut manifests);
             storage.store.complete_directories(
                 WorkspaceCompletion {
                     workspace_id: storage.workspace_id,
@@ -1022,8 +1352,12 @@ impl Task for WorkspaceCompletionTask {
                 catalog,
                 completed_at,
             )
+        };
+        if matches!(written, Err(StoreError::Busy)) {
+            self.lock_state()?
+                .note_store_busy("while recording repository reuse");
         }
-        .map_err(|error| invalid(error.to_string()))
+        written.map_err(|error| invalid(error.to_string()))
     }
 
     fn resolve(&mut self, _env: Env, output: ()) -> Result<()> {

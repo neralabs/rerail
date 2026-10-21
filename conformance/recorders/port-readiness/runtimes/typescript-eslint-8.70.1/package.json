@@ -1,0 +1,27 @@
+{
+  "name": "validation-upstream-typescript-eslint",
+  "private": true,
+  "description": "typescript-eslint 8.70.1 as published, with the eslint, typescript, @types and tsx versions its v8.70.1 pnpm-lock.yaml resolves; the overrides keep every transitive package at a version that lockfile lists.",
+  "dependencies": {
+    "@types/node": "24.13.3",
+    "@types/react": "18.3.31",
+    "@typescript-eslint/eslint-plugin": "8.70.1",
+    "@typescript-eslint/parser": "8.70.1",
+    "@typescript-eslint/rule-tester": "8.70.1",
+    "@typescript-eslint/scope-manager": "8.70.1",
+    "@typescript-eslint/type-utils": "8.70.1",
+    "@typescript-eslint/types": "8.70.1",
+    "@typescript-eslint/typescript-estree": "8.70.1",
+    "@typescript-eslint/utils": "8.70.1",
+    "@typescript-eslint/visitor-keys": "8.70.1",
+    "eslint": "10.8.1",
+    "tsx": "4.23.12",
+    "typescript": "6.0.3"
+  },
+  "overrides": {
+    "@eslint/plugin-kit": "0.7.2",
+    "acorn": "8.18.0",
+    "brace-expansion@5": "5.0.9",
+    "ignore@7": "7.0.6"
+  }
+}
