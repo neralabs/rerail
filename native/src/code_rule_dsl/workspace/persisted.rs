@@ -918,10 +918,7 @@ pub(super) fn persist_files(
         .iter()
         .zip(&documents)
         .map(
-            |(
-                (file, tape_bytes, grammar_id, aliases, (local_results, completions)),
-                documents,
-            )| {
+            |((file, tape_bytes, grammar_id, aliases, (local_results, completions)), documents)| {
                 OverlayFilePublication {
                     path: &file.input.path,
                     state_id: i64::from(file.source_revision),
