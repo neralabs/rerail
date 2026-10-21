@@ -1097,34 +1097,58 @@ describe("OMP conversation-rules extension", () => {
   });
 
   describe("steer strategies", () => {
-    const rewound = (toolCallId: string): AdapterDelivery => ({
+    const steer = (toolCallId: string): AdapterDelivery => ({
       sessionId: "omp-test-session",
       requested: "steer",
       mechanism: "native-queue",
-      content: "Your edit of a.ts was rolled back. Redo it following the rule.",
+      content: "Rerail found 1 problem in your last edit.",
       ruleIds: ["no-any"],
       rules: [{ id: "no-any", state: "steered" }],
-      strategy: "rewind",
+      strategy: "message",
       toolCallId,
+    });
+    const rewound = (toolCallId: string): AdapterDelivery => ({
+      ...steer(toolCallId),
+      content: "Your edit of a.ts was rolled back. Redo it following the rule.",
+      strategy: "rewind",
       rewound: ["a.ts"],
     });
     const editResult = { type: "tool_result", toolCallId: "call-1", toolName: "edit", input: {}, content: [{ type: "text", text: "Edited a.ts" }], details: { diff: "+x" }, isError: false };
 
-    it("puts a rolled-back edit's steer into that call's result, past OMP's steer queue, and counts it", async () => {
+    it("puts an edit's steer after what that call's result says, past OMP's steer queue, and counts it", async () => {
       const harness = await createHarness();
       const daemon = flakyDaemon(harness.context.cwd);
       // A steer that went to OMP's queue would be refused here: nothing ever lands in it.
       Object.assign(harness.context, { hasPendingMessages: () => false });
       createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
       await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
-      daemon.state.ingest = async () => [rewound("call-1"), { ...rewound("call-1"), content: "Second rule." }];
+      daemon.state.ingest = async () => [steer("call-1")];
 
       await expect(harness.handlers.get("tool_result")!(editResult, harness.context)).resolves.toEqual({
-        content: [{ type: "text", text: "Your edit of a.ts was rolled back. Redo it following the rule.\n\nSecond rule." }],
+        content: [{ type: "text", text: "Edited a.ts" }, { type: "text", text: "Rerail found 1 problem in your last edit." }],
+      });
+      expect(harness.messages).toEqual([]);
+      expect(daemon.requests.filter(request => request.operation === "record-steering-delivery")).toHaveLength(1);
+    });
+
+    it("replaces a call's result with its rolled-back edit's steers, marked an error, with its other steers after", async () => {
+      const harness = await createHarness();
+      const daemon = flakyDaemon(harness.context.cwd);
+      // A steer that went to OMP's queue would be refused here: nothing ever lands in it.
+      Object.assign(harness.context, { hasPendingMessages: () => false });
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
+      await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+      daemon.state.ingest = async () => [rewound("call-1"), steer("call-1"), { ...rewound("call-1"), content: "Second rule." }];
+
+      await expect(harness.handlers.get("tool_result")!(editResult, harness.context)).resolves.toEqual({
+        content: [
+          { type: "text", text: "Your edit of a.ts was rolled back. Redo it following the rule.\n\nSecond rule." },
+          { type: "text", text: "Rerail found 1 problem in your last edit." },
+        ],
         isError: true,
       });
       expect(harness.messages).toEqual([]);
-      expect(daemon.requests.filter(request => request.operation === "record-steering-delivery")).toHaveLength(2);
+      expect(daemon.requests.filter(request => request.operation === "record-steering-delivery")).toHaveLength(3);
     });
 
     it("sends a steer for a call whose result is not being ingested as a message", async () => {
@@ -1132,19 +1156,58 @@ describe("OMP conversation-rules extension", () => {
       const daemon = flakyDaemon(harness.context.cwd);
       createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
       await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
-      daemon.state.ingest = async () => [rewound("call-closed")];
+      daemon.state.ingest = async () => [steer("call-closed")];
 
       await expect(harness.handlers.get("tool_result")!(editResult, harness.context)).resolves.toBeUndefined();
       expect(harness.messages).toEqual([{
         message: {
           customType: RULE_MESSAGE_TYPE,
-          content: "Your edit of a.ts was rolled back. Redo it following the rule.",
+          content: "Rerail found 1 problem in your last edit.",
           display: true,
           details: { requested: "steer", mechanism: "native-queue", sessionId: "omp-test-session", rules: await deliveredRules(harness.context.cwd, "no-any") },
         },
         options: { deliverAs: "steer" },
       }]);
       expect(daemon.requests.filter(request => request.operation === "record-steering-delivery")).toHaveLength(1);
+    });
+  });
+
+  describe("compaction", () => {
+    /** OMP's preparation for a split turn whose prefix a Rerail steer leads, as `SessionMaintenance.compact` builds it. */
+    function steerLedPreparation() {
+      const prompt = { role: "user", content: [{ type: "text", text: "Add guest checkout." }], timestamp: 1 };
+      const steer = {
+        role: "custom", customType: RULE_MESSAGE_TYPE, content: [{ type: "text", text: "Rerail found 1 problem in src/cart.ts." }],
+        display: true, attribution: "agent", timestamp: 2,
+      };
+      const fix = { role: "assistant", content: [{ type: "toolCall", id: "call-2", name: "edit", arguments: {} }], timestamp: 3 };
+      return { prompt, steer, fix, preparation: { firstKeptEntryId: "entry-4", messagesToSummarize: [prompt], turnPrefixMessages: [steer, fix], recentMessages: [], isSplitTurn: true } };
+    }
+
+    it("summarizes a turn a steer leads as history with the person's prompt, the steer labelled as Rerail's", async () => {
+      const harness = await createHarness();
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
+      await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+      const { prompt, steer, fix, preparation } = steerLedPreparation();
+
+      expect(await harness.handlers.get("session_before_compact")!({ type: "session_before_compact", preparation }, harness.context)).toBeUndefined();
+      expect(preparation).toMatchObject({
+        messagesToSummarize: [
+          prompt,
+          { ...steer, content: [{ type: "text", text: "[Rerail: automated rule check sent to the agent, not a message from the user]\nRerail found 1 problem in src/cart.ts." }] },
+          fix,
+        ],
+        turnPrefixMessages: [],
+        isSplitTurn: false,
+      });
+    });
+
+    it("leaves OMP's speculative compaction on where Rerail never attaches", async () => {
+      const harness = await createHarness({ started: false });
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
+      await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+
+      expect(harness.handlers.has("session_before_compact")).toBe(false);
     });
   });
 });

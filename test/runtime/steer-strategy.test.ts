@@ -218,12 +218,12 @@ describe("The rewind steer strategy", () => {
 });
 
 describe("The message steer strategy", () => {
-  it("steers as Rerail always has, leaving the edit in place", async () => {
+  it("steers in the edit's own result as Rerail always has, leaving the edit in place", async () => {
     const session = await strategySession({ host: "omp" });
     try {
       const deliveries = await session.edit("w1", "created.py", "NEEDLE = 1\n");
       expect(deliveries).toEqual([{
-        sessionId: "strategy", requested: "steer", mechanism: "native-queue", ruleIds: ["test:needle"], strategy: "message",
+        sessionId: "strategy", requested: "steer", mechanism: "native-queue", ruleIds: ["test:needle"], strategy: "message", toolCallId: "w1",
         rules: [{ id: "test:needle", state: "steered", origin: "From your rule library." }],
         content: expect.stringMatching(/^Rerail found 1 problem in your last edit:\n- created\.py:1:1 — No needle \[test:needle\]\nFix it, or tell the user in one line why you won't\.$/u),
       }]);
@@ -237,8 +237,8 @@ describe("The message steer strategy", () => {
     const session = await strategySession({ strategy: "rewind", host: "omp", experimental: false });
     try {
       const deliveries = await session.edit("w1", "created.py", "NEEDLE = 1\n");
-      expect(deliveries).toEqual([expect.objectContaining({ strategy: "message", content: expect.stringMatching(/^Rerail found 1 problem/u) })]);
-      expect(deliveries[0]).not.toHaveProperty("toolCallId");
+      expect(deliveries).toEqual([expect.objectContaining({ strategy: "message", toolCallId: "w1", content: expect.stringMatching(/^Rerail found 1 problem/u) })]);
+      expect(deliveries[0]).not.toHaveProperty("rewound");
       expect(await readFile(join(session.root, "created.py"), "utf8")).toBe("NEEDLE = 1\n");
     } finally {
       await session.runtime.dispose();
@@ -253,9 +253,10 @@ describe("The subagent steer strategy", () => {
       const deliveries = await session.edit("w1", "created.py", "NEEDLE = 1\n");
       expect(deliveries).toEqual([expect.objectContaining({
         strategy: "subagent",
+        toolCallId: "w1",
         content: expect.stringMatching(/^Rerail found 1 problem in your last edit:\n- created\.py:1:1 — No needle \[test:needle\]\nFix it, or tell the user in one line why you won't\.\n\nThis note comes from Rerail, not the user, and your task is unchanged\. Hand the fix to a subagent with the `rerail_fix` tool/u),
       })]);
-      expect(deliveries[0]).not.toHaveProperty("toolCallId");
+      expect(deliveries[0]).not.toHaveProperty("rewound");
       expect(await readFile(join(session.root, "created.py"), "utf8")).toBe("NEEDLE = 1\n");
     } finally {
       await session.runtime.dispose();

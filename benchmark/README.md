@@ -53,8 +53,9 @@ Metrics per trial, printed as a mean per host × strategy (`--json` also writes 
 
 - **task done**: the runner's own check after the harness exits. The unit tests must pass, run inside the sandbox.
   README's Usage section must have lost its TODO and must show `Inventory(` and `add_item`.
-- **steers** and **rewound**: the rule's `steer` deliveries in Rerail's ledger (`.rerail/sessions/*/events.jsonl`),
-  and how many of them carry a `toolCallId`, meaning the edit was rolled back. The raw JSON also records each
+- **steers**, **in result** and **rewound**: the rule's `steer` deliveries in Rerail's ledger
+  (`.rerail/sessions/*/events.jsonl`), how many carry a `toolCallId` (they rode their edit's tool result, in OMP and
+  Pi, instead of a message), and how many carry `rewound` (the edit was rolled back). The raw JSON also records each
   delivery's `strategy`.
 - **violation left**: whether a file under `api/` still matches the rule. This is a line regex, so a multi-line
   f-string goes unseen.
@@ -81,11 +82,13 @@ Metrics per trial, printed as a mean per host × strategy (`--json` also writes 
   Pi also receive as a custom message right after the prompt, claims every split turn the steer does not, under every
   strategy: the prompt only starts the turn from the second prompt on.
 
-`--compaction-probe` (Pi only) forks each trial's session and compacts it for real in Pi's RPC mode. It compacts at
-the smallest `keepRecentTokens` whose cut starts the turn at the steer (else any split turn), set through the
-sandbox's global Pi settings, which need no project trust. It then asks what the user asked for. The raw JSON records
-the summary's "Original Request" and whether the answer names the task, the rule, both or neither. This costs a
-compaction and one more turn per trial.
+`--compaction-probe` (Pi only) forks each trial's session and compacts it for real in Pi's RPC mode, with Rerail loaded
+(its compaction guard included). It compacts at the smallest `keepRecentTokens` whose cut starts the turn at the steer
+(else any split turn), set through the sandbox's global Pi settings, which need no project trust. It then asks what the
+user asked for. The raw JSON records the summary's "Goal" and "Original Request" (empty once the guard folded a
+steer-led turn into the history) and whether the answer names the task, the rule, both or neither. This costs a
+compaction and one more turn per trial. The split-turn column above replays the host's cut logic without Rerail's
+guard: it measures how often a turn would start at a Rerail message, not what the guarded summary says.
 
 Caveats:
 

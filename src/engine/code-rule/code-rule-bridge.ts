@@ -347,6 +347,13 @@ export class CodeRuleBridge {
     this.#rewindable.delete(toolCallId);
   }
 
+  /** Whether a steer at `revision` over `scope` is the check of the call's finished edit, from `finish` until `release`. */
+  checks(toolCallId: string, revision: number, scope: readonly string[]): boolean {
+    const rewindable = this.#rewindable.get(toolCallId);
+    return rewindable !== undefined && rewindable.revision === revision
+      && scope.length > 0 && scope.every(path => rewindable.preimages.has(path));
+  }
+
   /**
    * Rolls a finished, still rewindable edit back to its captured preimages, every file or none: a file that did not
    * exist is deleted. Only for a steer at the revision its finish audited whose `scope` lies within the captured

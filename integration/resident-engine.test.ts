@@ -153,14 +153,16 @@ describe("engine service", () => {
         },
         options,
       );
+      const next = await runCodexHook({ ...common, hook_event_name: "UserPromptSubmit", turn_id: "turn-2", prompt: "next" }, options);
       const steer = steerText(CONTRACT_CURSOR_EXECUTE_RULE_ID, CONTRACT_CURSOR_EXECUTE_MESSAGE, "api/route.py:2:5");
+      const late = steerText(CONTRACT_CURSOR_EXECUTE_RULE_ID, CONTRACT_CURSOR_EXECUTE_MESSAGE, "api/route.py:2:5", { kind: "late" });
       const shown = expect.stringContaining(await steerLine(CONTRACT_CURSOR_EXECUTE_RULE_ID, common.cwd, "plain"));
-      // Policy evaluation settles in the background: the steer returns as PostToolUse context when it is
-      // ready by then, otherwise as the Stop follow-up — exactly once either way. A Stop hold shows the person
-      // its reason under Codex's own "Blocked by hook", so it carries no separate line.
-      expect([initial, stop]).toEqual(Object.keys(initial).length === 0
-        ? [{}, { decision: "block", reason: expect.stringContaining(steer) }]
-        : [{ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: expect.stringContaining(steer) }, systemMessage: shown }, {}]);
+      // Policy evaluation settles in the background: the steer returns as PostToolUse context when it is ready by
+      // then; otherwise its line shows at Stop and its block, led as late, goes out with the next message. Never as a
+      // Stop block, whose reason Codex records as the user's turn.
+      expect([initial, stop, next]).toEqual(Object.keys(initial).length === 0
+        ? [{}, { systemMessage: shown }, { hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: expect.stringContaining(late) } }]
+        : [{ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: expect.stringContaining(steer) }, systemMessage: shown }, {}, {}]);
     } finally {
       await service?.close();
       await rm(root, { recursive: true, force: true });
@@ -463,7 +465,7 @@ describe("engine service", () => {
     }
   }, 30_000);
 
-  it("starts a Codex continuation when a turn-boundary conversation rule fires at Stop", async () => {
+  it("shows a turn-boundary conversation rule's line at Codex's Stop and gives its steer with the next message", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-codex-stop-rule-"));
     const socketPath = join(root, "engine.sock");
     const storageRoot = join(root, ".rerail/sessions");
@@ -484,13 +486,15 @@ describe("engine service", () => {
       const options = { storageRoot, modelPath: resolve("model"), kernelSocketPath: socketPath };
       const common = { cwd: root, session_id: "stop-rule", turn_id: "turn" };
       await runCodexHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, options);
-      const reason = steerText("turn-steer", "CONTINUE_AFTER_STOP");
+      const content = steerText("turn-steer", "CONTINUE_AFTER_STOP");
       expect(
         await runCodexHook(
           { ...common, hook_event_name: "Stop", last_assistant_message: "Preserve database transaction atomicity" },
           options,
         ),
-      ).toEqual({ decision: "block", reason });
+      ).toEqual({ systemMessage: await steerLine("turn-steer", root, "plain") });
+      expect(await runCodexHook({ ...common, turn_id: "turn-2", hook_event_name: "UserPromptSubmit", prompt: "next" }, options))
+        .toEqual({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: content } });
     } finally {
       await service?.close();
       await rm(root, { recursive: true, force: true });

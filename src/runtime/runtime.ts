@@ -349,10 +349,11 @@ interface PendingSteer {
 }
 
 /**
- * A tool call's result being ingested: while it is open, a `rewind` steer for the call's edit rolls that edit back.
- * `steers` settle once each steer that began a rollback in it is queued, so the result answers with that steer.
+ * A tool call's result being ingested: while it is open, a steer from the call's own edit check rides that result
+ * (`toolCallId`), and a `rewind` one rolls the edit back. `steers` settle once each steer that began a rollback in it
+ * is queued, so the result answers with that steer.
  */
-interface RewindWindow {
+interface ResultWindow {
   readonly toolCallId: string;
   readonly steers: Promise<void>[];
 }
@@ -398,7 +399,7 @@ interface RuntimeSessionState {
   /** How the session's code-rule steers reach the agent; read with its audit settings. */
   steerStrategy: SteerStrategy;
   /** Open while a tool call's result is ingested; unset otherwise. */
-  rewindWindow: RewindWindow | undefined;
+  resultWindow: ResultWindow | undefined;
   codeRuleRevision: number;
   codeRuleSourceVersions: Map<string, number>;
   /** Sources whose queued steer a newer revision of them dropped before delivery, until the auditor asks (`undelivered`). */
@@ -712,9 +713,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       const index = state.pendingCodeRuleCalls.findIndex((call) => call.id === event.toolCallId);
       if (index >= 0) {
         const [call] = state.pendingCodeRuleCalls.splice(index, 1);
-        // While the result is ingested, a `rewind` steer for the call's edit may roll it back (`#rewind`).
-        const window: RewindWindow | undefined = bridge === undefined ? undefined : { toolCallId: call!.id, steers: [] };
-        state.rewindWindow = window;
+        // While the result is ingested, a steer from the call's edit check rides it, and a `rewind` one may roll the edit
+        // back (`#rewind`).
+        const window: ResultWindow | undefined = bridge === undefined ? undefined : { toolCallId: call!.id, steers: [] };
+        state.resultWindow = window;
         try {
           // From the finish on, which may check the edit before it returns, to the end of the wait.
           await this.#waitingForEditChecks(state, false, async () => {
@@ -725,7 +727,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         } finally {
           if (window !== undefined) {
             // A steer from now on is a message; one that already rolled the edit back is queued before this answers.
-            state.rewindWindow = undefined;
+            state.resultWindow = undefined;
             bridge!.release(call!.id);
             await Promise.all(window.steers);
           }
@@ -1114,7 +1116,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       eventDeliveries: new Map(),
       pendingSteers: [],
       steerStrategy: effectiveSteerStrategy(auditSettings ?? this.#auditSettings),
-      rewindWindow: undefined,
+      resultWindow: undefined,
       codeRuleRevision: 0,
       codeRuleSourceVersions: new Map(),
       undeliveredSources: new Set(),
@@ -1160,8 +1162,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         if (strategy === "subagent")
           pending.delivery = { ...pending.delivery, content: subagentSteer(content, activeState.descriptor.host), strategy };
         const findings = metadata?.generatedEdit;
-        const window = activeState.rewindWindow;
-        if (strategy === "rewind" && window !== undefined && findings !== undefined) {
+        const window = activeState.resultWindow;
+        // The check of the very edit whose result is being ingested: the host can put the steer into that result.
+        const own = window !== undefined && findings !== undefined
+          && activeState.codeRuleBridge?.checks(window.toolCallId, metadata!.revision, metadata!.scope) === true;
+        if (own) pending.delivery = { ...pending.delivery, toolCallId: window.toolCallId };
+        if (strategy === "rewind" && own) {
           // Queued before the result answers, so the steer goes out with the edit it rolled back.
           const queued = Promise.withResolvers<void>();
           window.steers.push(queued.promise);
@@ -1612,7 +1618,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /**
    * Rolls the window's tool call back for `pending` when the bridge can (`CodeRuleBridge.rewind`), and makes `pending`
    * the rollback's steer: the notice of what was put back and the steer, tagged with the call, at the rollback's
-   * revision. Otherwise `pending` stays the message it is.
+   * revision. Otherwise `pending` stays the steer it is.
    */
   async #rewind(state: RuntimeSessionState, toolCallId: string, pending: PendingSteer, metadata: SteerMetadata): Promise<void> {
     const bridge = state.codeRuleBridge;

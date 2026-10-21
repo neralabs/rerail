@@ -160,7 +160,7 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
       return pending;
     };
     /** The tool results being ingested, each with the steers placed in it so far. */
-    const openResults = new Map<string, string[]>();
+    const openResults = new Map<string, AdapterDelivery[]>();
     let fixToolRegistered = false;
     // The runtime records no links; the rules point at this checkout's dashboard only here.
     const sendDeliveries = async (current: RerailRuntime | NativeSessionClient, deliveries: readonly AdapterDelivery[]): Promise<void> => {
@@ -171,9 +171,9 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
       }
       await sendNativeDeliveries(await linkDeliveries(deliveries, (native.context() ?? currentContext)?.cwd), (message, options_) => pi.sendMessage(message, options_),
         (sessionId, receiptId, ruleIds) => current.recordSteer(sessionId, receiptId, ruleIds),
-        (toolCallId, content) => {
+        (toolCallId, delivery) => {
           const placed = openResults.get(toolCallId);
-          placed?.push(content);
+          placed?.push(delivery);
           return placed !== undefined;
         });
     };
@@ -375,7 +375,7 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
       configuredDatabase: cwd => options.databasePath === undefined ? undefined : resolve(cwd, options.databasePath),
       sessionNoteRules: async session => sessionNoteRules(session.cwd, configuredDatabasePath(options, session.cwd)),
       openToolResult: toolCallId => {
-        const placed: string[] = [];
+        const placed: AdapterDelivery[] = [];
         openResults.set(toolCallId, placed);
         return () => {
           if (openResults.get(toolCallId) === placed) openResults.delete(toolCallId);

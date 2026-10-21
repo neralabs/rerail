@@ -1,20 +1,19 @@
 import { rm } from "node:fs/promises";
 import { hookText, type AdapterDelivery, type RerailEventLoop } from "../../engine/adapter-contract.js";
-import { steers } from "../../engine/catalog/rule-mode.js";
 import { claudeHookEvents, claudeWorkspace } from "./claude-event-adapter.js";
 import {
-  deliveryRuleIds,
   deliveryRules,
-  deliveryText,
+  holdStopSteers,
   pendingPath,
-  persistPending,
-  prepareGuidanceOutput,
   routeDeliveries,
+  steerHookOutput,
   type EventTable,
+  type HeldDelivery,
   type HookInput,
   type HookOutput,
+  type SteerLines,
 } from "../../harness/hook-adapter.js";
-import { asLateSteer, headlineText, sessionStartNote, steerHeadlines, type HeadlineLinkStyle } from "../../engine/code-rule/rerail-steer.js";
+import { headlineText, sessionStartNote, steerHeadlines, type HeadlineLinkStyle } from "../../engine/code-rule/rerail-steer.js";
 import { dashboardOrigin, linkDeliveries, presentedSessionNoteRules } from "../../presentation/session-presentation.js";
 import { terminalDrawsHyperlinks } from "../../presentation/terminal-hyperlinks.js";
 import { colourDepth, rerailMark } from "../../presentation/rerail-mark.js";
@@ -31,9 +30,12 @@ const CLAUDE_EVENTS: EventTable = {
   StopFailure: true,
 };
 
+/**
+ * Events whose `additionalContext` reaches the model beside a tool call or at the session's start. `UserPromptSubmit`'s
+ * lands inside the person's own turn, so a steer held then waits for the next tool call.
+ */
 const CONTEXT_EVENTS: EventTable = {
   SessionStart: true,
-  UserPromptSubmit: true,
   PreToolUse: true,
   PostToolUse: true,
   PostToolUseFailure: true,
@@ -45,18 +47,16 @@ export function supportsClaudeHook(input: HookInput): boolean {
   return CLAUDE_EVENTS[requiredText(input, "hook_event_name")] === true;
 }
 
-/** A steer held for the next message; `shown` once the person has already seen its line, at `Stop`. */
-type HeldDelivery = AdapterDelivery & { readonly shown?: true };
-
 /**
  * The person's lines for `deliveries`, one per rule, as one `systemMessage`. Claude Code prefixes it with
  * `<Event>:<Tool> says:`; with more than one line a leading newline puts that prefix on its own line, so the lines align.
  */
-function steerLines(deliveries: readonly HeldDelivery[], links: HeadlineLinkStyle, mark: string | undefined): { systemMessage: string } | Record<string, never> {
-  const lines = steerHeadlines(deliveryRules(deliveries.filter(delivery => delivery.shown !== true)))
-    .map(headline => headlineText(headline, links, mark));
-  if (lines.length === 0) return {};
-  return { systemMessage: lines.length === 1 ? lines[0]! : `\n${lines.join("\n")}` };
+function steerLines(links: HeadlineLinkStyle, mark: string | undefined): SteerLines {
+  return deliveries => {
+    const lines = steerHeadlines(deliveryRules(deliveries)).map(headline => headlineText(headline, links, mark));
+    if (lines.length === 0) return {};
+    return { systemMessage: lines.length === 1 ? lines[0]! : `\n${lines.join("\n")}` };
+  };
 }
 
 export interface ClaudeOutputOptions {
@@ -70,23 +70,10 @@ export interface ClaudeOutputOptions {
 
 /**
  * Steers reach the model as `additionalContext` and the person as one line per rule in `systemMessage` (Claude Code
- * shows it under the tool call). At `Stop`, which cannot reach the model without showing it the whole block as an
- * error, only the person's lines are shown; the block waits for the next message (design N4c), led as a late steer. A
- * steer counts once, when the person sees its line (D5): at `Stop` for a late steer, whose block later goes out uncounted.
+ * shows it under the tool call); at `Stop`, only the person's lines (`steerHookOutput`).
  */
 export function claudeHookOutput(hook: string, deliveries: readonly HeldDelivery[], { note, links = "hyperlink", mark }: ClaudeOutputOptions = {}): HookOutput {
-  if (hook === "Stop") {
-    const lines = steerLines(deliveries, links, mark);
-    const lined = deliveries.filter(delivery => delivery.rules.length > 0);
-    return "systemMessage" in lines ? prepareGuidanceOutput(lines, deliveryRuleIds(lined)) : lines;
-  }
-  // A steer held past `Stop` reaches the agent after it has moved on, and its lead says so.
-  const content = deliveryText(deliveries.map(delivery => (delivery.shown === true ? { ...delivery, content: asLateSteer(delivery.content) } : delivery)));
-  const context = [note, content].filter(text => text !== undefined).join("\n\n");
-  if (context === "" || CONTEXT_EVENTS[hook] !== true) return {};
-  const output = { ...steerLines(deliveries, links, mark), hookSpecificOutput: { hookEventName: hook, additionalContext: context } };
-  const unseen = deliveries.filter(delivery => delivery.shown !== true);
-  return deliveryText(unseen) === undefined ? output : prepareGuidanceOutput(output, deliveryRuleIds(unseen));
+  return steerHookOutput(hook, deliveries, CONTEXT_EVENTS, steerLines(links, mark), note);
 }
 
 export async function handleClaudeEvent(
@@ -108,12 +95,7 @@ export async function handleClaudeEvent(
   const cwd = claudeWorkspace(input.cwd);
   const links = terminalDrawsHyperlinks(env) ? "hyperlink" : "plain";
   const mark = rerailMark(colourDepth(env));
-  if (hook === "Stop") {
-    const held = deliveries.filter(delivery => steers(delivery.requested));
-    // Only a steer whose line the person sees here is shown, and counted, now; any other keeps its line for later.
-    await persistPending(path, held.map(delivery => (delivery.rules.length > 0 ? { ...delivery, shown: true as const } : delivery)));
-    return claudeHookOutput(hook, await linkDeliveries(held, cwd), { links, mark });
-  }
+  if (hook === "Stop") return claudeHookOutput(hook, await linkDeliveries(await holdStopSteers(path, deliveries), cwd), { links, mark });
   const note = hook === "SessionStart" ? sessionStartNote(await dashboardOrigin(cwd), "claude-code", sessionId, await presentedSessionNoteRules({ host: "claude-code", sessionId, cwd })) : undefined;
   const routed: HeldDelivery[] = await routeDeliveries(path, hook, deliveries, CONTEXT_EVENTS);
   // `linkDeliveries` copies each delivery, so a held steer keeps its `shown` mark.

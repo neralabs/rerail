@@ -281,30 +281,55 @@ describe("Pi conversation-rules extension", () => {
         return [...await ingest.call(this, event), ...extra(event)];
       });
     };
-    const rewound = (toolCallId: string): AdapterDelivery => ({
+    const steer = (toolCallId: string): AdapterDelivery => ({
       sessionId: "pi-test-session",
       requested: "steer",
       mechanism: "native-queue",
-      content: "Your edit of a.ts was rolled back. Redo it following the rule.",
+      content: "Rerail found 1 problem in your last edit.",
       ruleIds: ["no-any"],
       rules: [{ id: "no-any", state: "steered" }],
-      strategy: "rewind",
+      strategy: "message",
       toolCallId,
+    });
+    const rewound = (toolCallId: string): AdapterDelivery => ({
+      ...steer(toolCallId),
+      content: "Your edit of a.ts was rolled back. Redo it following the rule.",
+      strategy: "rewind",
       rewound: ["a.ts"],
     });
     const result = { type: "tool_result", toolCallId: "call-1", toolName: "edit", input: {}, content: [{ type: "text", text: "Edited a.ts" }], details: { diff: "+x" }, isError: false };
 
-    it("puts a rolled-back edit's steer into that call's result instead of a message, and counts it", async () => {
+    it("puts an edit's steer after what that call's result says, instead of a message, and counts it", async () => {
       const harness = createHarness();
       await install(harness);
-      const spy = withDeliveries(event => event.kind === "result" ? [rewound(event.toolCallId), { ...rewound(event.toolCallId), content: "Second rule." }] : []);
+      const spy = withDeliveries(event => event.kind === "result" ? [steer(event.toolCallId)] : []);
       try {
         await expect(Promise.resolve(harness.handlers.get("tool_result")!(result, harness.context))).resolves.toEqual({
-          content: [{ type: "text", text: "Your edit of a.ts was rolled back. Redo it following the rule.\n\nSecond rule." }],
+          content: [{ type: "text", text: "Edited a.ts" }, { type: "text", text: "Rerail found 1 problem in your last edit." }],
+        });
+        expect(harness.messages).toEqual([]);
+        expect(receiptCount(harness)).toBe(1);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("replaces a call's result with its rolled-back edit's steers, marked an error, with its other steers after", async () => {
+      const harness = createHarness();
+      await install(harness);
+      const spy = withDeliveries(event => event.kind === "result"
+        ? [rewound(event.toolCallId), steer(event.toolCallId), { ...rewound(event.toolCallId), content: "Second rule." }]
+        : []);
+      try {
+        await expect(Promise.resolve(harness.handlers.get("tool_result")!(result, harness.context))).resolves.toEqual({
+          content: [
+            { type: "text", text: "Your edit of a.ts was rolled back. Redo it following the rule.\n\nSecond rule." },
+            { type: "text", text: "Rerail found 1 problem in your last edit." },
+          ],
           isError: true,
         });
         expect(harness.messages).toEqual([]);
-        expect(receiptCount(harness)).toBe(2);
+        expect(receiptCount(harness)).toBe(3);
       } finally {
         spy.mockRestore();
       }
@@ -313,13 +338,13 @@ describe("Pi conversation-rules extension", () => {
     it("sends a steer for a call whose result is not being ingested as a message", async () => {
       const harness = createHarness();
       await install(harness);
-      const spy = withDeliveries(event => event.kind === "result" ? [rewound("call-closed")] : []);
+      const spy = withDeliveries(event => event.kind === "result" ? [steer("call-closed")] : []);
       try {
         await expect(Promise.resolve(harness.handlers.get("tool_result")!(result, harness.context))).resolves.toBeUndefined();
         expect(harness.messages).toEqual([{
           message: {
             customType: RULE_MESSAGE_TYPE,
-            content: "Your edit of a.ts was rolled back. Redo it following the rule.",
+            content: "Rerail found 1 problem in your last edit.",
             display: true,
             details: { requested: "steer", mechanism: "native-queue", sessionId: "pi-test-session", rules: [{ id: "no-any", state: "steered" }] },
           },

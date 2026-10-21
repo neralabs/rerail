@@ -7,12 +7,15 @@ import {
   resultEvent,
   turnEndEvent,
   userPromptEvent,
+  resultWithSteers,
+  type AdapterDelivery,
   type AdapterEvent,
   type AdapterSession,
 } from "../../engine/adapter-contract.js";
 import { registerPiSemanticTools, type NativeSemanticToolRuntime } from "../../harness/native-semantic-tools.js";
 import { registerPiConversationRulesCommand, type PiConversationRulesCommandRuntime } from "./pi-command.js";
 import { contained } from "../../harness/contained-hook.js";
+import { guardCompaction } from "../../harness/compaction-guard.js";
 import { registerHostCommands } from "../../harness/host-commands.js";
 import { SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, type SessionNoteRules } from "../../engine/code-rule/rerail-steer.js";
 import { dashboardOrigin } from "../../presentation/session-presentation.js";
@@ -51,10 +54,10 @@ export interface PiHostAdapterRuntime {
   /** What the session-start note says about `session`'s rules. */
   sessionNoteRules(session: AdapterSession): Promise<SessionNoteRules>;
   /**
-   * Opens `toolCallId`'s result to the steers for that call (`rewind`) while it is being ingested; the returned
-   * function closes it and yields what was placed, so a later steer for the call goes out as a message.
+   * Opens `toolCallId`'s result to the steers for that call while it is being ingested; the returned function closes
+   * it and yields what was placed, so a later steer for the call goes out as a message.
    */
-  openToolResult(toolCallId: string): () => readonly string[];
+  openToolResult(toolCallId: string): () => readonly AdapterDelivery[];
 }
 
 function streamId(message: PiMessage): string {
@@ -148,6 +151,8 @@ export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRu
 
   pi.on("session_start", (_event, context) => initialize(context));
   pi.on("session_tree", (_event, context) => initialize(context));
+  // Pi compacts the preparation its handlers received (pi-coding-agent 1.1.0 `AgentSession.compact`/`_runAutoCompaction`).
+  pi.on("session_before_compact", event => { guardCompaction(event.preparation); });
   pi.on("input", async event => {
     const session = await runtime.sessionFor();
     if (session === undefined) {
@@ -223,9 +228,8 @@ export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRu
         event.isError,
       ));
     })());
-    const steers = close();
-    // A steer for this call's rolled-back edit is what the model sees of its result.
-    return steers.length === 0 ? undefined : { content: [{ type: "text" as const, text: steers.join("\n\n") }], isError: true };
+    // The call's steers ride its result: after what it says, or in its place when its edit was rolled back.
+    return resultWithSteers(event.content, close());
   });
   pi.on("turn_end", async event => {
     const session = await runtime.sessionFor();

@@ -109,7 +109,7 @@ type TurnStart = "rule" | "note" | "prompt" | "other";
 type SplitCut = { keepRecentTokens: number; firstKeptEntryIndex: number; turnStartIndex: number; start: TurnStart };
 export type Attribution = { thresholds: number; cuts: number; splitCuts: SplitCut[]; ruleShare: number | null };
 type Probe =
-  | { keepRecentTokens: number; compacted: boolean; originalRequest: string; answer: string; names: "task" | "rule" | "both" | "neither" }
+  | { keepRecentTokens: number; compacted: boolean; goal: string; originalRequest: string; answer: string; names: "task" | "rule" | "both" | "neither" }
   | { skipped: string };
 type Trial = {
   host: RerailHost;
@@ -120,6 +120,8 @@ type Trial = {
   wallMs?: number;
   steers?: number;
   rewound?: number;
+  /** Steers that rode their edit's tool result instead of a message. */
+  inResult?: number;
   deliveredStrategies?: string[];
   testsPassed?: boolean;
   readmeUpdated?: boolean;
@@ -208,15 +210,19 @@ const LedgerDelivery = z.object({
     rewound: z.array(z.string()).optional(),
   }),
 });
-/** The rule's steers in Rerail's ledger: how many, how many rolled their edit back, and the strategies they carried. */
-async function readSteers(project: string): Promise<{ steers: number; rewound: number; strategies: string[] }> {
+/**
+ * The rule's steers in Rerail's ledger: how many, how many rolled their edit back (`rewound`), how many rode their
+ * edit's tool result (`toolCallId`, where the harness can put them there), and the strategies they carried.
+ */
+async function readSteers(project: string): Promise<{ steers: number; rewound: number; inResult: number; strategies: string[] }> {
   const steers = (await readDeliveries(join(project, ".rerail", "sessions"))).flatMap((entry) => {
     const delivery = LedgerDelivery.safeParse(entry).data?.delivery;
     return delivery !== undefined && delivery.requested === "steer" && delivery.ruleIds.includes(RULE.id) ? [delivery] : [];
   });
   return {
     steers: steers.length,
-    rewound: steers.filter((steer) => steer.toolCallId !== undefined).length,
+    rewound: steers.filter((steer) => (steer.rewound?.length ?? 0) > 0).length,
+    inResult: steers.filter((steer) => steer.toolCallId !== undefined).length,
     strategies: [...new Set(steers.flatMap((steer) => (steer.strategy === undefined ? [] : [steer.strategy])))],
   };
 }
@@ -537,9 +543,10 @@ function names(text: string): "task" | "rule" | "both" | "neither" {
   return rule ? "rule" : "neither";
 }
 /**
- * `--compaction-probe` (Pi only): forks the trial's session, compacts it for real in RPC mode at the smallest
- * keepRecentTokens whose cut summarizes a steer-started turn (else any split turn), then asks what the user asked for.
- * The threshold goes into the sandbox's global Pi settings, which need no project trust.
+ * `--compaction-probe` (Pi only): forks the trial's session, compacts it for real in RPC mode with Rerail loaded (its
+ * compaction guard included) at the smallest keepRecentTokens whose cut summarizes a steer-started turn (else any
+ * split turn), then asks what the user asked for. The threshold goes into the sandbox's global Pi settings, which need
+ * no project trust.
  */
 async function compactionProbe(
   session: string,
@@ -557,7 +564,7 @@ async function compactionProbe(
   await writeFile(join(agentDir, "settings.json"), JSON.stringify({ compaction: { keepRecentTokens: target.keepRecentTokens } }));
   const { args } = hostCommand("pi", project, "");
   const flags = args.slice(0, args.indexOf("--session-dir"));
-  const child = spawn("sandbox-exec", ["-f", profile, "pi", ...flags.map((flag) => (flag === "json" ? "rpc" : flag)), "--no-extensions", "--session-dir", join(project, ".pi-probe-sessions"), ...extra, "--fork", session], {
+  const child = spawn("sandbox-exec", ["-f", profile, "pi", ...flags.map((flag) => (flag === "json" ? "rpc" : flag)), "--no-extensions", "--extension", BUILT.pi, "--session-dir", join(project, ".pi-probe-sessions"), ...extra, "--fork", session], {
     cwd: project,
     env,
     stdio: ["pipe", "pipe", "pipe"],
@@ -603,6 +610,7 @@ async function compactionProbe(
     return {
       keepRecentTokens: target.keepRecentTokens,
       compacted: compacted?.success === true,
+      goal: (summary.split("## Goal")[1]?.split("\n## ")[0] ?? "").trim(),
       originalRequest: (summary.split("## Original Request")[1]?.split("\n## ")[0] ?? "").trim(),
       answer,
       names: names(answer),
@@ -657,6 +665,7 @@ async function runTrial(host: RerailHost, strategy: SteerStrategy, trial: number
     const ledger = await readSteers(project);
     result.steers = ledger.steers;
     result.rewound = ledger.rewound;
+    result.inResult = ledger.inResult;
     result.deliveredStrategies = ledger.strategies;
     const outcome = await inspectProject(project, profile, env);
     Object.assign(result, outcome, { taskCompleted: outcome.testsPassed && outcome.readmeUpdated });
@@ -701,8 +710,8 @@ const fixed = (digits: number) => (value: number): string => value.toFixed(digit
 /** Mean per host × strategy over the trials that ran; `errors` counts trials that failed or whose harness exited non-zero. */
 export function table(trials: readonly Trial[]): string {
   const rows = [
-    "| host | strategy | trials | errors | task done | tests pass | README | steers | rewound | violation left | subagent calls | wall s | input tok | output tok | cache read tok | cost $ | split-turn starts rule / note / prompt |",
-    "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+    "| host | strategy | trials | errors | task done | tests pass | README | steers | in result | rewound | violation left | subagent calls | wall s | input tok | output tok | cache read tok | cost $ | split-turn starts rule / note / prompt |",
+    "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
   ];
   const groups = Map.groupBy(trials, (trial) => `${trial.host} ${trial.strategy}`);
   for (const group of groups.values()) {
@@ -717,6 +726,7 @@ export function table(trials: readonly Trial[]): string {
           cell(of((trial) => trial.testsPassed), percent),
           cell(of((trial) => trial.readmeUpdated), percent),
           cell(of((trial) => trial.steers), fixed(1)),
+          cell(of((trial) => trial.inResult), fixed(1)),
           cell(of((trial) => trial.rewound), fixed(1)),
           cell(of((trial) => trial.violationRemaining), percent),
           cell(of((trial) => trial.subagentCalls), fixed(1)),
@@ -772,7 +782,7 @@ async function main(): Promise<void> {
           say(`skip ${host}: ${result.error}`);
           break hostLoop;
         }
-        const outcome = result.error === undefined ? `done=${result.taskCompleted} steers=${result.steers} rewound=${result.rewound}` : `error: ${result.error.split("\n")[0]}`;
+        const outcome = result.error === undefined ? `done=${result.taskCompleted} steers=${result.steers} inResult=${result.inResult} rewound=${result.rewound}` : `error: ${result.error.split("\n")[0]}`;
         say(`${host} ${strategy} #${trial}: ${outcome}${result.kept === undefined ? "" : ` (kept ${result.kept})`}`);
       }
     }

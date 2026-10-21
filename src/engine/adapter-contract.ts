@@ -268,8 +268,9 @@ export interface AdapterDelivery {
   /** The steer strategy that shaped a code-rule steer; absent for every other delivery. */
   strategy?: SteerStrategy;
   /**
-   * Set only when Rerail rolled this tool call's edit back (`rewind`): the host puts `content` into that call's result
-   * in place of a message. Rolled-back paths are in `rewound`.
+   * The tool call whose result carries this steer where the host can put it there (Pi, OMP): set for a code-rule steer
+   * from that call's own edit check while its result is ingested. With `rewound` (the paths `rewind` rolled back), the
+   * result is replaced by `content` and marked an error; otherwise `content` follows the result's own.
    */
   toolCallId?: string;
   rewound?: readonly string[];
@@ -313,11 +314,11 @@ export async function sendNativeDeliveries(
   deliveries: readonly AdapterDelivery[],
   send: (message: NativeRuleMessage, options: { deliverAs: "steer" }) => void | Promise<void>,
   record: (sessionId: string, receiptId: string, ruleIds: readonly string[]) => void | Promise<void>,
-  place?: (toolCallId: string, content: string) => boolean,
+  place?: (toolCallId: string, delivery: AdapterDelivery) => boolean,
 ): Promise<void> {
   for (const delivery of deliveries) {
     if (!steers(delivery.requested)) continue;
-    const placed = delivery.toolCallId !== undefined && place?.(delivery.toolCallId, delivery.content) === true;
+    const placed = delivery.toolCallId !== undefined && place?.(delivery.toolCallId, delivery) === true;
     if (!placed) {
       await send(
         {
@@ -342,6 +343,22 @@ export async function sendNativeDeliveries(
       console.error("rerail steering receipt:", error);
     }
   }
+}
+
+/**
+ * What a tool result says once the steers `placed` in it ride it: a rolled-back edit's steers (`rewound`) replace the
+ * result and mark it an error, and every other steer follows as its own text after what the result already says.
+ * Undefined when none was placed.
+ */
+export function resultWithSteers<Block>(
+  content: readonly Block[],
+  placed: readonly Pick<AdapterDelivery, "content" | "rewound">[],
+): { content: Array<Block | { type: "text"; text: string }>; isError?: true } | undefined {
+  if (placed.length === 0) return undefined;
+  const rewound = placed.filter(delivery => delivery.rewound !== undefined).map(delivery => delivery.content);
+  const following = placed.filter(delivery => delivery.rewound === undefined).map(delivery => ({ type: "text" as const, text: delivery.content }));
+  if (rewound.length === 0) return { content: [...content, ...following] };
+  return { content: [{ type: "text", text: rewound.join("\n\n") }, ...following], isError: true };
 }
 
 export interface RerailEventLoop {
