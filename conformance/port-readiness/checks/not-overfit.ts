@@ -37,6 +37,15 @@ export interface NotOverfitResult {
 /** A regex that touches more distinct unexplained test identifiers than this is a syntax pattern, not a list of names. */
 export const REGEX_NAME_LIMIT = 10;
 
+/**
+ * A test text this long holding fewer than one identifier per SPARSE_TEXT characters is a stress test, read by node
+ * regexes only around its identifiers (`regexNames`). Of every gated tool-pack's test texts, only ESLint's five
+ * qualify: 100,000 to 1,000,011 characters with one or two identifiers. Every other text over 20,000 characters holds
+ * at least one identifier per 16.
+ */
+const LONG_TEXT = 20_000;
+const SPARSE_TEXT = 1_000;
+
 const POSIX_CLASSES: Record<string, string> = {
   alnum: "A-Za-z0-9", alpha: "A-Za-z", digit: "0-9", lower: "a-z", upper: "A-Z", space: "\\s", word: "\\w", xdigit: "0-9A-Fa-f", punct: "!-\\/:-@\\[-`{-~",
 };
@@ -262,11 +271,24 @@ function regexNames(regex: PolicyRegex, texts: string[], unexplained: (word: str
     // so whether the regex depends on it there is a separate question.
     const tested = new Set<number>();
     const identifiers = [...text.matchAll(IDENTIFIER)].map((match) => ({ start: match.index, end: match.index + match[0].length, word: match[0] }));
-    compiled.lastIndex = 0;
     const matches: { start: number; end: number }[] = [];
-    for (let match = compiled.exec(text); match !== null; match = compiled.exec(text)) {
-      if (match[0].length === 0) compiled.lastIndex = afterEmptyMatch(text, match.index);
-      else matches.push({ start: match.index, end: match.index + match[0].length });
+    const collect = (from: number, to: number) => {
+      const slice = text.slice(from, to);
+      compiled.lastIndex = 0;
+      for (let match = compiled.exec(slice); match !== null; match = compiled.exec(slice)) {
+        if (match[0].length === 0) compiled.lastIndex = afterEmptyMatch(slice, match.index);
+        else matches.push({ start: from + match.index, end: from + match.index + match[0].length });
+      }
+    };
+    if (regex.wholeText || text.length <= LONG_TEXT || identifiers.length * SPARSE_TEXT >= text.length) collect(0, text.length);
+    else {
+      // A node regex tried at every offset of a stress text backtracks across all of it: ESLint's 1,000,000-backslash
+      // strings cost a quarter of an hour of CPU per such regex. Only matches touching an identifier count, so the text
+      // is read in the window around each identifier it could select, the window the in-place test reads.
+      for (const identifier of identifiers) {
+        if (selected.has(identifier.word) || !unexplained(identifier.word)) continue;
+        collect(Math.max(0, identifier.start - 512), Math.min(text.length, identifier.end + 512));
+      }
     }
     for (const { start, end } of matches) {
       for (const identifier of identifiers) {
