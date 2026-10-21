@@ -1,5 +1,8 @@
 # Shared syntax facts and direct tree execution
 
+The measurements below describe commit `c4bd76bf`.
+The [batched producer contract](gpu-producer-execution-contract.md) defines the subsequent execution boundary.
+
 The [requirement](shared-syntax-requirement.md) puts preparation before faster execution algorithms.
 SQLite remains the rule execution engine.
 The new syntax source supplies structural facts from the existing parser tape.

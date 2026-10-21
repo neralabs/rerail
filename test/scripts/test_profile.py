@@ -29,6 +29,9 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(compare(before, after)["changedSettings"]["nativeInput"]["experiment"], "captures")
         after["parity"]["nativeSha256"] = "different"
         with self.assertRaisesRegex(ValueError, "nativeSha256"): compare(before, after)
+        self.assertEqual(compare(before, after, allow_engine_changes=True)["changedNative"], {"baseline": "binary", "experiment": "different"})
+        after["parity"]["workloadSha256"] = "different-workload"
+        with self.assertRaisesRegex(ValueError, "workloadSha256"): compare(before, after, allow_engine_changes=True)
         after = copy.deepcopy(before); after["trace"] = "off"
         with self.assertRaisesRegex(ValueError, "modes do not match"): compare(before, after)
         after = copy.deepcopy(before); after["sampleModules"] = ["*"]

@@ -13,6 +13,7 @@ mod anchors;
 pub(super) mod deferred;
 mod forest;
 mod insert;
+mod producer;
 mod reachability;
 mod source;
 pub(super) mod syntax;
@@ -467,71 +468,100 @@ fn read_value(value: rusqlite::types::ValueRef<'_>) -> Result<Value> {
     })
 }
 
-pub(super) fn evaluate(
-    code_rule: &CompiledCodeRule,
-    clause: &CompiledClause,
-    plan: &Plan,
-    rows: Vec<Rows>,
-    snapshot: &Snapshot,
-) -> Evaluation {
-    #[cfg(feature = "code-rule-profile")]
-    let _context = super::profile::trace::Context::enter(
-        &code_rule.id,
-        &clause.id,
-        (snapshot.files.len() == 1).then(|| snapshot.files[0].path.as_str()),
-    );
-    #[cfg(feature = "code-rule-profile")]
-    let _span = super::profile::trace::Span::start("relational", "evaluate");
-    #[cfg(feature = "code-rule-profile")]
-    let _cpu = super::profile::PhaseTimer::start(super::profile::Phase::Other);
-    let mut result = Evaluation::default();
-    if let Some(path) = rows.iter().flat_map(|rows| rows.incomplete.iter()).next() {
-        result.failures.push(failure(
-            &clause.id,
-            "source-incomplete",
-            "A relational input is incomplete",
-            Some(path),
-        ));
-        return result;
-    }
-    let syntax_files = (|| -> Result<syntax::Files> {
-        let Some(spec) = &plan.syntax else {
-            return Ok(Vec::new());
-        };
-        let gate = plan
-            .inputs
-            .iter()
-            .position(|(name, _)| name == &spec.gate)
-            .ok_or_else(|| invalid("missing syntax gate"))?;
-        let paths = rows[gate]
-            .witnesses
-            .iter()
-            .map(|w| w.path.as_str())
-            .collect::<BTreeSet<_>>();
-        snapshot
+pub(super) struct Job<'a> {
+    pub code_rule: &'a CompiledCodeRule,
+    pub clause: &'a CompiledClause,
+    pub rows: Vec<Rows>,
+    pub facts: syntax::Files,
+    pub snapshot: Snapshot,
+    pub budget: super::budget::Context,
+}
+struct Session<'a> {
+    code_rule: &'a CompiledCodeRule,
+    clause: &'a CompiledClause,
+    plan: &'a Plan,
+    db: Connection,
+    syntax_files: syntax::Files,
+    syntax_trees: Vec<producer::Tree>,
+    anchors: anchors::Anchors,
+    work: Arc<AtomicUsize>,
+    tables: BTreeSet<String>,
+    next: usize,
+    release_stages: bool,
+    _retained_inputs: Vec<Rows>,
+}
+impl<'a> Session<'a> {
+    fn new(
+        code_rule: &'a CompiledCodeRule,
+        clause: &'a CompiledClause,
+        rows: Vec<Rows>,
+        snapshot: &Snapshot,
+        supplied: syntax::Files,
+        prepared: &mut HashMap<(usize, super::language::GrammarDialect), Arc<syntax::Facts>>,
+    ) -> Result<Self> {
+        let limits = &code_rule.capabilities.limits;
+        let files = snapshot
             .files
             .iter()
-            .filter(|f| code_rule.scope.matches(&f.path) && paths.contains(f.path.as_str()))
-            .map(|f| Ok((f.path.clone(), syntax::Pool::get(f)?)))
-            .collect()
-    })();
-    let syntax_files = match syntax_files {
-        Ok(files) => files,
-        Err(e) => {
-            result
-                .failures
-                .push(failure(&clause.id, "source-incomplete", &e.reason, None));
-            return result;
+            .filter(|f| code_rule.scope.matches(&f.path));
+        let (file_count, byte_count) = files.fold((0usize, 0usize), |(n, b), f| {
+            (n + 1, b.saturating_add(f.source.len()))
+        });
+        if file_count > limits.max_files || byte_count > limits.max_source_bytes {
+            return Err(invalid("repository input budget exceeded"));
         }
-    };
-    let count: usize = rows.iter().map(|rows| rows.witnesses.len()).sum::<usize>()
-        + syntax_files.iter().map(|(_, f)| f.len()).sum::<usize>();
-    let work = Arc::new(AtomicUsize::new(0));
-    work.store(
-        code_rule.capabilities.limits.visits_for(count),
-        Ordering::Relaxed,
-    );
-    let run = || -> Result<Vec<Value>> {
+        let super::model::ClauseKind::Relational(plan) = &clause.kind else {
+            return Err(invalid("expected relational job"));
+        };
+        if rows.iter().any(|r| !r.incomplete.is_empty()) {
+            return Err(invalid("A relational input is incomplete"));
+        }
+        let syntax_files = if let Some(spec) = &plan.syntax {
+            let gate = plan
+                .inputs
+                .iter()
+                .position(|(n, _)| n == &spec.gate)
+                .ok_or_else(|| invalid("missing syntax gate"))?;
+            let paths = rows[gate]
+                .witnesses
+                .iter()
+                .map(|w| w.path.as_str())
+                .collect::<BTreeSet<_>>();
+            snapshot
+                .files
+                .iter()
+                .filter(|f| code_rule.scope.matches(&f.path) && paths.contains(f.path.as_str()))
+                .map(|f| {
+                    let key = (
+                        Arc::as_ptr(&f.source) as usize,
+                        super::eval::file_language(f)
+                            .ok_or_else(|| invalid("syntax grammar unavailable"))?,
+                    );
+                    let facts = if let Some(facts) = prepared.get(&key) {
+                        Arc::clone(facts)
+                    } else {
+                        let facts = match supplied.iter().find(|(p, _)| p == &f.path) {
+                            Some((_, facts)) => Arc::clone(facts),
+                            None => syntax::Pool::get(f)?,
+                        };
+                        prepared.insert(key, Arc::clone(&facts));
+                        facts
+                    };
+                    Ok((f.path.clone(), facts))
+                })
+                .collect::<Result<syntax::Files>>()?
+        } else {
+            Vec::new()
+        };
+        let count = rows.iter().map(|r| r.witnesses.len()).sum::<usize>()
+            + syntax_files.iter().map(|(_, f)| f.len()).sum::<usize>();
+        let syntax_trees = match &plan.syntax {
+            Some(spec) => syntax::prepare_trees(spec, &syntax_files)?,
+            None => Vec::new(),
+        };
+        let work = Arc::new(AtomicUsize::new(
+            code_rule.capabilities.limits.visits_for(count),
+        ));
         #[cfg(feature = "code-rule-profile")]
         let release_stages = std::env::var_os("RERAIL_SQL_RETAIN_STAGES").is_none();
         #[cfg(not(feature = "code-rule-profile"))]
@@ -684,54 +714,77 @@ pub(super) fn evaluate(
             }),
         )
         .map_err(sql_error)?;
-        for (index, stage) in plan.stages.iter().enumerate() {
-            {
-                #[cfg(feature = "code-rule-profile")]
-                let _span = super::profile::trace::Span::start("sql-validate", &stage.name);
-                columns(&db, &stage.query, &tables)?;
-            }
-            #[cfg(feature = "code-rule-profile")]
-            let started = std::time::Instant::now();
-            let materialized =
-                if let Some(spec) = stage.reachability.as_ref().filter(|s| s.syntax.is_some()) {
-                    syntax::closure(
-                        &db,
-                        stage,
-                        spec,
-                        plan.syntax
-                            .as_ref()
-                            .ok_or_else(|| invalid("missing syntax source"))?,
-                        &syntax_files,
-                        &work,
-                    )
-                } else {
-                    create_stage(&db, stage, true, &work)
-                };
-            #[cfg(feature = "code-rule-profile")]
-            if std::env::var_os("RERAIL_CODE_RULE_RELATIONAL_PROFILE").is_some() {
-                super::profile::trace::emit(
-                    "RERAIL_CODE_RULE_RELATIONAL",
-                    json!({"stage":stage.name,"elapsedMs":started.elapsed().as_secs_f64()*1000.0,"workLeft":work.load(Ordering::Relaxed),"failed":materialized.is_err()}),
-                );
-            }
-            materialized.map_err(|error| {
-                invalid(format!("relational stage {}: {}", stage.name, error.reason))
-            })?;
-            tables.insert(stage.name.clone());
-            for (name, _) in plan
-                .last_uses
-                .iter()
-                .filter(|(_, last)| release_stages && **last == index)
-            {
-                #[cfg(feature = "code-rule-profile")]
-                let _span = super::profile::trace::Span::start("sql-release", name);
-                deferred::release(&db, name, &plan.stages)?;
-                tables.remove(name);
-            }
+
+        Ok(Self {
+            code_rule,
+            clause,
+            plan,
+            db,
+            syntax_files,
+            syntax_trees,
+            anchors,
+            work,
+            tables,
+            next: 0,
+            release_stages,
+            _retained_inputs: retained_inputs,
+        })
+    }
+    fn release(&mut self) -> Result<()> {
+        let stage = &self.plan.stages[self.next];
+        self.tables.insert(stage.name.clone());
+        for (name, _) in self
+            .plan
+            .last_uses
+            .iter()
+            .filter(|(_, last)| self.release_stages && **last == self.next)
+        {
+            deferred::release(&self.db, name, &self.plan.stages)?;
+            self.tables.remove(name);
         }
+        self.next += 1;
+        Ok(())
+    }
+    fn advance(&mut self) -> Result<Option<producer::Demand>> {
+        let _reader = producer::ReadOnly::enter();
+        while let Some(stage) = self.plan.stages.get(self.next) {
+            columns(&self.db, &stage.query, &self.tables)?;
+            if let Some(spec) = stage.reachability.as_ref().filter(|s| s.syntax.is_some()) {
+                return Ok(Some(syntax::demand(
+                    &self.db,
+                    spec,
+                    &self.syntax_trees,
+                    &self.syntax_files,
+                    Arc::clone(&self.work),
+                )?));
+            }
+            create_stage(&self.db, stage, true, &self.work)
+                .map_err(|e| invalid(format!("relational stage {}: {}", stage.name, e.reason)))?;
+            self.release()?;
+        }
+        Ok(None)
+    }
+    fn publish(&mut self, output: producer::Completed) -> Result<()> {
+        let _reader = producer::ReadOnly::enter();
+        let stage = &self.plan.stages[self.next];
+        output.publish(&self.db, &stage.name, &self.work)?;
+        self.release()
+    }
+    fn finish(&self) -> Result<Vec<Value>> {
+        let _reader = producer::ReadOnly::enter();
+        let Self {
+            code_rule,
+            clause,
+            plan,
+            db,
+            syntax_files,
+            anchors,
+            tables,
+            ..
+        } = self;
         #[cfg(feature = "code-rule-profile")]
         let _span = super::profile::trace::Span::start("sql-result", "query");
-        let names = columns(&db, &plan.query, &tables)?;
+        let names = columns(db, &plan.query, tables)?;
         let mut statement = db.prepare(&plan.query).map_err(sql_error)?;
         let mut query = statement.query([]).map_err(sql_error)?;
         let mut findings = Vec::new();
@@ -797,7 +850,7 @@ pub(super) fn evaluate(
             if ignored || syntax_ignored {
                 continue;
             }
-            let mut output_clause = clause.clone();
+            let mut output_clause = (*clause).clone();
             if let Some(field) = &plan.code {
                 output_clause.violation.code = values
                     .get(field)
@@ -839,18 +892,135 @@ pub(super) fn evaluate(
             findings.push(finding);
         }
         Ok(findings)
-    };
-    match run() {
-        Ok(findings) => {
-            result.metrics.witnesses = findings.len();
-            result.violations = findings;
-        }
-        Err(error) => result.failures.push(failure(
-            &clause.id,
-            "relational-failed",
-            &error.reason,
-            None,
-        )),
     }
-    result
+}
+
+pub(super) fn evaluate(
+    code_rule: &CompiledCodeRule,
+    clause: &CompiledClause,
+    _plan: &Plan,
+    rows: Vec<Rows>,
+    snapshot: &Snapshot,
+) -> Evaluation {
+    evaluate_batch(vec![Job {
+        code_rule,
+        clause,
+        rows,
+        facts: Vec::new(),
+        snapshot: snapshot.clone(),
+        budget: super::budget::Context::capture(),
+    }])
+    .pop()
+    .unwrap_or_default()
+}
+
+/// SQL sessions yield producer demands. Only this driver can execute a producer wave.
+pub(super) fn evaluate_batch(jobs: Vec<Job<'_>>) -> Vec<Evaluation> {
+    #[cfg(feature = "code-rule-profile")]
+    let prepare = super::profile::trace::Span::start("producer-prepare", "documents");
+    let mut contexts = Vec::new();
+    let mut clauses = Vec::new();
+    let mut sessions = Vec::new();
+    let mut results = Vec::new();
+    let mut prepared = HashMap::new();
+    for mut job in jobs {
+        clauses.push(job.clause);
+        let result = job.budget.run(|| {
+            Session::new(
+                job.code_rule,
+                job.clause,
+                job.rows,
+                &job.snapshot,
+                job.facts,
+                &mut prepared,
+            )
+        });
+        contexts.push(job.budget);
+        let error = result.as_ref().err().map(|e| e.reason.clone());
+        sessions.push(result.ok());
+        results.push(Evaluation::default());
+        if sessions.last().unwrap().is_none() {
+            results.last_mut().unwrap().failures.push(failure(
+                &job.clause.id,
+                "source-incomplete",
+                error.as_deref().unwrap_or("Relational preparation failed"),
+                None,
+            ));
+        }
+    }
+    #[cfg(feature = "code-rule-profile")]
+    drop(prepare);
+    let mut allowance = producer::Allowance::default();
+    loop {
+        let mut pending = Vec::new();
+        for i in 0..sessions.len() {
+            let Some(session) = sessions[i].as_mut() else {
+                continue;
+            };
+            #[cfg(feature = "code-rule-profile")]
+            let _context = super::profile::trace::Context::enter(
+                &session.code_rule.id,
+                &clauses[i].id,
+                (session.syntax_files.len() == 1).then(|| session.syntax_files[0].0.as_str()),
+            );
+            match contexts[i].run(|| session.advance()) {
+                Ok(Some(demand)) => pending.push((i, demand)),
+                Ok(None) => {
+                    match contexts[i].run(|| session.finish()) {
+                        Ok(findings) => {
+                            results[i].metrics.witnesses = findings.len();
+                            results[i].violations = findings;
+                        }
+                        Err(e) => results[i].failures.push(failure(
+                            &clauses[i].id,
+                            "relational-failed",
+                            &e.reason,
+                            None,
+                        )),
+                    };
+                    sessions[i] = None;
+                }
+                Err(e) => {
+                    results[i].failures.push(failure(
+                        &clauses[i].id,
+                        "relational-failed",
+                        &e.reason,
+                        None,
+                    ));
+                    sessions[i] = None;
+                }
+            }
+        }
+        if pending.is_empty() {
+            break;
+        }
+        let indices = pending.iter().map(|(i, _)| *i).collect::<Vec<_>>();
+        let output = producer::execute(pending, &mut contexts, &mut allowance);
+        for (i, output) in indices.into_iter().zip(output) {
+            let result = output
+                .and_then(|out| contexts[i].run(|| sessions[i].as_mut().unwrap().publish(out)));
+            if let Err(e) = result {
+                results[i].failures.push(failure(
+                    &clauses[i].id,
+                    "relational-failed",
+                    &e.reason,
+                    None,
+                ));
+                sessions[i] = None;
+            }
+        }
+    }
+    for (i, context) in contexts.iter().enumerate() {
+        if context.observed() {
+            results[i].violations.clear();
+            results[i].metrics.witnesses = 0;
+            results[i].failures.push(failure(
+                &clauses[i].id,
+                "budget-exceeded",
+                "relational work budget exceeded",
+                None,
+            ));
+        }
+    }
+    results
 }

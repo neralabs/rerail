@@ -341,7 +341,7 @@ pub(super) fn evaluate_global(
     state: &mut WorkspaceState,
     index: usize,
     snapshot: &Snapshot,
-    closed: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    mut batched: BTreeMap<String, Evaluation>,
 ) -> Result<Evaluation> {
     let _syntax = crate::code_rule_dsl::relational::syntax::Pool::install();
     let resident = std::sync::Arc::clone(&state.code_rules[index]);
@@ -349,17 +349,7 @@ pub(super) fn evaluate_global(
     let _graph = state.crossfile.evaluation_slot();
     let mut evaluation = Evaluation::default();
     for clause in &state.globals[&index].clone() {
-        if let ClauseKind::Relational(plan) = &clause.kind
-            && plan.per_file
-        {
-            let mut result = evaluate_file_relations(
-                state,
-                index,
-                code_rule,
-                clause,
-                snapshot.revision,
-                closed,
-            )?;
+        if let Some(mut result) = batched.remove(&clause.id) {
             evaluation.violations.append(&mut result.violations);
             evaluation.failures.append(&mut result.failures);
             evaluation.metrics.merge(result.metrics);
@@ -473,107 +463,203 @@ pub(super) fn evaluate_global(
     Ok(evaluation)
 }
 
-fn evaluate_file_relations(
+/// Collect every dirty relational partition before advancing any SQL consumer.
+pub(super) fn evaluate_batched_relations(
     state: &mut WorkspaceState,
-    index: usize,
-    code_rule: &CompiledCodeRule,
-    clause: &CompiledClause,
-    revision: u32,
+    indices: &BTreeSet<usize>,
+    snapshot: &Snapshot,
     closed: &std::sync::Arc<std::sync::atomic::AtomicBool>,
-) -> Result<Evaluation> {
-    let paths = state.relation_plans[&(index, clause.id.clone())]
+) -> Result<BTreeMap<usize, BTreeMap<String, Evaluation>>> {
+    use crate::code_rule_dsl::{
+        budget::Context,
+        relational::{self, Job},
+    };
+    let _syntax = crate::code_rule_dsl::relational::syntax::Pool::install();
+    let _graph = state.crossfile.evaluation_slot();
+    let catalog = indices
         .iter()
-        .flat_map(|id| {
-            state
-                .evidence
-                .get(id)
-                .into_iter()
-                .flat_map(|rows| rows.keys().cloned())
+        .map(|&index| {
+            (
+                index,
+                std::sync::Arc::clone(&state.code_rules[index]),
+                state.globals[&index].clone(),
+            )
         })
-        .collect::<BTreeSet<_>>();
-    state
-        .file_relation_results
-        .retain(|(owner, name, path), _| {
-            *owner != index || name != &clause.id || paths.contains(path)
-        });
-    let mut result = Evaluation::default();
-    for path in paths {
-        #[cfg(feature = "code-rule-profile")]
-        let _context = crate::code_rule_dsl::profile::trace::Context::enter(
-            &code_rule.id,
-            &clause.id,
-            Some(&path),
-        );
-        #[cfg(feature = "code-rule-profile")]
-        let mut span =
-            crate::code_rule_dsl::profile::trace::Span::start("file-relation", "evaluate");
-        let key = (index, clause.id.clone(), path.clone());
-        let version = super::documents::current_version(state, &path)
-            .ok_or_else(|| invalid(format!("{path} has no current source version")))?;
-        let cached = state
-            .file_relation_results
-            .get(&key)
-            .is_some_and(|(cached, _)| cached == &version);
-        #[cfg(feature = "code-rule-profile")]
-        span.detail(|| serde_json::json!({"cached":cached}));
-        if !cached {
-            let mut input = state
-                .files
-                .get(&path)
-                .map(|file| file.input.clone())
-                .or_else(|| state.evicted_inputs.get(&path).cloned())
-                .ok_or_else(|| invalid(format!("{path} is not a file of this workspace")))?;
-            // Each file is an independent bounded evaluation, like a local AST clause.
-            let budget = crate::code_rule_dsl::budget::MatchBudget::work(
-                closed,
-                super::file_work_budget(input.source.len()),
-            );
-            let (_, document) = super::documents::load(state, &path)?;
-            input.source = std::sync::Arc::clone(&document.source);
-            let _tapes = crate::code_rule_dsl::eval::TapeCacheSlot::install();
-            if let Some(language) = crate::code_rule_dsl::eval::file_language(&input) {
-                crate::code_rule_dsl::eval::TapeCacheSlot::seed(language, &input, &document.image)?;
-            }
-            let _syntax = crate::code_rule_dsl::relational::syntax::Pool::install();
-            if matches!(&clause.kind, ClauseKind::Relational(plan) if plan.syntax.is_some()) {
-                let facts = match document.syntax.get() {
-                    Some(facts) => std::sync::Arc::clone(facts),
-                    None => {
-                        let facts = crate::code_rule_dsl::relational::syntax::Pool::get(&input)?;
-                        let _ = document.syntax.set(std::sync::Arc::clone(&facts));
-                        facts
-                    }
-                };
-                crate::code_rule_dsl::relational::syntax::Pool::seed(&input, facts);
-                state.documents.account_syntax(&version);
-            }
-            let snapshot = Snapshot {
-                revision,
-                files: vec![input],
-            };
-            let mut evaluated =
-                evaluate_clauses(code_rule, &snapshot, "report", std::slice::from_ref(clause))?;
-            if budget.observed() {
-                evaluated.failures.push(failure(
-                    &clause.id,
-                    "budget-exceeded",
-                    "file relation work budget exceeded",
-                    Some(&path),
-                ));
-                result.violations.append(&mut evaluated.violations);
-                result.failures.append(&mut evaluated.failures);
+        .collect::<Vec<_>>();
+    let mut jobs = Vec::new();
+    let mut keys = Vec::new();
+    let mut results = BTreeMap::new();
+    for (index, code_rule, clauses) in &catalog {
+        let index = *index;
+        let results = results
+            .entry(index)
+            .or_insert_with(BTreeMap::<String, Evaluation>::new);
+        for clause in clauses {
+            let ClauseKind::Relational(plan) = &clause.kind else {
                 continue;
+            };
+            results.entry(clause.id.clone()).or_default();
+            let producers = state.relation_plans[&(index, clause.id.clone())].clone();
+            if plan.per_file {
+                let paths = producers
+                    .iter()
+                    .flat_map(|id| {
+                        state
+                            .evidence
+                            .get(id)
+                            .into_iter()
+                            .flat_map(|r| r.keys().cloned())
+                    })
+                    .collect::<BTreeSet<_>>();
+                state
+                    .file_relation_results
+                    .retain(|(owner, name, path), _| {
+                        *owner != index || name != &clause.id || paths.contains(path)
+                    });
+                for path in paths {
+                    let key = (index, clause.id.clone(), path.clone());
+                    let version = super::documents::current_version(state, &path)
+                        .ok_or_else(|| invalid("relational source version unavailable"))?;
+                    if let Some((cached, evaluation)) = state
+                        .file_relation_results
+                        .get(&key)
+                        .filter(|(cached, _)| cached == &version)
+                    {
+                        let _ = cached;
+                        let result = results.get_mut(&clause.id).unwrap();
+                        result
+                            .violations
+                            .extend(evaluation.violations.iter().cloned());
+                        result.failures.extend(evaluation.failures.iter().cloned());
+                        result.metrics.witnesses += evaluation.metrics.witnesses;
+                        continue;
+                    }
+                    let mut input = state
+                        .files
+                        .get(&path)
+                        .map(|f| f.input.clone())
+                        .or_else(|| state.evicted_inputs.get(&path).cloned())
+                        .ok_or_else(|| invalid("relational source removed"))?;
+                    let mut budget =
+                        Context::work(closed, super::file_work_budget(input.source.len()));
+                    let mut facts_for_job = Vec::new();
+                    let rows = budget.run(|| -> Result<Vec<evidence::Rows>> {
+                        let (_, document) = super::documents::load(state, &path)?;
+                        input.source = std::sync::Arc::clone(&document.source);
+                        let _tapes = crate::code_rule_dsl::eval::TapeCacheSlot::install();
+                        if let Some(language) = crate::code_rule_dsl::eval::file_language(&input) {
+                            crate::code_rule_dsl::eval::TapeCacheSlot::seed(
+                                language,
+                                &input,
+                                &document.image,
+                            )?;
+                        }
+                        if plan.syntax.is_some() {
+                            let facts = match document.syntax.get() {
+                                Some(f) => std::sync::Arc::clone(f),
+                                None => {
+                                    let facts =
+                                        crate::code_rule_dsl::relational::syntax::Pool::get(
+                                            &input,
+                                        )?;
+                                    let _ = document.syntax.set(std::sync::Arc::clone(&facts));
+                                    facts
+                                }
+                            };
+                            facts_for_job.push((path.clone(), std::sync::Arc::clone(&facts)));
+                            crate::code_rule_dsl::relational::syntax::Pool::seed(&input, facts);
+                            state.documents.account_syntax(&version);
+                        }
+                        let snapshot = Snapshot {
+                            revision: snapshot.revision,
+                            files: vec![input.clone()],
+                        };
+                        let mut metrics = crate::code_rule_dsl::model::Metrics::default();
+                        crate::code_rule_dsl::eval::relational_rows(
+                            code_rule,
+                            clause,
+                            plan,
+                            &snapshot,
+                            &mut metrics,
+                        )
+                    })?;
+                    jobs.push(Job {
+                        code_rule,
+                        clause,
+                        rows,
+                        facts: facts_for_job,
+                        snapshot: Snapshot {
+                            revision: snapshot.revision,
+                            files: vec![input],
+                        },
+                        budget,
+                    });
+                    keys.push((index, clause.id.clone(), Some((key, version, path))));
+                }
+            } else {
+                let mut files = Vec::new();
+                if plan.reads_source {
+                    let paths = state
+                        .files
+                        .keys()
+                        .chain(state.evicted_inputs.keys())
+                        .filter(|p| code_rule.scope.matches(p))
+                        .cloned()
+                        .collect::<BTreeSet<_>>();
+                    if paths.len() > code_rule.capabilities.limits.max_files {
+                        return Err(invalid("relational source snapshot exceeds maxFiles"));
+                    }
+                    for path in paths {
+                        let mut input = state
+                            .files
+                            .get(&path)
+                            .map(|f| f.input.clone())
+                            .or_else(|| state.evicted_inputs.get(&path).cloned())
+                            .ok_or_else(|| invalid("relational source removed"))?;
+                        input.source = super::documents::source(state, &path)?;
+                        if input.source.len() > code_rule.capabilities.limits.max_source_bytes {
+                            return Err(invalid(
+                                "relational source snapshot exceeds maxSourceBytes",
+                            ));
+                        }
+                        files.push(input);
+                    }
+                } else {
+                    files = snapshot.files.clone();
+                }
+                let rows = plan
+                    .inputs
+                    .iter()
+                    .zip(&producers)
+                    .map(|((_, input), id)| relation_rows(state, *id, input))
+                    .collect();
+                jobs.push(Job {
+                    code_rule,
+                    clause,
+                    rows,
+                    facts: Vec::new(),
+                    snapshot: Snapshot {
+                        revision: snapshot.revision,
+                        files,
+                    },
+                    budget: Context::work(closed, super::CLAUSE_WORK_BUDGET),
+                });
+                keys.push((index, clause.id.clone(), None));
             }
+        }
+    }
+    for ((index, name, key), evaluation) in keys.into_iter().zip(relational::evaluate_batch(jobs)) {
+        if let Some((key, version, _path)) = key
+            && evaluation.failures.is_empty()
+        {
             state
                 .file_relation_results
-                .insert(key.clone(), (version, evaluated));
+                .insert(key, (version, evaluation.clone()));
         }
-        let evaluated = &state.file_relation_results[&key].1;
-        result
-            .violations
-            .extend(evaluated.violations.iter().cloned());
-        result.failures.extend(evaluated.failures.iter().cloned());
-        result.metrics.witnesses += evaluated.metrics.witnesses;
+        let result = results.get_mut(&index).unwrap().get_mut(&name).unwrap();
+        result.violations.extend(evaluation.violations);
+        result.failures.extend(evaluation.failures);
+        result.metrics.merge(evaluation.metrics);
     }
-    Ok(result)
+    Ok(results)
 }

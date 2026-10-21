@@ -110,6 +110,8 @@ jobs:
               - 'test/scripts/test_reachability.py'
               - 'test/scripts/test_native_relations.py'
               - 'test/scripts/test_native_sql_plan.py'
+              - 'scripts/profiling/producer-shape.mjs'
+              - 'test/engine/native/relational-batch.test.ts'
               - 'package.json'
               - '.github/workflows/ci.yml'
               - '.gitattributes'
@@ -192,6 +194,23 @@ jobs:
           python3 test/scripts/test_reachability.py
           python3 test/scripts/test_native_relations.py
           python3 test/scripts/test_native_sql_plan.py
+
+      # The shape gate requires profiling spans and must never silently skip on a production addon.
+      # Keep this debug addon separate from the package's release artifact.
+      - uses: ./.github/actions/node-deps
+        if: matrix.task == 'test'
+
+      - name: Build profiling addon for the producer shape gate
+        if: matrix.task == 'test'
+        run: |
+          cargo build --manifest-path native/Cargo.toml --features code-rule-profile
+          cp target/debug/librerail_engine.so "$RUNNER_TEMP/rerail-producer-shape.node"
+
+      - name: Enforce broad producer execution shape
+        if: matrix.task == 'test'
+        env:
+          RERAIL_ENGINE_PATH: ${{ runner.temp }}/rerail-producer-shape.node
+        run: npm run test:producer-shape
 
   # Builds the package once: dist/ and the release native engine, handed to every test job.
   build:

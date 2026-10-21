@@ -98,6 +98,7 @@ unsafe impl<'a> VTab<'a> for Table {
         ))
     }
     fn best_index(&self, info: &mut IndexInfo) -> Result<bool> {
+        let _reader = super::producer::ReadOnly::enter();
         let selected = info
             .constraints()
             .enumerate()
@@ -243,7 +244,7 @@ impl<'a> CreateVTab<'a> for Table {
 // SAFETY: SQLite's cursor base is first. No borrowed SQLite value escapes filter.
 unsafe impl VTabCursor for Cursor {
     fn filter(&mut self, index: c_int, _: Option<&str>, args: &Filters<'_>) -> Result<()> {
-        self.shared.source.initialize()?;
+        let _read_only = super::producer::ReadOnly::enter();
         self.shared.stats.scans.fetch_add(1, Ordering::Relaxed);
         self.position = 0;
         self.selected = None;
@@ -293,6 +294,7 @@ unsafe impl VTabCursor for Cursor {
         Ok(())
     }
     fn next(&mut self) -> Result<()> {
+        let _read_only = super::producer::ReadOnly::enter();
         self.shared.source.charge(1)?;
         if self.selected.is_some() {
             self.position += 1;
@@ -307,6 +309,7 @@ unsafe impl VTabCursor for Cursor {
             .map_or(self.range.is_empty(), |r| self.position >= r.len())
     }
     fn column(&self, ctx: &mut Context, col: c_int) -> Result<()> {
+        let _read_only = super::producer::ReadOnly::enter();
         self.shared.stats.columns.fetch_add(1, Ordering::Relaxed);
         self.shared.source.column(self.row(), col as usize, ctx)
     }
