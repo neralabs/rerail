@@ -332,46 +332,47 @@ pack adds a changeset (`npx changeset`) naming the pack's package and its bump, 
 (`changesetBumpFailures` in `scripts/release/packs.mjs`), which `changeset version` would turn into 0.2.0 or 1.0.0.
 Nobody edits a pack's `version` or `CHANGELOG.md` by hand: `npx changeset version` applies the pending changesets,
 bumps each pack and writes its `CHANGELOG.md` when packs are released. Changesets cover only the packs: the core
-package at the repository root keeps its `v<version>` tag release and the root `CHANGELOG.md`, and a changeset naming
-`@neralabs/rerail` is refused. A pack's first pull request adds it at `0.1.0` with a `patch` changeset for its initial
+package at the repository root is bumped by the same Release pull request when what it ships changes, with its notes
+in the root `CHANGELOG.md` ([README](../README.md#release)), and a changeset naming `@neralabs/rerail` is refused. A pack's first pull request adds it at `0.1.0` with a `patch` changeset for its initial
 rules, so its first release is `0.1.1`.
 
 ### Release
 
-`.github/workflows/version-packs.yml` versions the packs and `.github/workflows/release-packs.yml` releases them;
-core's `v*` release (`release.yml`) is separate.
+`.github/workflows/release-pr.yml` versions the packs, with core, and `.github/workflows/release-packs.yml` releases
+them; core's `v*` release (`release.yml`) is separate.
 
-1. **Version.** On each push to `main` with changesets pending, `version-packs.yml` opens or updates the **Version
-   packs** pull request (opened by the `neralabs-ci` app, so CI runs on it). It runs `npm run version:packs`:
-   `changeset version`, then `scripts/release/sync-pack-lockfile.mjs`, which records the new versions in
-   `package-lock.json`. Review it like any pull request; merging it is the release. A newer push to `main` cancels an
-   older run. CI runs only its licence and lint jobs on it, since `release-packs.yml` validates and packs every pack
-   on it and `main` runs everything once it is merged.
+1. **Version.** On each push to `main` with anything releasable, `release-pr.yml` opens or updates the **Release**
+   pull request (opened by the `neralabs-ci` app, so CI runs on it). With changesets pending it runs
+   `npm run version:packs`: `changeset version`, then `scripts/release/sync-pack-lockfile.mjs`, which records the new
+   versions in `package-lock.json`. The same pull request bumps core when what core ships has changed. Its
+   description lists every package and version merging it releases, with their changelog entries. Review it like any
+   pull request; merging it is the release. A newer push to `main` cancels an older run, and with nothing releasable
+   an open Release pull request is closed. CI runs only its licence and lint jobs on it, since `release-packs.yml`
+   validates and packs every pack on it and `main` runs everything once it is merged.
 2. **Publish.** On each push to `main`, every pack whose `package.json` version has no git tag
    `@neralabs/rerail-pack-<id>@<version>` goes through the publish gate and is published:
    - the whole pack validation for that pack (`test/engine/catalog/packs.test.ts`, every check and every rule), so a
      check added to the contract gates publishing with no change to the workflow;
    - `npm pack`, then a check that the tarball holds only `package.json` and what `files` publishes, and no
      validation material whatever `files` says (`packedFileFailures` in `conformance/pack-validation.ts`);
-   - `npm publish --access restricted --tag next` with npm trusted publishing (the `release` environment, so a
+   - `npm publish --access restricted --tag latest` with npm trusted publishing (the `release` environment, so a
      reviewer approves the run), a check that the registry refuses the package to an anonymous reader, and the tag.
+     Set-up and `rerail packs add <id>` fetch under `latest` (on the default update channel), so the version is used
+     from then on. A pack held at an older `latest` (step 3) is published under `next` instead, and its hold stays.
 
    Packs are published one by one, and any failed run can be run again: a version already tagged is skipped, and
    one the registry already has without its tag (a run that failed after publishing) is checked and tagged, not
-   published again. A pull request that touches packs runs the gate and the packing as a dry run.
-3. **Promote.** Publishing changes nothing for users: set-up and `rerail packs add <id>` fetch under `latest` (on
-   the default update channel), so a version is used once it is promoted. Run the workflow from `main` (Actions →
-   Release packs → Run workflow) with no inputs: its first job lists, in the run summary, every pack whose
-   `package.json` version is released and is not `latest` yet, and its promote job, once a reviewer approves the
-   `release` environment, points each one's `latest` at that version. A pack that fails to promote, or whose
-   dist-tags cannot be read, does not stop the others; the run fails naming it and can be run again. Promotions run
-   one at a time.
-
-   To promote one pack alone, give its id. To put an older released version back, give the id and that version: the
-   pack is also tagged `held` there, and runs with no inputs leave it alone (the summary names it) until the pack is
-   promoted by id again, which releases the hold. A version that was never released fails the run. By hand, from a
-   2FA npm login: `npm dist-tag add @neralabs/rerail-pack-<id>@<version> latest` (and `held` to hold it). To try a
-   version before promoting it: `rerail packs add <id>@next`.
+   published again. The run's **Published dist-tags** job then lists each published pack's dist-tags in the run
+   summary and fails if one's `latest` (`next` for a held pack) is not the version just published. A pull request
+   that touches packs runs the gate and the packing as a dry run.
+3. **Put back.** To put an older released version back, run the workflow from `main` (Actions → Release packs → Run
+   workflow) with the pack's id and that version. Its first job lists, in the run summary, what it will move, and its
+   promote job, once a reviewer approves the `release` environment, points the pack's `latest` at that version and
+   tags it `held` there. Publishes and runs with no inputs leave a held pack's `latest` alone (the summary names it)
+   until the pack is promoted by id again, at its `package.json` version, which releases the hold. Run with no inputs,
+   the workflow points `latest` at every pack's released version that is not `latest` yet, less any held. A pack that
+   fails to move, or whose dist-tags cannot be read, does not stop the others; the run fails naming it and can be run
+   again. A version that was never released fails the run. These runs go one at a time.
 
 The scripts are in `scripts/release/`. To check a pack's tarball locally:
 `node --import tsx scripts/release/packs-pack.ts --out /tmp/rule-packs <id>`.

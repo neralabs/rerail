@@ -9,8 +9,10 @@ import { fileURLToPath } from "node:url";
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const PACKS = join(ROOT, "packs");
 export const REGISTRY = "https://registry.npmjs.org";
-/** Every pack is published under `next` first; `latest` moves only by promotion. */
-export const PUBLISH_TAG = "next";
+/** Every pack version is published under `latest`, where set-up and `rerail packs add` fetch it. */
+export const PUBLISH_TAG = "latest";
+/** Where a pack held at an older `latest` (put back on purpose) is published instead, so the hold stays. */
+export const HELD_PUBLISH_TAG = "next";
 
 /** The git tag that marks `name`'s `version` as published. */
 export const releaseTag = (name, version) => `${name}@${version}`;
@@ -43,24 +45,31 @@ export const alreadyOnRegistry = (output) => /cannot publish over the previously
 /**
  * Releases each `{ name, version, file }` of a packs-pack.ts manifest, so that any failed run can be run again:
  * a version whose tag exists is skipped; one the registry already has without its tag (a run that failed after
- * publishing) is not published again, only checked and tagged. `steps` does the I/O: `publish(file)` returns
- * `{ ok, output }`, `assertRestricted(name)` and `tag(tag)` throw on failure.
+ * publishing) is not published again, only checked and tagged. A pack named in `held` (held at an older `latest`) is
+ * published under `next`, every other under `latest`. `steps` does the I/O: `publish(file, distTag)` returns
+ * `{ ok, output }`, `assertRestricted(name)` and `tag(tag)` throw on failure. Returns each `{ name, version, distTag }`
+ * this run released.
  */
-export async function releasePacks(manifest, tags, steps) {
+export async function releasePacks(manifest, tags, steps, held = []) {
   const existing = new Set(tags);
+  const holding = new Set(held);
+  const released = [];
   for (const { name, version, file } of manifest) {
     const tag = releaseTag(name, version);
     if (existing.has(tag)) {
       steps.log(`${tag} is already released; skipped`);
       continue;
     }
-    const published = steps.publish(file);
+    const distTag = holding.has(name) ? HELD_PUBLISH_TAG : PUBLISH_TAG;
+    const published = steps.publish(file, distTag);
     if (!published.ok && !alreadyOnRegistry(published.output)) throw new Error(`npm publish ${tag} failed`);
     if (!published.ok) steps.log(`${tag} is already on the registry without its tag; checking and tagging it`);
     await steps.assertRestricted(name);
     steps.tag(tag);
-    steps.log(`released ${tag} under ${PUBLISH_TAG}`);
+    steps.log(`released ${tag} under ${distTag}${holding.has(name) ? ` (held at an older ${PUBLISH_TAG})` : ""}`);
+    released.push({ name, version, distTag });
   }
+  return released;
 }
 
 /** Every pack under `packsDirectory`: `{ id, name, version }`, sorted by id. */
@@ -121,8 +130,23 @@ export function planPacks(packs, tags) {
   return { publish, first };
 }
 
-/** The dist-tag that holds a pack at a version put back on purpose, so a sweep leaves it there. */
+/** The dist-tag that holds a pack at a version put back on purpose, so a sweep and a publish leave it there. */
 export const HOLD_TAG = "held";
+
+/**
+ * Which of `names` are held, given `distTagsOf(name)` (null when npm could not be read): a pack whose `held` dist-tag
+ * is its `latest`, put back on purpose. A publish leaves such a pack's `latest` alone, as a promotion sweep does.
+ */
+export function heldPacks(names, distTagsOf) {
+  const held = [];
+  const unreadable = [];
+  for (const name of names) {
+    const distTags = distTagsOf(name);
+    if (distTags === null) unreadable.push(name);
+    else if (distTags[HOLD_TAG] !== undefined && distTags[HOLD_TAG] === distTags.latest) held.push(name);
+  }
+  return { held, unreadable };
+}
 
 /**
  * What one promotion run was asked for. With no `id`, every pack at its package.json version: the sweep. With one,
