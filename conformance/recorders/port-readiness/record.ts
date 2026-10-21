@@ -17,7 +17,7 @@ import {
   CORPUS_FILE, CORPUS_FORMAT, RECORDING_FILE, RECORDING_FORMAT, gatesCorpusSchema, gatesRecordingSchema, isCleanVerdict, recordedParsers, recordingText, spanTuple,
   type GatesCorpusRecording, type GatesRecording, type RecordedCase, type RecordedRule, type RecordedSpan,
 } from "../../port-readiness/recording/schema.js";
-import { diffRecordings, type RecordedPair, type RecordingChanges, type UnreadRecording } from "../../port-readiness/recording/diff.js";
+import { diffRecordings, type RecordedPair, type RecordingChanges, type ResolvedRuntime, type UnreadRecording } from "../../port-readiness/recording/diff.js";
 import {
   buildRecordingLock, DEFAULT_RELEASE, gzipRecording, readCachedRecording, RECORDING_LOCK, recordingLockSchema, recordingLockText, writeCachedRecording, type RecordingLock,
 } from "../../port-readiness/recording/store.js";
@@ -32,7 +32,7 @@ import { createPhpstanAdapter } from "./adapters/phpstan.js";
 import { createPsalmAdapter } from "./adapters/psalm.js";
 import { createRuffAdapter } from "./adapters/ruff.js";
 import { createTlintAdapter } from "./adapters/tlint.js";
-import { runtimePinDigests } from "./runtimes.js";
+import { resolvedComposerRuntimes, runtimePinDigests } from "./runtimes.js";
 
 export type AdapterFactory = (pack: PackManifest, names: string[], cacheRoot: string, runner: CommandRunner) => Promise<PackAdapter>;
 
@@ -281,6 +281,8 @@ export interface Recorded {
   corpus: GatesCorpusRecording;
   /** Every case source the recording names, with upstream's bytes. */
   sources: CaseCopy[];
+  /** The Composer runtimes the adapter used and what each resolved: for the summary, not for the recording or its lock. */
+  resolved: ResolvedRuntime[];
 }
 
 export interface RecordOptions {
@@ -542,7 +544,7 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
     }),
   });
 
-  return { recording, corpus, sources: [...sources.values()].sort((a, b) => byText(a.file, b.file)) };
+  return { recording, corpus, sources: [...sources.values()].sort((a, b) => byText(a.file, b.file)), resolved: resolvedComposerRuntimes() };
 }
 
 /** What differs between a fresh recording and what the tool-pack's committed `recording.lock` names. */
@@ -769,7 +771,7 @@ export async function writeRecording(root: string, pack: string, tool: string, r
     if (inline > 0) text = withRecordingNote(text, inlineTextsSource(manifest), licenseFiles(dirname(upstreamMd)));
     await writeFile(upstreamMd, text);
   }
-  return { ...diff, lock, assets, changes: diffRecordings(pack, tool, before, { recording: recorded.recording, corpus: recorded.corpus }) };
+  return { ...diff, lock, assets, changes: diffRecordings(pack, tool, before, { recording: recorded.recording, corpus: recorded.corpus }, recorded.resolved) };
 }
 
 /**

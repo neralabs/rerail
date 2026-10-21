@@ -185,9 +185,11 @@ jobs:
       # A fork records against the upstream its base's gates.yaml pins, as port-readiness-record.yml does. Its
       # repository, commit, runtime and test paths decide which code the recorder runs and whose tests it records, so a
       # fork that changed them would have this leg record answers of the fork's choosing and match the lock it
-      # committed. Only `popularity`, `known_gaps`, `real_code_gaps` and comments may differ; a branch here is not
-      # checked, since whoever can push one can already change this workflow.
-      - name: Refuse a fork's change to the upstream it is recorded against
+      # committed. Only `popularity`, `known_gaps`, `real_code_gaps` and comments may differ. The recorder, the gate code
+      # it shares and the PHP action decide the answers just as much, so a fork may not change those either: a
+      # maintainer records such a pull request with port-readiness-record.yml. A branch here is not checked, since
+      # whoever can push one can already change this workflow.
+      - name: Refuse a fork's change to the upstream or the recorder it is recorded with
         if: >-
           steps.fetch.outputs.missing == 'true' && github.event_name == 'pull_request' &&
           github.event.pull_request.head.repo.full_name != github.repository
@@ -210,6 +212,11 @@ jobs:
             process.exit(pinned(process.argv[1]) === pinned(process.argv[2]) ? 0 : 1);
           ' "$RUNNER_TEMP/base-gates.yaml" "$manifest"; then
             echo "::error::this pull request comes from a fork and changes $manifest beyond popularity, known_gaps and real_code_gaps, and the release holds no recording for it: land that change on the base branch first, then record"
+            exit 1
+          fi
+          recorder=(conformance/recorders/port-readiness conformance/port-readiness .github/actions/php)
+          if ! git diff --quiet "$BASE_SHA" HEAD -- "${recorder[@]}"; then
+            echo "::error::this pull request comes from a fork, changes the recorder (${recorder[*]}), and the release holds no recording for $PACK/$TOOL: a maintainer must record it with port-readiness-record.yml"
             exit 1
           fi
 

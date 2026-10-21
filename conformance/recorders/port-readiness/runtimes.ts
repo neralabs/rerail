@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { parse as parseToml } from "smol-toml";
 
 import { runChecked, type CommandRunner } from "../../port-readiness/process.js";
+import type { ResolvedRuntime } from "../../port-readiness/recording/diff.js";
 import { LICENSE_SPARSE_PATTERNS, upstreamCheckoutDirectory } from "../../port-readiness/recorded-adapter.js";
 import type { Check } from "../../port-readiness/types.js";
 
@@ -358,6 +359,9 @@ export function extensionList(text: string): string[] {
  * and .php-version, which pins the interpreter exactly): `composer update` resolves it in the cache directory with no
  * plugins and no scripts, and the tree it resolved is in that directory's composer.lock. No lockfile is committed, as for
  * npm and uv: transitive packages resolve at install time, and the nightly's `--check` reports one that moves an answer.
+ * What each runtime resolved is kept for the recording summary (resolvedComposerRuntimes), so a transitive release
+ * shows there without being recorded, and Composer's audit runs with blocking off: an advisory against a resolved
+ * package is written to stderr, in the log, instead of failing the install.
  */
 export async function composerRuntime(runtime: string, cacheRoot: string, runner: CommandRunner): Promise<PhpRuntime> {
   const files = COMPOSER_PINS;
@@ -365,11 +369,14 @@ export async function composerRuntime(runtime: string, cacheRoot: string, runner
   const unpinned = unpinnedComposerDependencies(await readFile(join(source, "composer.json"), "utf8"));
   if (unpinned.length > 0) throw new Error(`runtimes/${runtime}/composer.json must pin every requirement at an exact version: ${unpinned.join(", ")}`);
   const { php, version, pinned } = await pinnedPhp(runtime, runner);
-  const env: NodeJS.ProcessEnv = { ...process.env, COMPOSER_NO_INTERACTION: "1", COMPOSER_NO_AUDIT: "1" };
+  const env: NodeJS.ProcessEnv = { ...process.env, COMPOSER_NO_INTERACTION: "1" };
   await cachedInstall(directory, join(directory, "vendor"), async () => {
     for (const file of files) await copyFile(join(source, file), join(directory, file));
-    await runChecked(runner, [php, ...PHP_INI, await composerPath(runner), "update", "--no-interaction", "--no-progress", "--no-plugins", "--no-scripts", "--prefer-dist", "--quiet"], { cwd: directory, env });
+    // Composer writes its progress to stderr and the audit's result to stdout, which is all that is kept.
+    const audit = await runChecked(runner, [php, ...PHP_INI, await composerPath(runner), "update", "--no-interaction", "--no-progress", "--no-plugins", "--no-scripts", "--prefer-dist", "--no-blocking", "--audit-format=plain"], { cwd: directory, env });
+    if (audit.trim() !== "") process.stderr.write(`runtimes/${runtime}: composer audit:\n${audit.trimEnd()}\n`);
   });
+  RESOLVED_COMPOSER.set(runtime, installedPackages(directory));
   return {
     directory,
     php,
@@ -378,6 +385,24 @@ export async function composerRuntime(runtime: string, cacheRoot: string, runner
     vendorBin: (name) => join(directory, "vendor", "bin", name),
     command: (script, ...args) => [php, ...PHP_INI, script, ...args],
   };
+}
+
+/** The Composer runtimes this process installed or reused, by runtime, with what each resolved. */
+const RESOLVED_COMPOSER = new Map<string, string[]>();
+
+/** The packages Composer installed into a runtime's vendor/ (`vendor/composer/installed.json`), as sorted `name@version`. */
+export function installedPackages(directory: string): string[] {
+  const installed = JSON.parse(readFileSync(join(directory, "vendor", "composer", "installed.json"), "utf8")) as { packages: { name: string; version: string }[] };
+  return installed.packages.map((entry) => `${entry.name}@${entry.version}`).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+/**
+ * Every Composer runtime this process used and the package set it resolved, by runtime name. Nothing locks the
+ * transitive packages, so the recording summary lists them: a drift between two recordings is visible there, and is not
+ * in recording.json or the lock, so a transitive release alone never fails a leg.
+ */
+export function resolvedComposerRuntimes(): ResolvedRuntime[] {
+  return [...RESOLVED_COMPOSER].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([runtime, packages]) => ({ runtime, packages }));
 }
 
 /** The Composer on PATH, as a file the pinned interpreter runs (a phar, or Composer's bin script). */

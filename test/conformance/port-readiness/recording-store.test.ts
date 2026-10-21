@@ -318,6 +318,11 @@ test("the per-rule summary names what moved, and says so plainly when nothing di
   assert.deepEqual(unchanged.pinsChanged, []);
   assert.match(renderRecordingChanges([unchanged]), /re-recorded, and upstream answers the same/u);
   assert.match(renderRecordingChanges([unchanged]), /`demo\/bandit`: unchanged/u);
+  // The Composer packages a recording resolved are listed, so a transitive drift shows, without making it a change.
+  const resolved = renderRecordingChanges([diffRecordings("demo", "bandit", before, before, [{ runtime: "php", packages: ["nikic/php-parser@v5.9.0"] }])]);
+  assert.match(resolved, /re-recorded, and upstream answers the same/u);
+  assert.match(resolved, /^- `runtimes\/php`: `nikic\/php-parser@v5\.9\.0`$/mu);
+  assert.doesNotMatch(renderRecordingChanges([unchanged]), /Composer packages/u);
 
   const changes = diffRecordings("demo", "bandit", before, after);
   assert.deepEqual(changes.rules, [

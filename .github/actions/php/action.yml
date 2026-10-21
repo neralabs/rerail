@@ -5,7 +5,9 @@ description: >-
   with exactly the extensions `runtimes/php/extensions.txt` lists, and setup-php takes only a minor version and
   installs its newest patch, so PHP is built from php.net's release source by `runtimes/php/build.sh`, the script a
   maintainer records locally with. The source and Composer's phar are each checked against the sha256 their publishers
-  list before use, and the build is cached on this file, the script and the extension list.
+  list before use, and the build is cached on this file, the script and the extension list. The cache is saved by an
+  explicit step straight after the build, never in the post-job step: by the end of the job the recorder has run
+  upstream PHP code and unlocked Composer packages, which could have rewritten the prefix.
 
 inputs:
   save:
@@ -44,17 +46,9 @@ runs:
         sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
           pkg-config libxml2-dev libsqlite3-dev libonig-dev libssl-dev zlib1g-dev libcurl4-openssl-dev libzip-dev libicu-dev
 
-    - id: saved
-      name: Restore the PHP build
-      if: inputs.save == 'true'
-      uses: actions/cache@v6
-      with:
-        path: ${{ steps.pin.outputs.prefix }}
-        key: ${{ steps.pin.outputs.key }}
-
+    # Restore only. actions/cache would save in its post-job step, after the recorder's untrusted code has run.
     - id: restored
-      name: Restore the PHP build, without saving it
-      if: inputs.save != 'true'
+      name: Restore the PHP build
       uses: actions/cache/restore@v6
       with:
         path: ${{ steps.pin.outputs.prefix }}
@@ -63,11 +57,19 @@ runs:
     # build.sh checks the source's sha256, compiles every extension in (so the binary needs no php.ini), and fails
     # unless the build is the pinned version with exactly extensions.txt's extensions.
     - name: Build PHP
-      if: steps.saved.outputs.cache-hit != 'true' && steps.restored.outputs.cache-hit != 'true'
+      if: steps.restored.outputs.cache-hit != 'true'
       shell: bash
       env:
         PREFIX: ${{ steps.pin.outputs.prefix }}
       run: conformance/recorders/port-readiness/runtimes/php/build.sh "$PREFIX"
+
+    # Saved here, before any later step of the job runs the recorder, so what lands in the cache is build.sh's output.
+    - name: Save the PHP build
+      if: steps.restored.outputs.cache-hit != 'true' && inputs.save == 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ steps.pin.outputs.prefix }}
+        key: ${{ steps.pin.outputs.key }}
 
     # Downloaded and checked on every run, cache hit or not, into a directory the cache does not hold.
     - name: Install Composer

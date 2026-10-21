@@ -54,7 +54,10 @@ function php_files(string $directory): array
  * The cases a test class's providerValidCodeParse() and providerInvalidCodeParse() return, read statically: only items
  * whose key and value are constant expressions (DIRECTORY_SEPARATOR is "/"), as upstream/psalm/read_tests.php reads them.
  * Every other item, and a provider that returns no array literal, is `left`, with why: [provider, item, reason], the
- * item named by its key where that reads, else by its position (`#<n>`), and null for a whole provider.
+ * item named by its key where that reads, else by its position (`#<n>`), and null for a whole provider. The provider's
+ * first top-level `return [...]` is what it returns; a statement before it that this reading does not model and that
+ * could return or yield something else (an `if` around another return, a loop of yields) leaves the whole provider,
+ * as `unmodelled statement <type>`, rather than reading cases the provider may never return.
  */
 function provider_cases(array $statements, ConstExprEvaluator $evaluator): array
 {
@@ -68,8 +71,20 @@ function provider_cases(array $statements, ConstExprEvaluator $evaluator): array
         };
         if ($provider === null) continue;
         $returned = false;
+        $unmodelled = null;
         foreach ($method->stmts ?? [] as $statement) {
-            if (!$statement instanceof Stmt\Return_ || !$statement->expr instanceof Expr\Array_) continue;
+            if (!$statement instanceof Stmt\Return_ || !$statement->expr instanceof Expr\Array_) {
+                // A top-level return of something else, or a yield: the provider returns no array literal.
+                if ($statement instanceof Stmt\Return_ || $statement instanceof Stmt\Expression
+                    && ($statement->expr instanceof Expr\Yield_ || $statement->expr instanceof Expr\YieldFrom)) {
+                    break;
+                }
+                $returns = (new NodeFinder())->findFirst($statement, static fn ($inner): bool => $inner instanceof Stmt\Return_
+                    || $inner instanceof Expr\Yield_ || $inner instanceof Expr\YieldFrom);
+                if ($returns === null) continue;
+                $unmodelled = $statement->getType();
+                break;
+            }
             $returned = true;
             foreach ($statement->expr->items as $index => $item) {
                 $leave = static function (string $reason) use (&$left, $provider, $item, $index, $evaluator): void {
@@ -112,8 +127,12 @@ function provider_cases(array $statements, ConstExprEvaluator $evaluator): array
                     'php_version' => $case['php_version'] ?? null,
                 ];
             }
+            // Whatever follows the first top-level return is never reached.
+            break;
         }
-        if (!$returned) {
+        if ($unmodelled !== null) {
+            $left[] = ['provider' => $provider, 'item' => null, 'reason' => "unmodelled statement {$unmodelled}"];
+        } elseif (!$returned) {
             $left[] = ['provider' => $provider, 'item' => null, 'reason' => 'returns no array literal (it yields, or builds the array at run time)'];
         }
     }

@@ -14,9 +14,10 @@ export const PHPSTAN_SPAN_PARTS: SpanParts = { endLine: false, endCol: false };
 export function phpstanLine(source: string, byteOffset: number): number {
   const prefix = Buffer.from(source, "utf8").subarray(0, byteOffset).toString("utf8");
   let line = 0;
+  // The `\r` lookahead reads `source`: an offset between `\r` and `\n` cuts the prefix there, and `\r\n` is one break.
   for (let index = 0; index < prefix.length; index += 1) {
     const char = prefix[index];
-    if (char === "\n" || (char === "\r" && prefix[index + 1] !== "\n")) line += 1;
+    if (char === "\n" || (char === "\r" && source[index + 1] !== "\n")) line += 1;
   }
   return line;
 }

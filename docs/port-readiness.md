@@ -262,7 +262,9 @@ path: a leg that fetches records nothing.
 A fork's pull request records against the upstream its base pins, as `port-readiness-record.yml` does: the leg
 refuses a fork's change to `gates.yaml`'s repository, commit, runtime or tests (only `popularity`, `known_gaps`,
 `real_code_gaps` and comments may differ), since CI would otherwise run the upstream the fork chose and match the lock
-the fork committed. And because the recordings are not in the diff, the leg writes the per-rule summary the record
+the fork committed. It refuses a fork's change to the recorder for the same reason (`conformance/recorders/port-readiness`,
+`conformance/port-readiness` and `.github/actions/php`): a maintainer records such a pull request with
+`port-readiness-record.yml`, which runs the base branch's recorder. And because the recordings are not in the diff, the leg writes the per-rule summary the record
 workflow posts (`--changes`, below), against the recording the base's lock names (a first recording when the base has
 none), into its job summary and its report artifact.
 
@@ -367,7 +369,11 @@ against a runtime's pin changes it and fails `runtime-pins` until the tool-pack 
 resolve when a runtime is installed. When one of them changes what upstream
 answers, the nightly `--check` fails and names the difference: pin that package too (an `overrides` entry in
 `package.json`, a direct `==` dependency in `pyproject.toml`, or a direct requirement in `composer.json`) and record
-again.
+again. A recording's per-rule summary (`--changes`, which both the record workflow's legs and a gate leg that records
+upload in their artifact) lists every package each Composer runtime resolved (`name@version`, from `vendor/composer/installed.json`),
+so a transitive release shows between two recordings; the list is in neither `recording.json` nor the lock, so a
+release that moves no answer fails nothing. Composer audits what it resolved with blocking off (`--no-blocking`): an
+advisory is written to the recorder's log and does not stop the install.
 
 `not-overfit` runs a rule's regexes over every upstream test text, as V1 did. Upstream's test files are not copied into
 the pack: the recording lists each one with its sha256, and the gates fetch them from upstream at the pinned commit

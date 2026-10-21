@@ -11,6 +11,9 @@ test("an engine span is a PHPStan position: its line alone, lines broken as PHP'
   const start = Buffer.byteLength(SOURCE.slice(0, SOURCE.indexOf("$undefined")), "utf8");
   assert.deepEqual(phpstanSpan(SOURCE, start, start + "$undefined".length), errorSpan({ line: 4 }));
   assert.deepEqual(errorSpan({ line: 4 }), { startLine: 3, startCol: null, endLine: null, endCol: null });
+  // An offset between the `\r` and `\n` of line 1's CRLF is still on line 1.
+  const crlf = Buffer.byteLength(SOURCE.slice(0, SOURCE.indexOf("\r\n") + 1), "utf8");
+  assert.deepEqual(phpstanSpan(SOURCE, crlf, crlf), errorSpan({ line: 1 }));
   // PHPStan reports no column and no end, so only the start line is compared.
   assert.deepEqual(PHPSTAN_SPAN_PARTS, { endLine: false, endCol: false });
 });

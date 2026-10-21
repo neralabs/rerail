@@ -15,6 +15,9 @@ test("an engine span is a PHP_CodeSniffer position: its line, and its column in 
   assert.deepEqual(phpcsSpan(SOURCE, first, first + 1), messageSpan({ line: 2, column: 14 }));
   assert.deepEqual(phpcsSpan(SOURCE, second, second + 1), messageSpan({ line: 3, column: 1 }));
   assert.deepEqual(messageSpan({ line: 2, column: 14 }), { startLine: 1, startCol: 13, endLine: null, endCol: null });
+  // An offset between the `\r` and `\n` of line 2's CRLF is still on line 2, after its 18 characters and the `\r`.
+  const crlf = Buffer.byteLength(SOURCE.slice(0, SOURCE.indexOf("\r\n") + 1), "utf8");
+  assert.deepEqual(phpcsSpan(SOURCE, crlf, crlf), { startLine: 1, startCol: 19, endLine: null, endCol: null });
   // PHP_CodeSniffer reports no end, so none is compared.
   assert.deepEqual(PHPCS_SPAN_PARTS, { endLine: false, endCol: false });
 });

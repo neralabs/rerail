@@ -112,6 +112,8 @@ export async function createTlintAdapter(pack: PackManifest, names: string[], ca
       if (method.error !== null) disagreements.push(`${test}::${method.test} throws ${method.error}`);
       else if (method.assertions.length === 0) disagreements.push(`${test}::${method.test} asserts nothing`);
       else if (failed.length > 0) disagreements.push(`${test}::${method.test} fails ${failed.join(", ")}`);
+      // A method that threw before handing its linter a template has no case; its disagreement above is reported.
+      if (method.error !== null && method.templates.length === 0) return [];
       // A case is named by its test method, which hands the linter one template; one handing it more names none.
       if (method.templates.length !== 1) throw new Error(`${test}::${method.test} hands ${lint} ${method.templates.length} templates; a case is one template per test method`);
       return [{ fixture: `${test}#${method.test}`, owner: lint, test, path: `${lint}Test/${method.test}.blade.php`, source: method.templates[0]! }];

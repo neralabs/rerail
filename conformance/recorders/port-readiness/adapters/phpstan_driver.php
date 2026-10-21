@@ -15,7 +15,9 @@
 //                 symbols the analysed files use, which PHPStan reflects but does not analyse
 //   `if` statements on PHP_VERSION_ID or PHP_INT_SIZE are taken as this PHP takes them, and a method that skips itself
 //   on this PHP (#[RequiresPhp], markTestSkipped) is left out, as is one that builds its expectations at run time (a
-//   data provider, a loop) or analyses through a helper. This is packs/php/upstream/phpstan/read_tests.php's reading.
+//   data provider, a loop) or analyses through a helper. This is packs/php/upstream/phpstan/read_tests.php's reading,
+//   except that a statement or expression it does not model leaves the method out (`unmodelled statement <type>`)
+//   when it calls analyse() or changes a variable or property the reading tracks, where read_tests.php passes over it.
 //   And `left`: every test method left out, with why (`skipped` when it skips itself on this PHP, as upstream's own
 //   run does, rather than a method this reading cannot evaluate), so a reading that shrinks says so.
 // - {"op": "references", "files": [...]}: per file, the classes its code names (imports, types, `new`, static calls,
@@ -113,7 +115,35 @@ function test_methods(string $path): array
         $properties = $defaults;
         $required = [];
         $found = [];
-        $run = static function (array $statements) use (&$run, &$variables, &$properties, &$required, &$found, $evaluator, $name): void {
+        // A statement or expression the reading does not model is passed over only when it neither calls analyse() nor
+        // changes what the reading tracks: a variable it has read, or a property it runs the rule with. Else the method
+        // is left, so a loop that analyses or an append to the expected errors is not read as fewer of them.
+        $tracked = static function (Expr $target) use (&$variables, &$properties): bool {
+            while ($target instanceof Expr\ArrayDimFetch || $target instanceof Expr\PropertyFetch && !($target->var instanceof Expr\Variable && $target->var->name === 'this')) {
+                $target = $target->var;
+            }
+            if ($target instanceof Expr\Variable) {
+                return !is_string($target->name) || array_key_exists($target->name, $variables);
+            }
+            return $target instanceof Expr\PropertyFetch
+                && (!$target->name instanceof Node\Identifier || array_key_exists($target->name->toString(), $properties));
+        };
+        $unmodelled = static function (Node $node) use ($finder, $tracked): void {
+            $touches = $finder->findFirst($node, static fn (Node $inner): bool => match (true) {
+                $inner instanceof Expr\MethodCall => $inner->name instanceof Node\Identifier && $inner->name->toString() === 'analyse',
+                $inner instanceof Expr\Assign, $inner instanceof Expr\AssignOp, $inner instanceof Expr\AssignRef => $tracked($inner->var),
+                $inner instanceof Expr\FuncCall => $inner->name instanceof Node\Name
+                    && in_array(strtolower($inner->name->toString()), ['array_push', 'array_unshift', 'array_splice', 'array_pop', 'array_shift'], true)
+                    && ($inner->args[0] ?? null) instanceof Node\Arg && $tracked($inner->args[0]->value),
+                $inner instanceof Stmt\Foreach_ => $tracked($inner->valueVar) || ($inner->keyVar !== null && $tracked($inner->keyVar)),
+                $inner instanceof Stmt\Unset_ => array_filter($inner->vars, $tracked) !== [],
+                default => false,
+            });
+            if ($touches !== null) {
+                throw new RuntimeException('unmodelled statement ' . $node->getType());
+            }
+        };
+        $run = static function (array $statements) use (&$run, &$variables, &$properties, &$required, &$found, $evaluator, $name, $unmodelled): void {
             foreach ($statements as $statement) {
                 if ($statement instanceof Stmt\If_) {
                     $branch = $statement->stmts;
@@ -127,6 +157,7 @@ function test_methods(string $path): array
                     continue;
                 }
                 if (!$statement instanceof Stmt\Expression) {
+                    $unmodelled($statement);
                     continue;
                 }
                 $expr = $statement->expr;
@@ -146,6 +177,7 @@ function test_methods(string $path): array
                         throw new Skipped();
                     }
                     if ($called !== 'analyse') {
+                        $unmodelled($expr);
                         continue;
                     }
                     $argument = static fn (Expr $value): mixed => $value instanceof Expr\Variable && is_string($value->name)
@@ -159,6 +191,8 @@ function test_methods(string $path): array
                         'properties' => (object) $properties,
                         'required' => $required,
                     ];
+                } else {
+                    $unmodelled($expr);
                 }
             }
         };
