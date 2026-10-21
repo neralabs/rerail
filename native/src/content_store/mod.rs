@@ -526,11 +526,11 @@ pub struct OverlayFilePublication<'a> {
     pub source: &'a [u8],
     pub aliases: &'a [HashKey],
     pub tape: Option<TapePayload<'a>>,
+    /// What the file's results are stored under besides their checks. A publication interns the
+    /// checks its results and completion words name, and no other.
     pub catalog: CandidateCatalogIdentity,
-    pub candidates: &'a [CandidateClause],
     pub local_results: &'a [LocalResultPublication],
     pub local_completions: &'a [LocalCompletionPublication],
-    pub candidates_current: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

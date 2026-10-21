@@ -980,20 +980,14 @@ fn execute_object_pass(
 
 pub(super) type PublicationCandidateIdentity = (HashKey, Option<CandidateClause>);
 
-/// Every check `publication` names: its candidates', its results' and its completion words'.
+/// Every check `publication` names: its results' and its completion words'.
 fn publication_checks<'p>(
     publication: &'p OverlayFilePublication<'_>,
 ) -> impl Iterator<Item = Cow<'p, CandidateClause>> {
     publication
-        .candidates
+        .local_results
         .iter()
-        .chain(
-            publication
-                .local_results
-                .iter()
-                .map(|result| &result.candidate),
-        )
-        .map(Cow::Borrowed)
+        .map(|result| Cow::Borrowed(&result.candidate))
         .chain(
             publication
                 .local_completions

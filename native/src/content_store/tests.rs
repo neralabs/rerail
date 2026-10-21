@@ -545,7 +545,7 @@ fn snapshot_publication_is_atomic() {
 }
 
 #[test]
-fn overlay_publication_replaces_payload_and_candidates_atomically() {
+fn overlay_publication_replaces_payload_and_results_atomically() {
     let (_path, store) = store("atomic-overlay");
     let snapshot = store
         .put_snapshot(
@@ -562,9 +562,11 @@ fn overlay_publication_replaces_payload_and_candidates_atomically() {
     let workspace = store
         .open_workspace("/atomic", "repo", "owner", snapshot, 1, 100)
         .unwrap();
-    let candidate = CandidateClause {
+    let completion = LocalCompletionPublication {
         rule: HashKey::sha256(b"policy"),
-        clause: "changed".to_owned(),
+        context: HashKey::sha256(b"src/a.py"),
+        word: 0,
+        evaluated: 1,
     };
     let tape_bytes = b"compressed tape payload";
     let publications = [
@@ -581,10 +583,8 @@ fn overlay_publication_replaces_payload_and_candidates_atomically() {
                 documents: &[],
             }),
             catalog: candidate_catalog("overlay-atomic"),
-            candidates: std::slice::from_ref(&candidate),
             local_results: &[],
-            local_completions: &[],
-            candidates_current: false,
+            local_completions: std::slice::from_ref(&completion),
         },
         OverlayFilePublication {
             path: "src/b.py",
@@ -593,10 +593,8 @@ fn overlay_publication_replaces_payload_and_candidates_atomically() {
             aliases: &[],
             tape: None,
             catalog: candidate_catalog("overlay-atomic"),
-            candidates: &[],
             local_results: &[],
             local_completions: &[],
-            candidates_current: false,
         },
     ];
     let result = store
@@ -733,10 +731,8 @@ fn a_publication_of_many_local_results_stays_within_the_statement_budget() {
                 aliases: &[],
                 tape: None,
                 catalog,
-                candidates: &[],
                 local_results: &results[file],
                 local_completions: &completions[file],
-                candidates_current: false,
             })
             .collect::<Vec<_>>();
         let published = store
@@ -790,10 +786,8 @@ fn relationship_revalidation_does_not_hash_payloads_under_write_lock() {
                 aliases: &[],
                 tape: None,
                 catalog,
-                candidates: &[],
                 local_results: &[],
                 local_completions: &[],
-                candidates_current: false,
             },
         )
         .unwrap();
@@ -839,10 +833,8 @@ fn local_results_are_scoped_by_context_hash() {
                 aliases: &[],
                 tape: None,
                 catalog,
-                candidates: &[],
                 local_results: &[first, second],
                 local_completions: &[],
-                candidates_current: false,
             },
         )
         .unwrap();
@@ -908,10 +900,8 @@ fn completion_words_merge_per_context_and_catalog() {
                     aliases: &[],
                     tape: None,
                     catalog,
-                    candidates: &[],
                     local_results: &[],
                     local_completions: completions,
-                    candidates_current: false,
                 },
             )
             .unwrap()
@@ -985,10 +975,8 @@ fn a_result_under_a_new_context_of_stored_objects_is_kept() {
                     aliases: &[],
                     tape: None,
                     catalog,
-                    candidates: &[],
                     local_results: results,
                     local_completions: &[],
-                    candidates_current: false,
                 },
             )
             .unwrap()
@@ -1031,10 +1019,8 @@ fn context_results_cascade_when_sources_and_clauses_are_deleted() {
                     aliases: &[],
                     tape: None,
                     catalog,
-                    candidates: &[],
                     local_results: &[result],
                     local_completions: &[],
-                    candidates_current: false,
                 },
             )
             .unwrap();
@@ -1090,10 +1076,8 @@ fn reconciliation_reprepares_source_collected_after_the_read() {
             aliases: &[],
             tape: None,
             catalog,
-            candidates: &[],
             local_results: &[],
             local_completions: &[],
-            candidates_current: false,
         }],
         &|| polls.fetch_add(1, Ordering::SeqCst) >= 5,
     );
@@ -1130,10 +1114,8 @@ fn reconciliation_revalidates_clause_collected_before_relationship_write() {
                 aliases: &[],
                 tape: None,
                 catalog,
-                candidates: &[],
                 local_results: &[result],
                 local_completions: &[],
-                candidates_current: false,
             },
         )
         .unwrap();
@@ -1172,10 +1154,8 @@ fn reconciliation_revalidates_path_collected_before_relationship_write() {
                 aliases: &[],
                 tape: None,
                 catalog,
-                candidates: &[],
                 local_results: &[],
                 local_completions: &[],
-                candidates_current: false,
             },
         )
         .unwrap();
@@ -1198,10 +1178,8 @@ fn warm_overlay_publication_stores_new_git_aliases() {
         aliases,
         tape: None,
         catalog,
-        candidates: &[],
         local_results: &[],
         local_completions: &[],
-        candidates_current: false,
     };
     let stored = store
         .publish_overlay_file(workspace, publication(&[]))
@@ -1237,10 +1215,8 @@ fn cancelled_overlay_publication_rolls_back_before_commit() {
         aliases: &[],
         tape: None,
         catalog: candidate_catalog("cancelled"),
-        candidates: &[],
         local_results: &[],
         local_completions: &[],
-        candidates_current: false,
     };
     let result = store.publish_overlay_files_cancellable(workspace, &[publication], &|| {
         polls.fetch_add(1, Ordering::SeqCst) >= 2
@@ -1297,10 +1273,8 @@ fn overlay_publication_reports_busy_retries() {
                 aliases: &[],
                 tape: None,
                 catalog: candidate_catalog("retry"),
-                candidates: &[],
                 local_results: &[],
                 local_completions: &[],
-                candidates_current: false,
             }],
         )
         .unwrap();
@@ -1400,10 +1374,8 @@ fn one_operation_deadline_bounds_the_wait_across_publication_passes() {
             aliases: &[],
             tape: None,
             catalog: candidate_catalog("deadline"),
-            candidates: &[],
             local_results: &[],
             local_completions: &[],
-            candidates_current: false,
         }],
         &|| false,
         &mut busy,
@@ -1756,10 +1728,8 @@ fn multiprocess_publish_helper() {
                 aliases: &[],
                 tape: None,
                 catalog: candidate_catalog("multiprocess"),
-                candidates: &[],
                 local_results: &[],
                 local_completions: &[],
-                candidates_current: false,
             }],
         )
         .unwrap();
@@ -2723,10 +2693,8 @@ fn derived_documents_live_and_die_with_their_primary_tape() {
                     documents: std::slice::from_ref(&document),
                 }),
                 catalog: candidate_catalog("derived-documents"),
-                candidates: &[],
                 local_results: &[],
                 local_completions: &[],
-                candidates_current: false,
             },
         )
         .unwrap();
@@ -2813,10 +2781,8 @@ fn a_single_language_tape_writes_no_document_rows() {
                     documents: &[],
                 }),
                 catalog: candidate_catalog("single-language"),
-                candidates: &[],
                 local_results: &[],
                 local_completions: &[],
-                candidates_current: false,
             },
         )
         .unwrap();

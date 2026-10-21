@@ -806,13 +806,6 @@ pub(super) fn persist_files(
                 let file = files
                     .get(path)
                     .ok_or_else(|| invalid(format!("missing file for persistence: {path}")))?;
-                let candidates = file
-                    .candidates
-                    .regex
-                    .iter()
-                    .chain(&file.candidates.ast)
-                    .map(|id| candidate(id, None))
-                    .collect::<Vec<_>>();
                 let tape_bytes = {
                     #[cfg(feature = "code-rule-profile")]
                     let _timer = profile::PhaseTimer::start(profile::Phase::TapeSerialize);
@@ -889,7 +882,6 @@ pub(super) fn persist_files(
                     .collect::<Vec<_>>();
                 Ok((
                     file,
-                    candidates,
                     tape_bytes,
                     grammar_id,
                     aliases,
@@ -901,7 +893,7 @@ pub(super) fn persist_files(
     // Each file's derived documents, borrowing the bytes built above and the texts its image holds.
     let documents = prepared
         .iter()
-        .map(|(file, _, tape_bytes, _, _, _)| {
+        .map(|(file, tape_bytes, _, _, _)| {
             let (Some((_, image)), Some((_, derived))) = (&file.tape, tape_bytes) else {
                 return Vec::new();
             };
@@ -927,7 +919,7 @@ pub(super) fn persist_files(
         .zip(&documents)
         .map(
             |(
-                (file, candidates, tape_bytes, grammar_id, aliases, (local_results, completions)),
+                (file, tape_bytes, grammar_id, aliases, (local_results, completions)),
                 documents,
             )| {
                 OverlayFilePublication {
@@ -943,10 +935,8 @@ pub(super) fn persist_files(
                         documents,
                     }),
                     catalog: keys.domain,
-                    candidates,
                     local_results,
                     local_completions: completions,
-                    candidates_current: false,
                 }
             },
         )
@@ -983,8 +973,8 @@ pub(super) fn persist_files(
         };
     let clean_paths = prepared
         .iter()
-        .filter(|(_, _, _, _, aliases, _)| !aliases.is_empty())
-        .map(|(file, _, _, _, _, _)| file.input.path.as_str())
+        .filter(|(_, _, _, aliases, _)| !aliases.is_empty())
+        .map(|(file, _, _, _, _)| file.input.path.as_str())
         .collect::<Vec<_>>();
     let mut busy_during = busy_store(
         storage.store.promote_overlay_files_to_snapshot(
