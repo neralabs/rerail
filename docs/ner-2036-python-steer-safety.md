@@ -79,3 +79,5 @@ The local experiment is `pr-review-v8`, manifest SHA-256 `9901167d1ae6fa5a179faf
 The review also fixes the smoke-table formatting and test type narrowing, separates the SIM300 static-message assertion from its six finding/non-finding cases, and updates the pinned native catalog inventory from 360 to 362 for the two new operator clauses. The focused TypeScript/catalog suite now contains 94 passing tests.
 
 Review validation: `npm run test:native` passes (1,476 passed, 22 ignored), including native/restored-tape equivalence with the 362-query inventory. `npm run check`, `cargo fmt --all -- --check` and `git diff --check` pass.
+
+Integration follow-up: main merged complexity-pack changes in #169, adding two catalog queries. After syncing main, the combined inventory is 364 (362 on main plus these two operator clauses); the native pin now reflects that combined inventory. The earlier 362-query local result above describes the pre-sync branch.
