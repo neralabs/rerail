@@ -31,12 +31,11 @@ const RULES = {
 } as const;
 type CorpusLanguage = keyof typeof RULES;
 const LANGUAGES = Object.keys(RULES) as CorpusLanguage[];
-const COMMENT: Record<CorpusLanguage, string> = { python: "#", typescript: "//", javascript: "//" };
 
 /** The steer for a function scored `ccn`: named as `name` (in backticks), or "This function" when it has none. */
 function message(language: CorpusLanguage, name: string | undefined, ccn: number): string {
   const subject = name === undefined ? "This function" : `\`${name}\``;
-  return `${subject} has cyclomatic complexity ${ccn}, over the ceiling of ${LIMIT}. Decompose it, or put \`${COMMENT[language]} rerail-ignore <rule id> -- <why>\` above it.`;
+  return `${subject} has cyclomatic complexity ${ccn}, over the ceiling of ${LIMIT}. Decompose it into smaller functions.`;
 }
 
 /** The number a steer carries; every message must be one `message` would write. */
@@ -272,17 +271,6 @@ describe("complexity rule pack", () => {
     expect(starts.length).toBe(names.length);
     const expected = Object.fromEntries(starts.map((line, index) => [key(path, line), message(language, names[index], 7)]));
     expect(messages(compile(ruleJson(language)), [{ path, source }])).toEqual(expected);
-  });
-
-  it.each(LANGUAGES)("%s: the rerail-ignore comment the steer suggests silences it", language => {
-    const path = { python: "src/branchy.py", typescript: "src/branchy.ts", javascript: "src/branchy.js" }[language];
-    const source = language === "python" ? `def branchy(a):\n    ${OVER.python}\n` : `export function branchy(a) {\n  ${OVER[language]}\n}\n`;
-    const compiled = compile(ruleJson(language));
-    const [steer] = Object.values(messages(compiled, [{ path, source }]));
-    expect(steer).toBe(message(language, "branchy", 7));
-    // The agent fills in the rule id the steer names in brackets after the message, and its reason.
-    const suggested = /put `([^`]+)` above it/u.exec(steer!)![1]!.replace("<rule id>", RULES[language]).replace("<why>", "a protocol table, split by state already");
-    expect(messages(compiled, [{ path, source: `${suggested}\n${source}` }])).toEqual({});
   });
 
   it("scopes each rule to its own language's sources outside dependency and build output", () => {

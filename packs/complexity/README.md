@@ -17,10 +17,8 @@ Every document has `mode: "steer"`: a rule that runs steers the agent and never 
 
 A function's cyclomatic complexity is 1 plus its decision points. A function fails when that exceeds 6, so 7 or more.
 The finding spans the whole function, so under the `ai-output` scope only functions an edit touched are reported. The
-message names the function and its number, and offers a recorded way out, as slapkit's advisory does: `` `grade` has
-cyclomatic complexity 7, over the ceiling of 6. Decompose it, or put `# rerail-ignore <rule id> -- <why>` above it. ``
-(code `CYCLOMATIC_COMPLEXITY`); the agent takes the rule id from the steer, which names it after the message. A
-TypeScript or JavaScript function with no name of its own takes the variable, class field or object key it is assigned
+message names the function and its number, as slapkit's advisory does: `` `grade` has cyclomatic complexity 7, over the
+ceiling of 6. Decompose it into smaller functions. `` (code `CYCLOMATIC_COMPLEXITY`). A TypeScript or JavaScript function with no name of its own takes the variable, class field or object key it is assigned
 to; a callback with none of those is "This function" (the `too-complex-anonymous` clause). The number comes from the
 count's `as`/`offset` binding: the rule counts decision points with `count.has` (`stopBy` the function boundary, so a
 nested function is not entered), binds the count plus 1 as `$CCN`, and fires at `min: 6` decisions.
