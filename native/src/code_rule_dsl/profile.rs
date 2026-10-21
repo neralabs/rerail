@@ -5,6 +5,7 @@ pub(super) mod capture_rows;
 pub(super) mod native_rows;
 mod native_tape;
 mod semantic;
+pub(super) mod sql;
 pub(crate) mod trace;
 use ast_grep_core::matcher::{DumpPattern, Matcher};
 use serde_json::{Value, json};

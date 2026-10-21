@@ -244,6 +244,15 @@ impl<'a> CreateVTab<'a> for Table {
 // SAFETY: SQLite's cursor base is first. No borrowed SQLite value escapes filter.
 unsafe impl VTabCursor for Cursor {
     fn filter(&mut self, index: c_int, _: Option<&str>, args: &Filters<'_>) -> Result<()> {
+        #[cfg(feature = "code-rule-profile")]
+        crate::code_rule_dsl::profile::sql::frame(
+            if index == 0 {
+                crate::code_rule_dsl::profile::sql::FrameEvent::Scan
+            } else {
+                crate::code_rule_dsl::profile::sql::FrameEvent::Lookup
+            },
+            1,
+        );
         let _read_only = super::producer::ReadOnly::enter();
         self.shared.stats.scans.fetch_add(1, Ordering::Relaxed);
         self.position = 0;
@@ -294,6 +303,11 @@ unsafe impl VTabCursor for Cursor {
         Ok(())
     }
     fn next(&mut self) -> Result<()> {
+        #[cfg(feature = "code-rule-profile")]
+        crate::code_rule_dsl::profile::sql::frame(
+            crate::code_rule_dsl::profile::sql::FrameEvent::Next,
+            1,
+        );
         let _read_only = super::producer::ReadOnly::enter();
         self.shared.source.charge(1)?;
         if self.selected.is_some() {
@@ -309,6 +323,11 @@ unsafe impl VTabCursor for Cursor {
             .map_or(self.range.is_empty(), |r| self.position >= r.len())
     }
     fn column(&self, ctx: &mut Context, col: c_int) -> Result<()> {
+        #[cfg(feature = "code-rule-profile")]
+        crate::code_rule_dsl::profile::sql::frame(
+            crate::code_rule_dsl::profile::sql::FrameEvent::Column,
+            1,
+        );
         let _read_only = super::producer::ReadOnly::enter();
         self.shared.stats.columns.fetch_add(1, Ordering::Relaxed);
         self.shared.source.column(self.row(), col as usize, ctx)

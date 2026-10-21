@@ -10,6 +10,8 @@ use rusqlite::functions::FunctionFlags;
 use rusqlite::hooks::{AuthAction, Authorization};
 
 mod anchors;
+mod database;
+use database::Database;
 pub(super) mod deferred;
 mod forest;
 mod insert;
@@ -82,8 +84,8 @@ fn sql_error(error: rusqlite::Error) -> napi::Error {
     invalid(format!("relational query: {error}"))
 }
 
-pub(super) fn connection(max_pattern: usize, work: Arc<AtomicUsize>) -> Result<Connection> {
-    let db = Connection::open_in_memory().map_err(sql_error)?;
+pub(super) fn connection(max_pattern: usize, work: Arc<AtomicUsize>) -> Result<Database> {
+    let db = Database::open().map_err(sql_error)?;
     db.set_limit(
         rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH,
         16 * 1024 * 1024,
@@ -480,7 +482,7 @@ struct Session<'a> {
     code_rule: &'a CompiledCodeRule,
     clause: &'a CompiledClause,
     plan: &'a Plan,
-    db: Connection,
+    db: Database,
     syntax_files: syntax::Files,
     syntax_trees: Vec<producer::Tree>,
     anchors: anchors::Anchors,
@@ -572,6 +574,9 @@ impl<'a> Session<'a> {
             code_rule.capabilities.limits.max_regex_pattern_bytes,
             Arc::clone(&work),
         )?;
+        #[cfg(feature = "code-rule-profile")]
+        db.context(json!({"scope":"relational", "ruleId":code_rule.id, "clauseId":clause.id,
+            "path":(snapshot.files.len() == 1).then(|| snapshot.files[0].path.as_str()), "stage":"inputs"}));
         if plan.reads_source {
             let visible = Snapshot {
                 revision: snapshot.revision,
@@ -705,6 +710,10 @@ impl<'a> Session<'a> {
         db.progress_handler(
             64,
             Some(move || {
+                #[cfg(feature = "code-rule-profile")]
+                if super::profile::sql::explaining() {
+                    return false;
+                }
                 guard
                     .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
                         left.checked_sub(1)
@@ -731,6 +740,9 @@ impl<'a> Session<'a> {
         })
     }
     fn release(&mut self) -> Result<()> {
+        // Explain before the last-use release removes the query's inputs.
+        #[cfg(feature = "code-rule-profile")]
+        self.db.checkpoint().map_err(sql_error)?;
         let stage = &self.plan.stages[self.next];
         self.tables.insert(stage.name.clone());
         for (name, _) in self
@@ -748,6 +760,8 @@ impl<'a> Session<'a> {
     fn advance(&mut self) -> Result<Option<producer::Demand>> {
         let _reader = producer::ReadOnly::enter();
         while let Some(stage) = self.plan.stages.get(self.next) {
+            #[cfg(feature = "code-rule-profile")]
+            self.db.stage(&stage.name);
             columns(&self.db, &stage.query, &self.tables)?;
             if let Some(spec) = stage.reachability.as_ref().filter(|s| s.syntax.is_some()) {
                 return Ok(Some(syntax::demand(
@@ -758,8 +772,16 @@ impl<'a> Session<'a> {
                     Arc::clone(&self.work),
                 )?));
             }
+            #[cfg(feature = "code-rule-profile")]
+            let operation = self
+                .db
+                .operation(&format!("/*RELATIONAL_STAGE*/ {}", stage.name), self.next);
             create_stage(&self.db, stage, true, &self.work)
                 .map_err(|e| invalid(format!("relational stage {}: {}", stage.name, e.reason)))?;
+            #[cfg(feature = "code-rule-profile")]
+            operation
+                .into_iter()
+                .for_each(|operation| operation.finish_unobserved());
             self.release()?;
         }
         Ok(None)
@@ -767,10 +789,22 @@ impl<'a> Session<'a> {
     fn publish(&mut self, output: producer::Completed) -> Result<()> {
         let _reader = producer::ReadOnly::enter();
         let stage = &self.plan.stages[self.next];
+        #[cfg(feature = "code-rule-profile")]
+        self.db.stage(&stage.name);
+        #[cfg(feature = "code-rule-profile")]
+        let operation = self
+            .db
+            .operation(&format!("/*RELATIONAL_PUBLISH*/ {}", stage.name), self.next);
         output.publish(&self.db, &stage.name, &self.work)?;
+        #[cfg(feature = "code-rule-profile")]
+        operation
+            .into_iter()
+            .for_each(|operation| operation.finish_unobserved());
         self.release()
     }
     fn finish(&self) -> Result<Vec<Value>> {
+        #[cfg(feature = "code-rule-profile")]
+        self.db.stage("result");
         let _reader = producer::ReadOnly::enter();
         let Self {
             code_rule,

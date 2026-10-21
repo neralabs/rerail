@@ -221,6 +221,8 @@ impl Facts {
         }
         #[cfg(feature = "code-rule-profile")]
         let _span = crate::code_rule_dsl::profile::trace::Span::start("syntax-owners", &owner.kind);
+        #[cfg(feature = "code-rule-profile")]
+        let _index = crate::code_rule_dsl::profile::sql::index_build(self.rows.len());
         let mut values = Vec::with_capacity(self.rows.len());
 
         for &id in &self.rows {

@@ -7,6 +7,12 @@ mod row_table;
 pub mod rows;
 mod table;
 
+// Compile the production tracer directly, without the native engine's full test target.
+#[cfg(all(test, not(feature = "extension")))]
+#[allow(dead_code)]
+#[path = "../../../../native/src/code_rule_dsl/profile/sql.rs"]
+mod code_rule_dsl;
+
 use graph::{Graph, Registry, failure};
 #[cfg(feature = "extension")]
 use rusqlite::ffi;

@@ -10,6 +10,8 @@ The [profile after shared SQL grouping](shared-sql-performance.md) records the r
 The [SQL experiments](sql-performance-spikes.md) add generated policy variants and production-gate comparisons.
 The [reachability experiments](reachability-spikes.md) compare batched SQL with Rust SQLite extensions on captured native inputs.
 
+The [SQL workload profiler](sql-workload-profiling.md) adds complete statement capture, plans, bytecode, and ranked reports through `--sql-profile`.
+
 ## Run a bounded workload
 
 Use Python 3.9 or later. Use the normal Node development environment.
