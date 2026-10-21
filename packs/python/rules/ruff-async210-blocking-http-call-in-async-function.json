@@ -1,7 +1,7 @@
 {
  "format": "rerail.policy/v1",
  "id": "ruff-async210-blocking-http-call-in-async-function",
- "revision": 1,
+ "revision": 2,
  "mode": "steer",
  "description": "Don't make blocking HTTP calls with requests, httpx, urllib or urllib3 inside async functions; they stall the event loop.",
  "scope": {
@@ -147,7 +147,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "ASYNC210",
-    "message": "Replace this blocking HTTP call with an awaited async client call, such as `httpx.AsyncClient` or `aiohttp`.",
+    "message": "Use an existing async client, or `await asyncio.to_thread(helper, ...)` for the request and response handling; preserve the API and options.",
     "suppress": {
       "noqa": {
         "codes": [
