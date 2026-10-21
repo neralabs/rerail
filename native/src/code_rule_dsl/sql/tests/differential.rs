@@ -2351,6 +2351,9 @@ fn following_cases(seed: u64) -> Vec<(&'static str, Value, Value)> {
 /// mutant (`sql::mutant`); `RERAIL_SQL_DIFF_REPLAY` names another file of them (lines of
 /// `RERAIL_SQL_DIFF_SLOW_LOG` or `RERAIL_SQL_DIFF_KEEP`):
 /// `RERAIL_SQL_DIFF_REPLAY=<file> cargo test --profile loop sql::tests::differential::replayed -- --nocapture`.
+/// Every case must also be compared in a debug build (`cargo test`), where a level of utility
+/// recursion takes about ten times the stack it takes in release, so the native matcher reaches its
+/// stack limit (`MAX_UTIL_STACK_BYTES`) some 50 levels deep: a recursive case must recurse shallowly.
 #[test]
 fn replayed_cases_agree() {
     use crate::code_rule_dsl::sql::exec::STATEMENT_PROFILE;
