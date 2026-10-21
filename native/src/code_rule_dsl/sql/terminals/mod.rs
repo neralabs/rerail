@@ -1,6 +1,8 @@
 //! Native terminals behind virtual tables, each evaluated once per statement over its whole input
 //! set (`pattern`, `text_match`, `program_match`, `fact`). SQL never calls one per row.
 
+pub(super) mod census;
+pub(super) mod content;
 mod fact;
 mod leaves;
 mod pattern;
@@ -19,7 +21,7 @@ pub(super) use leaves::{
     BindingSites, BindsCandidates, BindsOthers, Exported, FormatPart, FormatSides, Occurrences,
     Parsed,
 };
-pub(super) use pattern::{PatternRow, PatternTable, fresh_match};
+pub(super) use pattern::{EnvMatch, PatternRow, PatternTable, env_match, fresh_match};
 pub(super) use program::{ProgramTable, ProgramTerm};
 use regex::Regex;
 pub(super) use text::TextTable;

@@ -5,7 +5,9 @@
 //! (`Batch::fresh`), whichever frames reach it. With an `ek IN (…)` input (the env-input variant)
 //! it matches each input row's node with the row's bindings of the pattern's captures already in
 //! the environment: an ellipsis's greedy alignment and every unification then happen natively,
-//! exactly as the matcher does them.
+//! exactly as the matcher does them; each (term, input key) is matched once per batch
+//! (`Batch::env`). A term is a pattern by content (`terminals::content`), so equal patterns of
+//! several clauses share these matches.
 
 use super::{PATTERN_COLUMNS, PatternTerm, Terminal};
 use crate::code_rule_dsl::matcher::node_at;
@@ -37,6 +39,9 @@ pub(in crate::code_rule_dsl::sql) struct PatternRow {
     values: Arc<[Option<i64>]>,
 }
 
+/// An env-input match: its file, node and capture columns (`Batch::env`).
+pub(in crate::code_rule_dsl::sql) type EnvMatch = (u32, u32, Arc<[Option<i64>]>);
+
 impl PatternRow {
     /// A fresh-env match at `node` of `file`, binding `values`.
     pub(in crate::code_rule_dsl::sql) fn fresh(
@@ -48,6 +53,17 @@ impl PatternRow {
             file,
             node,
             ek: None,
+            values,
+        }
+    }
+
+    /// The env-input match `found` of input row key `ek`.
+    pub(in crate::code_rule_dsl::sql) fn env(ek: String, found: EnvMatch) -> Self {
+        let (file, node, values) = found;
+        Self {
+            file,
+            node,
+            ek: Some(ek),
             values,
         }
     }
@@ -143,8 +159,12 @@ pub(in crate::code_rule_dsl::sql) fn fresh_match(
 }
 
 /// Decodes an env-input key (`file,node,<value>…`, one value per read capture: a node id, or a
-/// list's `lo:hi`, empty where unbound), matches it, and returns its row where it matches.
-fn env_row(batch: &Batch, term: &PatternTerm, ek: &str) -> Option<PatternRow> {
+/// list's `lo:hi`, empty where unbound), matches it, and returns its match where it matches.
+pub(in crate::code_rule_dsl::sql) fn env_match(
+    batch: &Batch,
+    term: &PatternTerm,
+    ek: &str,
+) -> Option<EnvMatch> {
     let mut parts = ek.split(',');
     let file: u32 = parts.next()?.parse().ok()?;
     let node: u32 = parts.next()?.parse().ok()?;
@@ -176,12 +196,7 @@ fn env_row(batch: &Batch, term: &PatternTerm, ek: &str) -> Option<PatternRow> {
     let mut env = Cow::Owned(env);
     term.pattern
         .match_node_with_env(node_at(&entry.root, node), &mut env)?;
-    Some(PatternRow {
-        file,
-        node,
-        ek: Some(ek.to_owned()),
-        values: values(term, &entry.facts, &env).into(),
-    })
+    Some((file, node, values(term, &entry.facts, &env).into()))
 }
 
 const COL_TERM: c_int = 0;
@@ -356,9 +371,7 @@ unsafe impl VTabCursor for PatternCursor<'_> {
             } else if let Value::Text(text) = args.get::<Value>(1)? {
                 keys.insert(text);
             }
-            keys.iter()
-                .filter_map(|ek| env_row(&batch, term, ek))
-                .collect()
+            batch.env(term_id as usize, term, keys)
         };
         Ok(())
     }

@@ -79,7 +79,11 @@ pub(super) const DEFAULT_BATCH_SIZE: usize = 64;
 ///     table, not by its memo term, so unlike utilities of two clauses share answers (`lower`);
 /// 24. the batch's unit answer tables are emptied when each clause ends, their demand tables
 ///     only per batch, so a later clause reads a key demanded before as matching nothing
-///     (`exec`).
+///     (`exec`);
+/// 25. a fact term's key leaves out the captures its keys carry, so equal leaves reading
+///     different captures are one terminal (`lower`);
+/// 26. a pattern term's key leaves out the captures an env-input one reads, so one pattern read
+///     with different bindings, or matched in a fresh environment, is one terminal (`lower`).
 ///
 /// `tests/replay.jsonl` (`replayed_cases_agree`) kills each of them; `just rerail-sql-gate
 /// --mutants` checks it does, and that the differential at the gate's case count does too.

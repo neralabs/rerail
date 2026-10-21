@@ -13,6 +13,8 @@
 
 use super::Terminal;
 use crate::code_rule_dsl::literal::{ID_FLAG, SubDoc};
+#[cfg(test)]
+use crate::code_rule_dsl::matcher::Semantic;
 use crate::code_rule_dsl::matcher::{
     AstMatcher, FileScopeSlot, ParkedScopes, SubTables, export_text, exported_span, exported_text,
     leaf_env, leaf_verdict, node_at,
@@ -79,8 +81,10 @@ impl Verdict {
 /// A fact term's verdicts in a batch by key, remembered from its second evaluation on: a term the
 /// batch evaluates again (an `each` round, a recursion level, a loop's statement) is mostly asked
 /// the keys it was asked before, so it answers them as it did then, and a term evaluated once
-/// remembers nothing. A verdict is the native leaf's at the key's node with its bindings, the
-/// same whichever statement asks.
+/// remembers nothing. A term several operators read (`FactTerm::shared`: equal leaves of several
+/// clauses, `terminals::content`) remembers from its first evaluation, since another operator
+/// may ask the same keys. A verdict is the native leaf's at the key's node with its bindings,
+/// the same whichever statement asks.
 #[derive(Default)]
 pub(in crate::code_rule_dsl::sql) struct FactMemo {
     evaluations: u32,
@@ -89,13 +93,14 @@ pub(in crate::code_rule_dsl::sql) struct FactMemo {
 
 impl FactMemo {
     /// The verdicts at key `ek`: those remembered, else `evaluate`'s, remembered from the term's
-    /// second evaluation in the batch on.
+    /// second evaluation in the batch on, or from its first where it is `shared`.
     fn answer(
         &mut self,
         ek: &str,
+        shared: bool,
         evaluate: impl FnOnce() -> Result<Vec<Verdict>>,
     ) -> Result<Vec<Verdict>> {
-        if self.evaluations < 2 {
+        if self.evaluations < 2 && !shared {
             return evaluate();
         }
         if let Some(known) = self.verdicts.get(ek) {
@@ -128,6 +133,19 @@ pub(in crate::code_rule_dsl::sql) trait Verdicts:
         _env: &MetaVarEnv<'t, SubDoc>,
     ) -> std::result::Result<Vec<Verdict>, String> {
         Err("this term reads no parsed tree".to_owned())
+    }
+
+    /// The canonical form of what this evaluates (`content`), where it has one: terms of equal
+    /// forms reading the same captures are one terminal.
+    fn content(&self) -> Option<String> {
+        None
+    }
+
+    /// What this evaluates, for the terminal census.
+    #[cfg(test)]
+    fn describe(&self) -> String {
+        let name = std::any::type_name::<Self>();
+        name.rsplit("::").next().unwrap_or(name).to_owned()
     }
 }
 
@@ -163,6 +181,23 @@ impl Verdicts for Leaf {
         env: &MetaVarEnv<'t, SubDoc>,
     ) -> std::result::Result<Vec<Verdict>, String> {
         leaf_rows(&self.0, node, env)
+    }
+
+    fn content(&self) -> Option<String> {
+        super::content::leaf(&self.0)
+    }
+
+    #[cfg(test)]
+    fn describe(&self) -> String {
+        match &self.0 {
+            AstMatcher::Compare(_) => "Leaf(compare)",
+            AstMatcher::Semantic(Semantic::Value(_)) => "Leaf(value)",
+            AstMatcher::Semantic(Semantic::Layout(_)) => "Leaf(layout)",
+            AstMatcher::Semantic(Semantic::Resolves(_)) => "Leaf(resolves)",
+            AstMatcher::Semantic(Semantic::Calls(_)) => "Leaf(calls)",
+            _ => "Leaf(other)",
+        }
+        .to_owned()
     }
 }
 
@@ -253,6 +288,8 @@ pub(in crate::code_rule_dsl::sql) fn values_of<D: Doc>(
 pub(in crate::code_rule_dsl::sql) struct FactTerm {
     pub(in crate::code_rule_dsl::sql) verdicts: Box<dyn Verdicts>,
     pub(in crate::code_rule_dsl::sql) reads: Vec<(String, SlotKind)>,
+    /// Whether several operators read it (`FactMemo`).
+    pub(in crate::code_rule_dsl::sql) shared: bool,
 }
 
 thread_local! {
@@ -525,7 +562,8 @@ fn evaluate(
             answered_all = with_scopes(index, file, || -> Result<()> {
                 for position in of_file {
                     let key = &keys.keys[position];
-                    let verdicts = memo.answer(keys.text(key), || {
+                    let verdicts = memo.answer(keys.text(key), term.shared, || {
+                        note(batch, term_id, keys.text(key));
                         if key.node >= file.facts.len() {
                             return Ok(Vec::new());
                         }
@@ -557,7 +595,8 @@ fn evaluate(
             answered_all = with_scopes(sub.host, host, || -> Result<()> {
                 for position in of_file {
                     let key = &keys.keys[position];
-                    let verdicts = memo.answer(keys.text(key), || {
+                    let verdicts = memo.answer(keys.text(key), term.shared, || {
+                        note(batch, term_id, keys.text(key));
                         if key.node >= sub.facts.len() {
                             return Ok(Vec::new());
                         }
@@ -575,6 +614,13 @@ fn evaluate(
     }
     batch.fact_memos.lock().insert(term_id, memo);
     answered_all.map(|()| rows)
+}
+
+/// One evaluation of fact term `term` at key `ek`, for the census.
+fn note(batch: &Batch, term: usize, ek: &str) {
+    if let Some(census) = &batch.census {
+        census.note(super::census::Kind::Fact, term, super::census::text_key(ek));
+    }
 }
 
 const COL_TERM: c_int = 0;

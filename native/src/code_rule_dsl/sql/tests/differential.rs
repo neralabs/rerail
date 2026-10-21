@@ -1958,9 +1958,9 @@ fn generated_rules_agree_with_the_native_matcher() {
     );
 }
 
-/// The programs of `program_cases(seed)` over each language's fixture files (`run_program`), in
-/// batches of two files: why each that does not agree does not. Every one is in scope, so none
-/// may be refused.
+/// The programs of `program_cases(seed)` and `terminal_cases(seed)` over each language's fixture
+/// files (`run_program`), in batches of two files: why each that does not agree does not. Every
+/// one is in scope, so none may be refused.
 fn program_failures(seed: u64, vocabularies: &[Vocabulary], capabilities: &Value) -> Vec<String> {
     let docs: Vec<(GrammarDialect, Vec<TapeDoc>)> = vocabularies
         .iter()
@@ -1973,6 +1973,9 @@ fn program_failures(seed: u64, vocabularies: &[Vocabulary], capabilities: &Value
         })
         .collect();
     let outcomes = program_cases(seed)
+        .into_iter()
+        .chain(terminal_cases(seed))
+        .collect::<Vec<_>>()
         .into_par_iter()
         .map(|(language, clauses)| {
             let at = FIXTURES
@@ -2003,7 +2006,7 @@ fn program_failures(seed: u64, vocabularies: &[Vocabulary], capabilities: &Value
         }
     }
     eprintln!(
-        "programs: {compared} programs of clauses sharing units agree ({found} roots), {} do not",
+        "programs: {compared} programs of clauses sharing units or terminals agree ({found} roots), {} do not",
         failures.len()
     );
     for failure in failures.iter().take(5) {
@@ -2133,6 +2136,111 @@ fn program_cases(seed: u64) -> Vec<(&'static str, Vec<Value>)> {
                     let combined = if rng.chance(50) { "any" } else { "all" };
                     let rule = json!({ "kind": *rng.pick(roots), combined: terms });
                     json!({ "language": language, "rule": rule, "utils": utils })
+                })
+                .collect();
+            (language, clauses)
+        })
+        .collect()
+}
+
+/// Programs of two to four clauses over one language sharing their predicates: one pattern of
+/// captures, one regex and one leaf (a `compare` or a `layout` gap over the pattern's captures, a
+/// `compare` of `G`, which every clause binds before the pattern as a node or, in Python, as the
+/// text a format string's field name exports, or a capture-free `testUnknown`), each clause
+/// binding one capture before them, or none. So one pattern is a fresh-env terminal in one clause
+/// and an env-input one reading other captures in another, and one leaf reads a capture as a node
+/// in one clause and as text in another: equal predicates reading the same captures are one
+/// terminal (`terminals::content`), and those reading others must not be. Drawn from a generator
+/// of their own, so the cases above stay as their seed names them.
+fn terminal_cases(seed: u64) -> Vec<(&'static str, Vec<Value>)> {
+    const CASES: usize = 64;
+    let mut rng = Rng(seed ^ 0xc0de_7e41_0000_0001);
+    (0..CASES)
+        .map(|index| {
+            let (language, patterns, roots, regexes): (&str, &[&str], &[&str], &[&str]) =
+                if index % 2 == 0 {
+                    (
+                        "typescript",
+                        &["$F($A)", "$A.$B", "$F($A, $B)", "$A = $B"],
+                        &[
+                            "expression_statement",
+                            "statement_block",
+                            "function_declaration",
+                            "lexical_declaration",
+                        ],
+                        &["^con", "(?i)^CON", "^[a-z]+$", "\\("],
+                    )
+                } else {
+                    (
+                        "python",
+                        &["$F($A)", "$A.$B", "$F($A, $B)", "$A = $B"],
+                        &[
+                            "expression_statement",
+                            "block",
+                            "function_definition",
+                            "assignment",
+                        ],
+                        &["^pri", "(?i)^PRI", "^[a-z]+$", "\\("],
+                    )
+                };
+            let pattern = *rng.pick(patterns);
+            let regex = *rng.pick(regexes);
+            // `G` is no capture of a pattern: only a clause binding it before reads it.
+            let captures = ["A", "B", "F", "G"];
+            let own: Vec<&str> = captures
+                .into_iter()
+                .filter(|name| pattern.contains(&format!("${name}")))
+                .collect();
+            let choice = rng.below(4);
+            let leaf = match choice {
+                // Both sides the pattern's: one leaf reading the same captures everywhere.
+                0 => json!({ "compare": { "left": *rng.pick(&own), "op": "ne",
+                    "right": *rng.pick(&own), "text": "source" } }),
+                1 => json!({ "layout": { "after": {
+                    "to": format!("capture.{}", rng.pick(&own)), "breaks": { "max": 1 } } } }),
+                // `G`, which every clause binds before, as a node or (Python) as the text a
+                // format string's field name exports: one leaf reading `G` in either kind.
+                2 => json!({ "compare": { "left": "G", "op": "eq", "right": "G", "text": "source" } }),
+                _ => json!({ "testUnknown": regex }),
+            };
+            let clauses = (0..2 + rng.below(3))
+                .map(|at| {
+                    let mut terms = Vec::new();
+                    if choice == 2 {
+                        // `G` as text (Python) in every other clause, as a node in the rest, read
+                        // at once by the leaf.
+                        terms.push(if language == "python" && at % 2 == 0 {
+                            json!({ "has": { "stopBy": "end", "kind": "string",
+                                "parse": { "grammar": "braceFormat",
+                                    "has": { "kind": "field_name", "stopBy": "end", "capture": "G" } } } })
+                        } else {
+                            json!({ "has": { "stopBy": "end", "kind": "identifier", "pattern": "$G" } })
+                        });
+                        terms.push(leaf.clone());
+                    } else {
+                        // The captures bound before the shared pattern: none, or one at the root
+                        // or at a descendant.
+                        let name = *rng.pick(&captures);
+                        match rng.below(3) {
+                            0 => {}
+                            1 => terms.push(json!({ "pattern": format!("${name}") })),
+                            _ => terms.push(json!({ "has": { "stopBy": "end", "kind": "identifier",
+                                "pattern": format!("${name}") } })),
+                        }
+                    }
+                    terms.push(if rng.chance(50) {
+                        json!({ "has": { "stopBy": "end", "pattern": pattern } })
+                    } else {
+                        json!({ "has": { "stopBy": "end", "regex": regex, "pattern": pattern } })
+                    });
+                    if choice != 2 && rng.chance(70) {
+                        terms.push(leaf.clone());
+                    }
+                    if rng.chance(30) {
+                        terms.push(json!({ "not": { "has": { "regex": regex } } }));
+                    }
+                    let root = if choice == 2 { "call" } else { *rng.pick(roots) };
+                    json!({ "language": language, "rule": { "kind": root, "all": terms } })
                 })
                 .collect();
             (language, clauses)

@@ -15,7 +15,7 @@ use super::shapes::{
 };
 use super::skip::{self, Counts, MODE, Mode, Outcome};
 use super::terminals::{
-    BatchScopes, FactTable, PatternRow, PatternTable, PatternTerm, Terminal, TextTable,
+    BatchScopes, FactTable, PatternRow, PatternTable, PatternTerm, Terminal, TextTable, env_match,
     fresh_match, take_fact_time,
 };
 use super::timing::{Started, Timing, timed};
@@ -99,21 +99,26 @@ pub(super) struct Program {
 /// A pattern terminal's fresh-env matches tested so far in a batch, by key (`file << 32 | node`):
 /// the capture columns, `None` where the pattern does not match.
 type FreshMatches = HashMap<i64, Option<Arc<[Option<i64>]>>>;
+/// A pattern terminal's env-input matches tested so far in a batch, by input key (`ek`).
+type EnvMatches = rustc_hash::FxHashMap<Box<str>, Option<super::terminals::EnvMatch>>;
 /// A file to run: its tape, the statement (by index into the compiled grammars) that matches it,
 /// if any, with its selected roots, and what its scopes read beyond the tape.
 pub(in crate::code_rule_dsl) type RunFile =
     (TapeDoc, Option<(usize, Option<Arc<[u32]>>)>, FileContext);
 
-/// A batch: its files' tapes and node facts, its program, the fresh-env matches of each pattern
-/// terminal at the nodes tested so far, and the fact terms' remembered verdicts.
+/// A batch: its files' tapes and node facts, its program, the fresh-env and env-input matches of
+/// each pattern terminal at the inputs tested so far, and the fact terms' remembered verdicts.
 pub(super) struct Batch {
     pub(super) files: Vec<BatchFile>,
     pub(super) program: Arc<Program>,
     fresh: Vec<parking_lot::Mutex<FreshMatches>>,
+    env: Vec<parking_lot::Mutex<EnvMatches>>,
     subfiles: parking_lot::Mutex<SubFiles>,
     /// Per fact term (by terminal index), its verdicts so far (`terminals::FactMemo`).
     pub(super) fact_memos:
         parking_lot::Mutex<rustc_hash::FxHashMap<usize, super::terminals::FactMemo>>,
+    /// The terminals' evaluations, where `RERAIL_SQL_TERMINAL_CENSUS` asks for them.
+    pub(super) census: Option<super::terminals::census::BatchCensus>,
 }
 
 impl Batch {
@@ -143,7 +148,13 @@ impl Batch {
             .collect();
         Arc::new(Self {
             files,
+            census: super::terminals::census::BatchCensus::of(&program.terminals),
             fresh: program
+                .terminals
+                .iter()
+                .map(|_| Default::default())
+                .collect(),
+            env: program
                 .terminals
                 .iter()
                 .map(|_| Default::default())
@@ -204,9 +215,49 @@ impl Batch {
                 let (file, node) = ((key >> 32) as u32, key as u32);
                 let values = tested
                     .entry(key)
-                    .or_insert_with(|| fresh_match(self, term, file as usize, node))
+                    .or_insert_with(|| {
+                        if let Some(census) = &self.census {
+                            census.note(
+                                super::terminals::census::Kind::PatternFresh,
+                                index,
+                                key as u64,
+                            );
+                        }
+                        fresh_match(self, term, file as usize, node)
+                    })
                     .clone()?;
                 Some(PatternRow::fresh(file, node, values))
+            })
+            .collect()
+    }
+
+    /// The env-input matches of pattern terminal `index` at input keys `eks`, each (term, key)
+    /// matched once per batch whichever statements ask for it.
+    pub(super) fn env(
+        &self,
+        index: usize,
+        term: &PatternTerm,
+        eks: BTreeSet<String>,
+    ) -> Vec<PatternRow> {
+        let mut tested = self.env[index].lock();
+        eks.into_iter()
+            .filter_map(|ek| {
+                let found = match tested.get(ek.as_str()) {
+                    Some(found) => found.clone(),
+                    None => {
+                        if let Some(census) = &self.census {
+                            census.note(
+                                super::terminals::census::Kind::PatternEnv,
+                                index,
+                                super::terminals::census::text_key(&ek),
+                            );
+                        }
+                        let found = env_match(self, term, &ek);
+                        tested.insert(ek.as_str().into(), found.clone());
+                        found
+                    }
+                }?;
+                Some(PatternRow::env(ek, found))
             })
             .collect()
     }
@@ -708,6 +759,60 @@ impl Compiled {
                 plan.verified,
             )
         })
+    }
+
+    /// Per terminal kind, how many terminals the program holds, how many canonical predicates
+    /// they are (`terminals::content`; a terminal with no canonical form counts as its own),
+    /// and how many have none; fact terminals also by what they evaluate.
+    #[cfg(test)]
+    pub(in crate::code_rule_dsl) fn terminal_census(
+        &self,
+    ) -> std::collections::BTreeMap<String, (usize, usize, usize)> {
+        use super::terminals::content;
+        let mut forms: std::collections::BTreeMap<String, (usize, HashSet<String>, usize)> =
+            Default::default();
+        for (index, terminal) in self.program.terminals.iter().enumerate() {
+            let (kinds, form) = match terminal {
+                Terminal::Pattern(term) if term.reads.is_empty() => (
+                    vec!["pattern (fresh)".to_owned()],
+                    content::pattern(&term.pattern, term.dialect),
+                ),
+                Terminal::Pattern(term) => (
+                    vec!["pattern (env-input)".to_owned()],
+                    content::pattern(&term.pattern, term.dialect)
+                        .map(|form| format!("{:?}:{form}", term.reads)),
+                ),
+                Terminal::Regex(regex) => (
+                    vec!["text_match".to_owned()],
+                    Some(regex.as_str().to_owned()),
+                ),
+                // Pushdown keys its programs by their rules' canonical forms already.
+                Terminal::Program(_) => (vec!["program_match".to_owned()], Some(index.to_string())),
+                Terminal::Fact(term) => (
+                    vec![
+                        "fact".to_owned(),
+                        format!("fact: {}", term.verdicts.describe()),
+                    ],
+                    term.verdicts
+                        .content()
+                        .map(|form| format!("{:?}:{form}", term.reads)),
+                ),
+            };
+            for kind in kinds {
+                let entry = forms.entry(kind).or_default();
+                entry.0 += 1;
+                match &form {
+                    Some(form) => {
+                        entry.1.insert(form.clone());
+                    }
+                    None => entry.2 += 1,
+                }
+            }
+        }
+        forms
+            .into_iter()
+            .map(|(kind, (count, distinct, none))| (kind, (count, distinct.len() + none, none)))
+            .collect()
     }
 
     /// A connection set up to run this program's batches.

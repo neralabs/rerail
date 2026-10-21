@@ -13,7 +13,7 @@ use super::plan::{
 };
 use super::recursion::{self, Cycle, Recursion, UtilKey, util_key};
 use super::terminals::{
-    FACT_COLUMNS, FactTerm, Leaf, PATTERN_COLUMNS, PatternTerm, Terminal, Verdicts,
+    FACT_COLUMNS, FactTerm, Leaf, PATTERN_COLUMNS, PatternTerm, Terminal, Verdicts, content,
 };
 use super::timing::{Timing, timed};
 use crate::code_rule_dsl::language::GrammarDialect;
@@ -72,11 +72,14 @@ pub(super) struct ProgramBuilder {
     // Boxed on purpose: `Vec` reallocation would move an unboxed rule and change its address.
     #[allow(clippy::vec_box)]
     derived: Vec<Box<AstMatcher>>,
-    regexes: HashMap<(String, String), usize>,
-    fresh_patterns: HashMap<usize, usize>,
-    /// Leaf fact terminals by the leaf's address and the captures their keys carry: lowering a
-    /// stage again (to key it by its SQL) reuses them.
-    leaves: HashMap<(usize, Vec<(String, SlotKind)>), usize>,
+    /// Regex terminals by their source.
+    regexes: HashMap<String, usize>,
+    /// Pattern terminals by identity and the captures an env-input one reads (`PatternTerm::reads`,
+    /// none for a fresh-env one).
+    patterns: HashMap<(Identity, Vec<usize>), usize>,
+    /// Leaf fact terminals by identity and the captures their keys carry: lowering a stage again
+    /// (to key it by its SQL) reuses them.
+    leaves: HashMap<(Identity, Vec<(String, SlotKind)>), usize>,
     recursion: Recursion,
     /// The members of the cycles whose units are being lowered.
     in_progress: HashSet<UtilKey>,
@@ -89,6 +92,17 @@ pub(super) struct ProgramBuilder {
     pub(super) stage_emission: Timing,
     /// The stages and programs pushdown compiled (`pushdown`).
     pub(super) pushdown: super::pushdown::Pushdown,
+}
+
+/// A terminal's identity in its program: the canonical form of its predicate
+/// (`terminals::content`), else the address of the matcher it evaluates. Terminals of one
+/// identity reading the same captures evaluate alike, so they are one terminal, and the
+/// per-batch caches keyed by terminal (`exec::Batch::fresh`, `terminals::FactMemo`) answer each
+/// (predicate, input) once per batch, whichever clauses ask.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(super) enum Identity {
+    Content(String),
+    Address(usize),
 }
 
 /// The capture and value analyses lowering reads (`CaptureAnalysis`, `reads_values`,
@@ -148,7 +162,7 @@ impl ProgramBuilder {
             self.stage_index.retain(|_, stage| *stage < stages);
             self.stage_rules.retain(|_, set| set.stage < stages);
             self.regexes.retain(|_, term| *term < terminals);
-            self.fresh_patterns.retain(|_, term| *term < terminals);
+            self.patterns.retain(|_, term| *term < terminals);
             self.leaves.retain(|_, term| *term < terminals);
             self.in_progress.clear();
         }
@@ -1015,7 +1029,7 @@ impl<'p> Lowerer<'p> {
     fn fact(
         &mut self,
         verdicts: impl FnOnce() -> Box<dyn Verdicts>,
-        identity: Option<usize>,
+        identity: Option<Identity>,
         scope: usize,
         reads: &BTreeSet<String>,
         at_node: bool,
@@ -1043,7 +1057,7 @@ impl<'p> Lowerer<'p> {
     fn fact_slots(
         &mut self,
         verdicts: impl FnOnce() -> Box<dyn Verdicts>,
-        identity: Option<usize>,
+        identity: Option<Identity>,
         scope: usize,
         reads: &BTreeSet<String>,
         at_node: bool,
@@ -1060,16 +1074,29 @@ impl<'p> Lowerer<'p> {
         if width > FACT_COLUMNS {
             return unsupported("terminal binding more than 16 columns");
         }
-        let key = identity
-            .filter(|_| binds.is_empty())
-            .map(|identity| (identity, vars.clone()));
+        // Mutant 25: a fact term's key leaves out the captures it reads, so equal leaves reading
+        // different captures are one terminal.
+        let key = identity.filter(|_| binds.is_empty()).map(|identity| {
+            let reads = if super::mutant(25) {
+                Vec::new()
+            } else {
+                vars.clone()
+            };
+            (identity, reads)
+        });
         let term = match key.as_ref().and_then(|key| self.program.leaves.get(key)) {
-            Some(&term) => term,
+            Some(&term) => {
+                if let Terminal::Fact(fact) = &mut self.program.terminals[term] {
+                    fact.shared = true;
+                }
+                term
+            }
             None => {
                 let term = self.program.terminals.len();
                 self.program.terminals.push(Terminal::Fact(FactTerm {
                     verdicts: verdicts(),
                     reads: vars,
+                    shared: false,
                 }));
                 if let Some(key) = key {
                     self.program.leaves.insert(key, term);
@@ -1114,7 +1141,8 @@ impl<'p> Lowerer<'p> {
     }
 
     /// A leaf the matcher evaluates itself (`value`, `compare`, `layout`, `testUnknown`) as a
-    /// fact terminal reading `reads`.
+    /// fact terminal reading `reads`, one for every leaf of its canonical form
+    /// (`terminals::content::leaf`), else for every compilation of it.
     fn leaf(
         &mut self,
         leaf: &AstMatcher,
@@ -1123,9 +1151,13 @@ impl<'p> Lowerer<'p> {
         at_node: bool,
         bound: &Bound,
     ) -> Result<(Op, Bound), Unsupported> {
+        let identity = match content::leaf(leaf) {
+            Some(form) => Identity::Content(form),
+            None => Identity::Address(std::ptr::from_ref(leaf) as usize),
+        };
         self.fact(
             || Box::new(Leaf(leaf.clone())),
-            Some(std::ptr::from_ref(leaf) as usize),
+            Some(identity),
             scope,
             reads,
             at_node,
@@ -1306,15 +1338,26 @@ impl<'p> Lowerer<'p> {
                     .collect();
                 let reads: Vec<SlotId> = term.reads.iter().map(|&index| vars[index]).collect();
                 let env = !reads.is_empty();
-                let key = std::ptr::from_ref(pattern) as usize;
-                let id = match (env, self.program.fresh_patterns.get(&key)) {
-                    (false, Some(&id)) => id,
-                    _ => {
+                let identity = match content::pattern(pattern, self.dialect) {
+                    Some(form) => Identity::Content(form),
+                    None => Identity::Address(std::ptr::from_ref(pattern) as usize),
+                };
+                // Mutant 26: a pattern term's key leaves out the captures an env-input one
+                // reads, so a pattern read with different bindings is one terminal.
+                let key = (
+                    identity,
+                    if super::mutant(26) {
+                        Vec::new()
+                    } else {
+                        term.reads.clone()
+                    },
+                );
+                let id = match self.program.patterns.get(&key) {
+                    Some(&id) => id,
+                    None => {
                         let id = self.program.terminals.len();
                         self.program.terminals.push(Terminal::Pattern(term));
-                        if !env {
-                            self.program.fresh_patterns.insert(key, id);
-                        }
+                        self.program.patterns.insert(key, id);
                         id
                     }
                 };
@@ -1332,7 +1375,7 @@ impl<'p> Lowerer<'p> {
             }
             AstMatcher::Kind(kind) => Ok((Op::Kinds(vec![kind_id(kind)]), bound.clone())),
             AstMatcher::Regex(regex) => {
-                let key = (self.dialect.to_string(), regex.as_str().to_owned());
+                let key = regex.as_str().to_owned();
                 let id = match self.program.regexes.get(&key) {
                     Some(&id) => id,
                     None => {

@@ -152,9 +152,10 @@ pub(in crate::code_rule_dsl::sql) struct ProgramCursor<'vtab> {
 }
 
 /// The nodes of document `file` (a batch file, or a parsed tree of the batch's own) among
-/// `starts` at which `program` holds, as keys.
+/// `starts` at which program terminal `term`, `program`, holds, as keys.
 fn holding(
     batch: &Batch,
+    term: usize,
     program: &Program,
     file: usize,
     starts: impl FnOnce(u32) -> NodeSet,
@@ -172,6 +173,15 @@ fn holding(
         }
     };
     let starts = starts(facts.len());
+    if let Some(census) = &batch.census {
+        for node in starts.iter() {
+            census.note(
+                super::census::Kind::Program,
+                term,
+                (file as u64) << 32 | u64::from(node),
+            );
+        }
+    }
     let held = program.holds(facts, &starts).map_err(|error| {
         Error::ModuleError(format!("program_match: the program fails: {error:?}"))
     })?;
@@ -221,16 +231,22 @@ unsafe impl VTabCursor for ProgramCursor<'_> {
                 let file = inputs[at] >> 32;
                 let end = at + inputs[at..].partition_point(|key| key >> 32 == file);
                 let nodes = &inputs[at..end];
-                keys.extend(holding(&batch, &term.program, file as usize, |len| {
-                    let mut starts = NodeSet::new(len);
-                    for &key in nodes {
-                        let node = (key & 0xffff_ffff) as u32;
-                        if node < len {
-                            starts.insert(node);
+                keys.extend(holding(
+                    &batch,
+                    term_id as usize,
+                    &term.program,
+                    file as usize,
+                    |len| {
+                        let mut starts = NodeSet::new(len);
+                        for &key in nodes {
+                            let node = (key & 0xffff_ffff) as u32;
+                            if node < len {
+                                starts.insert(node);
+                            }
                         }
-                    }
-                    starts
-                })?);
+                        starts
+                    },
+                )?);
                 at = end;
             }
         } else {
@@ -238,7 +254,13 @@ unsafe impl VTabCursor for ProgramCursor<'_> {
                 let Ok(file) = usize::try_from(file) else {
                     continue;
                 };
-                keys.extend(holding(&batch, &term.program, file, NodeSet::full)?);
+                keys.extend(holding(
+                    &batch,
+                    term_id as usize,
+                    &term.program,
+                    file,
+                    NodeSet::full,
+                )?);
             }
         }
         self.term = term_id;

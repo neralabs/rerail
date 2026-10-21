@@ -124,9 +124,11 @@ impl Lowerer<'_> {
             .map(|&slot| (self.slots[slot].name.clone(), self.slots[slot].kind))
             .collect();
         let term = self.program.terminals.len();
-        self.program
-            .terminals
-            .push(Terminal::Fact(FactTerm { verdicts, reads }));
+        self.program.terminals.push(Terminal::Fact(FactTerm {
+            verdicts,
+            reads,
+            shared: false,
+        }));
         term
     }
 
@@ -539,7 +541,7 @@ impl Lowerer<'_> {
 
     /// The program's `Exported` terminal, one for every export.
     pub(super) fn exported_term(&mut self) -> usize {
-        let key = (usize::MAX, Vec::new());
+        let key = (super::Identity::Address(usize::MAX), Vec::new());
         if let Some(&term) = self.program.leaves.get(&key) {
             return term;
         }

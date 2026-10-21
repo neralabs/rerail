@@ -242,6 +242,11 @@ unsafe impl VTabCursor for TextCursor<'_> {
         }
         keys.sort_unstable();
         keys.dedup();
+        if let Some(census) = &batch.census {
+            for &key in &keys {
+                census.note(super::census::Kind::Regex, term_id as usize, key as u64);
+            }
+        }
         let mut verdicts = Vec::with_capacity(keys.len());
         // Keys ascend by file: each file's keys at once.
         for group in keys.chunk_by(|a, b| a >> 32 == b >> 32) {

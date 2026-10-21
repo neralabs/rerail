@@ -818,9 +818,9 @@ fn the_benchmark_policies_share_shapes_exactly() {
         .expect("the shapes");
 }
 
-fn run_shapes() {
-    use crate::code_rule_dsl::sql::{VERIFY_SHAPES, compile_each};
-    VERIFY_SHAPES.store(true, std::sync::atomic::Ordering::Relaxed);
+/// The twelve benchmark policies, compiled (`RERAIL_BENCH_POLICIES`, default
+/// `~/rerail-bench/data-layer/policies`).
+fn benchmark_policies() -> Vec<crate::code_rule_dsl::CompiledCodeRuleDsl> {
     let home = std::env::var("HOME").expect("HOME");
     let root = std::env::var("RERAIL_BENCH_POLICIES")
         .unwrap_or_else(|_| format!("{home}/rerail-bench/data-layer/policies"));
@@ -832,7 +832,7 @@ fn run_shapes() {
         .collect();
     policies.sort();
     assert_eq!(policies.len(), 12, "the twelve benchmark policies");
-    let runtimes: Vec<_> = policies
+    policies
         .iter()
         .map(|path| {
             CodeRuleDslRuntime::compile(
@@ -842,8 +842,15 @@ fn run_shapes() {
             )
             .unwrap_or_else(|error| panic!("{}: {}", path.display(), error.reason))
         })
-        .collect();
-    let grammars: Vec<_> = runtimes
+        .collect()
+}
+
+/// Every AST clause's grammar matchers of `runtimes`, with the capture each enumerates, as the
+/// workspace compiles them into one program.
+fn program_grammars(
+    runtimes: &[crate::code_rule_dsl::CompiledCodeRuleDsl],
+) -> Vec<(&crate::code_rule_dsl::matcher::GrammarMatcher, Option<&str>)> {
+    runtimes
         .iter()
         .flat_map(|compiled| &compiled.inner.clauses)
         .flat_map(|clause| match &clause.kind {
@@ -853,7 +860,14 @@ fn run_shapes() {
                 .collect(),
             _ => Vec::new(),
         })
-        .collect();
+        .collect()
+}
+
+fn run_shapes() {
+    use crate::code_rule_dsl::sql::{VERIFY_SHAPES, compile_each};
+    VERIFY_SHAPES.store(true, std::sync::atomic::Ordering::Relaxed);
+    let runtimes = benchmark_policies();
+    let grammars = program_grammars(&runtimes);
     let started = std::time::Instant::now();
     let (program, outcomes) = compile_each(&grammars);
     let (instances, shapes, verified) = program.shared();
@@ -874,4 +888,35 @@ fn run_shapes() {
         "every stage and clause gives its draft back"
     );
     assert!(shapes < instances, "clauses alike share a shape");
+}
+
+/// The terminals of every benchmark policy compiled into one program, as the workspace compiles
+/// them: per kind, how many terminals and how many canonical predicates they are
+/// (`Compiled::terminal_census`). Run by hand:
+/// `cargo test --profile loop --lib sql::tests::census::the_benchmark_policies_terminal_census -- --ignored --nocapture`.
+#[test]
+#[ignore = "reads the data-layer benchmark's policies from outside the repository"]
+fn the_benchmark_policies_terminal_census() {
+    std::thread::Builder::new()
+        .stack_size(1 << 30)
+        .spawn(|| {
+            let runtimes = benchmark_policies();
+            let grammars = program_grammars(&runtimes);
+            let (program, outcomes) = crate::code_rule_dsl::sql::compile_each(&grammars);
+            eprintln!(
+                "{} grammar matchers ({} lower)",
+                grammars.len(),
+                outcomes.iter().filter(|outcome| outcome.is_ok()).count()
+            );
+            eprintln!(
+                "{:<28} {:>9} {:>11} {:>8}",
+                "kind", "terminals", "predicates", "no form"
+            );
+            for (kind, (count, distinct, none)) in program.terminal_census() {
+                eprintln!("{kind:<28} {count:>9} {distinct:>11} {none:>8}");
+            }
+        })
+        .expect("a census thread")
+        .join()
+        .expect("the census");
 }
