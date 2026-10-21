@@ -16,6 +16,7 @@
 
 mod each;
 mod following;
+mod guards;
 mod keyed;
 mod leaves;
 mod lineage;
@@ -1029,6 +1030,11 @@ impl<'s> Emitter<'s> {
             None => String::new(),
             Some(kinds) if kinds.is_empty() => " AND 0".to_owned(),
             Some(kinds) => format!(" AND n.kind IN ({})", list(kinds)),
+        };
+        // A two-valued rule's capture-free necessary condition at the root (`guards`).
+        let kinds = match (!self.three).then(|| guards::root_guard(op, self.units)).flatten() {
+            Some(guard) => format!("{kinds} AND {guard}"),
+            None => kinds,
         };
         // Every root of the clause's kinds in the whole files, then the selected roots of those
         // kinds in the narrowed files. It reads the batch's own rows (`FILES`, `ROOTS`), which the
