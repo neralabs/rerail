@@ -1,5 +1,7 @@
 # SQL workload profiling
 
+The [performance journal](data-layer-performance-journal.md) retains baseline measurements and experiment outcomes.
+
 The relational executor can record every executed statement on its SQLite connections.
 The capture includes setup, input insertion, stage materialization, indexes, result queries, transactions, and cleanup.
 Compilation connections also appear in the capture.

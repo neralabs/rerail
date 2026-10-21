@@ -1,5 +1,7 @@
 # SQL shape experiments
 
+The [performance journal](data-layer-performance-journal.md) records these decisions and the subsequent execution baseline.
+
 The experiments isolate the four targets from the captured SQL report.
 The preferred combination reduces cold CPU by 33% and edit CPU by 42% on the pinned workload.
 The accepted changes now form the normal execution path. The engine has no experiment switches.
