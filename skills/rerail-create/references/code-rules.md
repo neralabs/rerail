@@ -19,7 +19,7 @@ example on this page is a complete draft for `rerail rules test`, and Rerail's t
       {
         "id": "<clause-name>",
         "forbid": { "regex": { "pattern": "…", "source": "file.content" } },
-        "violation": { "code": "UPPER_SNAKE", "anchor": "witness.span", "message": "One sentence: what to change in this code." }
+        "violation": { "code": "UPPER_SNAKE", "anchor": "witness.span", "message": "What to change in this code, and when to leave it." }
       }
     ]
   },
@@ -109,27 +109,25 @@ Rerail found 1 problem in your last edit:
 Fix it, or tell the user in one line why you won't.
 ```
 
-So the message only says what to change in this code. It must be right every time it fires, or say when it might not be.
+So the message tells the agent what to change and, when the change could be wrong, when not to.
 
-1. **Start with a verb saying what to change,** not what was detected: "Log through `logger.info` (src/log.ts) instead of
-   console.log."
-2. **Be specific to the finding:** use what the clause captured (`$M`, `$NAME`) where it helps, and never a metavariable
-   the clause doesn't define.
-3. **Name the replacement,** so the agent can act without reading anything else. Prefer pointing to the right helper over
-   "remove" or "delete": a steer to delete is the most common harmful steer.
-4. **Be right for every match** of the clause; give each clause its own message.
-5. **Agree with the clause's `fix`,** when it has one.
-6. **Give a reason only when it changes the decision,** where the agent might otherwise reasonably decline. Say when to
-   leave it alone, if a legitimate exception exists that the matcher cannot see: "…; keep it if this call can fail in
-   normal operation."
-7. **No tool or Rerail vocabulary:** no linter names, rule codes or versions, and no "steer", "rule pack" or "mode".
-8. **Nothing the block adds:** no location, no rule id, no "Rerail", no "fix it or explain".
-9. **A calibrated tone:** no hedging ("Consider maybe…"), no shouting (NEVER, MUST, ALWAYS).
-10. **One action.**
-11. **It stands alone** as one line in a list of findings.
-12. **One sentence,** ending with a period, at most 140 characters, counting metavariables as written.
-13. **Not the description again:** the description is the intent, for a person; the message is the action for this
-    instance.
+1. **Name the change:** a replacement or what to remove. A fact or a ban alone isn't advice. Where a helper exists,
+   point to it rather than saying "remove" or "delete": a steer to delete is the most common harmful steer.
+2. **Say when to leave it alone** if following it would be wrong for some code it matches, or what the change trades
+   off.
+3. **State a risk only as far as the rule can confirm it,** without softening ("consider") or shouting (NEVER, MUST).
+4. **Be right for every match you don't exempt,** agree with the clause's `fix`, and name captures (`$NAME`) where that
+   shows which code you mean.
+5. **Leave out the rule id, location, "Rerail" and "fix it or explain",** and name no linter, rule code, tool version
+   or matcher term outside quoted code.
+6. **At most 200 characters for each text it can show** (metavariables as written), in any number of sentences.
+7. **Give matches that need different advice different messages** (`x == None` and `x != None`).
+
+| Instead of | Write |
+|---|---|
+| `Bandit B113 (request-without-timeout)` | `Pass a finite timeout to this HTTP call; without one a slow server can hang the program.` |
+| `zip() without an explicit strict= parameter` | ``Pass `strict=` explicitly: `strict=True` when lengths must match, `strict=False` when truncation is intended.`` |
+| `` Comparison to `None` should be `cond is None` ``, one clause for `==` and `!=` | One clause each: ``Use `is None` instead of `== None` for this comparison.`` and ``Use `is not None` instead of `!= None` for this comparison.`` |
 
 Also:
 
