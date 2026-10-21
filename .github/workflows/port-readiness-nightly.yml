@@ -2,8 +2,9 @@ name: Port readiness (nightly)
 
 # Once a day, and on demand: re-records every gated tool-pack's upstream answers and fails when a committed recording
 # no longer matches the pinned upstream (port-readiness:record --check), then judges every rule again and saves the fresh
-# results for pull requests to read. Pull requests judge rules against the committed recordings (port-readiness.yml); this
-# job keeps them honest.
+# results for pull requests to read, and fails when an upstream tool has published a stable release newer than the one
+# its tool-pack pins (port-readiness:upstream-releases). Pull requests judge rules against the committed recordings
+# (port-readiness.yml); this job keeps them honest.
 
 on:
   schedule:
@@ -94,12 +95,11 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # The drift check runs the recorder as port-readiness-record.yml does, with --check: upstream on its own tests and on
-  # the corpus files the goldens name, never the rest of the corpus. It reports when upstream moved and uploads nothing,
-  # so the night tells main without quietly re-recording main behind the maintainers. It is its own job rather than a
-  # call to that workflow because a called workflow's jobs may not ask for more than the caller grants, and the
-  # recorder's authorize and publish jobs ask for write: GitHub would refuse the whole nightly run at startup, and
-  # granting write here would hand the scheduled run a write token while upstream linters run.
+  # The drift check runs the recorder with --check: upstream on its own tests and on the corpus files the goldens name,
+  # never the rest of the corpus. It reports when upstream moved and writes nothing, so the night tells main without
+  # quietly re-recording main behind the maintainers. Read-only, and saving no cache: the recorder runs upstream's code
+  # and unlocked Composer packages, and a save after that would hand main's scope whatever that code wrote. id-token
+  # reads the packs' test data from S3: --check compares upstream's case sources with them.
   record-check:
     name: Recordings match upstream (${{ matrix.pack }} · ${{ matrix.tool }})
     needs: build
@@ -107,13 +107,12 @@ jobs:
     if: github.repository_owner == 'neralabs'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
-    # attestations: read is for the fetch, which checks each recording's attestation (recording/fetch.ts).
     permissions:
       contents: read
-      attestations: read
+      id-token: write
     strategy:
       fail-fast: false
-      # port-readiness-record.yml's matrix: every gated tool-pack.
+      # Every gated tool-pack.
       matrix:
         include:
           - pack: python
@@ -155,6 +154,8 @@ jobs:
 
       - uses: ./.github/actions/lfs
 
+      - uses: ./.github/actions/pack-fixtures
+
       - uses: ./.github/actions/node-deps
 
       - name: Build the package
@@ -168,31 +169,31 @@ jobs:
         if: matrix.pack == 'php' || matrix.pack == 'blade'
         uses: ./.github/actions/php
 
-      # The recorder's own cache, restored so a night reuses what port-readiness-record.yml saved. The paths are
-      # port-readiness-record.yml's exactly, which GitHub requires for one to restore what the other saved. `recordings/*`
-      # rather than `recordings`, so the negation drops upload/: the cache archives each path the glob lists, recursively.
-      # Restored only, never saved: what this job would add to it is what the recorder installed and ran, upstream's code
-      # and unlocked Composer packages among it, and a save after that would hand main's scope whatever that code wrote.
-      - name: Restore the upstream runtimes, checkouts, corpus and recordings
-        uses: actions/cache/restore@v6
-        with:
-          path: |
-            .rerail/port-readiness/runtimes
-            .rerail/port-readiness/upstream
-            .rerail/port-readiness/corpus
-            .rerail/port-readiness/recordings/*
-            !.rerail/port-readiness/recordings/upload
-          key: port-readiness-record-${{ matrix.pack }}-${{ matrix.tool }}-${{ hashFiles('conformance/recorders/port-readiness/runtimes/**', format('packs/{0}/upstream/{1}/gates.yaml', matrix.pack, matrix.tool), 'conformance/port-readiness/corpus-tasks.json') }}
-          restore-keys: |
-            port-readiness-record-${{ matrix.pack }}-${{ matrix.tool }}-
-
-      - name: Fetch the recording the manifest names
-        continue-on-error: true
+      # The recordings the lock names, from the cache the gate legs save into (port-readiness.yml, the same key): when
+      # a fresh corpus.json differs from the locked one, --check compares the two, and without it says it could not.
+      - id: lock
+        name: Read the recordings the lock names
         env:
           PACK: ${{ matrix.pack }}
           TOOL: ${{ matrix.tool }}
-          GITHUB_TOKEN: ${{ github.token }}
-        run: npm run port-readiness -- fetch --pack "$PACK" --tool "$TOOL"
+        run: |
+          set -euo pipefail
+          lock="packs/$PACK/upstream/$TOOL/recording.lock"
+          recording="$(jq -r '.files["recording.json"].sha256' "$lock")"
+          corpus="$(jq -r '.files["corpus.json"].sha256' "$lock")"
+          {
+            echo "key=port-readiness-recording-$PACK-$TOOL-$recording-$corpus"
+            echo "paths<<EOF"
+            echo ".rerail/port-readiness/recordings/$recording.json"
+            echo ".rerail/port-readiness/recordings/$corpus.json"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Restore the recordings the lock names
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ steps.lock.outputs.paths }}
+          key: ${{ steps.lock.outputs.key }}
 
       - name: Report drift against the committed manifest
         env:
@@ -206,12 +207,34 @@ jobs:
     # Forks that turn scheduled workflows back on skip it; change the owner if the repository moves.
     if: github.repository_owner == 'neralabs'
     # The called report job asks for these to post on pull requests; a scheduled run posts nothing. The called gates
-    # job reads the recordings' attestations.
+    # job reads the packs' test data from S3.
     permissions:
       contents: read
       issues: write
       pull-requests: write
-      attestations: read
+      id-token: write
     uses: ./.github/workflows/port-readiness.yml
     with:
       no-cache: true
+
+  # Red when an upstream tool has published a stable release newer than its tool-pack's pin: gates.yaml's version and
+  # the runtime's pin under conformance/recorders/port-readiness/runtimes/, against npm, PyPI, Packagist and the Rust
+  # channel (Clippy, pinned by rust-toolchain.toml). The job summary lists every tool-pack. Bumping a pin means
+  # recording the tool-pack again (docs/port-readiness.md, "Upstream releases").
+  upstream-releases:
+    name: Upstream releases are not newer than the pins
+    # Main's pins; forks that turn scheduled workflows back on skip it.
+    if: github.repository_owner == 'neralabs' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/node-deps
+
+      - name: Check the upstream releases
+        run: npm run port-readiness:upstream-releases

@@ -22,9 +22,9 @@ conformance/recorders/port-readiness/runtimes/*/package-lock.json
 conformance/recorders/port-readiness/runtimes/*/uv.lock
 conformance/recorders/port-readiness/runtimes/*/composer.lock
 
-# The port readiness gates' recordings are not in the tree: each tool-pack commits a recording.lock naming the one its rules
-# are judged against, and the bytes live in a GitHub release (conformance/port-readiness/recording/store.ts). The recorder and
-# `npm run port-readiness -- fetch` put them in .rerail/port-readiness/recordings/; committing one again would put 71 MB of generated
+# The port readiness gates' recordings are not in the tree: each tool-pack commits a recording.lock naming, by sha256, the one
+# its rules are judged against (conformance/port-readiness/recording/store.ts). The recorder puts them in
+# .rerail/port-readiness/recordings/, and CI keeps them in its Actions cache; committing one again would put 71 MB of generated
 # JSON back in the history, where it stays forever.
 packs/*/upstream/*/recording.json
 packs/*/upstream/*/corpus.json

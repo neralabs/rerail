@@ -1,0 +1,345 @@
+/**
+ * `npm run port-readiness:upstream-releases`: whether every upstream a tool-pack ports is still pinned at its latest
+ * stable release. The nightly runs it on main, so a release upstream publishes after the pin shows up as a red job
+ * rather than as rules quietly ported from an old version.
+ *
+ * Each gated tool-pack (`packs/<pack>/upstream/<tool>/gates.yaml`) pins its upstream twice: `upstream.version` in
+ * gates.yaml, and the package its runtime installs (`conformance/recorders/port-readiness/runtimes/<upstream.runtime>/`:
+ * package.json, pyproject.toml or composer.json). The two must agree, and the version must be the latest stable release
+ * the package's registry (npm, PyPI or Packagist) publishes. The Rust pack's Clippy has no gates.yaml; its pin is the
+ * Rust toolchain its generators refuse any other than (`packs/rust/upstream/common.py`), held to the latest stable Rust.
+ *
+ * Exit 1 when a tool-pack is behind upstream, its pins disagree, or its registry could not be read (a check that cannot
+ * see upstream's releases must not pass), 2 on an exception. With GITHUB_STEP_SUMMARY set, the table is appended to it
+ * too; under GitHub Actions each failing tool-pack is also an `::error::` annotation.
+ */
+import { appendFileSync, readFileSync, realpathSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { parse as parseToml } from "smol-toml";
+import { z } from "zod";
+
+import { readGatesManifest, type GatesManifest } from "./manifest.js";
+import { RUNTIMES_DIRECTORY } from "./recorded-adapter.js";
+import { gatedToolPacks } from "./run.js";
+
+/** The registries a gated tool-pack's runtime installs its upstream from. */
+export type PackageEcosystem = "npm" | "pypi" | "packagist";
+export type Ecosystem = PackageEcosystem | "rust";
+
+/** How each ecosystem is named in the table. */
+const ECOSYSTEM_NAMES: Record<Ecosystem, string> = { npm: "npm", pypi: "PyPI", packagist: "Packagist", rust: "Rust" };
+
+/** What one tool-pack pins of its upstream. */
+export interface UpstreamPin {
+  /** `<pack>/<tool>`. */
+  toolPack: string;
+  ecosystem: Ecosystem;
+  /** The package as its registry names it; `rust` for the toolchain Clippy ships with. */
+  package: string;
+  /** The version the tool-pack's manifest pins (gates.yaml `upstream.version`, or common.py's toolchain). */
+  version: string;
+  /** Where the other pins of the same upstream say something else, or cannot be read; empty when they agree. */
+  disagreements: string[];
+  /** What to do once upstream has a newer release. */
+  bump: string;
+}
+
+/**
+ * The registry package of each non-ESLint adapter's upstream. gates.yaml names upstream by its repository, which is not
+ * always the name its releases are published under, so the adapter (one per upstream linter) decides. The ESLint
+ * adapter serves several upstreams; each names its package in `eslint.release.installed` (eslintPackage).
+ */
+const ADAPTER_PACKAGES: Record<Exclude<GatesManifest["adapter"], "eslint">, { ecosystem: PackageEcosystem; package: string }> = {
+  ruff: { ecosystem: "pypi", package: "ruff" },
+  bandit: { ecosystem: "pypi", package: "bandit" },
+  // PHP_CodeSniffer moved to the PHPCSStandards organisation and still publishes under its old name.
+  phpcs: { ecosystem: "packagist", package: "squizlabs/php_codesniffer" },
+  // phpstan/phpstan-src is the source; phpstan/phpstan is the release Composer installs, tagged with the same versions.
+  phpstan: { ecosystem: "packagist", package: "phpstan/phpstan" },
+  psalm: { ecosystem: "packagist", package: "vimeo/psalm" },
+  // tighten/tlint publishes as tightenco/tlint.
+  tlint: { ecosystem: "packagist", package: "tightenco/tlint" },
+  // Its runtime is the Blade toolkit (`blade`), which installs it beside laravel/framework.
+  "blade-parser": { ecosystem: "packagist", package: "stillat/blade-parser" },
+  // TomasVotruba/bladestan publishes as tomasvotruba/bladestan (Packagist names are lower case).
+  bladestan: { ecosystem: "packagist", package: "tomasvotruba/bladestan" },
+};
+
+/**
+ * The npm package an ESLint-family upstream's release is installed as: the package part of `eslint.release.installed`
+ * (`@next/eslint-plugin-next/dist` is @next/eslint-plugin-next, `eslint/lib` is eslint itself).
+ */
+export function eslintPackage(installed: string): string {
+  const parts = installed.split("/");
+  return (installed.startsWith("@") ? parts.slice(0, 2) : parts.slice(0, 1)).join("/");
+}
+
+/** A requirement `name==version` in a pyproject.toml's `project.dependencies`, extras allowed. */
+const PYTHON_PIN = /^([A-Za-z0-9._-]+)(?:\[[^\]]*\])?\s*==\s*(\S+)$/u;
+
+/** The parts of a runtime's pin files this check reads; the recorder holds the rest to its own rules (runtimes.ts). */
+const npmManifestSchema = z.object({ dependencies: z.record(z.string(), z.string()).default({}) });
+const composerManifestSchema = z.object({ require: z.record(z.string(), z.string()).default({}) });
+const pyprojectSchema = z.object({ project: z.object({ dependencies: z.array(z.string()).default([]) }) });
+
+/** The version a runtime's pin file pins `name` at, or why it cannot say. */
+export function runtimePin(ecosystem: PackageEcosystem, file: string, text: string, name: string): { version: string } | { problem: string } {
+  if (ecosystem === "npm") {
+    const version = npmManifestSchema.parse(JSON.parse(text)).dependencies[name];
+    return version === undefined ? { problem: `${file} has no dependency ${name}` } : { version };
+  }
+  if (ecosystem === "packagist") {
+    const entry = Object.entries(composerManifestSchema.parse(JSON.parse(text)).require).find(([key]) => key.toLowerCase() === name);
+    return entry === undefined ? { problem: `${file} does not require ${name}` } : { version: entry[1].replace(/^v/u, "") };
+  }
+  // PEP 503's normal form of a name, which is how two spellings of one Python package compare.
+  const normal = (value: string): string => value.toLowerCase().replace(/[-_.]+/gu, "-");
+  for (const dependency of pyprojectSchema.parse(parseToml(text)).project.dependencies) {
+    const match = PYTHON_PIN.exec(dependency.trim());
+    if (match !== null && normal(match[1]!) === normal(name)) return { version: match[2]! };
+  }
+  return { problem: `${file} pins no ${name}==<version>` };
+}
+
+/** The pin file of each ecosystem's runtimes. */
+const PIN_FILES: Record<PackageEcosystem, string> = { npm: "package.json", pypi: "pyproject.toml", packagist: "composer.json" };
+
+/** A gated tool-pack's pins: gates.yaml's `upstream.version` and its runtime's pin of the same package. */
+export function gatedPin(root: string, pack: string, tool: string): UpstreamPin {
+  const manifest = readGatesManifest(root, pack, tool);
+  const { ecosystem, package: name }: { ecosystem: PackageEcosystem; package: string } = manifest.adapter === "eslint" ? { ecosystem: "npm", package: eslintPackage(manifest.eslint!.release.installed) } : ADAPTER_PACKAGES[manifest.adapter];
+  const file = `${RUNTIMES_DIRECTORY}/${manifest.upstream.runtime}/${PIN_FILES[ecosystem]}`;
+  let pinned: { version: string } | { problem: string };
+  try {
+    pinned = runtimePin(ecosystem, file, readFileSync(join(root, file), "utf8"), name);
+  } catch (error) {
+    pinned = { problem: `${file} cannot be read: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  const version = manifest.upstream.version;
+  const disagreements = "problem" in pinned ? [pinned.problem] : pinned.version === version ? [] : [`gates.yaml upstream.version is ${version} but ${file} pins ${name} ${pinned.version}`];
+  return {
+    toolPack: manifest.id,
+    ecosystem,
+    package: name,
+    version,
+    disagreements,
+    bump: `move gates.yaml's upstream (version, commit) and the runtime's pins to it, then npm run port-readiness:record -- --pack ${pack} --tool ${tool}`,
+  };
+}
+
+/**
+ * Clippy's pin. It ships with the Rust toolchain, so the release to follow is Rust's: `TOOLCHAIN` in
+ * packs/rust/upstream/common.py, which the pack's generators refuse any other toolchain than. The repository's own
+ * rust-toolchain.toml pins the toolchain Rerail is built with, not the Clippy the pack ports, so it is not read here.
+ * conformance.json's `tools[clippy].version` names the same release as Clippy's own version, 0.1.<minor> for Rust
+ * 1.<minor>.<patch>, and must agree.
+ */
+export function clippyPin(root: string): UpstreamPin {
+  const common = "packs/rust/upstream/common.py";
+  const conformance = "packs/rust/conformance.json";
+  const version = /^TOOLCHAIN = "([^"]+)"$/mu.exec(readFileSync(join(root, common), "utf8"))?.[1];
+  if (version === undefined) throw new Error(`${common} sets no TOOLCHAIN = "<version>"`);
+  const conformanceSchema = z.object({ tools: z.array(z.object({ name: z.string(), version: z.string() })) });
+  const clippy = conformanceSchema.parse(JSON.parse(readFileSync(join(root, conformance), "utf8"))).tools.find((entry) => entry.name === "clippy")?.version;
+  const expected = `0.1.${version.split(".")[1] ?? ""}`;
+  return {
+    toolPack: "rust/clippy",
+    ecosystem: "rust",
+    package: "rust",
+    version,
+    disagreements: clippy === expected ? [] : [`${common} pins Rust ${version}, whose Clippy is ${expected}, but ${conformance} tools[clippy].version is ${clippy ?? "missing"}`],
+    bump: `move ${common}'s pins and ${conformance}'s tools[clippy].version to it, then run packs/rust/upstream/clippy/generate.py`,
+  };
+}
+
+/** Every pin this check follows: the gated tool-packs, in pack and tool order, then Clippy. */
+export function upstreamPins(root: string): UpstreamPin[] {
+  return [...gatedToolPacks(root).map(({ pack, tool }) => gatedPin(root, pack, tool)), clippyPin(root)];
+}
+
+/** A version's numeric components (`v9.7.0` is 9, 7, 0), or null when it is not a plain release (`4.0.0-RC1`, `0.17.0rc1`, `dev-main`). */
+export function releaseParts(version: string): number[] | null {
+  const match = /^v?(\d+(?:\.\d+)*)$/u.exec(version.trim());
+  return match === null ? null : match[1]!.split(".").map(Number);
+}
+
+/** Two releases compared component by component, a missing component counting as 0 (`2.1` is `2.1.0`). */
+export function compareReleases(a: number[], b: number[]): number {
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    const difference = (a[index] ?? 0) - (b[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+/** The highest of `versions` that is a plain release; null when none is. */
+function highestRelease(versions: Iterable<string>): string | null {
+  let best: { version: string; parts: number[] } | null = null;
+  for (const version of versions) {
+    const parts = releaseParts(version);
+    if (parts !== null && (best === null || compareReleases(parts, best.parts) > 0)) best = { version: version.replace(/^v/u, ""), parts };
+  }
+  return best?.version ?? null;
+}
+
+/** The parts of each registry's answer the check reads. */
+const npmPackumentSchema = z.object({ "dist-tags": z.object({ latest: z.string() }) });
+const pypiProjectSchema = z.object({ releases: z.record(z.string(), z.array(z.object({ yanked: z.boolean().default(false) }))) });
+const packagistSchema = z.object({ packages: z.record(z.string(), z.array(z.object({ version: z.string() }))) });
+const rustChannelSchema = z.object({ pkg: z.object({ rust: z.object({ version: z.string() }) }) });
+
+/** npm's latest release: the `latest` dist-tag, which `npm install <package>` installs. */
+export function latestNpm(body: string): string {
+  const latest = npmPackumentSchema.parse(JSON.parse(body))["dist-tags"].latest;
+  if (releaseParts(latest) === null) throw new Error(`the latest dist-tag is ${latest}, not a release`);
+  return latest;
+}
+
+/**
+ * PyPI's latest stable release: the highest final release (no `a`, `b`, `rc`, `.dev` or `.post` part) with a file that is
+ * not yanked. `info.version` is not used, since it can name a pre-release or a release whose files were all yanked.
+ */
+export function latestPypi(body: string): string {
+  const { releases } = pypiProjectSchema.parse(JSON.parse(body));
+  const latest = highestRelease(Object.entries(releases).filter(([, files]) => files.some((file) => !file.yanked)).map(([version]) => version));
+  if (latest === null) throw new Error("no final release with a file that is not yanked");
+  return latest;
+}
+
+/**
+ * Packagist's latest stable release of `name`, from its Composer v2 metadata (`p2/<vendor>/<package>.json`, which holds
+ * tagged versions only; branches are in `~dev.json`): the highest version that is a plain release, so `-alpha`, `-beta`,
+ * `-RC` and `dev-` versions are skipped. Each entry of the minified list repeats `version`.
+ */
+export function latestPackagist(body: string, name: string): string {
+  const latest = highestRelease((packagistSchema.parse(JSON.parse(body)).packages[name] ?? []).map((entry) => entry.version));
+  if (latest === null) throw new Error(`no stable release of ${name}`);
+  return latest;
+}
+
+/**
+ * Rust's latest stable release, from the stable channel's manifest: `[pkg.rust] version = "1.99.1 (58cf8f9c3 2026-10-13)"`.
+ * The manifest is what rustup installs as `stable`, so a release is in it exactly when it can be pinned; GitHub's
+ * releases of rust-lang/rust are marked latest by hand and are read through an API that limits callers without a token.
+ */
+export function latestRust(body: string): string {
+  const version = rustChannelSchema.parse(parseToml(body)).pkg.rust.version;
+  const release = version.split(" ")[0]!;
+  if (releaseParts(release) === null) throw new Error(`[pkg.rust] version is ${version}, not a release`);
+  return release;
+}
+
+/** Where each ecosystem publishes a package's releases, the media type to ask for, and how to read the answer. */
+export function registry(ecosystem: Ecosystem, name: string): { url: string; accept: string; latest: (body: string) => string } {
+  switch (ecosystem) {
+    case "npm":
+      // The abbreviated document carries the dist-tags without every version's full metadata.
+      return { url: `https://registry.npmjs.org/${name.replace("/", "%2f")}`, accept: "application/vnd.npm.install-v1+json", latest: latestNpm };
+    case "pypi":
+      return { url: `https://pypi.org/pypi/${name}/json`, accept: "application/json", latest: latestPypi };
+    case "packagist":
+      return { url: `https://repo.packagist.org/p2/${name}.json`, accept: "application/json", latest: (body) => latestPackagist(body, name) };
+    case "rust":
+      return { url: "https://static.rust-lang.org/dist/channel-rust-stable.toml", accept: "application/toml", latest: latestRust };
+  }
+}
+
+/** The part of `fetch` the check uses; tests pass recorded answers instead of the network. */
+export type Fetch = (url: string, init: { headers: Record<string, string>; signal?: AbortSignal }) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>;
+
+/** How long one registry request may take before the check fails it. */
+const REQUEST_TIMEOUT_MS = 60_000;
+
+export type ReleaseStatus = "current" | "behind" | "pins disagree" | "registry error";
+
+/** One tool-pack's verdict: its pin, upstream's latest stable release (null when the registry could not be read), and what is wrong. */
+export interface ReleaseCheck extends UpstreamPin {
+  latest: string | null;
+  statuses: ReleaseStatus[];
+  problems: string[];
+}
+
+/** Every tool-pack's pin against its registry's latest stable release, in `pins` order. */
+export async function checkUpstreamReleases(pins: UpstreamPin[], fetch: Fetch): Promise<ReleaseCheck[]> {
+  return await Promise.all(pins.map(async (pin): Promise<ReleaseCheck> => {
+    const source = registry(pin.ecosystem, pin.package);
+    const statuses: ReleaseStatus[] = [];
+    const problems: string[] = [];
+    if (pin.disagreements.length > 0) {
+      statuses.push("pins disagree");
+      problems.push(...pin.disagreements);
+    }
+    let latest: string | null = null;
+    try {
+      const response = await fetch(source.url, { headers: { accept: source.accept }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      latest = source.latest(await response.text());
+    } catch (error) {
+      statuses.push("registry error");
+      problems.push(`${source.url}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    const pinned = releaseParts(pin.version);
+    if (pinned === null) {
+      statuses.push("pins disagree");
+      problems.push(`the pin ${pin.version} is not a release version`);
+    } else if (latest !== null && compareReleases(releaseParts(latest)!, pinned) > 0) {
+      statuses.push("behind");
+      problems.push(`${pin.package} ${pin.version} is pinned and ${ECOSYSTEM_NAMES[pin.ecosystem]}'s latest stable release is ${latest}: ${pin.bump}`);
+    }
+    return { ...pin, latest, statuses: statuses.length === 0 ? ["current"] : [...new Set(statuses)], problems };
+  }));
+}
+
+/** The checks as Markdown: one table row per tool-pack, then each failing tool-pack's problems. */
+export function renderMarkdown(checks: ReleaseCheck[]): string {
+  const failing = checks.filter((check) => check.problems.length > 0);
+  const lines = [
+    "## Upstream releases",
+    "",
+    "| Tool-pack | Ecosystem | Package | Pinned | Latest stable | Status |",
+    "| --- | --- | --- | --- | --- | --- |",
+    ...checks.map((check) => `| \`${check.toolPack}\` | ${ECOSYSTEM_NAMES[check.ecosystem]} | \`${check.package}\` | ${check.version} | ${check.latest ?? "unknown"} | ${check.statuses.join(", ")} |`),
+    "",
+    failing.length === 0 ? `Every one of the ${checks.length} upstreams is pinned at its latest stable release.` : `${failing.length} of ${checks.length} upstreams need attention:`,
+    ...failing.flatMap((check) => check.problems.map((problem) => `- \`${check.toolPack}\`: ${problem}`)),
+  ];
+  return `${lines.join("\n")}\n`;
+}
+
+/** Run the check over this checkout and report it; the exit code. */
+export async function main(root: string, fetch: Fetch, env: NodeJS.ProcessEnv = process.env): Promise<number> {
+  const checks = await checkUpstreamReleases(upstreamPins(root), fetch);
+  const markdown = renderMarkdown(checks);
+  process.stdout.write(markdown);
+  const step = env.GITHUB_STEP_SUMMARY;
+  if (step !== undefined && step !== "") appendFileSync(step, markdown);
+  const failing = checks.filter((check) => check.problems.length > 0);
+  if (env.GITHUB_ACTIONS === "true") {
+    // A workflow command's data escapes `%`, CR and LF.
+    for (const check of failing) process.stdout.write(`::error title=Upstream release (${check.toolPack})::${`${check.toolPack} ${check.statuses.join(", ")}: ${check.problems.join("; ")}`.replace(/%/gu, "%25").replace(/\r/gu, "%0D").replace(/\n/gu, "%0A")}\n`);
+  }
+  return failing.length === 0 ? 0 : 1;
+}
+
+// Imported by its tests, run as a script by the nightly: only the second checks.
+const invoked = (() => {
+  try {
+    return process.argv[1] !== undefined && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+})();
+if (invoked) {
+  if (process.argv.length > 2) {
+    process.stderr.write("usage: npm run port-readiness:upstream-releases\n");
+    process.exitCode = 2;
+  } else {
+    main(resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."), globalThis.fetch).then((code) => {
+      process.exitCode = code;
+    }, (error: unknown) => {
+      process.stderr.write(`conformance/port-readiness/upstream-releases.ts: ${error instanceof Error ? error.message : String(error)}\n`);
+      process.exitCode = 2;
+    });
+  }
+}

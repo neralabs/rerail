@@ -16,7 +16,9 @@ concurrency:
 # Real-session jobs call hosted models with repository secrets, and the installed-packs job reads the restricted
 # rule packs from npm with one. GitHub withholds secrets from fork and Dependabot pull requests, so those jobs run on
 # pushes and same-repository pull requests only; there a missing secret or variable is a configuration error and
-# fails the job.
+# fails the job. The jobs that read the packs' test data (the Rust tests, unit tests, conformance harnesses and port
+# readiness) are guarded the same way: the data is in S3, not git (.github/actions/pack-fixtures), and they read it
+# under an OIDC token, which GitHub does not give those pull requests either.
 #
 # The Version packs pull request (changeset-release/main, from version-packs.yml) changes only pack versions,
 # changelogs and package-lock.json, and is rewritten on every push to main. It runs the licence and lint jobs only:
@@ -79,6 +81,10 @@ jobs:
   # read conformance/, fixtures/, the packs' rules and the language registry (languages/ and its
   # generated TS module); package.json holds the cargo commands, .gitattributes the LFS objects the
   # engine embeds. Pushes to main always run the Rust jobs.
+  #
+  # The filters see only the git diff. The packs' test data is in S3 (CONTRIBUTING.md), so a change to it alone would
+  # trigger nothing; none is made alone: a pull request checks its data in, and the maintainer who moves it to S3
+  # before merging deletes it from git in the same pull request, so packs/** still matches.
   #
   # Port readiness is filtered on pushes to main as well, against the push's previous head (main takes squash merges
   # only and no force pushes, so a push is one commit), but only when CI finished green on that head. Otherwise (it
@@ -144,6 +150,8 @@ jobs:
               - '.github/workflows/ci.yml'
               - '.gitattributes'
               - '.github/actions/lfs/**'
+              - '.github/actions/pack-fixtures/**'
+              - 'scripts/s3/**'
             # A rule's verdict depends on its document, the pack's recordings, the gate code and the engine.
             port-readiness:
               - 'packs/**'
@@ -161,13 +169,25 @@ jobs:
               - '.github/actions/**'
 
   # rustfmt and clippy, and the engine's own tests, side by side; nothing downstream waits for them.
-  # Each keeps its own cache: clippy's check metadata and the test binaries share no artifacts.
+  # Each keeps its own cache: clippy's check metadata and the test binaries share no artifacts. The tests read the
+  # packs' test data (pack-fixtures, below), so the job runs where an OIDC token is given (the note at the top).
   rust:
     name: Rust engine (${{ matrix.name }})
     needs: changes
-    if: needs.changes.outputs.rust != 'false' && github.head_ref != 'changeset-release/main'
+    if: >-
+      ${{
+        needs.changes.outputs.rust != 'false' && github.head_ref != 'changeset-release/main' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # id-token: the tests leg reads the packs' test data from S3.
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -191,6 +211,10 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/lfs
+
+      # The clippy leg only compiles the tests; the tests leg runs them, and three read pack test data.
+      - if: matrix.task == 'test'
+        uses: ./.github/actions/pack-fixtures
 
       # rust-toolchain.toml is the single pin: rustup reads it whenever cargo runs in this repository,
       # so the toolchain installed here must be the same channel.
@@ -299,24 +323,40 @@ jobs:
   port-readiness:
     name: Port readiness
     needs: [changes, build]
-    if: needs.changes.outputs.port-readiness != 'false'
-    # The report job posts the results as a pull request comment; the gates read the recordings' attestations.
+    if: >-
+      ${{
+        needs.changes.outputs.port-readiness != 'false' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
+    # The report job posts the results as a pull request comment; the gates read the packs' test data from S3.
     permissions:
       contents: read
       issues: write
       pull-requests: write
-      attestations: read
+      id-token: write
     uses: ./.github/workflows/port-readiness.yml
     with:
       base: ${{ github.event.pull_request.base.sha || github.event.before }}
       # A pull request judges only the tool-packs of the packs it touches; a push to main judges every one.
       select: ${{ github.event_name == 'pull_request' }}
 
+  # Both shards read the packs' test data (packs.test.ts, complexity-rules.test.ts and the native tests share them).
   unit:
     name: Unit tests (${{ matrix.shard }}/2)
     needs: build
+    if: >-
+      ${{
+        github.event_name != 'pull_request' ||
+        (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+      }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -329,6 +369,8 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/lfs
+
+      - uses: ./.github/actions/pack-fixtures
 
       - uses: ./.github/actions/node-deps
         with:
@@ -405,7 +447,9 @@ jobs:
 
       # The file names the variable, not the token: npm reads NODE_AUTH_TOKEN from the step that runs it.
       - name: Authenticate npm to read the packs
-        run: printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
+        run: |
+          # shellcheck disable=SC2016 # npm expands ${NODE_AUTH_TOKEN} itself; the file must not hold the token.
+          printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
 
       - name: Rule packs from npm
         env:
@@ -413,11 +457,20 @@ jobs:
           RERAIL_INSTALLED_PACKS_NPM: "1"
         run: npx vitest run integration/installed-packs.test.ts
 
+  # The conformance harnesses score every pack's ported rules on its test data, read from S3.
   tools:
     name: Scripts, reference examples, conformance, and rule playground
     needs: build
+    if: >-
+      ${{
+        github.event_name != 'pull_request' ||
+        (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+      }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -426,6 +479,8 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/lfs
+
+      - uses: ./.github/actions/pack-fixtures
 
       - uses: ./.github/actions/node-deps
         with:

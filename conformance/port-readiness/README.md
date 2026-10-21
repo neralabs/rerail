@@ -85,6 +85,19 @@ evaluated. An entry that is not JSON, was written by another cache layout (`CACH
 or names another document is a miss. In CI every run saves its results, pull requests included; GitHub scopes a pull
 request's cache to that pull request, so main reads only what main's pushes and the nightly saved.
 
+## Upstream releases
+
+```sh
+npm run port-readiness:upstream-releases   # every pin against its upstream's latest stable release
+```
+
+`upstream-releases.ts` reads each gated tool-pack's pin of its upstream twice, `upstream.version` in `gates.yaml` and the
+package its runtime installs (`runtimes/<upstream.runtime>/`: `package.json`, `pyproject.toml` or `composer.json`), and
+the Rust pack's Clippy pin (`TOOLCHAIN` in `packs/rust/upstream/common.py`, with `conformance.json`'s Clippy version). It
+asks npm, PyPI, Packagist and Rust's stable channel manifest for each package's latest stable release, prints a table,
+and exits 1 when a pin is behind it, the pins disagree, or a registry cannot be read. `port-readiness-nightly.yml` runs
+it on main and writes the table to the job summary (docs/port-readiness.md, "Upstream releases").
+
 ## Data
 
 ```
@@ -93,14 +106,14 @@ packs/<pack>/upstream/<tool>/recording.lock     which recording this commit is j
 packs/<pack>/upstream/<tool>/goldens.tsv        goldens of matches-upstream-tests, by document id, imported from NRV
 packs/<pack>/upstream/<tool>/fixtures/          the case sources the recording names: pack test data, in S3 (npm run fixtures:pull)
 
-.rerail/port-readiness/recordings/<sha256>.json          the recordings themselves, fetched or recorded, cached by digest
+.rerail/port-readiness/recordings/<sha256>.json          the recordings themselves, recorded (or restored from CI's cache), by digest
   recording.json                                upstream's recorded answers (recording/schema.ts, rerail.port-readiness-recording/v2)
   corpus.json                                   upstream's findings on the corpus (rerail.port-readiness-corpus/v2)
 ```
 
-The recordings are not in the tree: the lock names them and a GitHub release holds them, so `npm run port-readiness -- fetch
---pack <id> --tool <tool>` must have run (or `port-readiness:record`, which writes them straight into the cache). A download
-whose sha256 is not the one the lock names fails the run.
+The recordings are not in the tree: the lock names them by sha256, so `port-readiness:record` must have run, which writes
+them into the cache; in CI, `port-readiness.yml` restores them from the Actions cache, keyed by the lock's digests, and a
+leg that misses records them. A cached file whose sha256 is not the one the lock names reads as missing.
 
 `npm run port-readiness:record -- --pack <id> --tool <tool>` (conformance/recorders/port-readiness/) writes the recordings. A tool-pack
 check that fails fails every rule of the tool-pack: a shipped rule blocks, and a candidate is not ready to promote. The

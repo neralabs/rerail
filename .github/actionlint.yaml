@@ -1,0 +1,8 @@
+# actionlint's built-in metadata for actions/create-github-app-token@v3 predates `client-id`, which v3's action.yml
+# declares (and which replaces the deprecated `app-id`), so it reports a correct call as wrong. Only those two
+# messages, only in the one workflow that calls it.
+paths:
+  .github/workflows/version-packs.yml:
+    ignore:
+      - 'missing input "app-id" which is required by action "actions/create-github-app-token@v3"'
+      - 'input "client-id" is not defined in action "actions/create-github-app-token@v3"'

@@ -20,7 +20,7 @@ import {
 } from "../../port-readiness/recording/schema.js";
 import { diffRecordings, type RecordedPair, type RecordingChanges, type ResolvedRuntime, type UnreadRecording } from "../../port-readiness/recording/diff.js";
 import {
-  buildRecordingLock, DEFAULT_RELEASE, gzipRecording, readCachedRecording, RECORDING_LOCK, recordingLockSchema, recordingLockText, writeCachedRecording, type RecordingLock,
+  buildRecordingLock, readCachedRecording, RECORDING_LOCK, recordingLockSchema, recordingLockText, writeCachedRecording, type RecordingLock,
 } from "../../port-readiness/recording/store.js";
 import { licenseFiles, rebuildFixtureTexts, upstreamCheckoutDirectory, type RecordedFixtureTexts } from "../../port-readiness/recorded-adapter.js";
 import type { PackAdapter, PackManifest, Span, UpstreamCase } from "../../port-readiness/types.js";
@@ -601,7 +601,7 @@ export function diffRecording(root: string, pack: string, tool: string, recorded
     if (file === CORPUS_FILE && lock !== null && lock.success) {
       const locked = readLockedPair(root, cacheRoot, pack, tool);
       if (locked === null || "unavailable" in locked) {
-        corpusNote = `the locked ${CORPUS_FILE} could not be compared: ${locked === null ? "no lock" : locked.unavailable} (run npm run port-readiness -- fetch first)`;
+        corpusNote = `the locked ${CORPUS_FILE} could not be compared: ${locked === null ? "no lock" : locked.unavailable} (record it first, or restore it from CI's cache)`;
       } else if (locked.corpus === null) {
         corpusNote = `the lock names no ${CORPUS_FILE}`;
       } else {
@@ -685,7 +685,7 @@ export function recordingNote(source: string, licenses: string[]): string[] {
   const named = licenses.map((name) => `\`${name}\``);
   const kept = named.length === 1 ? `${named[0]!} beside this file is` : `${named.slice(0, -1).join(", ")} and ${named.at(-1)!} beside this file are`;
   const text = `${RECORDING_NOTE_START.slice(2)}, and no file of this pack, so it is recorded here rather than in the table above: `
-    + `the tool-pack's \`${RECORDING_LOCK}\` names it and a GitHub release holds the bytes (docs/port-readiness.md). It carries `
+    + `the tool-pack's \`${RECORDING_LOCK}\` names it by its sha256, and the bytes are a cache entry, not a file in git (docs/port-readiness.md). It carries `
     + `excerpts of this upstream's tests (${source}), redistributed under the licence above, together with Rerail's Apache-2.0; `
     + `${kept} this upstream's own, at the pinned commit.`;
   const lines: string[] = [];
@@ -723,26 +723,24 @@ export function withRecordingNote(text: string, source: string, licenses: string
   return [...lines.slice(0, at), ...note, ...lines.slice(end + 1)].join("\n");
 }
 
-/** What a written recording left behind, for the caller to upload and to commit. */
+/** What a written recording left behind, for the caller to commit. */
 export interface WrittenRecording extends RecordingDiff {
   /** The lock as it is now committed. */
   lock: RecordingLock;
-  /** The gzipped recordings, by their asset name, ready for the release; written beside the cache. */
-  assets: { name: string; path: string; bytes: number }[];
   /** The per-rule summary against the recording the lock named before, a first recording, or why it was not compared. */
   changes: RecordingChanges;
 }
 
 /**
- * Write the recording into the local cache, the `recording.lock` that names it, the gzipped assets a trusted job
- * uploads, and the missing case sources; list the copies in UPSTREAM.md.
+ * Write the recording into the local cache, the `recording.lock` that names it, and the missing case sources; list the
+ * copies in UPSTREAM.md.
  *
- * The lock and UPSTREAM.md are committed; the copied case sources are pack test data, which live in S3 and reach a pull
- * request with `git add -f` (CONTRIBUTING.md, "Pack test data"); the recordings are neither. They go to the cache the
- * gates read, so iterating locally needs no release and no network: record, then run the gates, and they read what was
- * just recorded because the lock names it.
+ * The lock and UPSTREAM.md are committed. The copied case sources are pack test data, which live in S3: a pull request
+ * checks them in with `git add -f`, and a maintainer moves them to S3 before merging (CONTRIBUTING.md, "Pack test
+ * data"). The recordings are neither; they go to the cache the gates read, so iterating locally needs no network:
+ * record, then run the gates, and they read what was just recorded because the lock names it.
  */
-export async function writeRecording(root: string, pack: string, tool: string, recorded: Recorded, options: { cacheRoot: string; release?: string }): Promise<WrittenRecording> {
+export async function writeRecording(root: string, pack: string, tool: string, recorded: Recorded, options: { cacheRoot: string }): Promise<WrittenRecording> {
   const directory = toolPackDirectory(root, pack, tool);
   const diff = diffRecording(root, pack, tool, recorded, options.cacheRoot);
   if (diff.conflicting.length > 0) throw new Error(`packs/${pack}/upstream/${tool}: committed case sources differ from upstream's: ${diff.conflicting.slice(0, 5).join(", ")}`);
@@ -751,19 +749,9 @@ export async function writeRecording(root: string, pack: string, tool: string, r
   // lock the report says it is a first recording; with one whose recording cannot be read, that what moved is unknown.
   const before = readLockedPair(root, options.cacheRoot, pack, tool);
   const texts = { [RECORDING_FILE]: recordingText(recorded.recording), [CORPUS_FILE]: recordingText(recorded.corpus) };
-  const lock = buildRecordingLock(pack, tool, options.release ?? DEFAULT_RELEASE, recorded.recording.pins, recorded.recording.runtimes, texts);
+  const lock = buildRecordingLock(tool, recorded.recording.pins, recorded.recording.runtimes, texts);
   for (const text of Object.values(texts)) await writeCachedRecording(options.cacheRoot, text);
   await writeFile(join(directory, RECORDING_LOCK), recordingLockText(lock));
-
-  const uploads = join(options.cacheRoot, "recordings", "upload");
-  await mkdir(uploads, { recursive: true });
-  const assets = [];
-  for (const file of [RECORDING_FILE, CORPUS_FILE] as const) {
-    const gzipped = gzipRecording(texts[file]);
-    const path = join(uploads, lock.files[file].asset);
-    await writeFile(path, gzipped);
-    assets.push({ name: lock.files[file].asset, path, bytes: gzipped.length });
-  }
 
   for (const copy of diff.missing) {
     await mkdir(dirname(join(directory, copy.file)), { recursive: true });
@@ -778,23 +766,23 @@ export async function writeRecording(root: string, pack: string, tool: string, r
     if (inline > 0) text = withRecordingNote(text, inlineTextsSource(manifest), licenseFiles(dirname(upstreamMd)));
     await writeFile(upstreamMd, text);
   }
-  return { ...diff, lock, assets, changes: diffRecordings(pack, tool, before, { recording: recorded.recording, corpus: recorded.corpus }, recorded.resolved) };
+  return { ...diff, lock, changes: diffRecordings(pack, tool, before, { recording: recorded.recording, corpus: recorded.corpus }, recorded.resolved) };
 }
 
 /**
  * The recording the committed lock names, read from the cache: null when there is no lock, and why not when the lock
- * is there but its recording cannot be read (not fetched, or a fetch that failed), which is not a first recording. It
- * is what a re-record is summarized against; nothing fetches it, because a summary is not worth a download and a
- * maintainer re-recording has usually just run the gates.
+ * is there but its recording cannot be read (never recorded here, or not restored from CI's cache), which is not a
+ * first recording. It is what a re-record is summarized against; a maintainer re-recording has usually just run the
+ * gates on it.
  */
 export function readLockedPair(root: string, cacheRoot: string, pack: string, tool: string): RecordedPair | UnreadRecording | null {
   const lockPath = join(toolPackDirectory(root, pack, tool), RECORDING_LOCK);
   if (!existsSync(lockPath)) return null;
   const lock = recordingLockSchema.safeParse(JSON.parse(readFileSync(lockPath, "utf8")));
   if (!lock.success) return { unavailable: `${RECORDING_LOCK} does not match its schema` };
-  const locked = [RECORDING_FILE, CORPUS_FILE].map((file) => lock.data.files[file as typeof RECORDING_FILE]);
-  const texts = locked.map((file) => readCachedRecording(cacheRoot, file.sha256));
-  const missing = locked.filter((_, index) => texts[index] === undefined).map((file) => file.asset);
+  const files = [RECORDING_FILE, CORPUS_FILE] as const;
+  const texts = files.map((file) => readCachedRecording(cacheRoot, lock.data.files[file].sha256));
+  const missing = files.filter((_, index) => texts[index] === undefined).map((file) => `the locked ${file} (sha256 ${lock.data.files[file].sha256.slice(0, 12)})`);
   if (missing.length > 0) return { unavailable: `${missing.join(" and ")} ${missing.length === 1 ? "is" : "are"} not in the cache` };
   const recording = gatesRecordingSchema.safeParse(JSON.parse(texts[0]!));
   const corpus = gatesCorpusSchema.safeParse(JSON.parse(texts[1]!));
