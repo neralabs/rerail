@@ -1,0 +1,1 @@
+type Foo<T> = Record<string, T>;

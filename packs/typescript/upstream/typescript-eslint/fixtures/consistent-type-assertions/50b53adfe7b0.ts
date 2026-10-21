@@ -1,0 +1,1 @@
+const ternary = <any>(true ? x : y);

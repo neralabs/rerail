@@ -1,0 +1,4 @@
+
+export { C };
+class C {}
+      

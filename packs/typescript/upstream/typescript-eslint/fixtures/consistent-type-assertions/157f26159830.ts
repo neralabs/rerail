@@ -1,0 +1,1 @@
+const foo = <Foo>[5];

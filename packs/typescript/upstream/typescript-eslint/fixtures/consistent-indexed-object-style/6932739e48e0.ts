@@ -1,0 +1,1 @@
+type Foo = Record<string, /* preserve me */ number>;

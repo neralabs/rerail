@@ -1,0 +1,1 @@
+let y: string[] = <Array<string>>['2'];

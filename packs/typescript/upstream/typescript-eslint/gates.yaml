@@ -51,6 +51,10 @@ real_code_gaps:
     differing_files: 4200
   - rule: typescript-eslint-explicit-member-accessibility
     differing_files: 4343
+  # Counted in NRV 7f933d9 (ggiangi/ner-1856-typescript-pack-gates): typescript-eslint 8.70.1 reports nothing at the
+  # rule's default options, and the port runs it as `always` (packs/typescript/README.md).
+  - rule: typescript-eslint-init-declarations
+    differing_files: 2693
   - rule: typescript-eslint-max-params
     differing_files: 3479
   - rule: typescript-eslint-member-ordering

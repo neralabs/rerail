@@ -146,6 +146,19 @@
       "match": "line+column"
     },
     {
+      "id": "typescript-eslint-no-empty-object-type",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-empty-object-type"
+      },
+      "policy": "rules/typescript-eslint-no-empty-object-type.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "typescript-eslint-no-extra-non-null-assertion",
       "upstream": {
         "tool": "typescript-eslint",
@@ -219,6 +232,20 @@
       "policy": "rules/typescript-eslint-no-unnecessary-type-constraint.json",
       "capabilities": [
         "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "typescript-eslint-no-unsafe-declaration-merging",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-unsafe-declaration-merging"
+      },
+      "policy": "rules/typescript-eslint-no-unsafe-declaration-merging.json",
+      "capabilities": [
+        "syntax",
+        "compare",
         "suppression"
       ],
       "match": "line+column"
@@ -330,6 +357,21 @@
       "match": "line+column"
     },
     {
+      "id": "typescript-eslint-triple-slash-reference",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/triple-slash-reference"
+      },
+      "policy": "rules/typescript-eslint-triple-slash-reference.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "compare",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "typescript-eslint-adjacent-overload-signatures",
       "upstream": {
         "tool": "typescript-eslint",
@@ -339,6 +381,20 @@
       "capabilities": [
         "syntax",
         "compare",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "typescript-eslint-array-type",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/array-type"
+      },
+      "policy": "candidates/rules/typescript-eslint-array-type.json",
+      "capabilities": [
+        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -399,6 +455,34 @@
       "match": "line+column"
     },
     {
+      "id": "typescript-eslint-consistent-indexed-object-style",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/consistent-indexed-object-style"
+      },
+      "policy": "candidates/rules/typescript-eslint-consistent-indexed-object-style.json",
+      "capabilities": [
+        "syntax",
+        "compare",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "typescript-eslint-consistent-type-assertions",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/consistent-type-assertions"
+      },
+      "policy": "candidates/rules/typescript-eslint-consistent-type-assertions.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "typescript-eslint-consistent-type-imports",
       "upstream": {
         "tool": "typescript-eslint",
@@ -434,6 +518,34 @@
       "capabilities": [
         "syntax",
         "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "typescript-eslint-explicit-module-boundary-types",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/explicit-module-boundary-types"
+      },
+      "policy": "candidates/rules/typescript-eslint-explicit-module-boundary-types.json",
+      "capabilities": [
+        "syntax",
+        "compare",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "typescript-eslint-init-declarations",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/init-declarations"
+      },
+      "policy": "candidates/rules/typescript-eslint-init-declarations.json",
+      "capabilities": [
+        "syntax",
         "suppression"
       ],
       "match": "line+column"
@@ -547,6 +659,22 @@
       "match": "line+column"
     },
     {
+      "id": "typescript-eslint-no-magic-numbers",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-magic-numbers"
+      },
+      "policy": "candidates/rules/typescript-eslint-no-magic-numbers.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "compare",
+        "arguments",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "typescript-eslint-no-misused-new",
       "upstream": {
         "tool": "typescript-eslint",
@@ -555,6 +683,21 @@
       "policy": "candidates/rules/typescript-eslint-no-misused-new.json",
       "capabilities": [
         "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "typescript-eslint-no-non-null-asserted-nullish-coalescing",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-non-null-asserted-nullish-coalescing"
+      },
+      "policy": "candidates/rules/typescript-eslint-no-non-null-asserted-nullish-coalescing.json",
+      "capabilities": [
+        "syntax",
+        "compare",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -587,6 +730,21 @@
       "match": "line+column"
     },
     {
+      "id": "typescript-eslint-no-shadow",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-shadow"
+      },
+      "policy": "candidates/rules/typescript-eslint-no-shadow.json",
+      "capabilities": [
+        "syntax",
+        "compare",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "typescript-eslint-no-this-alias",
       "upstream": {
         "tool": "typescript-eslint",
@@ -595,6 +753,36 @@
       "policy": "candidates/rules/typescript-eslint-no-this-alias.json",
       "capabilities": [
         "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "typescript-eslint-no-unnecessary-parameter-property-assignment",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-unnecessary-parameter-property-assignment"
+      },
+      "policy": "candidates/rules/typescript-eslint-no-unnecessary-parameter-property-assignment.json",
+      "capabilities": [
+        "syntax",
+        "compare",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "typescript-eslint-no-unused-private-class-members",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-unused-private-class-members"
+      },
+      "policy": "candidates/rules/typescript-eslint-no-unused-private-class-members.json",
+      "capabilities": [
+        "syntax",
+        "compare",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -609,6 +797,21 @@
       "capabilities": [
         "syntax",
         "value",
+        "compare",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "typescript-eslint-no-use-before-define",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/no-use-before-define"
+      },
+      "policy": "candidates/rules/typescript-eslint-no-use-before-define.json",
+      "capabilities": [
+        "syntax",
         "compare",
         "scope",
         "suppression"
@@ -639,6 +842,22 @@
       "policy": "candidates/rules/typescript-eslint-parameter-properties.json",
       "capabilities": [
         "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "typescript-eslint-prefer-for-of",
+      "upstream": {
+        "tool": "typescript-eslint",
+        "rule": "@typescript-eslint/prefer-for-of"
+      },
+      "policy": "candidates/rules/typescript-eslint-prefer-for-of.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "compare",
+        "scope",
         "suppression"
       ],
       "match": "line+column"

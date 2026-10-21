@@ -1,0 +1,1 @@
+type Unwrap<T> = T extends Array<infer E> ? E : T;

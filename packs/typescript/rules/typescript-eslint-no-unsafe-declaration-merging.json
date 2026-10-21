@@ -1,0 +1,250 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint-no-unsafe-declaration-merging",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't give a TypeScript class and an interface the same name in one scope; the merge adds the interface's members to the class without checking them.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "merged-class-and-interface",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "has": {
+              "field": "name",
+              "pattern": "$NAME"
+            },
+            "any": [
+              {
+                "matches": "class-declaration",
+                "inside": {
+                  "matches": "scope-with-interface"
+                }
+              },
+              {
+                "kind": "interface_declaration",
+                "not": {
+                  "has": {
+                    "field": "type_parameters",
+                    "kind": "type_parameters"
+                  }
+                },
+                "inside": {
+                  "matches": "scope-with-class"
+                }
+              }
+            ]
+          },
+          "utils": {
+            "class-declaration": {
+              "any": [
+                {
+                  "kind": "class_declaration"
+                },
+                {
+                  "kind": "abstract_class_declaration"
+                }
+              ]
+            },
+            "scope-block": {
+              "any": [
+                {
+                  "kind": "program"
+                },
+                {
+                  "kind": "statement_block"
+                },
+                {
+                  "kind": "switch_body"
+                },
+                {
+                  "kind": "for_statement",
+                  "has": {
+                    "field": "initializer",
+                    "kind": "lexical_declaration"
+                  }
+                },
+                {
+                  "kind": "for_in_statement",
+                  "has": {
+                    "field": "kind",
+                    "regex": "^(?:let|const)$"
+                  }
+                },
+                {
+                  "kind": "with_statement"
+                }
+              ]
+            },
+            "wrapper": {
+              "any": [
+                {
+                  "kind": "export_statement"
+                },
+                {
+                  "kind": "ambient_declaration"
+                },
+                {
+                  "kind": "switch_case"
+                },
+                {
+                  "kind": "switch_default"
+                },
+                {
+                  "kind": "if_statement"
+                },
+                {
+                  "kind": "else_clause"
+                },
+                {
+                  "kind": "while_statement"
+                },
+                {
+                  "kind": "do_statement"
+                },
+                {
+                  "kind": "labeled_statement"
+                },
+                {
+                  "kind": "for_statement",
+                  "has": {
+                    "field": "initializer",
+                    "any": [
+                      {
+                        "kind": "variable_declaration"
+                      },
+                      {
+                        "kind": "empty_statement"
+                      },
+                      {
+                        "precedes": {
+                          "pattern": ";"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "for_in_statement",
+                  "has": {
+                    "field": "left",
+                    "follows": {
+                      "any": [
+                        {
+                          "pattern": "("
+                        },
+                        {
+                          "pattern": "var"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "member-interface": {
+              "any": [
+                {
+                  "kind": "interface_declaration",
+                  "has": {
+                    "field": "name",
+                    "pattern": "$OTHER"
+                  },
+                  "compare": {
+                    "left": "OTHER",
+                    "op": "eq",
+                    "right": "NAME"
+                  }
+                },
+                {
+                  "matches": "wrapper",
+                  "has": {
+                    "matches": "member-interface"
+                  }
+                }
+              ]
+            },
+            "member-class": {
+              "any": [
+                {
+                  "matches": "class-declaration",
+                  "has": {
+                    "field": "name",
+                    "pattern": "$OTHER"
+                  },
+                  "compare": {
+                    "left": "OTHER",
+                    "op": "eq",
+                    "right": "NAME"
+                  }
+                },
+                {
+                  "matches": "wrapper",
+                  "has": {
+                    "matches": "member-class"
+                  }
+                }
+              ]
+            },
+            "scope-with-interface": {
+              "any": [
+                {
+                  "matches": "scope-block",
+                  "has": {
+                    "matches": "member-interface"
+                  }
+                },
+                {
+                  "matches": "wrapper",
+                  "inside": {
+                    "matches": "scope-with-interface"
+                  }
+                }
+              ]
+            },
+            "scope-with-class": {
+              "any": [
+                {
+                  "matches": "scope-block",
+                  "has": {
+                    "matches": "member-class"
+                  }
+                },
+                {
+                  "matches": "wrapper",
+                  "inside": {
+                    "matches": "scope-with-class"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.NAME",
+        "code": "@typescript-eslint/no-unsafe-declaration-merging",
+        "message": "Rename the class or the interface so they don't merge; merged, the class claims the interface's members without implementing them.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/no-unsafe-declaration-merging"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noUnsafeDeclarationMerging"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

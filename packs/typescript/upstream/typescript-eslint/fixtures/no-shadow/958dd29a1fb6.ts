@@ -1,0 +1,1 @@
+const { a = [].find(a => true) } = dummy;

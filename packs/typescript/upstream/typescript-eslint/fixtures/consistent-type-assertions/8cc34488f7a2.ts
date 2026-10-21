@@ -1,0 +1,1 @@
+function b(x = {} as Foo.Bar) {}
