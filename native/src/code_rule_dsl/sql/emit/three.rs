@@ -582,8 +582,8 @@ impl Emitter<'_> {
                         &siblings,
                         format!(
                             "INSERT INTO {siblings} SELECT NULL, c.file, c.id{}, f.k, c.id{} FROM {input} f \
-                             JOIN node fn ON fn.file = f.file AND fn.id = f.node \
-                             JOIN node c ON c.file = f.file AND c.parent = fn.parent WHERE c.named = 1",
+                             CROSS JOIN node fn ON fn.file = f.file AND fn.id = f.node \
+                             CROSS JOIN node c ON c.file = f.file AND c.parent = fn.parent WHERE c.named = 1",
                             this.physical_of("f"),
                             this.zeros()
                         ),

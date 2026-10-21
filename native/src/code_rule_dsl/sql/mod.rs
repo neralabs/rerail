@@ -40,6 +40,7 @@ mod plan;
 mod pushdown;
 mod rec;
 mod recursion;
+mod roots;
 pub(super) mod select_when;
 mod shapes;
 mod skip;
