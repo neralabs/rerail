@@ -427,9 +427,8 @@ function readAuthored(directory: string): { authored: Set<string>; failures: str
 
 const PACK_LIST_MODULE = "src/engine/catalog/pack-list.generated.ts";
 
-/** The longest description, for people browsing the catalog, and the longest message, for the agent (docs/pack-format.md, "Rule text"). */
+/** The longest description, for people browsing the catalog (docs/pack-format.md, "Rule text"). */
 export const DESCRIPTION_CHARS = 200;
-export const MESSAGE_CHARS = 140;
 /** Upstream tools a rule's text must not name; a tool's plugins share its name (`eslint-plugin-react`, `typescript-eslint`). */
 const TOOL_NAMES = /\b(?:eslint|oxlint|biome|ruff|bandit|pylint|flake8|clippy|sqlfluff|phpstan|psalm|phpcs|tlint|bladestan|lizard)\b/iu;
 /** A sentence end inside the text: a full stop or question mark, then a capital. */
@@ -439,18 +438,10 @@ const QUOTED = /'[^']*'|`[^`]*`/gu;
 /** Abbreviations whose full stop ends no sentence. */
 const ABBREVIATION = /\b(?:e\.g|i\.e|etc|vs)\./giu;
 
-/** Every text a message can be: the message, or each case and template of a message an option chooses. */
-function messageTexts(message: unknown): string[] {
-  if (typeof message === "string") return [message];
-  if (message === null || typeof message !== "object") return [];
-  return Object.entries(message).flatMap(([key, value]) => (key === "$option" ? [] : messageTexts(value)));
-}
-
 /**
- * Check 8 (text): a rule document's description and violation messages meet the rule text criteria a machine can
- * check. A description is one sentence ending in a period, at most DESCRIPTION_CHARS, with no backticks and no tool
- * name; a message is at most MESSAGE_CHARS, naming no tool, Rerail or steering, and not shouting. A message's form (one
- * sentence, a final period) is left to review: an upstream message the rewrite gained nothing over is kept as written.
+ * Check 8 (text): a rule document's description meets the description criteria a machine can check. It is one
+ * sentence ending in a period, at most DESCRIPTION_CHARS, with no backticks and no tool name. Violation messages are
+ * left to review (docs/pack-format.md, "Message"): no check reads them.
  */
 export function textFailures(file: string, text: string): string[] {
   let document: unknown;
@@ -473,23 +464,6 @@ export function textFailures(file: string, text: string): string[] {
     sentence("description", description, DESCRIPTION_CHARS, true);
     if (description.includes("`")) failures.push(`${file}: description holds code (backticks): ${description}`);
   }
-  const seen = new Set<string>();
-  const walk = (value: unknown): void => {
-    if (Array.isArray(value)) value.forEach(walk);
-    else if (value !== null && typeof value === "object") {
-      for (const [key, inner] of Object.entries(value)) {
-        if (key !== "message") walk(inner);
-        else for (const message of messageTexts(inner)) {
-          if (seen.has(message)) continue;
-          seen.add(message);
-          sentence("message", message, MESSAGE_CHARS, false);
-          if (/\b(?:rerail|steer)/iu.test(message.replace(QUOTED, "''"))) failures.push(`${file}: message names Rerail or steering: ${message}`);
-          if (/\b(?:NEVER|MUST|ALWAYS)\b/u.test(message)) failures.push(`${file}: message shouts: ${message}`);
-        }
-      }
-    }
-  };
-  walk((document as { clauses?: unknown }).clauses);
   return failures;
 }
 
@@ -751,8 +725,9 @@ export async function validatePack(directory: string, options: ValidatePackOptio
   // Check 7: manifest. Set-up can recommend the pack: its match is there, and core's pack list names it.
   for (const failure of manifestFailures(directory, packJson, options.listed ?? resolve(dirname(directory)) === PACKS_DIRECTORY)) fail("manifest", failure);
 
-  // Check 8: text. Every rule document's description and violation messages, shipped and candidate, meet the parts of
-  // the rule text criteria a machine can check. Probes are facts the ports are built on, read by no one, so are left out.
+  // Check 8: text. Every rule document's description, shipped and candidate, meets the parts of the description
+  // criteria a machine can check; violation messages are left to review. Probes are facts the ports are built on, read
+  // by no one, so are left out.
   const listedBy = new Map((pack?.rules ?? []).map(rule => [rule.document, rule.id]));
   const documents = [...filesUnder(directory, join(directory, "rules")), ...candidateDocuments(directory, filesUnder(directory, join(directory, "candidates"))).filter(file => !file.startsWith("candidates/probes/"))];
   for (const file of documents) {

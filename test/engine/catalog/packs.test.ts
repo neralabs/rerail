@@ -371,16 +371,6 @@ describe("validatePack", () => {
       directory => editJson(join(directory, "rules", "pass-statement.json"), ({ description: _description, ...document }) => document),
       { text: ["rules/pass-statement.json: has no description"] },
     ],
-    [
-      "a message that names Rerail, whatever its form",
-      directory => editJson(join(directory, "rules", "pass-statement.json"), document => ({
-        ...document,
-        clauses: (document.clauses as { violation: object }[]).map(clause => ({ ...clause, violation: { ...clause.violation, message: "Rerail found a pass. Remove it" } })),
-      })),
-      {
-        text: ["rules/pass-statement.json: message names Rerail or steering: Rerail found a pass. Remove it"],
-      },
-    ],
   ];
 
   it.each(cases)("fails %s", async (_name, change, expected) => {
@@ -389,15 +379,23 @@ describe("validatePack", () => {
     expect(validation.pass).toBe(false);
   });
 
-  describe("check 8: text", () => {
-    it("checks every text a message an option chooses can be, once each", () => {
-      const long = `Remove this pass statement${"!".repeat(130)}.`;
-      const document = { description: "Remove pass statements.", clauses: [{ violation: { message: { $option: "strict", cases: { true: long, false: "Remove this pass statement." }, default: "Remove this pass statement." } } }] };
-      expect(textFailures("rules/pass.json", JSON.stringify(document))).toEqual([`rules/pass.json: message is 157 characters, over 140: ${long}`]);
-    });
+  it("passes a rule whatever its message says: messages are left to review", async () => {
+    const message = `NEVER keep this pass (pass-statement); Rerail flags it.${" Remove it.".repeat(20)}`;
+    const validation = await validatePack(
+      changed("valid", directory => editJson(join(directory, "rules", "pass-statement.json"), document => ({
+        ...document,
+        clauses: (document.clauses as { violation: object }[]).map(clause => ({ ...clause, violation: { ...clause.violation, message } })),
+      }))),
+      { corpora: false },
+    );
+    expect(failing(validation)).toEqual({});
+    expect(validation.pass).toBe(true);
+    expect(validation.rules.find(rule => rule.id === "pass-statement")?.status).toBe("ok");
+  });
 
+  describe("check 8: text", () => {
     it("reads no sentence end in an abbreviation or quoted text, and no tool name in a quoted value", () => {
-      const document = { description: "Use field init shorthand, e.g. Point { x } for Point { x: x }.", clauses: [{ violation: { message: "Resolve this 'eslint' comment ('Note. Later'), e.g. Fix it now." } }] };
+      const document = { description: "Use field init shorthand, e.g. Point { x } for Point { x: x }, not 'eslint' style.", clauses: [] };
       expect(textFailures("rules/x.json", JSON.stringify(document))).toEqual([]);
     });
   });

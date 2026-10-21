@@ -140,8 +140,9 @@ Fix these, or tell the user in one line why you won't.
 ```
 
 The block already gives the location, the rule id, the lead and the latitude ("fix or explain"), so the message only
-says what to change in this code. Check 8 enforces the criteria a machine can check; review covers the rest
-(`just rerail-guidance-review` shows every rule's description, messages and the block for each of its cases).
+advises what to do about this code. Check 8 enforces the description criteria a machine can check; review covers the
+rest of the description criteria and all of the message criteria (`just rerail-guidance-review` shows every rule's
+description, messages and the block for each of its cases).
 
 ### Description
 
@@ -168,28 +169,26 @@ pack's README, under "Rule details". For example: `Avoid dd() and dump() calls; 
 
 ### Message
 
-1. Says what to change. It usually starts with a verb ("Pass a timeout…"); it may instead state the finding first and
-   then the action, when the finding carries the specifics the agent acts on ("`$NAME` has cyclomatic complexity $CCN,
-   over the ceiling of 6. Decompose it into smaller functions.").
-2. Specific to the finding: it uses the values the clause captures where they help (`$CCN`, `$NAME`, thresholds), and
-   never a binding the clause doesn't define.
-3. A concrete fix direction: it names the replacement, so the agent can act without reading the rule's docs.
-4. Correct for every match of its clause; a rule with several clauses has a fitting message for each.
-5. Agrees with the clause's suggested `fix`, when it has one.
-6. A short reason only when it changes the decision, where the agent might otherwise reasonably decline.
-7. No Rerail or upstream vocabulary: no tool names, rule codes, versions or implementation text, and no "steer", "rule
-   pack" or "mode".
-8. Nothing the block adds: no location, no rule id, no "Rerail", no "fix it or explain".
-9. A calibrated tone: no hedging ("Consider maybe…"), no shouting (NEVER, MUST, ALWAYS).
-10. One action.
-11. It stands alone as one line in a list of findings.
-12. Short: at most 140 characters, counting placeholders as written, ending with a period. One sentence by default; a
-    second is fine when the first states the finding (rule 1).
-13. The description's voice without copying it: the description is the intent, for a person; the message is the
-    action for this instance.
+The message tells the agent what to change and, when the change could be wrong, when not to.
 
-For example, `Bandit B113 (request_without_timeout)` becomes
-`Pass a timeout to this requests call; without one a slow server can hang the program.`
+1. It names the change: a replacement or what to remove. A fact or a ban alone isn't advice.
+2. If following it would be wrong for some code it matches, it says when to leave the code alone or what the change
+   trades off.
+3. It states a risk only as far as the rule can confirm it, without softening ("consider") or shouting (NEVER, MUST).
+4. It is right for every match it doesn't exempt, agrees with the clause's `fix`, and names captures (`$NAME`) where
+   that shows which code it means.
+5. It leaves out the rule id, location, "Rerail" and "fix it or explain", and names no tool, rule code, tool version or
+   matcher term outside quoted code.
+6. Each text it can show is at most 200 characters (placeholders as written), in any number of sentences.
+7. Matches that need different advice get different messages (`x == None` and `x != None`).
+
+| Instead of | Write |
+|---|---|
+| `Bandit B113 (request-without-timeout)` | `Pass a finite timeout to this HTTP call; without one a slow server can hang the program.` |
+| `zip() without an explicit strict= parameter` | ``Pass `strict=` explicitly: `strict=True` when lengths must match, `strict=False` when truncation is intended.`` |
+| `` Comparison to `None` should be `cond is None` ``, one clause for `==` and `!=` | One clause each: ``Use `is None` instead of `== None` for this comparison.`` and ``Use `is not None` instead of `!= None` for this comparison.`` |
+
+These criteria are for reviewers and never block a merge: no check reads a message's text.
 
 ## The validation contract
 
@@ -299,11 +298,12 @@ Precisely:
 7. `match` must be present: without it set-up never recommends the pack. For a directory under `packs/`,
    `src/engine/catalog/pack-list.generated.ts` must list the pack's id and equal what `npm run generate:packs` writes.
    Fixture packs elsewhere are not published, so no list names them; `listed: true` checks the list for them too.
-8. Every rule document's text, shipped and candidate (not probes), meets the parts of the [rule text](#rule-text)
-   criteria a machine can check (`textFailures`). The description is present, one sentence ending in a period, at most
-   200 characters, with no backticks. Each message, and each text a message an option chooses can be, is at most 140
-   characters and doesn't shout (NEVER, MUST, ALWAYS) or name Rerail or steering; its form is left to review.
-   Neither names an upstream tool outside quoted text (`'…'` or `` `…` ``). The rest of the criteria are for review.
+8. Every rule document's description, shipped and candidate (not probes), meets the parts of the
+   [description](#description) criteria a machine can check (`textFailures`): it is present, one sentence ending in a
+   period, at most 200 characters, with no backticks, and names no upstream tool outside quoted text (`'…'` or
+   `` `…` ``). Violation messages are not checked: the [message](#message) criteria are for review. A message's
+   `$` placeholders are checked by check 1, since a rule whose message names a capture its clause doesn't bind does not
+   compile.
 
 **Languages not supported yet.** A pack may hold code rules for a language core's
 [language registry](language-packs.md) lists as `planned`, or rules that read a capability their language has

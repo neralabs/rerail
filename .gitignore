@@ -11,6 +11,11 @@ coverage/
 .rerail/
 /tmp/
 
+# Local secrets, such as the Bedrock API key for model testing. An example file stays committable.
+.env
+.env.*
+!.env.example
+
 # The port readiness gates' upstream runtimes are pinned by their manifests alone (conformance/recorders/port-readiness/runtimes.ts):
 # installs resolve in .rerail/port-readiness/runtimes/, and a lockfile here would put every transitive package in the dependency graph.
 conformance/recorders/port-readiness/runtimes/*/package-lock.json
