@@ -418,6 +418,7 @@ pub(super) fn evaluate_clauses(
                     vec![snapshot.clone()]
                 };
                 for partition in partitions {
+                    prepare_relation_inputs(code_rule, plan, &partition)?;
                     #[cfg(feature = "code-rule-profile")]
                     let _context = super::profile::trace::Context::enter(
                         &code_rule.id,
@@ -496,7 +497,9 @@ pub(super) fn relational_rows(
     snapshot: &Snapshot,
     metrics: &mut Metrics,
 ) -> Result<Vec<evidence::Rows>> {
+    let _tapes = TapeCacheSlot::install();
     let _calls = stateless_calls(code_rule, snapshot, std::slice::from_ref(clause), metrics)?;
+    prepare_relation_inputs(code_rule, plan, snapshot)?;
     plan.inputs
         .iter()
         .map(|(_, input)| {
@@ -509,6 +512,40 @@ pub(super) fn relational_rows(
             )
         })
         .collect()
+}
+
+fn prepare_relation_inputs(
+    code_rule: &CompiledCodeRule,
+    plan: &super::relational::Plan,
+    snapshot: &Snapshot,
+) -> Result<()> {
+    if let [file] = snapshot.files.as_slice() {
+        let grammars: Vec<_> = plan
+            .inputs
+            .iter()
+            .filter_map(|(_, input)| {
+                if !code_rule.scope.matches(&file.path)
+                    || input
+                        .ast
+                        .domain
+                        .as_ref()
+                        .is_some_and(|domain| !domain.matches(&file.path))
+                {
+                    return None;
+                }
+                let super::model::Query::Ast { matchers, .. } = &input.ast.query else {
+                    return None;
+                };
+                grammar_matcher(matchers, file)
+            })
+            .collect();
+        query::prepare_anchors(
+            file,
+            &grammars,
+            code_rule.capabilities.limits.max_visited_nodes,
+        )?;
+    }
+    Ok(())
 }
 
 /// An evidence relation's rows in a stateless snapshot: each file of the code rule's scope and the

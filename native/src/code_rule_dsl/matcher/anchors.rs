@@ -25,6 +25,7 @@ pub(in crate::code_rule_dsl) trait AnchorCursor<'tree> {
     fn first_child(&mut self) -> bool;
     fn next_sibling(&mut self) -> bool;
     fn parent(&mut self) -> bool;
+    fn field_id(&self) -> u16;
 }
 
 impl<'tree> AnchorCursor<'tree> for tree_sitter::TreeCursor<'tree> {
@@ -40,6 +41,9 @@ impl<'tree> AnchorCursor<'tree> for tree_sitter::TreeCursor<'tree> {
     }
     fn parent(&mut self) -> bool {
         self.goto_parent()
+    }
+    fn field_id(&self) -> u16 {
+        self.field_id().map_or(0, |id| id.get())
     }
 }
 
@@ -74,6 +78,9 @@ impl<'tree> AnchorCursor<'tree> for TapeCursor<'tree> {
             false
         }
     }
+    fn field_id(&self) -> u16 {
+        self.0.incoming_field()
+    }
 }
 
 pub(in crate::code_rule_dsl) trait AnchorNode<'tree>:
@@ -104,6 +111,7 @@ impl<'tree> AnchorNode<'tree> for crate::code_rule_dsl::tape::TapeNode<'tree> {
     }
 }
 
+mod fields;
 mod text;
 use text::TextProbe;
 
@@ -135,6 +143,7 @@ enum Condition {
         inner: Box<AnchorPlan>,
         direction: Direction,
         recursive: bool,
+        field: Option<u16>,
     },
     /// A utility's plan, shared by every reference to it: diamond paths reach one plan instead
     /// of each copying it. Its root kinds stay on the referencing plan, which the enclosing
@@ -209,18 +218,10 @@ impl AnchorPlan {
         let plan = util
             .with_target(|rule| Self::compile_in(rule, inlining))
             .unwrap_or_else(Self::unrestricted);
-        // A target whose plan projects relations keeps only its root kinds: those projections
-        // scan whole-file postings, and on utilities written to walk a relation (tail positions,
-        // enclosing scopes) they cost more than matching the roots the kinds already select.
-        // Dropping a condition only widens the plan. Any other condition is kept whole and shared.
+        // Keep relation constraints too: utility_selection memoizes the already evaluated scope,
+        // and relation selection starts from kind/value/field postings instead of rematching roots.
         let plan = if matches!(plan.condition, Condition::Always) {
             plan
-        } else if plan.projects_relations() {
-            Self {
-                root_kinds: plan.root_kinds,
-                condition: Condition::Always,
-                exact: false,
-            }
         } else {
             Self {
                 root_kinds: plan.root_kinds.clone(),
@@ -231,22 +232,6 @@ impl AnchorPlan {
         inlining.visiting.remove(&util.index);
         inlining.completed.insert(util.index, plan.clone());
         plan
-    }
-
-    /// Whether selecting with this plan walks a relation. A shared utility plan never does: one
-    /// that would is reduced to its root kinds instead.
-    fn projects_relations(&self) -> bool {
-        match &self.condition {
-            Condition::Relation { .. } => true,
-            Condition::All(plans) | Condition::Any(plans) => {
-                plans.iter().any(AnchorPlan::projects_relations)
-            }
-            Condition::Not(plan) => plan.projects_relations(),
-            Condition::Always
-            | Condition::Pattern(_)
-            | Condition::Text { .. }
-            | Condition::Utility(_) => false,
-        }
     }
 
     fn compile_in(matcher: &AstMatcher, inlining: &mut Inlining) -> Self {
@@ -358,6 +343,7 @@ impl AnchorPlan {
                         inner: Box::new(inner),
                         direction,
                         recursive: !matches!(stop, StopBy::Neighbor),
+                        field: None,
                     },
                 }
             }
@@ -386,6 +372,7 @@ impl AnchorPlan {
                         },
                         // `has` with a stop rule tests the field child's children too.
                         recursive: !matches!(relation.stop, StopBy::Neighbor),
+                        field: Some(relation.field),
                     },
                 }
             }
@@ -418,6 +405,16 @@ impl AnchorPlan {
         self.root_kinds.as_ref()
     }
 
+    /// Kind-only queries already use the tape's kind postings; they need no structural index.
+    pub(in crate::code_rule_dsl) fn needs_index(&self) -> bool {
+        match &self.condition {
+            Condition::Always => false,
+            Condition::All(plans) | Condition::Any(plans) => plans.iter().any(Self::needs_index),
+            Condition::Utility(plan) => plan.needs_index(),
+            _ => true,
+        }
+    }
+
     fn restrict_root(&mut self, kinds: Option<&BTreeSet<u16>>) {
         intersect_kinds(&mut self.root_kinds, kinds);
         match &mut self.condition {
@@ -439,6 +436,7 @@ impl AnchorPlan {
         domain: Option<&BTreeSet<u16>>,
         utilities: &mut HashSet<(usize, Option<BTreeSet<u16>>)>,
         needs: &mut [Needs<'plan>],
+        fields: &mut BTreeSet<u16>,
     ) {
         match &self.condition {
             Condition::Pattern(required) => {
@@ -465,19 +463,22 @@ impl AnchorPlan {
             // `restrict_root` already narrowed these children to this plan's root kinds.
             Condition::All(plans) | Condition::Any(plans) => {
                 for plan in plans {
-                    plan.collect_needs(domain, utilities, needs);
+                    plan.collect_needs(domain, utilities, needs, fields);
                 }
             }
-            Condition::Not(plan) => plan.collect_needs(domain, utilities, needs),
+            Condition::Not(plan) => plan.collect_needs(domain, utilities, needs, fields),
             // Relations bind other nodes: no root kind domain applies to them.
-            Condition::Relation { inner, .. } => inner.collect_needs(None, utilities, needs),
+            Condition::Relation { inner, field, .. } => {
+                fields.extend(field);
+                inner.collect_needs(None, utilities, needs, fields);
+            }
             Condition::Utility(plan) => {
                 let mut kinds = domain.cloned();
                 intersect_kinds(&mut kinds, self.root_kinds.as_ref());
                 if utilities.insert((Arc::as_ptr(plan) as usize, kinds.clone())) {
                     #[cfg(test)]
                     record_walk(Walk::AnchorNeeds);
-                    plan.collect_needs(kinds.as_ref(), utilities, needs);
+                    plan.collect_needs(kinds.as_ref(), utilities, needs, fields);
                 }
             }
             Condition::Always => {}
@@ -638,6 +639,9 @@ pub(in crate::code_rule_dsl) struct FileAnchorIndex<'tree, D: Doc> {
     source: &'tree str,
     entries: Vec<Entry<'tree, D>>,
     kinds: Vec<Vec<usize>>,
+    /// First children in requested fields, in preorder. These are sparse positional postings,
+    /// not a dense (parent, field) table. Parent links supply the reverse direction.
+    fields: HashMap<u16, Vec<usize>>,
     errors: Vec<usize>,
     values: HashMap<u16, Values<'tree>>,
     text_cache: RefCell<TextCache>,
@@ -662,12 +666,26 @@ where
         max_nodes: usize,
         mut budget_exhausted: impl FnMut() -> bool,
     ) -> Self {
+        #[cfg(test)]
+        record_walk(Walk::AnchorBuild);
         let doc = root.root().get_doc();
+        let mut needs: Vec<_> = (0..doc.get_lang().kind_count())
+            .map(|_| Needs::default())
+            .collect();
+        let mut utilities = HashSet::default();
+        let mut fields = BTreeSet::new();
+        for plan in plans {
+            plan.collect_needs(None, &mut utilities, &mut needs, &mut fields);
+        }
         let mut index = Self {
             root,
             source: doc.get_source(),
             entries: Vec::new(),
             kinds: vec![Vec::new(); doc.get_lang().kind_count()],
+            fields: fields
+                .into_iter()
+                .map(|field| (field, Vec::new()))
+                .collect(),
             errors: Vec::new(),
             values: HashMap::default(),
             text_cache: RefCell::new(HashMap::default()),
@@ -680,7 +698,7 @@ where
         // (last immediate child, children after the cursor's current child).
         // A failed native goto_next_sibling searches upward through the cursor
         // stack. Skip it when the owned frame already knows there is no sibling.
-        let mut last_children: Vec<(Option<NonZeroUsize>, usize)> = Vec::new();
+        let mut last_children: Vec<(Option<NonZeroUsize>, usize, u64)> = Vec::new();
         let mut closed_nodes = 0;
         let mut cursor = doc.root_node().cursor();
         'preorder: loop {
@@ -693,7 +711,7 @@ where
             }
             let kind = node.kind_id();
             let ordinal = index.entries.len();
-            let previous = last_children.last().and_then(|(last, _)| *last);
+            let previous = last_children.last().and_then(|(last, _, _)| *last);
             index.walked_siblings |= node.range().is_empty()
                 || previous.is_some_and(|previous| {
                     index.entries[previous.get() - 1].node.range().end > node.range().start
@@ -714,11 +732,30 @@ where
                 index.kinds[usize::from(kind)].push(ordinal);
             }
             let current = NonZeroUsize::new(ordinal + 1).expect("inserted node");
-            if let Some((last_child, _)) = last_children.last_mut() {
+            if let Some((last_child, _, seen_fields)) = last_children.last_mut() {
                 *last_child = Some(current);
+                let field = cursor.field_id();
+                if let Some(posting) = index.fields.get_mut(&field) {
+                    // Rec6 grammars have at most 63 fields. Keep the cursor oracle sound for
+                    // wider native grammars too, without a field-width assumption there.
+                    let first = if let Some(bit) = 1_u64.checked_shl(u32::from(field)) {
+                        let first = *seen_fields & bit == 0;
+                        *seen_fields |= bit;
+                        first
+                    } else {
+                        let parent = index.entries[ordinal].parent.expect("child has parent");
+                        index.entries[parent.get() - 1]
+                            .node
+                            .child_by_field_id(field)
+                            .is_some_and(|first| first.node_id() == node.node_id())
+                    };
+                    if field != 0 && first {
+                        posting.push(ordinal);
+                    }
+                }
             }
             ancestors.push(current);
-            last_children.push((None, 0));
+            last_children.push((None, 0, 0));
             if cursor.first_child() {
                 last_children.last_mut().expect("current frame").1 = node.child_count() - 1;
                 continue;
@@ -742,11 +779,6 @@ where
                 }
                 assert!(cursor.parent(), "cursor must return to an open ancestor");
             }
-        }
-        let mut needs: Vec<_> = (0..index.kinds.len()).map(|_| Needs::default()).collect();
-        let mut utilities = HashSet::default();
-        for plan in plans {
-            plan.collect_needs(None, &mut utilities, &mut needs);
         }
         index.complete = index.build_values(&needs, &mut budget_exhausted) && !budget_exhausted();
         index
@@ -827,6 +859,12 @@ where
         for posting in &self.kinds {
             bytes += posting.capacity() * std::mem::size_of::<usize>();
         }
+        bytes += self.fields.capacity() * std::mem::size_of::<(u16, Vec<usize>)>();
+        bytes += self
+            .fields
+            .values()
+            .map(|posting| posting.capacity() * std::mem::size_of::<usize>())
+            .sum::<usize>();
         for values in self.values.values() {
             bytes += values.residue.capacity() * std::mem::size_of::<usize>();
             for (key, posting) in values.terms.iter().chain(&values.prefixes) {
@@ -1047,7 +1085,13 @@ where
                 inner,
                 direction,
                 recursive,
-            } => self.relation_selection(scope, inner, *direction, *recursive, memo),
+                field,
+            } => match field {
+                Some(field) => {
+                    self.field_selection(scope, inner, *direction, *recursive, *field, memo)
+                }
+                None => self.relation_selection(scope, inner, *direction, *recursive, memo),
+            },
             Condition::Utility(inner) => self.utility_selection(scope, inner, memo),
         }
     }
@@ -1320,7 +1364,7 @@ where
         // identifiers to find a direct child of one of the already-selected parents, or a sibling
         // of one of the already-selected roots. No grammar-specific split is needed.
         let inner_scope = match direction {
-            Direction::Has if !recursive => {
+            Direction::Has if !recursive && !matches!(scope, Selection::All) => {
                 let mut children = Vec::new();
                 for parent in scope.ordinals(self.len()) {
                     self.push_children(parent, &mut children)?;

@@ -11,10 +11,12 @@ pub(super) struct Counters {
     miss_children_examined: u64,
     scans_over_64: u64,
     max_scan: u64,
+    known_edge_checks: u64,
+    known_edge_matches: u64,
 }
 thread_local! { static COUNTERS: Cell<Counters> = const { Cell::new(Counters {
     calls: 0, children_examined: 0, misses: 0, miss_children_examined: 0,
-    scans_over_64: 0, max_scan: 0,
+    scans_over_64: 0, max_scan: 0, known_edge_checks: 0, known_edge_matches: 0,
 }) }; }
 
 pub(in crate::code_rule_dsl) fn record(examined: usize, found: bool) {
@@ -32,6 +34,17 @@ pub(in crate::code_rule_dsl) fn record(examined: usize, found: bool) {
         local.set(value);
     });
 }
+pub(in crate::code_rule_dsl) fn record_edge(found: bool) {
+    if !super::trace::enabled() {
+        return;
+    }
+    COUNTERS.with(|local| {
+        let mut value = local.get();
+        value.known_edge_checks += 1;
+        value.known_edge_matches += u64::from(found);
+        local.set(value);
+    });
+}
 pub(super) fn reset() {
     COUNTERS.with(|local| local.set(Counters::default()));
 }
@@ -45,5 +58,7 @@ pub(super) fn flush() {
         target.miss_children_examined += value.miss_children_examined;
         target.scans_over_64 += value.scans_over_64;
         target.max_scan = target.max_scan.max(value.max_scan);
+        target.known_edge_checks += value.known_edge_checks;
+        target.known_edge_matches += value.known_edge_matches;
     });
 }

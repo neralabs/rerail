@@ -5,6 +5,95 @@ Each entry identifies its implementation and evidence. Historical results remain
 Experiments stay in isolated worktrees or standalone harnesses until a keep-or-reject decision.
 The engine retains one chosen execution path. Profiling adds observation and does not select another algorithm.
 
+## Field-aware anchors and shared input indexes: 2026-10-21, after `a92c126a`
+
+**Keep selective anchors and share one index across each file's relational inputs.**
+The [evidence](../fixtures/host/data-layer-port/profiling/anchor-execution-20261021.json) records the controls, rejected trial, navigation counters, external samples, and tests.
+
+The implementation uses the existing kind and value postings, plus sparse postings for requested AST fields.
+Each field posting identifies the first child in that field.
+Stored parent links support reverse navigation from those children.
+Utility plans retain their relation constraints.
+File-local fact extraction now uses these selections before the matcher constructs captures and projected rows.
+Kind-only queries continue to use kind postings directly.
+
+The tape records first-field occupancy during restoration.
+This marker occupies existing padding: each navigation record remains 40 bytes.
+Ancestor checks read the known child edge directly and preserve first-child behavior for repeated fields.
+Nested relations, stop rules, negation, damaged trees, and capture order retain their existing semantics.
+
+These candidate indexes remain in Rust because the existing AST matcher consumes the tape before SQL input construction.
+SQL continues to use indexed syntax virtual tables for kind, parent, identity, ownership, and byte ranges.
+Their existing field-access index remains available to SQL projections.
+This change adds no execution backend or configuration switch.
+Moving AST candidate selection into SQL requires a separate integration with that syntax source.
+
+### Matched controls
+
+Both builds use engine optimization level 1, dependency level 3, no cross-crate LTO, 256 codegen units, and the system-malloc shim.
+The baseline build comes from a clean `a92c126a` worktree.
+The source pin, source hashes, rule definitions, ingestion size, and expected findings remain identical.
+These builds differ from the earlier thin-LTO reference.
+
+| Workload | Before CPU | After CPU | Before peak RSS | After peak RSS |
+| --- | ---: | ---: | ---: | ---: |
+| Ten rules, 12 files, tracing off | 38.155 s | 32.436 s | 2.564 GiB | 2.474 GiB |
+| Quality rule, 64 files, tracing on | 9.184 s | 6.947 s | 656.69 MiB | 639.17 MiB |
+
+The positive workload retains all 61 expected source findings with no engine failures.
+The quality workload retains zero findings and no failures.
+The CPU reductions are 15.0% and 24.4%, respectively.
+The table uses the final rebuilt binary.
+An earlier run of the retained algorithm measured 33.464 seconds and 7.735 seconds, respectively.
+The evidence preserves both runs and their binary identities.
+The baseline has one control run on the shared host.
+The positive workload's elapsed times range from 48.831 to 65.662 seconds, against the 51.631-second baseline.
+These comparisons use process CPU and do not establish an elapsed-time improvement.
+No new full-repository or production-build result is claimed.
+
+### Navigation and index construction
+
+| Quality probe counter | Before | After |
+| --- | ---: | ---: |
+| Field lookups | 16,140,707 | 614,645 |
+| Child examinations | 427,807,885 | 1,403,498 |
+| Child examinations in failed lookups | 423,856,845 | 808,916 |
+| Direct checks of known field edges | 0 | 2,050,091 |
+
+Child examinations decrease by 99.67%.
+The first implementation rebuilt the structural index for each input.
+It performed 695 builds over 31,441,607 nodes during positive-workload preparation.
+One state-flow clause then exhausted its work budget, despite the correct finding count.
+That run is rejected as a passing benchmark.
+
+The final implementation builds 76 indexes over 3,466,450 nodes for the same input partitions.
+Each batch shares kind, value, and field postings across its input plans.
+Selections retain compact ordinal arrays after the shared index is released.
+The selection cache uses the compiled plan and current source identity.
+A source change clears the cache, and the evaluation scope releases it.
+The original work limits remain unchanged.
+A regression test requires two distinct inputs to share exactly one index and preserve separate selections.
+
+### Remaining costs and validation
+
+The final diagnostic retains 80 queued jobs, 577,199 projected rows, and 9,833,801 JSON fields.
+Its referenced row-storage estimate remains 1,256,398,807 bytes before SQL admission.
+The representation problem from the previous entry remains.
+
+External samples show allocation and matcher overhead during preparation.
+Two later sampling windows contain 81.4% and 99.7% SQLite samples.
+Their leaf functions include record comparisons, B-tree lookups, memory copies, and sorting.
+Those percentages describe sampling windows, not total execution CPU.
+The diagnostic attributes 22.052 seconds of CPU to the SQL batch and 5.785 seconds to input preparation.
+The largest descendant materializations and their indexes remain substantial costs.
+
+Validation covers 69 focused Rust tests, 320 public native tests, and 17 profiling tests.
+Two existing public tests remain skipped by their existing gates.
+The source-corpus sample covers one positive and one clean observation for each of the ten rules.
+All 40 stateless and workspace evaluations pass without differences.
+TypeScript, repository checks, formatting, and Clippy run separately from the timed controls.
+Every command retains a deadline shorter than two minutes.
+
 ## CPU and memory attribution: 2026-10-21, after `4def200d`
 
 **The remaining problem is large fact construction, repeated AST navigation, and large SQL intermediates.**
