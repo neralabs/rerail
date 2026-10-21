@@ -3,7 +3,7 @@
   "id": "clippy-decimal-literal-representation-threshold",
   "revision": 2,
   "mode": "steer",
-  "description": "Port of Clippy 0.1.99's decimal_literal_representation under literal-representation-threshold = 0xFFFFFF (its ui-toml test): reports a decimal integer literal whose value is at least the threshold and whose hexadecimal digits (four or more above this threshold) are a power of two with a margin (1, 2, 4 or 8 then zeros, or 1, 3, 7 or F then Fs, the last digit free: a value at most 16 below or 15 above a power of two) or only 0s and Fs after a leading 7 or F (every hexadecimal digit 0 or F, the leading one possibly 7). Values of 2^53 and above are not read: the rule language has no hexadecimal reading of a value, so the digits are read as value ranges and bit masks, and a rule's numbers reach the engine as JavaScript numbers, exact only up to 2^53. Macro arguments and macro_rules! bodies are token trees no syntax-level reader expands.",
+  "description": "Write Rust integer literals of 16,777,215 and up in hexadecimal when they are a power of two or a bit mask; the hex form shows the bit pattern.",
   "scope": {"include": ["**/*"], "exclude": []},
   "clauses": [
     {

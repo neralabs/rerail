@@ -107,19 +107,27 @@ Port of Clippy 0.1.99's allow_attributes: reports the path of every outer #[allo
 
 ### `clippy-allow-attributes-without-reason`
 
-Port of Clippy 0.1.99's allow_attributes_without_reason: reports every #[allow(..)] and #[expect(..)] attribute, inner or outer, one a #[cfg_attr(..)] expands to included (at the expanded attribute), whose last item is not `reason = ".."`. The lint needs Rust 1.81 (lint reasons, `suppress.clippy.msrv`). What a macro invocation's or macro_rules! body's token tree holds, and whether a #[cfg] predicate holds in a build, are not read. A #[cfg_attr] is read as active unless its first argument is exactly `test`, `any()` or `not(clippy)`, the predicates the suppression engine reads as off whatever the build; every other predicate is read as active. Each allow or expect a #[cfg_attr] expands to is checked on its own for a last `reason = ".."` item.
+Port of Clippy 0.1.99's allow_attributes_without_reason: reports every #[allow(..)] and #[expect(..)] attribute, inner or outer, one a #[cfg_attr(..)] expands to included (at the expanded attribute), whose last item is not `reason = ".."`. The lint needs Rust 1.81 (lint reasons, `suppress.clippy.msrv`). What a macro invocation's or macro_rules! body's token tree holds, and whether a #[cfg] predicate holds in a build, are not read. A #[cfg_attr] is read as active unless its first argument is exactly `test`, `any()` or `not(clippy)`, the predicates the suppression engine reads as off whatever the build; every other predicate is read as active. Each allow or expect a #[cfg_attr] expands to is checked on its own for a last `reason = ".."` item and reported at its own span (`allow(..)`, as Clippy reports the expanded attribute); a list nested deeper than two parentheses inside it is not read.
+
+### `clippy-builtin-type-shadow`
+
+Port of Clippy 0.1.99's builtin_type_shadow: reports generic type parameters named like a primitive type (rustc's PrimTy names: the integer types, the float types f16 to f128, bool, char and str); semantic name resolution is not modelled.
 
 ### `clippy-decimal-literal-representation`
 
-Port of Clippy 0.1.99's decimal_literal_representation (literal-representation-threshold 16384, the default): reports a decimal integer literal whose value is at least the threshold and whose hexadecimal digits are a power of two with a margin (1, 2, 4 or 8 then zeros, or 1, 3, 7 or F then Fs, the last digit free) or only 0s and Fs after a leading 7 or F. Values of 2^52 and above are not read (the thresholds are JSON numbers); macro arguments and macro_rules! bodies are token trees no syntax-level reader expands.
+Port of Clippy 0.1.99's decimal_literal_representation (literal-representation-threshold 16384, the default): reports a decimal integer literal whose value is at least the threshold and whose hexadecimal digits (four or more above this threshold) are a power of two with a margin (1, 2, 4 or 8 then zeros, or 1, 3, 7 or F then Fs, the last digit free: a value at most 16 below or 15 above a power of two) or only 0s and Fs after a leading 7 or F (every hexadecimal digit 0 or F, the leading one possibly 7). Values of 2^53 and above are not read: the rule language has no hexadecimal reading of a value, so the digits are read as value ranges and bit masks, and a rule's numbers reach the engine as JavaScript numbers, exact only up to 2^53. Macro arguments and macro_rules! bodies are token trees no syntax-level reader expands.
 
 ### `clippy-decimal-literal-representation-threshold`
 
-Port of Clippy 0.1.99's decimal_literal_representation under literal-representation-threshold = 0xFFFFFF (its ui-toml test): reports a decimal integer literal whose value is at least the threshold and whose hexadecimal digits are a power of two with a margin (1, 2, 4 or 8 then zeros, or 1, 3, 7 or F then Fs, the last digit free) or only 0s and Fs after a leading 7 or F. Values of 2^52 and above are not read (the thresholds are JSON numbers); macro arguments and macro_rules! bodies are token trees no syntax-level reader expands.
+Port of Clippy 0.1.99's decimal_literal_representation under literal-representation-threshold = 0xFFFFFF (its ui-toml test): reports a decimal integer literal whose value is at least the threshold and whose hexadecimal digits (four or more above this threshold) are a power of two with a margin (1, 2, 4 or 8 then zeros, or 1, 3, 7 or F then Fs, the last digit free: a value at most 16 below or 15 above a power of two) or only 0s and Fs after a leading 7 or F (every hexadecimal digit 0 or F, the leading one possibly 7). Values of 2^53 and above are not read: the rule language has no hexadecimal reading of a value, so the digits are read as value ranges and bit masks, and a rule's numbers reach the engine as JavaScript numbers, exact only up to 2^53. Macro arguments and macro_rules! bodies are token trees no syntax-level reader expands.
 
 ### `clippy-double-parens`
 
-Port of Clippy 0.1.99's double_parens lint: reports redundant nested parentheses around an expression (only whitespace between the two opening or closing parentheses, as Clippy's source check requires; a call's sole argument in parentheses, reported once where the nested-parentheses clauses already report the same span); macro expansion and tuple/unit argument semantics are not modelled.
+Port of Clippy 0.1.99's double_parens lint: reports redundant nested parentheses around an expression (only whitespace between the two opening or closing parentheses, as Clippy's source check requires; a call's sole argument in parentheses, reported once where the nested-parentheses clauses already report the same span), and the same two shapes in a macro_rules! transcriber's tokens (a parenthesized group whose only content is another parenthesized group, in expression position after `=`, `=>`, `return`, a delimiter, `;` or `,`, or as the sole parenthesized argument after a call's name; a `$(` repetition is not a parenthesized expression); expansion of macro invocations' arguments and tuple/unit argument semantics are not modelled.
+
+### `clippy-else-if-without-else`
+
+Port of Clippy 0.1.99's else_if_without_else lint: reports the if expression of an else-if branch whose final if has no else, spanning the whole else-if expression; macro expansion and cfg evaluation are not modelled.
 
 ### `clippy-inconsistent-digit-grouping`
 
@@ -165,17 +173,21 @@ Port of Clippy 0.1.99's needless_raw_strings: reports raw literals whose content
 
 Port of Clippy 0.1.99's octal_escapes: reports each \0 followed by one or two octal digits in string, byte-string, or C-string literals; format-string preprocessing and external macros are not modelled.
 
+### `clippy-option-env-unwrap`
+
+Port of Clippy 0.1.99's option_env_unwrap: reports an unwrap or expect call on option_env!, spanning the whole call; inside a token tree (a macro invocation's input or a macro_rules! body) it reports the call where its tokens are written, as Clippy does for macros that keep their input's spans (macro_rules!, format macros) and for a macro_rules! body that is expanded; a proc macro that respans its input, which Clippy reports at the invocation, is not modelled.
+
 ### `clippy-partial-pub-fields`
 
-Port of Clippy 0.1.99's partial_pub_fields: in a struct whose first field is `pub` (exactly: `pub(crate)` and other restricted visibilities are not), reports the first field that is not, and in one whose first field is not `pub`, the first field that is, at the field's visibility (its start when it has none).
+Port of Clippy 0.1.99's partial_pub_fields: in a struct whose first field is `pub` (exactly: `pub(crate)` and other restricted visibilities are not), reports the first field that is not, and in one whose first field is not `pub`, the first field that is, at the field's visibility (a zero-width point at the field's start when it has none).
 
 ### `clippy-precedence`
 
-Port of Clippy 0.1.99's precedence lint: reports a shift or bitwise operation whose operand is an unparenthesized arithmetic (+ - * / %) operation, at every nesting depth; macro expansion and type/value semantics are not modelled.
+Port of Clippy 0.1.99's precedence lint: reports a shift or bitwise operation whose operand is an unparenthesized arithmetic (+ - * / %) operation, at every nesting depth, and a method call whose receiver is an unparenthesized closure (spanning the call); macro expansion and type/value semantics are not modelled.
 
 ### `clippy-precedence-bits`
 
-Port of Clippy 0.1.99's precedence_bits lint: reports, at any nesting depth, a bitwise (& | ^) operation with an unparenthesized shift operand and no unparenthesized arithmetic operand (that mix is the precedence lint's). Clippy reports every such operation, but operations sharing a start (a left-nested chain like `a ^ b ^ c >> 1 ^ d >> 2`) are one position, so one finding is made per chain, at the outermost operation; macro expansion and semantic type checks are not modelled.
+Port of Clippy 0.1.99's precedence_bits lint: reports, at any nesting depth, every bitwise (& | ^) operation with an unparenthesized shift operand and no unparenthesized arithmetic operand (that mix is the precedence lint's), each at its own span, so every operation of a left-nested chain like `a ^ b ^ c >> 1 ^ d >> 2` that has a shift operand is reported; macro expansion and semantic type checks are not modelled.
 
 ### `clippy-redundant-field-names`
 
@@ -192,6 +204,10 @@ Port of Clippy 0.1.99's single_char_lifetime_names: reports each single-characte
 ### `clippy-single-component-path-imports`
 
 Port of Clippy 0.1.99's single_component_path_imports (Rust 2018 and later): reports a module's (the file's or a `mod`'s) non-`pub` `use name;` without a rename, and each `name` of a `use {a, b};` without a prefix, unless a `macro_rules!` of that name comes before it in the module, a non-`pub` `use self::name..` of the module (or `use self::{name..}`) names it, or a path `self::name::..` outside `use` declarations does anywhere in the module. Clippy reads the module after macro expansion; macro arguments and macro_rules! bodies are token trees no syntax-level reader expands.
+
+### `clippy-unneeded-wildcard-pattern`
+
+Port of Clippy 0.1.99's unneeded_wildcard_pattern: reports the run of wildcard elements of a tuple or tuple-struct pattern adjacent to its rest pattern, and the trailing wildcard fields of a struct pattern before its rest, spanning them with their separators up to (or from) the rest pattern as Clippy does; elements nested more than two brackets deep and macro-expanded code are not modelled.
 
 ### `clippy-unnested-or-patterns`
 

@@ -3,7 +3,7 @@
   "id": "clippy-builtin-type-shadow",
   "revision": 2,
   "mode": "steer",
-  "description": "Port of Clippy 0.1.99's builtin_type_shadow: reports generic type parameters named like a primitive type (rustc's PrimTy names: the integer types, the float types f16 to f128, bool, char and str); semantic name resolution is not modelled.",
+  "description": "Don't name a Rust generic type parameter after a primitive type such as u32 or bool; it shadows the real type inside the item.",
   "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [{
     "id": "builtin-type-shadow",

@@ -3,7 +3,7 @@
   "id": "sqlfluff-st10-structure-constant-expression",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of SQLFluff 4.4.0's ST10 (structure.constant_expression): report =, != or <> whose operands are the same non-literal written identically, or two literals other than the allowed 1 = 1 and 1 = 0 (compared without a string's quotes, so '1' = 1 is allowed too), anchored at the operator. SQLFluff's operands are the pieces adjacent to the operator, as its postgres dialect reads them: a positional parameter ($1) is a literal; a date, time, timestamp or interval literal is one operand and no literal; any other typed string (name 'x') is a type then a string, so on the left its string is the operand and on the right the type, which matches nothing; a right operand followed by COLLATE is the collated expression, a left one is the collation name, which matches nothing; an operand that is itself an arithmetic, bitwise or other binary expression is not adjacent, so such comparisons are skipped.",
+  "description": "Remove SQL comparisons that are always true or false, such as an expression compared to itself or two literals; 1 = 1 and 1 = 0 are allowed.",
   "scope": {
     "include": [
       "**/*.sql"
