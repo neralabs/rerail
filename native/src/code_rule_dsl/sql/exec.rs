@@ -1825,6 +1825,9 @@ const BATCH_STATEMENTS: usize = 4;
 /// batches: a batch empties its tables (`frames`: the frame tables' buffers) and refills them
 /// through the cached statements. `counts`: every counted table's rows (`skip`).
 pub(in crate::code_rule_dsl) struct Session {
+    // Drop the callback owner before closing the connection.
+    #[cfg(any(test, feature = "unbounded-work"))]
+    profiling: Option<Box<super::profiling::Profiler>>,
     connection: Connection,
     slot: Arc<BatchSlot>,
     program: Arc<Program>,
@@ -1851,6 +1854,9 @@ impl Session {
         let slot = Arc::new(BatchSlot::default());
         let connection = connect(&slot)?;
         let frames = Arc::clone(&slot.frames);
+        #[cfg(any(test, feature = "unbounded-work"))]
+        // SAFETY: Session drops profiling before connection; constructor errors do the same.
+        let profiling = unsafe { super::profiling::Profiler::configured(&connection) }?;
         connection.execute_batch(
             "PRAGMA temp_store = MEMORY; \
              CREATE TEMP TABLE runs(run INTEGER NOT NULL, file INTEGER NOT NULL, \
@@ -1867,6 +1873,8 @@ impl Session {
             .map(|table| (table.name.clone(), matches!(table.make, Make::Frame(_))))
             .collect();
         Ok(Self {
+            #[cfg(any(test, feature = "unbounded-work"))]
+            profiling,
             connection,
             slot,
             program: Arc::clone(&compiled.program),
@@ -2069,6 +2077,10 @@ impl Session {
             self.counts.reset();
         }
         self.frames.trim();
+        #[cfg(any(test, feature = "unbounded-work"))]
+        if let Some(profiling) = &self.profiling {
+            profiling.checkpoint(&self.connection)?;
+        }
         result
     }
 
@@ -2078,6 +2090,8 @@ impl Session {
         runs: &[ClauseRun],
     ) -> Result<Vec<Vec<Vec<SqlMatch>>>, SqlError> {
         let Self {
+            #[cfg(any(test, feature = "unbounded-work"))]
+            profiling,
             connection,
             plan,
             stats,
@@ -2090,6 +2104,8 @@ impl Session {
         let (stages, clauses, sole) = (&plan.stages, &plan.clauses, &plan.sole);
         let connection = &*connection;
         let mut runner = Runner {
+            #[cfg(any(test, feature = "unbounded-work"))]
+            profiling: profiling.as_deref(),
             connection,
             frames,
             stats,
@@ -2216,6 +2232,8 @@ impl Session {
                     if !skipped {
                         let mut text = runner.buffer();
                         bound.text(last, &mut text);
+                        #[cfg(any(test, feature = "unbounded-work"))]
+                        let operation = runner.profile_operation(&text, bound, last);
                         let started = Started::now();
                         let mut statement = connection.prepare_cached(&text)?;
                         let mut rows = statement.query([])?;
@@ -2234,6 +2252,10 @@ impl Session {
                         }
                         drop(rows);
                         drop(statement);
+                        #[cfg(any(test, feature = "unbounded-work"))]
+                        if let Some(operation) = operation {
+                            operation.finish(count);
+                        }
                         let elapsed = started.elapsed();
                         let stats = &mut *runner.stats;
                         stats.statements += 1;
@@ -2312,6 +2334,8 @@ impl Session {
 /// A session's connection, frames, statistics and counts while a batch runs its statements;
 /// `at`, the stage or clause running (`verify`).
 struct Runner<'s> {
+    #[cfg(any(test, feature = "unbounded-work"))]
+    profiling: Option<&'s super::profiling::Profiler>,
     connection: &'s Connection,
     frames: &'s FrameStore,
     stats: &'s mut Stats,
@@ -2323,7 +2347,27 @@ struct Runner<'s> {
     depth: usize,
 }
 
-impl Runner<'_> {
+impl<'s> Runner<'s> {
+    #[cfg(any(test, feature = "unbounded-work"))]
+    fn profile_operation(
+        &self,
+        sql: &str,
+        bound: Bound<'_>,
+        step: &Step,
+    ) -> Option<super::profiling::Operation<'s>> {
+        self.profiling.map(|profiler| {
+            profiler.operation(
+                sql,
+                self.at,
+                self.depth,
+                bound
+                    .inputs(bound.action(step))
+                    .map(|table| (self.counts.name(table).to_owned(), self.counts.rows(table)))
+                    .collect(),
+            )
+        })
+    }
+
     /// A buffer to write a step's text into; `release` it once the text is run.
     fn buffer(&mut self) -> String {
         self.texts.pop().unwrap_or_default()
@@ -2466,20 +2510,38 @@ impl Runner<'_> {
                 let description = until
                     .strip_prefix(emit::FRONTIER)
                     .expect("a frontier descriptor");
+                #[cfg(any(test, feature = "unbounded-work"))]
+                let initialization = self.profile_operation(until, bound, &steps[end]);
                 let started = Started::now();
                 let mut frontier = self.frames.frontier(description)?;
+                #[cfg(any(test, feature = "unbounded-work"))]
+                if let Some(operation) = initialization {
+                    operation.finish(0);
+                }
                 let mut initialized = started.elapsed();
                 #[cfg(any(test, feature = "unbounded-work"))]
                 let mut passes = 0;
                 self.depth += 1;
                 loop {
+                    #[cfg(any(test, feature = "unbounded-work"))]
+                    let operation = self.profile_operation(until, bound, &steps[end]);
                     let started = Started::now();
                     let rows = self.frames.frontier_fill(&mut frontier)?;
                     let mut elapsed = started.elapsed().plus(initialized);
                     initialized = Timing::ZERO;
+                    #[cfg(any(test, feature = "unbounded-work"))]
+                    if let Some(operation) = operation {
+                        operation.finish(rows);
+                    }
                     self.steps(bound, &steps[at + 1..end], known_empty)?;
+                    #[cfg(any(test, feature = "unbounded-work"))]
+                    let operation = self.profile_operation(until, bound, &steps[end]);
                     let advanced = Started::now();
                     let more = frontier.advance()?;
+                    #[cfg(any(test, feature = "unbounded-work"))]
+                    if let Some(operation) = operation {
+                        operation.finish(0);
+                    }
                     elapsed.add(advanced.elapsed());
                     self.stats.statements += 1;
                     self.stats.rows += rows;
@@ -2520,10 +2582,18 @@ impl Runner<'_> {
             // A loop's pass evaluates the dirty keys of its units: with none (the site demanded
             // no new key), it would change nothing, and the units it reaches would be run for
             // nothing again, at every site of every pass above them.
+            #[cfg(any(test, feature = "unbounded-work"))]
+            let (profiler, scope, depth) = (self.profiling, self.at, self.depth);
             let dirty = |connection: &Connection| -> Result<bool, SqlError> {
+                #[cfg(any(test, feature = "unbounded-work"))]
+                let operation = profiler.map(|p| p.operation(until, scope, depth, Vec::new()));
                 let changed: i64 = connection
                     .prepare_cached(until)?
                     .query_row([], |row| row.get(0))?;
+                #[cfg(any(test, feature = "unbounded-work"))]
+                if let Some(operation) = operation {
+                    operation.finish(1);
+                }
                 Ok(changed != 0)
             };
             if !dirty(self.connection)? {
@@ -2626,6 +2696,8 @@ impl Runner<'_> {
         if *MODE != Mode::Check {
             bound.text(step, &mut text);
         }
+        #[cfg(any(test, feature = "unbounded-work"))]
+        let operation = self.profile_operation(&text, bound, step);
         let started = Started::now();
         let selected = self.frames.select(self.connection, &text)?;
         let mut statement = self.connection.prepare_cached(&text)?;
@@ -2634,6 +2706,10 @@ impl Runner<'_> {
             None => statement.execute([])?,
         };
         let elapsed = started.elapsed();
+        #[cfg(any(test, feature = "unbounded-work"))]
+        if let Some(operation) = operation {
+            operation.finish(rows);
+        }
         #[cfg(feature = "unbounded-work")]
         if super::diagnostics::enabled(&text) {
             let selection = frames::take_selection_trace();
@@ -2708,6 +2784,13 @@ impl Runner<'_> {
             self.release(text);
             return Ok(());
         }
+        #[cfg(any(test, feature = "unbounded-work"))]
+        let operation = if self.profiling.is_some() {
+            bound.text(clear, &mut text);
+            self.profile_operation(&text, bound, clear)
+        } else {
+            None
+        };
         let rows = match action.kind {
             Kind::Clear(table) => {
                 let name = self.counts.name(bound.table(table));
@@ -2724,6 +2807,10 @@ impl Runner<'_> {
             skip::check(&text, outcome, rows);
         }
         self.release(text);
+        #[cfg(any(test, feature = "unbounded-work"))]
+        if let Some(operation) = operation {
+            operation.finish(rows);
+        }
         self.counts.wrote(&bound.writes(action), rows);
         Ok(())
     }

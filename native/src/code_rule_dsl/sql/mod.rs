@@ -14,6 +14,8 @@ mod lower;
 mod nearest;
 mod nodes;
 mod plan;
+#[cfg(any(test, feature = "unbounded-work"))]
+mod profiling;
 mod recursion;
 pub(super) mod select_when;
 mod shapes;

@@ -1,0 +1,141 @@
+import { createReadStream, readFileSync, readdirSync, openSync, closeSync, writeSync, writeFileSync } from "node:fs";
+import { createInterface } from "node:readline";
+import { join } from "node:path";
+
+export const thresholds = Object.freeze({ highVmPerRow: 1000, minimumVm: 100_000, emptyVm: 10_000,
+  repeatedRuns: 100, smallCpuNs: 1_000_000, expansion: 10, expandedRows: 1000, indexBuilds: 10,
+  frameAdvances: 100_000, repeatedScans: 100 });
+const fields = ["runs", "cpuNs", "wallNs", "selfCpuNs", "selfWallNs", "rows", "changes", "vmSteps", "fullscanSteps", "sorts", "autoIndexRows",
+  "frameScans", "frameLookups", "frameNext", "frameColumns", "frameInserts", "frameIndexBuilds", "frameIndexedRows"];
+const frameFields = fields.slice(11);
+const counterFields = ["vmSteps", "fullscanSteps", "sorts", "autoIndexRows"];
+const ms = ns => (ns / 1e6).toFixed(3);
+
+export function flags(query) {
+  const out = [];
+  const add = (code, certainty, evidence, action) => out.push({ code, certainty, evidence, action });
+  const details = Array.isArray(query.plan) ? query.plan.map(row => row[3]).join("\n") : "";
+  if (query.kind === "sql" && (!Array.isArray(query.plan) || !Array.isArray(query.bytecode))) {
+    add("explain-unavailable", "observed", query.plan?.error ?? query.bytecode?.error ?? "Missing EXPLAIN", "Inspect the raw SQL and schema lifetime.");
+  }
+  if (/USE TEMP B-TREE/i.test(details)) add("temporary-btree", "potential", details.split("\n").filter(s => /TEMP B-TREE/i.test(s)), "Inspect ordering, grouping, and deduplication before materialization.");
+  if (/CORRELATED.*SUBQUERY/i.test(details)) add("correlated-subquery", "potential", details.split("\n").filter(s => /CORRELATED/i.test(s)), "Inspect whether this subquery repeats for each outer row.");
+  if (/MATERIALIZE /i.test(details)) add("materialization", "potential", details.split("\n").filter(s => /MATERIALIZE /i.test(s)), "Inspect reuse and push restrictions into the materialized input.");
+  if (query.fullscanSteps) add("full-scan", "observed", { fullscanSteps: query.fullscanSteps }, "Inspect missing restrictions or lookup indexes.");
+  if (/SCAN .*VIRTUAL TABLE INDEX 0:/i.test(details)) add("virtual-full-scan", "potential", { frameScans: query.frameScans, frameNext: query.frameNext }, "Inspect the virtual-table plan and measured frame visits.");
+  if (query.sorts) add("runtime-sorts", "observed", { sorts: query.sorts }, "Inspect ordering and grouping in this query.");
+  if (query.autoIndexRows) add("automatic-index", "observed", { insertedIndexRows: query.autoIndexRows }, "Inspect whether repeated executions rebuild the same automatic index.");
+  if (query.frameIndexBuilds >= thresholds.indexBuilds) add("frame-index-rebuilds", "observed", { builds: query.frameIndexBuilds, indexedRows: query.frameIndexedRows }, "Inspect frame writes that invalidate lookup indexes.");
+  const output = query.rows + query.changes;
+  if (query.vmSteps >= thresholds.minimumVm && query.vmSteps / Math.max(1, output) >= thresholds.highVmPerRow) add("high-vm-per-row", "observed", { vmSteps: query.vmSteps, resultOrChangedRows: output }, "Inspect repeated probes and intermediate work per result.");
+  if (!output && query.vmSteps >= thresholds.emptyVm) add("empty-result-work", "observed", { vmSteps: query.vmSteps, cpuMs: Number(ms(query.cpuNs)) }, "Inspect whether an earlier emptiness check can avoid this work.");
+  if (query.runs >= thresholds.repeatedRuns && query.cpuNs / query.runs < thresholds.smallCpuNs) add("many-small-executions", "observed", { runs: query.runs, averageCpuMs: Number(ms(query.cpuNs / query.runs)) }, "Inspect batching or fusion across these executions.");
+  if (query.maxExpansion >= thresholds.expansion) add("row-expansion", "observed", { maximumOutputToLargestInput: query.maxExpansion }, "Inspect join multiplicity and push candidate restrictions earlier.");
+  if (query.frameScans >= thresholds.repeatedScans && query.frameNext >= thresholds.frameAdvances) add("repeated-frame-scans", "observed", { scans: query.frameScans, cursorAdvances: query.frameNext }, "Inspect keyed lookup opportunities and repeated input scans.");
+  if (query.incomplete) add("incomplete-operation", "observed", { executions: query.incomplete }, "Inspect workload failures before interpreting performance.");
+  return out;
+}
+
+export async function buildReport(rawDirectory, outputDirectory, workload = {}) {
+  const files = readdirSync(rawDirectory).filter(name => /^profile-.*\.json$/.test(name)).sort();
+  if (!files.length) throw new Error("No SQL sessions were captured. Select supported SQL clauses and build the addon with --features unbounded-work.");
+  const byText = new Map();
+  const queries = [];
+  const contexts = new Map();
+  const clauseNames = new Map((workload.results?.sql?.report?.profile?.clauses ?? []).map(clause => [clause.statement, clause]));
+  const trace = openSync(join(outputDirectory, "trace.json"), "w");
+  writeSync(trace, '{"displayTimeUnit":"ms","traceEvents":[');
+  let first = true, eventCount = 0;
+  try {
+    for (const name of files) {
+      const catalogue = JSON.parse(readFileSync(join(rawDirectory, name), "utf8"));
+      if (catalogue.version !== 1) throw new Error(`Unsupported SQL profile version: ${catalogue.version}`);
+      const local = new Map(catalogue.queries.map(query => {
+        const key = `${query.kind}:${query.sql}`;
+        let combined = byText.get(key);
+        if (!combined) {
+          combined = { ...query, id: queries.length, ...Object.fromEntries(fields.map(f => [f, 0])), maxExpansion: 0, incomplete: 0, contexts: new Set(), plans: [] };
+          queries.push(combined); byText.set(key, combined);
+        }
+        if (query.kind === "sql") {
+          // Keep different plans across sessions, rather than silently retaining the first.
+          if (!combined.plans.some(p => JSON.stringify(p.plan) === JSON.stringify(query.plan) && JSON.stringify(p.bytecode) === JSON.stringify(query.bytecode))) {
+            combined.plans.push({ plan: query.plan, bytecode: query.bytecode });
+          }
+        }
+        return [query.id, combined];
+      }));
+      let localEvents = 0;
+      for await (const line of createInterface({ input: createReadStream(join(rawDirectory, name.replace(/\.json$/, ".jsonl"))), crlfDelay: Infinity })) {
+        if (!line) continue;
+        const event = JSON.parse(line);
+        const query = local.get(event.query);
+        if (!query) throw new Error(`Missing query ${event.query} in ${name}`);
+        eventCount++; localEvents++;
+        query.runs++;
+        for (const key of fields.slice(1, 8)) query[key] += event[key] ?? 0;
+        counterFields.forEach((key, i) => { query[key] += event.counters?.[i] ?? 0; });
+        frameFields.forEach((key, i) => { query[key] += event.frame?.[i] ?? 0; });
+        if (event.kind === "operator" && !event.completed) query.incomplete++;
+        const context = { ...(event.context ?? {}) };
+        if (context.operator !== undefined) context.operator = local.get(context.operator)?.id ?? context.operator;
+        const clause = context.scope === "clause" ? clauseNames.get(context.statement) : undefined;
+        if (clause) Object.assign(context, { ruleId: clause.ruleId, clauseId: clause.clauseId });
+        const largest = Math.max(0, ...(context.inputs ?? []).map(([, count]) => count));
+        if (event.kind === "operator" && largest > 0 && event.rows >= thresholds.expandedRows) query.maxExpansion = Math.max(query.maxExpansion, event.rows / largest);
+        const scopeKey = context.scope ? `${context.scope}:${context.statement}${clause ? ` ${clause.ruleId}/${clause.clauseId}` : ""}` : "setup/input/cleanup";
+        query.contexts.add(scopeKey);
+        let scope = contexts.get(scopeKey);
+        if (!scope) { scope = { scope: context.scope ?? "session", statement: context.statement, ruleId: clause?.ruleId, clauseId: clause?.clauseId, selfCpuNs: 0, selfWallNs: 0, executions: 0 }; contexts.set(scopeKey, scope); }
+        scope.selfCpuNs += event.selfCpuNs; scope.selfWallNs += event.selfWallNs; scope.executions++;
+        const traceEvent = { name: `Q${query.id} ${event.kind}`, cat: event.kind, ph: "X", pid: catalogue.pid,
+          tid: event.thread, ts: event.startNs / 1000, dur: event.wallNs / 1000,
+          args: { query: query.id, sql: query.sql, cpuMs: event.cpuNs / 1e6, selfCpuMs: event.selfCpuNs / 1e6,
+            rows: event.rows, changes: event.changes, context, counters: event.counters, frame: event.frame,
+            flags: flags(query).map(flag => flag.code), flagBasis: "query totals through this event" } };
+        writeSync(trace, (first ? "" : ",") + JSON.stringify(traceEvent)); first = false;
+      }
+      if (localEvents !== catalogue.events) throw new Error(`Incomplete trace ${name}: ${localEvents}/${catalogue.events} events`);
+    }
+    writeSync(trace, "]}");
+  } finally { closeSync(trace); }
+  for (const query of queries) {
+    query.contexts = [...query.contexts].sort();
+    // Union plan hazards across all observed plans.
+    const allFlags = [flags(query), ...query.plans.map(plan => flags({ ...query, ...plan }))].flat();
+    query.flags = [...new Map(allFlags.map(flag => [flag.code, flag])).values()];
+  }
+  queries.sort((a, b) => b.selfCpuNs - a.selfCpuNs || a.id - b.id);
+  const summary = Object.fromEntries(fields.map(key => [key, queries.reduce((n, q) => n + (key === "cpuNs" || key === "wallNs" ? (q.kind === "sql" ? q[key] : 0) : q[key]), 0)]));
+  const report = { version: 1, workload, thresholds, eventCount, sessions: files.length, summary,
+    accounting: "Ranked CPU uses SQL CPU plus operator CPU excluding child SQL. SQL spans exclude preparation; operator spans include preparation. Parsing and other pipeline phases outside these spans are not attributed. Inclusive operator times overlap SQL. Aggregate wall time sums worker spans, not workload latency. Profiling callback and serialization overhead affect timings. EXPLAIN uses unbound NULL parameters after execution. Query plans describe SQLite choices, not actual loop counts. Frame counters cover frame tables; terminal internals are included in SQL time but have no callback breakdown. Rows are returned, changed, or published rows; shared rows are not copies. Summed row counts include operator and SQL observations of the same rows. Threshold flags are review candidates, not correctness failures.",
+    contexts: [...contexts.values()].sort((a, b) => b.selfCpuNs - a.selfCpuNs), queries };
+  writeFileSync(join(outputDirectory, "profile.json"), JSON.stringify(report, null, 2) + "\n");
+  const lines = ["# SQL workload profile", "", `Output parity: ${workload.results?.parity ?? "unavailable"}.`, "", report.accounting, "",
+    `Events: ${eventCount}. Sessions: ${files.length}. Accounted CPU: ${ms(summary.selfCpuNs)} ms.`, "",
+    "| Query | Kind | Self CPU ms | Runs | Rows | VM steps | Flags |", "|---|---|---:|---:|---:|---:|---|"];
+  for (const q of queries) lines.push(`| Q${q.id} | ${q.kind} | ${ms(q.selfCpuNs)} | ${q.runs} | ${q.rows + q.changes} | ${q.vmSteps} | ${q.flags.map(f => f.code).join(", ")} |`);
+  for (const q of queries) {
+    lines.push("", `## Q${q.id}`, "", `Contexts: ${q.contexts.join(", ")}.`, "", "```sql", q.sql, "```", "");
+    for (const flag of q.flags) lines.push(`- **${flag.code} (${flag.certainty})**: ${JSON.stringify(flag.evidence)}. ${flag.action}`);
+    if (q.kind === "sql") lines.push("", "```json", JSON.stringify(q.plans.map(p => p.plan), null, 2), "```");
+  }
+  writeFileSync(join(outputDirectory, "profile.md"), lines.join("\n") + "\n");
+  writeFileSync(join(outputDirectory, "profile.html"), html(report));
+  return report;
+}
+
+function html(report) {
+  const payload = JSON.stringify(report).replaceAll("<", "\\u003c").replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><title>SQL workload profile</title>
+<style>body{font:14px system-ui;margin:24px;color:#17202a}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:8px;border-bottom:1px solid #ddd}th{cursor:pointer}tr:hover{background:#eef5ff}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f6f8;padding:12px}.flag{color:#934500}input{padding:8px;width:70%}#detail{border-top:2px solid #aaa;margin-top:24px}button{margin:8px;padding:6px}</style>
+<h1>SQL workload profile</h1><p id="summary"></p><p id="accounting"></p><input id="filter" aria-label="Filter queries" placeholder="Filter SQL, scope, or flag"><button id="flagged">Flagged only</button><table><thead><tr><th data-sort="id">Query</th><th data-sort="selfCpuNs">Self CPU ms ↓</th><th data-sort="runs">Runs</th><th data-sort="rows">Rows</th><th data-sort="vmSteps">VM steps</th><th>Flags</th></tr></thead><tbody id="rows"></tbody></table><section id="detail"></section>
+<script type="application/json" id="data">${payload}</script><script>
+const report=JSON.parse(document.getElementById('data').textContent);let sort='selfCpuNs',direction=-1,flagged=false;
+const el=id=>document.getElementById(id),ms=n=>(n/1e6).toFixed(3),text=(tag,value)=>{const e=document.createElement(tag);e.textContent=value;return e};
+el('summary').textContent=report.eventCount+' events · '+report.sessions+' sessions · '+ms(report.summary.selfCpuNs)+' ms accounted CPU · output parity: '+(report.workload.results?.parity??'unavailable');el('accounting').textContent=report.accounting;
+function detail(q){const d=el('detail');d.replaceChildren(text('h2','Q'+q.id+' · '+q.kind),text('p',q.contexts.join(', ')),text('pre',q.sql));for(const f of q.flags)d.append(text('p',f.code+' ('+f.certainty+'): '+JSON.stringify(f.evidence)+' '+f.action));d.append(text('h3','Metrics'),text('pre',JSON.stringify({...q,sql:undefined,plans:undefined,bytecode:undefined,plan:undefined},null,2)));if(q.kind==='sql')d.append(text('h3','EXPLAIN QUERY PLAN and bytecode'),text('pre',JSON.stringify(q.plans,null,2)));d.scrollIntoView({block:'start'});}
+function render(){const filter=el('filter').value.toLowerCase();el('rows').replaceChildren();for(const q of [...report.queries].filter(q=>(!flagged||q.flags.length)&&JSON.stringify([q.sql,q.contexts,q.flags]).toLowerCase().includes(filter)).sort((a,b)=>direction*(a[sort]-b[sort]))){const r=document.createElement('tr');for(const value of ['Q'+q.id+' '+q.kind,ms(q.selfCpuNs),q.runs,q.rows+q.changes,q.vmSteps,q.flags.map(f=>f.code).join(', ')])r.append(text('td',value));r.onclick=()=>detail(q);el('rows').append(r);}}
+el('filter').oninput=render;el('flagged').onclick=()=>{flagged=!flagged;el('flagged').textContent=flagged?'Show all':'Flagged only';render()};document.querySelectorAll('[data-sort]').forEach(e=>e.onclick=()=>{direction=sort===e.dataset.sort?-direction:-1;sort=e.dataset.sort;render()});render();
+</script></html>`;
+}

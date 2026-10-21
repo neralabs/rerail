@@ -907,6 +907,11 @@ impl Frame {
         {
             return Ok(Rc::clone(rows));
         }
+        #[cfg(any(test, feature = "unbounded-work"))]
+        {
+            super::profiling::frame(super::profiling::FrameEvent::IndexBuild, 1);
+            super::profiling::frame(super::profiling::FrameEvent::IndexedRows, self.len);
+        }
         let mut rows: Vec<u32> = match self.scan_order()? {
             Some(order) => order.to_vec(),
             None => (0..self.len as u32).collect(),
@@ -1504,6 +1509,8 @@ impl UpdateVTab<'_> for FrameTable {
     }
 
     fn insert(&mut self, args: &Inserts<'_>) -> Result<i64> {
+        #[cfg(any(test, feature = "unbounded-work"))]
+        super::profiling::frame(super::profiling::FrameEvent::Insert, 1);
         // SAFETY: SQLite calls `xUpdate` with no cursor of the frame inside a method (`Shared`).
         let frame = unsafe { self.shared.get_mut() };
         if args.len() != frame.columns.len() + 2 {
@@ -1698,6 +1705,15 @@ fn partition(len: usize, before: impl Fn(usize) -> bool) -> usize {
 
 unsafe impl VTabCursor for FrameCursor<'_> {
     fn filter(&mut self, idx_num: c_int, idx_str: Option<&str>, args: &Filters<'_>) -> Result<()> {
+        #[cfg(any(test, feature = "unbounded-work"))]
+        super::profiling::frame(
+            if idx_num == 0 {
+                super::profiling::FrameEvent::Scan
+            } else {
+                super::profiling::FrameEvent::Lookup
+            },
+            1,
+        );
         if idx_num == 0 {
             let frame = self.shared.get();
             self.rows = match frame.scan_order()? {
@@ -1772,6 +1788,8 @@ unsafe impl VTabCursor for FrameCursor<'_> {
     }
 
     fn next(&mut self) -> Result<()> {
+        #[cfg(any(test, feature = "unbounded-work"))]
+        super::profiling::frame(super::profiling::FrameEvent::Next, 1);
         self.step();
         Ok(())
     }
@@ -1783,6 +1801,8 @@ unsafe impl VTabCursor for FrameCursor<'_> {
     }
 
     fn column(&self, context: &mut Context, column: c_int) -> Result<()> {
+        #[cfg(any(test, feature = "unbounded-work"))]
+        super::profiling::frame(super::profiling::FrameEvent::Column, 1);
         let frame = self.shared.get();
         let value = frame.columns[column as usize].get(self.row);
         context.set_result(&ToSqlOutput::Borrowed(value))
