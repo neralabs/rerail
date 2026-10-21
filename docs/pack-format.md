@@ -169,24 +169,27 @@ pack's README, under "Rule details". For example: `Avoid dd() and dump() calls; 
 
 ### Message
 
-The message is advice to the agent: what is wrong, why it matters, what to change and when it is fine to leave it. A
-message that states a fact or a ban gives the agent nothing to act on, and one the agent follows without judgement can
-break working code.
+The message tells the agent what to change in this code and, where the change can be wrong, when to leave it alone.
 
-1. It gives advice: it says what to change in this code and names the replacement. A fact or a ban alone ("Use of the
-   insecure ECB cipher mode.", "Do not use bare except") is not advice.
-2. Where following it can be wrong, because the matcher can't see the intent or the fix changes behaviour, it says when
-   to leave the code alone or what the fix trades off ("…`strict=False` if truncation is intended").
-3. It is calibrated: no hedging ("Consider maybe…", "may not be"), no shouting (NEVER, MUST, ALWAYS), and no alarm the
-   finding doesn't warrant.
-4. It is right for every match of its clause and agrees with the clause's `fix` when it has one. It uses the values the
-   clause captures where they help (`$NAME`, `$CCN`, thresholds), never a binding the clause doesn't define.
-5. It leaves out what the block adds: no rule id, location, "Rerail" or "fix it or explain". It names no upstream tool,
-   rule code ("B113", "PIE810") or version, and no implementation text (AST node kinds, regexes).
-6. At most 200 characters, counting placeholders as written. It may open with what was found and run to more than one
-   sentence.
-7. Where a rule's clauses match different things, each clause has its own message. One message for `x == None` and
-   `x != None` that says "use `is None`" gives the opposite advice for `!=`.
+1. It says what to change in this code: the replacement, or what to remove. A fact or a ban that names no change ("Use
+   of the insecure ECB cipher mode.", "Do not use bare except") is not advice.
+2. If you can write code this rule matches where following the message would be wrong (the matcher can't see the
+   intent, or the change alters what the code does when it runs), the message says when to leave the code alone or what
+   the change trades off ("…`strict=False` if truncation is intended").
+3. Its tone matches what the rule can confirm. It doesn't soften the advice ("consider", "you might want to"), doesn't
+   shout (NEVER, MUST, ALWAYS in capitals), and states a risk only as far as the rule can confirm it ("can run arbitrary
+   code if the input is untrusted", not "is vulnerable").
+4. Its advice is right for every match of its clause, counting the exception rule 2 names, and agrees with the clause's
+   `fix` when it has one. It names what the clause captured (`$NAME`, `$CCN`) where that makes clear which code it
+   means; it can only use captures the clause defines.
+5. It leaves out what the block adds (the rule id, the location, "Rerail", "fix it or explain") and the rule's origin and
+   internals: no upstream tool name, rule code ("B113", "PIE810") or tool version, and no matcher terms (AST node kinds,
+   regexes). Quoting the code the finding is about is fine, even when it names a tool (`# noqa`, `// eslint-disable`).
+6. Each text it can show is at most 200 characters, counting placeholders as written (`$NAME` counts as 5). It may open
+   with what was found and run to more than one sentence.
+7. When the right advice differs between things the rule matches (`x == None` and `x != None`), the message differs
+   too: give each its own clause and message, or build the difference into the message from a capture. One message
+   telling both to "use `is None`" gives the opposite advice for `!=`.
 
 For example: `This exception is silently discarded with pass. Handle or log it, or catch a specific expected exception when
 suppression is intentional.`, or `` `$NAME` has cyclomatic complexity $CCN, over the ceiling of 6. Decompose it into smaller

@@ -109,24 +109,28 @@ Rerail found 1 problem in your last edit:
 Fix it, or tell the user in one line why you won't.
 ```
 
-So the message is advice: what is wrong, what to change, and when to leave it. An agent that obeys a steer without
-judgement breaks working code, and a steer that only states a fact or a ban gives it nothing to act on.
+So the message tells the agent what to change in this code and, where the change can be wrong, when to leave it alone.
 
-1. **Give advice:** say what to change in this code and name the replacement: "Log through `logger.info` (src/log.ts)
-   instead of console.log." Prefer pointing to the right helper over "remove" or "delete": a steer to delete is the most
-   common harmful steer.
-2. **Say when to leave it alone,** if a legitimate exception exists that the matcher cannot see, or the fix changes
-   behaviour: "…; keep it if this call can fail in normal operation."
-3. **Be calibrated:** no hedging ("Consider maybe…", "may not be"), no shouting (NEVER, MUST, ALWAYS), and no alarm the
-   finding doesn't warrant.
-4. **Be right for every match** of the clause and agree with its `fix` when it has one. Use what the clause captured
-   (`$M`, `$NAME`) where it helps, and never a metavariable the clause doesn't define.
-5. **Leave out what the block adds:** no rule id, location, "Rerail" or "fix it or explain", and no linter names, rule
-   codes ("B113", "no-console"), versions or implementation text (AST node kinds, regexes).
-6. **At most 200 characters,** counting metavariables as written. It may open with what was found and take more than one
-   sentence.
-7. **Give each clause its own message** when the clauses match different things. One message for `x == None` and
-   `x != None` that says "use `is None`" gives the opposite advice for `!=`.
+1. **Say what to change:** the replacement, or what to remove: "Log through `logger.info` (src/log.ts) instead of
+   console.log." A fact or a ban that names no change is not advice. Where a helper exists, point to it rather than
+   saying "remove" or "delete": a steer to delete is the most common harmful steer.
+2. **Say when to leave it alone** if you can write code this rule matches where following the message would be wrong
+   (the matcher can't see the intent, or the change alters what the code does when it runs): "…; keep it if this call
+   can fail in normal operation."
+3. **Match the tone to what the rule can confirm:** don't soften the advice ("consider", "you might want to"), don't
+   shout (NEVER, MUST, ALWAYS in capitals), and state a risk only as far as the rule can confirm it ("can run arbitrary
+   code if the input is untrusted", not "is vulnerable").
+4. **Be right for every match** of the clause, counting the exception rule 2 names, and agree with its `fix` when it has
+   one. Name what the clause captured (`$M`, `$NAME`) where that makes clear which code you mean; only metavariables the
+   clause defines can be used.
+5. **Leave out what the block adds and the rule's origin and internals:** no rule id, location, "Rerail" or "fix it or
+   explain", and no linter names, rule codes ("B113", "no-console"), tool versions or matcher terms (AST node kinds,
+   regexes). Quoting the code the finding is about is fine, even when it names a tool (`# noqa`, `// eslint-disable`).
+6. **At most 200 characters for each text it can show,** counting metavariables as written (`$NAME` counts as 5). It may
+   open with what was found and take more than one sentence.
+7. **Let the message differ when the right advice does:** when the rule matches things that need different advice
+   (`x == None` and `x != None`), give each its own clause and message, or build the difference into the message from a
+   capture. One message telling both to "use `is None`" gives the opposite advice for `!=`.
 
 Also:
 
