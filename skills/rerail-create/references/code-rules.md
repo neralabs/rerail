@@ -117,10 +117,12 @@ judgement breaks working code, and a steer that only states a fact or a ban give
    common harmful steer.
 2. **Say when to leave it alone,** if a legitimate exception exists that the matcher cannot see, or the fix changes
    behaviour: "…; keep it if this call can fail in normal operation."
-3. **Don't be emphatic:** no shouting (NEVER, MUST, ALWAYS), and no alarm the finding doesn't warrant.
+3. **Be calibrated:** no hedging ("Consider maybe…", "may not be"), no shouting (NEVER, MUST, ALWAYS), and no alarm the
+   finding doesn't warrant.
 4. **Be right for every match** of the clause, agree with its `fix` when it has one, and use only metavariables the
    clause defines (`$M`, `$NAME`); give each clause its own message.
-5. **Leave out what the block adds:** no rule id, location, "Rerail" or "fix it or explain", and no linter names.
+5. **Leave out what the block adds:** no rule id, location, "Rerail" or "fix it or explain", and no linter names or rule
+   codes ("B113", "no-console").
 6. **At most 200 characters,** counting metavariables as written. It may open with what was found and take more than one
    sentence.
 

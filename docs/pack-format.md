@@ -177,10 +177,12 @@ a ban with nothing to act on, or were obeyed without judgement and broke working
    insecure ECB cipher mode.", "Do not use bare except") is not advice.
 2. Where following it can be wrong, because the matcher can't see the intent or the fix changes behaviour, it says when
    to leave the code alone or what the fix trades off ("…`strict=False` if truncation is intended").
-3. It is calibrated, not emphatic: no shouting (NEVER, MUST, ALWAYS), and no alarm the finding doesn't warrant.
+3. It is calibrated: no hedging ("Consider maybe…", "may not be"), no shouting (NEVER, MUST, ALWAYS), and no alarm the
+   finding doesn't warrant.
 4. It is right for every match of its clause, agrees with the clause's `fix` when it has one, and uses only bindings the
    clause defines.
-5. It leaves out what the block adds: no rule id, location, "Rerail" or "fix it or explain". It names no upstream tool.
+5. It leaves out what the block adds: no rule id, location, "Rerail" or "fix it or explain". It names no upstream tool
+   or rule code ("B113", "PIE810").
 6. At most 200 characters, counting placeholders as written. It may open with what was found and run to more than one
    sentence.
 
