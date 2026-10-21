@@ -5,6 +5,208 @@ Each entry identifies its implementation and evidence. Historical results remain
 Experiments stay in isolated worktrees or standalone harnesses until a keep-or-reject decision.
 The engine retains one chosen execution path. Profiling adds observation and does not select another algorithm.
 
+## Batch six diagnosis: 2026-10-21, after `71ea1606`
+
+**All 60 rules now pass together over 9,021 files: 24,993 findings and zero engine failures.**
+Cold, unchanged-file, and trailing-newline edit comparisons have zero missing or extra findings.
+The [diagnosis evidence](../fixtures/host/data-layer-port/profiling/batch-six-root-cause-20261021.json) contains reports, source hashes, test receipts, SQL counters, and external samples.
+
+Both combined runs use the same 137,924,324-byte pinned snapshot and reference harness.
+CPU includes process user and system time, including the profiling build's residency accounting.
+Peak RSS covers the complete process, including incremental checks.
+
+| Combined 60-rule run | Cold CPU | Cold elapsed | Unchanged CPU | Edit CPU | Peak RSS | Result |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| After capacity admission, before remaining SQL fixes | 1,076.563 s | 1,054.093 s | 2.102 s | 53.083 s | 28.12 GiB | Fail: conditional budget exhaustion |
+| Final | **1,114.637 s** | 1,277.989 s | 2.109 s | 63.196 s | **18.30 GiB** | **Pass: 24,993 findings** |
+
+Final compilation uses 2.163 s CPU, separately from cold evaluation.
+The final run completes analysis that the preceding run interrupts. These results do not establish a passing CPU speedup.
+The observed memory peak decreases, but full input preparation remains outside admission and still needs architectural work.
+The historical 951-second passing run covers only ten rules and records no CPU time.
+
+The preceding measurements are committed and pushed in `71ea1606`.
+This investigation identifies two independent causes of the 890 repository failures.
+The fixes retain SQLite evaluation, existing limits, and one production execution path.
+The [execution contract](gpu-producer-execution-contract.md) describes capacity admission and its memory boundaries.
+
+### Shared producer capacity and eager SQL preparation
+
+The previous driver creates every SQL session before it advances any consumer.
+Each session retains its input tables and intermediate state while the driver prepares its peers.
+That SQLite storage is outside the producer's 64 MiB packed-input arena.
+Once aggregate producer input exceeds capacity, preparation rejects every ready relation.
+This explains the 889 identical `quality-contracts-1` failures.
+It also permits unbounded suspended SQL storage, but the preceding 21.33 GiB process peak does not isolate that storage from prepared inputs.
+
+The driver now prepares consumers as capacity permits.
+Admission counts shared packed columns once and checks SQLite cache, schema, and statement storage through its 64-bit status API.
+SQLite admission measures storage at the first producer suspension; later SQL stages can grow it.
+Ready consumers share broad producer waves within each capacity partition.
+Finished consumers close before admission continues.
+The driver preserves original result identities and keeps one 100-pass allowance across all capacity partitions.
+It does not reset work limits when it releases physical storage.
+
+The SQLite admission target is 256 MiB, with one prepared candidate retained while the preceding partition drains.
+A single consumer can exceed that target under its existing work and output limits.
+Projected evidence, prepared syntax facts, publication indexes, and document caches are outside this target.
+It therefore does not bound process RSS.
+The producer retains its 64 MiB input and 256 MiB numeric-output limits.
+An individually oversized relation fails without rejecting fitting peers.
+
+Four focused Rust tests cover capacity partitioning, SQL admission, peer isolation, and exhaustion of the shared stage allowance.
+A separate layout test checks shared-column accounting and transactional admission.
+The mandatory producer-shape gate preserves stage counts as independent roots, files, and policies increase.
+
+### A file gate cannot preserve selected AST rows
+
+The conditional rule needs declarations across the repository, plus selected nodes within particular bodies.
+Its authored AST input selects individual rows and preserves selected ancestry.
+The native syntax lowering replaces that input with a file gate and whole-file syntax.
+Since the selection includes module declarations, every file qualifies.
+The lowering therefore expands a selected relation into the entire repository's syntax and source demand.
+The 32 MB repository-source guard then correctly rejects the 137 MB snapshot.
+
+The initial experiment moves byte accounting after file selection.
+A full quality-only run still fails: the file gate admits every repository file.
+That experiment is removed. Source-budget behavior and limits remain unchanged.
+The actual fix restricts native syntax lowering to file-partitioned contract clauses.
+The global conditional clause uses its existing projected AST inputs and ordinary SQLite stages.
+Its 20 typed input partitions share one AST selection utility instead of repeating the selection definition.
+A generator regression test ensures global node selection cannot become a whole-file gate.
+No new engine feature or Linear ticket is required for this correction.
+
+All 1,259 sixth-batch recorded comparisons pass, including 417 positive and 842 clean observations.
+These comparisons check both stateless and workspace execution.
+The quality rule's 200 observations include 135 positives and pass separately.
+The 12 focused Rust relational tests and native relational and conformance suites pass.
+
+### Measurements and remaining preparation costs
+
+The first combined 60-rule rerun matches all 24,993 findings but still fails parity.
+Its only failures are interruption and work-budget exhaustion in the conditional ownership stage.
+All 889 producer-capacity failures disappear, and the conditional clause passes the preceding source-budget guard.
+Cold CPU is 1,076.563 s, elapsed time is 1,054.093 s, and peak RSS is 28.12 GiB.
+Unchanged CPU is 2.102 s. Edit CPU is 53.083 s; both retain the conditional failures.
+This is another failed measurement, not a passing speedup.
+
+The SQL capture then identifies wide window rows and graph normalization as additional costs.
+The general column-nulling pass increases the five-file conditional capture from 9,574,525 to 10,680,292 VM instructions.
+That experiment and its unused helper extension are removed.
+The selected ordinal window instead sorts narrow keys before joining projected node values.
+The SQL test preserves every node value and requires fewer VM instructions on wide input.
+Declaration selection also uses materialized key sets before joining class and function values.
+Tests preserve class ownership and the latest declaration when names repeat.
+Together, these changes use 8,723,163 VM instructions on the same five-file conditional capture, about nine percent fewer.
+Instrumented CPU does not improve on that small selection. These counters do not establish a CPU speedup.
+
+A focused repository capture then completes ownership but exhausts work during descendant normalization.
+It uses 784,639,688 measured SQLite VM instructions before failure.
+The normalizer prepares graph keys for every selected file, although only files with requested roots can contribute descendant rows.
+The authored conditional plan now materializes its roots once and limits its edge query to those file domains.
+CST edges cannot cross files. The test preserves closure results and isolated roots while excluding an unrelated file's edges.
+Engine forest validation and graph semantics remain unchanged; the authored edge relation carries the narrower domain.
+One covering forward edge index replaces two overlapping indexes.
+The unused outermost-function ownership index is removed.
+
+Those changes still exhaust the allowance during graph-key compaction on the full conditional snapshot.
+The capture records 67,410,860 VM instructions for the key sort and 18,962,193 for two key indexes.
+Compaction then consumes another 12,967,702 instructions before interruption.
+The key table stores a dense number separately from SQLite's own row identity.
+The engine now declares that number as `INTEGER PRIMARY KEY` and lets SQLite assign it during the existing deduplicated insertion.
+This removes the numbering window and the redundant numeric index.
+The unchanged scalar-key union preserves SQLite equality and its selected key values.
+The fresh table receives one insertion per unique key, so its identities remain dense for the existing forest adapter.
+Its scalar-key index also carries the numeric identity through SQLite's row index.
+A small derived-forest test reproduces the preceding budget failure without a repository run and compares completed output with recursive SQL.
+The preceding engine fails that test at 25,000 relational work units. The new engine passes all 28 reachability tests.
+A separate SQL probe extracts the actual normalization statements from both engine versions.
+It preserves decoded scalar types and values, including text, numbers, and blobs, and retains dense identities.
+For 5,008 keys, normalization decreases from approximately 921,600 to 699,000 VM instructions.
+This isolated probe uses Python's SQLite and does not establish a native workload CPU gain.
+
+File-domain pruning alone still includes unrelated components within requested files.
+The selected conditional plan therefore prepares the union of requested subtrees through one unlabelled SQL frontier.
+Overlapping roots share that preparation. The existing producer then computes the separate closure for each root.
+The regression test excludes an unrelated component within the same file while preserving all oracle closure rows and isolated roots.
+This prepares demanded graph facts instead of normalizing every declaration's graph identity.
+
+The corrected conditional clause passes over all 9,021 files, with zero findings expected and zero engine failures.
+Its graph catalog contains 88,625 keys, compared with 824,441 in the preceding file-domain attempt.
+The key insertion falls from 67,410,860 to 4,596,429 VM instructions.
+The complete capture records 763,559,808 VM instructions, fewer than the preceding failed partial capture's 784,639,417.
+Cold CPU is 199.837 s, elapsed time is 208.689 s, and peak RSS is 7.24 GiB.
+This is a traced, conditional-only diagnostic with SQL capture and larger ingestion batches: 2,048 files or 16 MiB.
+It is not the standard combined reference run, which retains 32-file or 1 MiB ingestion batches.
+The full sixth-batch corpus also passes again on the new engine: 1,259 observations, including 417 positives and 842 clean observations.
+
+The intermediate quality-only run eliminates all 889 producer-capacity failures.
+It uses 140.094 s cold process CPU, 215.249 s elapsed time, and 2.79 GiB peak RSS over 9,010 files.
+It still has the conditional source-budget failure and is not a passing performance result.
+Its traced first partition contains 439 files and 950,054 roots in three producer passes.
+Two capacity partitions suffice. The admission observations reach 268,454,464 SQLite bytes across 450 suspended sessions.
+This counter measures admission storage, not the peak across subsequent SQL stages.
+This quality-only measurement cannot establish a memory ratio against the preceding ten-rule run.
+
+The corrected five-file quality probe passes at 3.888 s cold CPU and 1.068 s edit CPU, with 515 MiB peak RSS.
+The earlier median is 1.940 s cold CPU and 0.710 s edit CPU for the same source selection.
+The policy changes to preserve selected global evidence. This is a correctness cost, not an optimization gain.
+Efficient native projection must preserve selected rows, ancestry, and column demand before it can replace that evidence path.
+
+The full repository run also exposes profiling overhead during ingestion.
+After every ingestion batch, `record_workspace_residency` walks all retained witnesses and serializes their projections to estimate bytes.
+Repeated batches therefore rescan an increasing corpus.
+A one-second external sample contains 96 active native samples; 74 include this accounting function.
+This is a local ingestion observation, not a whole-run CPU percentage.
+The projection captures retain spans and shared JSON projections; they do not retain complete source text for every capture variable.
+Selected evidence still has substantial JSON storage and allocation overhead outside SQL admission.
+Incremental residency accounting and compact demanded evidence columns remain preparation frontiers.
+
+The workspace also prepares every dirty file-local job before it calls the SQL scheduler.
+Its file-partitioned evidence index deliberately keeps eligibility witnesses, with projection and enumeration disabled.
+Those gates are not complete cached input relations.
+The consumer restores shared tapes, extracts the full AST inputs through `relational_rows`, and retains those rows alongside prepared facts in queued jobs.
+Reusing the eligibility witnesses as complete input would lose findings.
+Global projected-only producers also construct capture span maps before projection and then discard those maps through `retain_projection`.
+Their next extraction path must preserve requested anchors and projected values while skipping unused capture metadata.
+The new admission boundary is downstream of that preparation.
+A second one-second sample contains 89 active native samples; 87 include `relational_rows` and `stateless_rows`.
+Thirty-eight include witness construction, and 27 include evidence projection. These inclusive counts overlap.
+This identifies full input extraction and queued input storage as another preparation frontier, separate from suspended SQL storage.
+The next admission boundary must precede full projection, with queued descriptors holding document versions rather than complete input row vectors.
+That change must preserve source versions, evidence completeness, cancellation, and broad producer batches.
+The combined repository run exceeds 24 GiB despite SQL admission. End-to-end memory use remains unresolved.
+A third one-second sample, after preparation, has 90 active native samples, all in SQLite under `Session::advance`.
+The three samples distinguish ingestion accounting, repeated extraction, and SQL execution. They do not assign whole-run CPU shares.
+
+The reference addons use engine optimization level 1, thin LTO, 256 codegen units, four workers, and the system-malloc shim.
+The intermediate addon has SHA-256 `4c3f5357e27dfc054fa4e61a4139d71effb67430df7577e18890771774096631`.
+The final addon has SHA-256 `26960ddfc2c0ecb06dcf7f25d639111f51c2a77d5499d261f1fa96fa39b3c1b9`.
+Its build tools use optimization level 3 and 16 codegen units. These settings accelerate parser generation without changing runtime optimization settings.
+Timing tracing is disabled, but profiling residency accounting remains enabled in that build.
+Historical CPU timings remain unavailable. These results do not establish a CPU speedup over the historical 951-second passing run.
+
+### Final checks and next work
+
+The final addon passes all 1,259 sixth-batch observations, including 417 positives and 842 clean observations.
+The global conditional entry contributes 28 observations, including 16 positives.
+All 40 edit transitions pass. The 12 Rust relational tests, 28 reachability tests, and 40 native and signature conformance tests pass.
+The mandatory producer-shape gate passes all five tests without skipping profiling assertions.
+Its dependency test receives the same 110-second allowance as its independent-batch test after a shared-host five-second timeout.
+Engine work limits do not change.
+Clippy passes with and without profiling. Typecheck, repository checks, formatting, and profiling-script tests pass.
+
+The next work starts before SQL session admission:
+
+1. Queue document-version descriptors and admit full input extraction by capacity, instead of retaining all projected rows before consumers run.
+2. Build demanded capture columns for global selected evidence and omit unused capture-span maps while preserving anchors and completeness.
+3. Update profiling residency totals incrementally, instead of serializing the complete retained corpus after each ingestion batch.
+
+The completed conditional forest walk takes about 56 ms CPU for 46,469 roots in 182 bounded batches.
+The surrounding diagnostic uses about 200 s cold CPU. Faster graph traversal cannot remove the extraction and materialization costs around it.
+The native producer gate preserves broad count, scan, and scatter passes.
+Global projected AST extraction and its SQL demand frontier remain CPU preparation; these results do not measure whole-workload GPU launches.
+
 ## Full repository verification: 2026-10-21, execution `3285b48f`
 
 **The first 50 rules pass at repository scale. Batch six fails at repository scale.**

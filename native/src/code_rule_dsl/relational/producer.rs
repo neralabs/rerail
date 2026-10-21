@@ -6,6 +6,7 @@ use std::{
     sync::{Arc, atomic::AtomicUsize},
 };
 mod completed;
+pub(super) mod layout;
 const MAX_STAGES: usize = 100;
 const MAX_OUTPUT_BYTES: usize = 256 * 1024 * 1024;
 thread_local! { static READERS: Cell<usize> = const { Cell::new(0) }; }
@@ -27,6 +28,15 @@ pub(super) struct Allowance {
     resident: Resident,
 }
 impl Allowance {
+    pub(super) fn clear_resident(&mut self) {
+        self.resident = Resident::default();
+    }
+    fn admit_retained(&mut self, demands: &[Demand]) {
+        let mut layout = layout::Footprint::retained(&self.resident);
+        if demands.iter().any(|d| !layout.admit(d, MAX_RESIDENT_BYTES)) {
+            self.clear_resident();
+        }
+    }
     fn reserve(&mut self, n: usize) -> Result<()> {
         if READERS.get() != 0 {
             return Err(invalid("producer execution inside SQL callback"));
@@ -89,7 +99,7 @@ struct Resident {
     retained: Vec<Tree>,
     resident_bytes: usize,
 }
-const MAX_RESIDENT_BYTES: usize = 64 * 1024 * 1024;
+pub(super) const MAX_RESIDENT_BYTES: usize = 64 * 1024 * 1024;
 fn capacity(bytes: Option<usize>, limit: usize) -> Result<usize> {
     bytes
         .filter(|&n| n <= limit)
@@ -201,7 +211,8 @@ pub(super) fn execute(
     let mut wave = crate::code_rule_dsl::profile::trace::Span::start("producer-wave", "subtrees");
     let (indices, demands): (Vec<_>, Vec<_>) = pending.into_iter().unzip();
     let n = demands.len();
-    let before = allowance.resident.files.len();
+    allowance.admit_retained(&demands);
+    let before = allowance.resident.documents.len();
     if let Err(e) = allowance
         .reserve(3)
         .and_then(|()| allowance.resident.prepare(&demands))
@@ -298,7 +309,7 @@ pub(super) fn execute(
         }
     }
     #[cfg(feature="code-rule-profile")]
-    wave.detail(||serde_json::json!({"relations":n,"roots":resident.roots.len(),"documents":resident.files.len(),"inputDocumentsAdded":resident.files.len()-before,"stages":3,"backend":"cpu"}));
+    wave.detail(||serde_json::json!({"relations":n,"roots":resident.roots.len(),"documents":resident.documents.len(),"selectors":resident.files.len(),"inputDocumentsAdded":resident.documents.len()-before,"residentInputBytes":resident.resident_bytes,"requestBytes":resident.roots.len()*24,"outputRows":totals.iter().sum::<usize>(),"stages":3,"backend":"cpu"}));
     outputs
 }
 #[cfg(test)]

@@ -26,6 +26,22 @@ const evaluate = (rule: ReturnType<typeof compile>, current = files) => {
   const { failures, violations } = JSON.parse(rule.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, files: current }), "report"));
   return { failures, violations };
 };
+it("normalizes a derived forest within a linear SQL work allowance", () => {
+  const doc = document(["0"], [], 256, false, true);
+  doc.clauses[0]!.relational.stages[0]!.query = "SELECT __path,0 AS id FROM functions";
+  doc.clauses[0]!.relational.stages[1]!.query = "WITH RECURSIVE seq(id) AS (SELECT 0 UNION ALL SELECT id+1 FROM seq WHERE id<2999) SELECT f.__path,seq.id AS src,seq.id+1 AS dst FROM functions f CROSS JOIN seq";
+  doc.clauses[0]!.relational.query = "SELECT f.__path AS path,f.__start AS start_byte,f.__end AS end_byte,count(*) AS pairs FROM functions f JOIN closure c ON c.__path=f.__path GROUP BY f.__path,f.__start,f.__end";
+  doc.clauses[0]!.relational.key = ["pairs"];
+  const limits = JSON.parse(capabilities);
+  Object.assign(limits.limits, { maxVisitedNodes: 25_000, maxVisitsPerNode: 0 });
+  const actual = evaluate(native.CodeRuleDslRuntime.compile(JSON.stringify(doc), "json", JSON.stringify(limits)));
+  expect(actual.failures).toEqual([]);
+  expect(actual.violations).toHaveLength(2);
+  const oracle = structuredClone(doc);
+  Object.assign(oracle.clauses[0]!.relational.stages[2]!, { query: "WITH RECURSIVE walk(__path,root,node) AS (SELECT __path,id,id FROM requested UNION SELECT w.__path,w.root,e.dst FROM walk w JOIN links e ON e.__path=w.__path AND e.src=w.node) SELECT * FROM walk" });
+  delete oracle.clauses[0]!.relational.stages[2]!.reachability;
+  expect(actual.violations).toEqual(evaluate(compile(oracle)).violations);
+});
 function pairCount(roots: string[], edges: [string, string][]) {
   let count = roots.length; // b.py has identical keys but no edges.
   for (const root of new Set(roots)) {

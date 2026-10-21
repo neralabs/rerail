@@ -1,5 +1,6 @@
 """Execute generated shared SQL directly with SQLite before testing the native engine."""
 import copy
+import json
 from pathlib import Path
 import sqlite3
 import sys
@@ -22,8 +23,73 @@ def resolve(value, entry, oracle=False):
 
 
 class SharedSqlTests(unittest.TestCase):
+    def test_conditional_reachability_limits_graph_domains_without_losing_isolated_roots(self):
+        from data_layer_six.ast_relations import batched_reachability
+        clause = {'id': 'quality-conditional-1', 'relational': {'stages': [S('descendants', "WITH RECURSIVE roots(__path,id) AS (SELECT __path,id FROM nodes WHERE kind='type'), walk(__path,root,node) AS (SELECT __path,id,id FROM roots) SELECT * FROM walk")]}}
+        batched_reachability(clause, forest=True)
+        declared, reach = clause['relational']['stages']
+        db = sqlite3.connect(':memory:')
+        db.executescript('CREATE TABLE nodes (__path,id,kind); CREATE TABLE edges (__path,src,dst); CREATE INDEX forward ON edges (__path,src,dst);')
+        db.executemany('INSERT INTO nodes VALUES (?,?,?)', [('a.py','r','type'),('b.py','r','identifier'),('c.py','isolated','type')])
+        db.executemany('INSERT INTO edges VALUES (?,?,?)', [('a.py','r','child'),('a.py','unrelated','tail'),('b.py','r','unused')])
+        db.execute('CREATE TABLE descendant_roots AS ' + declared['query'])
+        self.assertEqual(db.execute(reach['reachability']['edges']).fetchall(), [('a.py','r','child')])
+        closure = 'WITH RECURSIVE walk(__path,root,node) AS (SELECT __path,id,id FROM descendant_roots UNION SELECT w.__path,w.root,e.dst FROM walk w JOIN ({}) e ON e.__path=w.__path AND e.src=w.node) SELECT * FROM walk ORDER BY __path,root,node'
+        expected = db.execute(closure.format('SELECT * FROM edges')).fetchall()
+        self.assertEqual(db.execute(closure.format(reach['reachability']['edges'])).fetchall(), expected)
+        self.assertIn(('c.py','isolated','isolated'), expected)
+        db.close()
+
+    def test_conditional_declaration_keys_preserve_shadowing_and_class_ownership(self):
+        policy = json.loads((Path(__file__).resolve().parents[2] / 'packs/data-layer/candidates/rules/data-layer-serverplan-quality.json').read_text())
+        clause = next(c for c in policy['clauses'] if c.get('id') == 'quality-conditional-1')
+        stages = {s['name']: s['query'] for s in clause['relational']['stages'] if 'query' in s}
+        db = sqlite3.connect(':memory:')
+        db.executescript('CREATE TABLE classes (__path,id,name,__start); CREATE TABLE functions (__path,id,name,__start); CREATE TABLE ownership (__path,id,cls); CREATE TABLE module_names (__path,qualified);')
+        db.executemany('INSERT INTO classes VALUES (?,?,?,?)', [('a.py','c1','C',1),('a.py','c2','C',10),('a.py','d1','D',20)])
+        db.executemany('INSERT INTO functions VALUES (?,?,?,?)', [('a.py','m1','run',11),('a.py','m2','run',12),('a.py','m3','run',21),('a.py','g1','g',30),('a.py','g2','g',40)])
+        db.executemany('INSERT INTO ownership VALUES (?,?,?)', [('a.py','m1','c2'),('a.py','m2','c2'),('a.py','m3','d1'),('a.py','g1',None),('a.py','g2',None)])
+        db.execute("INSERT INTO module_names VALUES ('a.py','pkg')")
+        for name in ['conditional_classes','conditional_methods','conditional_functions']:
+            db.execute('CREATE TABLE ' + name + ' AS ' + stages[name])
+        self.assertEqual(db.execute('SELECT id,qualified_name FROM conditional_classes ORDER BY id').fetchall(), [('c2','pkg.C'),('d1','pkg.D')])
+        self.assertEqual(db.execute('SELECT id,cls FROM conditional_methods ORDER BY id').fetchall(), [('m2','c2'),('m3','d1')])
+        self.assertEqual(db.execute('SELECT id,qualified_name FROM conditional_functions').fetchall(), [('g2','pkg.g')])
+        db.close()
+
+    def test_ast_ordinals_sort_narrow_rows_without_changing_node_values(self):
+        from data_layer_six.ast_relations import ast_stages, narrow_ast_ordinals
+        original = {'relational': {'stages': ast_stages()[:1]}}
+        candidate = copy.deepcopy(original)
+        narrow_ast_ordinals(candidate)
+        columns = ['__path', '__start', '__end', 'kind', 'parent_start', 'parent_end', 'parent_kind', 'ancestor_start', 'ancestor_end', 'ancestor_kind']
+        columns += ['payload_' + str(i) for i in range(40)]
+        rows = [('a.py', i, i + 1, 'identifier', i // 10, 10000, 'block', i // 10, 10000, 'block', *['payload'] * 40) for i in range(1000)]
+        def evaluate(clause):
+            db = sqlite3.connect(':memory:')
+            db.execute('CREATE TABLE raw_nodes (' + ','.join(columns) + ')')
+            db.executemany('INSERT INTO raw_nodes VALUES (' + ','.join('?' for _ in columns) + ')', rows)
+            steps = [0]
+            def count():
+                steps[0] += 1
+                return 0
+            db.set_progress_handler(count, 1)
+            for stage in clause['relational']['stages']:
+                db.execute('CREATE TABLE "' + stage['name'] + '" AS ' + stage['query'])
+                for index, fields in enumerate(stage.get('indexes', [])):
+                    db.execute('CREATE INDEX "' + stage['name'] + str(index) + '" ON "' + stage['name'] + '" (' + ','.join(fields) + ')')
+            db.set_progress_handler(None, 0)
+            result = db.execute('SELECT * FROM nodes ORDER BY __path,__start,__end,kind').fetchall()
+            db.close()
+            return result, steps[0]
+        expected, old_steps = evaluate(original)
+        actual, new_steps = evaluate(candidate)
+        self.assertEqual(actual, expected)
+        self.assertLess(new_steps, old_steps)
+
     def test_shared_syntax_eliminates_reconstruction_and_preserves_gates(self):
         clause = relational("quality-contracts-1", [S("calls", "SELECT n.*,f.id AS callee FROM nodes n JOIN nodes f ON f.id=n.function_kind||':'||n.function_start||':'||n.function_end"), S("descendants", "unused")], "SELECT * FROM calls")
+        clause["relational"]["partitionBy"] = "file"
         clause["relational"]["inputs"]["raw_nodes"]["evidence"]["query"]["ast"]["rule"]["all"].append({"filePath": {"regex": "^eligible/"}})
         defer_node_text(clause)
         self.assertTrue(shared_syntax_relations(clause))
@@ -37,6 +103,23 @@ class SharedSqlTests(unittest.TestCase):
         gate = plan["inputs"]["syntax_gate"]["evidence"]["query"]["ast"]["rule"]
         self.assertIn({"filePath": {"regex": "^eligible/"}}, gate["all"])
         self.assertIn({"kind": "module"}, gate["all"])
+
+    def test_global_declaration_projection_does_not_become_whole_file_syntax(self):
+        clause = relational("quality-conditional-1", [], "SELECT * FROM nodes")
+        selector = {"any": [{"kind": "module"}, {"kind": "class_definition"}, {"kind": "function_definition"}]}
+        clause["relational"]["inputs"]["raw_nodes"]["evidence"]["query"]["ast"]["rule"]["all"].append(selector)
+        original = copy.deepcopy(clause)
+        self.assertFalse(shared_syntax_relations(clause))
+        self.assertEqual(clause, original)
+        typed_input_partitions(clause)
+        self.assertNotIn("syntax", clause["relational"])
+        def contains_selector(value):
+            if value == selector:
+                return True
+            children = value.values() if isinstance(value, dict) else value if isinstance(value, list) else []
+            return any(contains_selector(child) for child in children)
+        for relation in clause["relational"]["inputs"].values():
+            self.assertTrue(contains_selector(relation["evidence"]["query"]["ast"]["rule"]))
 
     def test_window_inputs_do_not_compute_unused_deferred_text(self):
         stage = S("last_methods", "SELECT * FROM (SELECT *,row_number() OVER(PARTITION BY __path,cls,name ORDER BY __start DESC) AS chosen FROM methods) WHERE chosen=1")

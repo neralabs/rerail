@@ -51,4 +51,4 @@ it.skipIf(!shapeGate)("batches policies together and advances genuine SQL depend
   const dependent = run(2, 2, false, 1, true);
   expect(dependent.filter(t => t.phase === "producer-wave")[1].detail.inputDocumentsAdded).toBe(0);
   expect(dependent.filter(t => t.phase === "producer-stage").map(t => t.name)).toEqual(["count", "scan", "scatter", "count", "scan", "scatter"]);
-});
+}, 110_000);

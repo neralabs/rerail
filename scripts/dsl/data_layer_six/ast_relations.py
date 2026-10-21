@@ -31,6 +31,19 @@ def ast_stages():
  FROM owned JOIN edges e ON e.__path=owned.__path AND e.src=owned.id
  JOIN nodes child ON child.__path=e.__path AND child.id=e.dst) SELECT * FROM owned""",('__path','id'),('__path','fn'),('__path','top_fn'))]
 
+def narrow_ast_ordinals(clause):
+ """Number unique CST nodes before joining their wide projected values."""
+ plan=clause['relational']
+ nodes=next(stage for stage in plan['stages'] if stage['name']=='nodes')
+ ordinal="row_number() OVER(PARTITION BY __path,parent_start,parent_end,parent_kind ORDER BY __start,__end,kind)-1"
+ if ordinal+' AS ordinal' not in nodes['query']:raise ValueError('expected the authored CST ordinal window')
+ window=S('node_ordinals','SELECT __path,__start,__end,kind,'+ordinal+' AS ordinal FROM raw_nodes',('__path','__start','__end','kind'))
+ nodes['query']="""SELECT n.*,n.kind||':'||n.__start||':'||n.__end AS id,
+ n.parent_kind||':'||n.parent_start||':'||n.parent_end AS parent,
+ n.ancestor_kind||':'||n.ancestor_start||':'||n.ancestor_end AS edge_parent,o.ordinal
+ FROM raw_nodes n JOIN node_ordinals o ON o.__path=n.__path AND o.__start=n.__start AND o.__end=n.__end AND o.kind=n.kind"""
+ plan['stages'].insert(plan['stages'].index(nodes),window)
+
 def relational(id,stages,query,code='issue',key=('issue','identity')):
  return {'id':id,'relational':{'inputs':ast_inputs(),'stages':[*ast_stages(),*stages],'query':query,'key':list(key),'code':code},
   'violation':{'code':'architecture','message':'Architecture contract violation','anchor':'witness.span'}}
@@ -174,14 +187,14 @@ def typed_input_partitions(clause):
   helpers=[S('syntax_rows_'+str(index),' UNION ALL '.join(chunk)) for index,chunk in enumerate(chunks)]
   union=' UNION ALL '.join('SELECT * FROM '+stage['name'] for stage in helpers)
  for stage in plan['stages']:
-  if stage['name']=='nodes':stage['query']=stage['query'].replace('FROM raw_nodes','FROM ('+union+')')
+  if isinstance(stage.get('query'),str):stage['query']=stage['query'].replace('FROM raw_nodes','FROM ('+union+')')
  plan['stages']=[*helpers,*plan['stages']]
  if len(plan['stages'])>64:raise ValueError(clause['id']+' needs too many materialized syntax stages')
 
 def batched_reachability(clause,forest=False):
  """Lower explicit graph producers to the generic batched SQLite stage."""
  plan=clause['relational']
- for stage in plan.get('stages',[]):
+ for stage in list(plan.get('stages',[])):
   if stage['name']!='descendants':continue
   original=stage['query']
   if original.startswith('WITH RECURSIVE roots(__path,id) AS ('):
@@ -200,7 +213,15 @@ def batched_reachability(clause,forest=False):
   else:
    # Other linters retain all authored seeds until a smaller producer is proved.
    continue
-  stage.clear();stage.update(name='descendants',reachability={'roots':roots,'edges':'SELECT __path,src,dst FROM edges',**({'graph':'forest'} if forest else {})})
+  edges='SELECT __path,src,dst FROM edges'
+  if forest and clause['id'].startswith('quality-conditional'):
+   # Keep global declarations, but normalize only the union of demanded CST
+   # subtrees. This unlabelled frontier visits overlapping regions just once.
+   declared=S('descendant_roots','SELECT __path,id FROM ('+roots+') WHERE __path IS NOT NULL AND id IS NOT NULL',('__path','id'))
+   plan['stages'].insert(plan['stages'].index(stage),declared)
+   roots='SELECT __path,id FROM descendant_roots'
+   edges='WITH RECURSIVE demanded(__path,id) AS (SELECT __path,id FROM descendant_roots UNION SELECT d.__path,e.dst FROM demanded d CROSS JOIN edges e ON e.__path=d.__path AND e.src=d.id) SELECT e.__path,e.src,e.dst FROM demanded d CROSS JOIN edges e ON e.__path=d.__path AND e.src=d.id'
+  stage.clear();stage.update(name='descendants',reachability={'roots':roots,'edges':edges,**({'graph':'forest'} if forest else {})})
 
 def defer_node_text(clause):
  """These authored relations carry the node's exact path and byte range.
@@ -237,7 +258,9 @@ def shared_syntax_relations(clause):
  """Use declared tape facts; keep every detector and source gate in SQL/AST."""
  import copy
  plan=clause['relational'];raw=plan['inputs'].get('raw_nodes')
- if raw is None or not clause['id'].startswith(('quality-contracts','quality-conditional')):return False
+ # Global projected relations may select declarations and selected method bodies
+ # across the repository. A file gate cannot represent that row selection.
+ if raw is None or plan.get('partitionBy')!='file' or not clause['id'].startswith('quality-contracts'):return False
  batched_reachability(clause)
  original=copy.deepcopy(raw)
  def gate_only(rule):
@@ -259,8 +282,6 @@ def shared_syntax_relations(clause):
   'excludeKinds':['comment','string_start','string_content','string_end','escape_sequence','line_continuation'],
   'edges':'edges','ownership':'ownership','owners':{
    'fn':{'kind':'function_definition'},'cls':{'kind':'class_definition'},'top_fn':{'kind':'function_definition','outermost':True}}}
- if clause['id'].startswith('quality-conditional'):
-  plan['syntax']['emptyTextKinds']=['module','class_definition','function_definition','decorated_definition','block','expression_statement','argument_list','keyword_argument','assignment','augmented_assignment','return_statement','if_statement','elif_clause','else_clause','match_statement','case_clause','for_statement']
  plan['stages']=[s for s in plan['stages'] if s['name'] not in ('nodes','edges','ownership')]
  # Replace authored identity expressions with the corresponding canonical field ID.
  identity=re.compile(r"(?P<prefix>\b[A-Za-z_]\w*\.)?(?P<field>[a-z_]+)_kind\|\|':'\|\|(?P=prefix)?(?P=field)_start\|\|':'\|\|(?P=prefix)?(?P=field)_end")

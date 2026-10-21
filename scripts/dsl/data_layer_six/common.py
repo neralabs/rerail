@@ -41,9 +41,10 @@ def literals(values):return '('+','.join(q(v) for v in sorted(values))+')'
 def choice(option,yes,no):return {'$option':option,'cases':{'true':yes,'false':no}}
 
 def write(out,name,clauses,pin,roots,exclude,utils=None,options=None,mode='block'):
- from .ast_relations import trim_ast_projection,typed_input_partitions,batched_reachability,defer_node_text,shared_syntax_relations
+ from .ast_relations import trim_ast_projection,typed_input_partitions,batched_reachability,defer_node_text,shared_syntax_relations,narrow_ast_ordinals
  from .sql_columns import narrow_columns
  quality=name=='serverplan_quality'
+ utils=dict(utils or {})
  for clause in clauses:
   if 'relational' in clause:
    if quality:defer_node_text(clause)
@@ -57,7 +58,17 @@ def write(out,name,clauses,pin,roots,exclude,utils=None,options=None,mode='block
    if quality and shared_syntax_relations(clause):
     narrow_columns(plan)
     continue
+   if quality and clause['id'].startswith('quality-conditional'):narrow_ast_ordinals(clause)
    if not clause['id'].startswith('step-'):typed_input_partitions(clause)
+   if quality and clause['id'].startswith('quality-conditional'):
+    # The typed columns share one selective AST query, including its captures.
+    asts=[r['evidence']['query']['ast'] for r in plan['inputs'].values()]
+    selection=asts[0]['rule']['all'][-1]
+    if not all(ast['rule']['all'][-1]==selection for ast in asts):
+     raise ValueError('conditional input partitions must retain one shared selection')
+    utility=clause['id']+'-selection'
+    utils[utility]=selection
+    for ast in asts:ast['rule']['all'][-1]={'matches':utility}
    if quality:batched_reachability(clause,forest=True)
  definition={'options':{'oracleAnalyzer':{'type':'boolean','default':False},'entryPoint':{'type':'string','default':'all'},**(options or {})}}
  if utils:definition.update(language='python',utils=utils)
