@@ -157,6 +157,8 @@ Its counters include rows, unique projections, JSON fields, referenced syntax ob
 These categories can share storage with the workspace and document cache.
 Their sum is not exclusive process RSS.
 Tracing also counts AST field lookups, child examinations, failed lookups, and maximum scan length.
+Known field edges have separate counters for direct checks and matches.
+These counters distinguish avoided sibling scans from faster child discovery.
 Counters use thread-local storage and merge at existing worker boundaries.
 
 For timing controls, omit census, external snapshots, and SQL capture; set `--trace off`.

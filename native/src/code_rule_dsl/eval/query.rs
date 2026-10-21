@@ -18,7 +18,7 @@ use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
 use napi::Result;
 use serde_json::{Map, Value};
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 pub(crate) enum WitnessError {
@@ -724,6 +724,9 @@ struct CachedTape {
 struct TapeCache {
     active: bool,
     entry: Option<CachedTape>,
+    /// Selections share one index build across a file's relational inputs. The cache lasts only
+    /// as long as this evaluation's current source, and stores ordinals rather than witnesses.
+    anchors: HashMap<usize, Option<Arc<[u32]>>>,
 }
 
 thread_local! {
@@ -799,6 +802,11 @@ fn cache_tape(
     EVALUATION_TAPE.with(|cache| {
         let mut cache = cache.borrow_mut();
         if cache.active {
+            if cache.entry.as_ref().is_none_or(|cached| {
+                cached.language != language || !Arc::ptr_eq(&cached.source, &file.source)
+            }) {
+                cache.anchors.clear();
+            }
             cache.entry = Some(CachedTape {
                 language,
                 source: Arc::clone(&file.source),
@@ -807,6 +815,60 @@ fn cache_tape(
             });
         }
     });
+}
+
+/// Builds kind, value, and requested field postings once for all inputs of a file partition.
+/// SQL admission still receives the same projected rows and retains all policy decisions.
+pub(super) fn prepare_anchors(
+    file: &FileInput,
+    grammars: &[&GrammarMatcher],
+    bound: usize,
+) -> Result<()> {
+    let grammars: Vec<_> = grammars
+        .iter()
+        .copied()
+        .filter(|grammar| grammar.anchors.needs_index())
+        .collect();
+    let Some(first) = grammars.first() else {
+        return Ok(());
+    };
+    let (doc, _) = file_tape(first.language, file)?;
+    let target = ast_grep_core::AstGrep::doc(doc);
+    let plans: Vec<_> = grammars
+        .iter()
+        .map(|grammar| grammar.anchors.as_ref())
+        .collect();
+    use crate::code_rule_dsl::matcher::FileAnchorIndex;
+    #[cfg(feature = "code-rule-profile")]
+    let timer = crate::code_rule_dsl::profile::PhaseTimer::start(
+        crate::code_rule_dsl::profile::Phase::Index,
+    );
+    let index = FileAnchorIndex::build(
+        &target,
+        &plans,
+        bound,
+        crate::code_rule_dsl::budget::matcher_budget_exhausted,
+    );
+    #[cfg(feature = "code-rule-profile")]
+    {
+        drop(timer);
+        crate::code_rule_dsl::profile::record_index(
+            index.len(),
+            index.estimated_bytes(),
+            index.complete(),
+        );
+    }
+    for grammar in grammars {
+        let selected = selected_roots(&index, grammar);
+        EVALUATION_TAPE.with_borrow_mut(|cache| {
+            if cache.active {
+                cache
+                    .anchors
+                    .insert(Arc::as_ptr(&grammar.anchors) as usize, selected);
+            }
+        });
+    }
+    Ok(())
 }
 
 fn restore_file_tape(
@@ -829,6 +891,85 @@ fn restore_file_tape(
     )
     .map_err(invalid)?;
     Ok((doc, lines))
+}
+
+/// Selects candidate ordinals through the same postings used by workspace ingestion. Incomplete
+/// indexes retain the existing bounded root walk; kind-only queries already have kind postings.
+fn anchor_roots(
+    target: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
+    grammar: &GrammarMatcher,
+    bound: usize,
+) -> Option<Arc<[u32]>> {
+    use crate::code_rule_dsl::matcher::FileAnchorIndex;
+    if !grammar.anchors.needs_index() {
+        return None;
+    }
+    if let Some(cached) = EVALUATION_TAPE.with_borrow(|cache| {
+        cache
+            .entry
+            .as_ref()
+            .filter(|entry| {
+                std::ptr::eq(entry.doc.get_source(), target.root().get_doc().get_source())
+            })
+            .and_then(|_| {
+                cache
+                    .anchors
+                    .get(&(Arc::as_ptr(&grammar.anchors) as usize))
+                    .cloned()
+            })
+    }) {
+        return cached;
+    }
+    #[cfg(feature = "code-rule-profile")]
+    let timer = crate::code_rule_dsl::profile::PhaseTimer::start(
+        crate::code_rule_dsl::profile::Phase::Index,
+    );
+    let index = FileAnchorIndex::build(
+        target,
+        &[&grammar.anchors],
+        bound,
+        crate::code_rule_dsl::budget::matcher_budget_exhausted,
+    );
+    #[cfg(feature = "code-rule-profile")]
+    {
+        drop(timer);
+        crate::code_rule_dsl::profile::record_index(
+            index.len(),
+            index.estimated_bytes(),
+            index.complete(),
+        );
+    }
+    selected_roots(&index, grammar)
+}
+
+fn selected_roots(
+    index: &crate::code_rule_dsl::matcher::FileAnchorIndex<'_, crate::code_rule_dsl::tape::TapeDoc>,
+    grammar: &GrammarMatcher,
+) -> Option<Arc<[u32]>> {
+    use crate::code_rule_dsl::matcher::Selection;
+    #[cfg(feature = "code-rule-profile")]
+    let _timer = crate::code_rule_dsl::profile::PhaseTimer::start(
+        crate::code_rule_dsl::profile::Phase::Selection,
+    );
+    let selection = index.select(&grammar.anchors);
+    #[cfg(feature = "code-rule-profile")]
+    crate::code_rule_dsl::profile::record_selection(
+        match &selection {
+            Selection::All => index.len(),
+            Selection::Roots(roots) => roots.len(),
+        },
+        matches!(selection, Selection::All),
+    );
+    match selection {
+        Selection::All => None,
+        Selection::Roots(roots) => Some(
+            roots
+                .iter()
+                .map(|&ordinal| index.node(ordinal).node_id() as u32)
+                .collect::<Vec<_>>()
+                .into(),
+        ),
+    }
 }
 
 /// Evaluates one file with its grammar matcher on the file's tape: nodes count towards
@@ -854,6 +995,11 @@ fn evaluate_file_clause(
     use crate::code_rule_dsl::matcher::{Stopped, enumerate, node_at, run_clause, with_file_memo};
     let count = target.root().get_doc().transducer_len();
     let visited = metrics.visited_nodes;
+    let selected = anchor_roots(
+        &target,
+        grammar,
+        limits.max_visited_nodes.saturating_sub(visited),
+    );
     let each = violation.and_then(|violation| violation.each.as_deref());
     let mut outcome = FileOutcome::Continue;
     let result = with_file_memo(&target, || {
@@ -861,7 +1007,7 @@ fn evaluate_file_clause(
         run_clause(
             &target,
             grammar,
-            None,
+            selected.as_deref(),
             limits.max_visited_nodes.saturating_sub(visited),
             util_work,
             |node, first, work| {

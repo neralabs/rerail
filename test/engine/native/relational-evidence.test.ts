@@ -19,6 +19,51 @@ const query = `SELECT f.__path AS path, f.__start AS start_byte, f.__end AS end_
   WHERE f.name NOT LIKE '%_async' AND g.name IS NULL`;
 const compile = (document: unknown) => native.CodeRuleDslRuntime.compile(JSON.stringify(document), "json", capabilities);
 
+it("keeps field-anchored utility captures in stateless facts, edits, and clean files", async () => {
+  const base = policy("SELECT __path AS path,__start AS start_byte,__end AS end_byte,name AS family,'selected' AS issue FROM functions WHERE EXISTS(SELECT 1 FROM others)");
+  const evidence = { as: "f", query: { ast: { language: "python", rule: { matches: "selected" }, utils: {
+    selected: { kind: "function_definition", has: { field: "name", all: [{ regex: "^target$" }, { pattern: "$NAME" }] } },
+  } } }, project: { name: "capture.NAME" } };
+  const others = { ...evidence, query: { ast: { ...evidence.query.ast, utils: { selected: {
+    ...evidence.query.ast.utils.selected, has: { field: "name", all: [{ regex: "^other$" }, { pattern: "$NAME" }] },
+  } } } } };
+  const rule = compile({ ...base, clauses: [{ ...base.clauses[0], relational: {
+    ...base.clauses[0]!.relational, partitionBy: "file", inputs: { functions: { evidence }, others: { evidence: others } },
+  } }] });
+  const workspace = new native.CodeRuleDslWorkspace();
+  const source = "def other(): return target\n".repeat(200) + "def target(): return other\n";
+  const initial = [{ path: "a.py", language: "python", source },
+    { path: "clean.py", language: "python", source: "def other(): return target\n" }];
+  const evaluate = (files: typeof initial) => JSON.parse(rule.evaluate(JSON.stringify({
+    format: "rerail.repository-snapshot/v1", revision: 0, files,
+  }), "report"));
+  try {
+    workspace.addCodeRule(rule);
+    for (const [revision, files] of [[1, initial], [2, [{ ...initial[0]!, source: "def other(): return target\n" }]],
+      [3, [{ ...initial[0]!, source }]]] as const) {
+      const expected = evaluate(revision === 1 ? [...files] : [...files, initial[1]!]);
+      expect(expected.failures).toEqual([]);
+      expect(expected.violations).toHaveLength(revision === 2 ? 0 : 1);
+      if (expected.violations.length) expect(expected.violations[0].variables.row.family).toBe("target");
+      const actual = JSON.parse(await workspace.applyAsync(JSON.stringify({ revision, files, removed: [] }))).evaluation;
+      expect(actual.failures).toEqual([]);
+      expect(actual.violations).toEqual(expected.violations);
+    }
+  } finally { workspace.close(); }
+});
+
+it("inside-field matching selects only the first child when a field repeats", () => {
+  const rule = compile({ format: "rerail.policy/v1", id: "first-field", revision: 1, mode: "log", clauses: [{
+    id: "first", forbid: { ast: { language: "python", rule: { kind: "dotted_name",
+      pattern: "$NAME", inside: { kind: "import_statement", field: "name" } } } },
+    violation: { code: "FIRST", message: "$NAME", anchor: "witness.span" },
+  }] });
+  const result = JSON.parse(rule.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0,
+    files: [{ path: "a.py", language: "python", source: "import alpha, beta, gamma\nimport delta, epsilon\n" }] }), "report"));
+  expect(result.failures).toEqual([]);
+  expect(result.violations.map((v: { message: string }) => v.message).sort()).toEqual(["alpha", "delta"]);
+});
+
 it("counts shared projected evidence once and releases its census on edits and removal", async () => {
   const base = policy("SELECT __path AS path,__start AS start_byte,__end AS end_byte,name AS family,'unused' AS issue FROM functions WHERE 0");
   const document = { ...base, clauses: [{ ...base.clauses[0], relational: { ...base.clauses[0]!.relational, partitionBy: "repository" } }] };

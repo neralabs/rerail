@@ -73,9 +73,10 @@ def summary(report):
     if "process" in report:
         process = report["process"]
         lines += [f"Sampled process tree: CPU >= {process['treeCpuSecondsLowerBound']:.3f}s; peak summed RSS {process['peakTreeRssBytes']} bytes; {process['samples']} samples.", process["note"]]
-    fields = [row["fieldLookups"] for row in report["native"].get("applies", []) if row.get("fieldLookups", {}).get("calls", 0)]
+    fields = [row["fieldLookups"] for row in report["native"].get("applies", []) if row.get("fieldLookups")]
     if fields:
         lines += [f"Field navigation: {sum(row['calls'] for row in fields)} lookups; {sum(row['childrenExamined'] for row in fields)} child examinations; {sum(row['missChildrenExamined'] for row in fields)} examinations in failed lookups; maximum scan {max(row['maxScan'] for row in fields)}."]
+        lines += [f"Known field edges: {sum(row.get('knownEdgeChecks', 0) for row in fields)} direct checks; {sum(row.get('knownEdgeMatches', 0) for row in fields)} matches; no sibling enumeration."]
     for queue in report["native"].get("inputQueues", []):
         memory = queue.get("ownership")
         if memory is None:

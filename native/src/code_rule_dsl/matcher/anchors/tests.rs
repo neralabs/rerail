@@ -1072,6 +1072,81 @@ fn utility_plans_select_as_precisely_as_the_rule_written_inline() {
     }
 }
 
+#[test]
+fn field_plans_select_the_actual_edge_including_through_utilities() {
+    let source = "const target = other; const other = target; target(other); other(target);\n";
+    let root = AstGrep::doc(StrDoc::new(source, GrammarDialect::TypeScript));
+    for (rule, expected) in [
+        (
+            json!({ "kind": "variable_declarator", "has": {
+            "field": "name", "kind": "identifier", "regex": "^target$" } }),
+            1,
+        ),
+        (
+            json!({ "kind": "identifier", "regex": "^target$", "inside": {
+            "field": "name", "kind": "variable_declarator" } }),
+            1,
+        ),
+        (
+            json!({ "kind": "call_expression", "has": {
+            "field": "function", "kind": "identifier", "regex": "^target$" } }),
+            1,
+        ),
+        (
+            json!({ "kind": "call_expression", "has": {
+            "field": "arguments", "stopBy": "end", "kind": "identifier", "regex": "^target$" } }),
+            1,
+        ),
+        (
+            json!({ "kind": "identifier", "regex": "^target$", "inside": {
+            "field": "arguments", "stopBy": "end", "kind": "call_expression" } }),
+            1,
+        ),
+    ] {
+        for ast in [
+            json!({ "rule": rule }),
+            json!({ "rule": { "matches": "u" }, "utils": { "u": rule } }),
+        ] {
+            let compiled = compiled(ast.clone());
+            let grammar = &grammar_matchers(&compiled)[0];
+            let (found, roots, _, complete, _) = selected(
+                &root,
+                &grammar.matcher,
+                &grammar.anchors,
+                usize::MAX,
+                || false,
+            );
+            assert!(complete);
+            assert_eq!(found, actual(&root, &grammar.matcher), "{ast}");
+            assert_eq!(roots, expected, "{ast}");
+        }
+    }
+}
+
+#[test]
+fn field_plans_preserve_nested_edges_stops_negation_and_repeated_fields() {
+    compare(
+        "if (target) { f(target); if (other) { target; } }\n",
+        GrammarDialect::TypeScript,
+        &[
+            json!({ "kind": "identifier", "inside": { "field": "condition", "kind": "if_statement", "stopBy": "end" } }),
+            json!({ "kind": "identifier", "inside": { "field": "consequence", "kind": "if_statement", "stopBy": "end" } }),
+            json!({ "kind": "identifier", "inside": { "field": "consequence", "kind": "if_statement", "stopBy": { "kind": "statement_block" } } }),
+            json!({ "kind": "if_statement", "has": { "field": "consequence", "kind": "identifier", "stopBy": "end" } }),
+            json!({ "not": { "has": { "field": "name", "kind": "identifier" } } }),
+            json!({ "kind": "if_statement", "has": { "field": "consequence", "kind": "identifier", "stopBy": { "kind": "statement_block" } } }),
+        ],
+    );
+    compare(
+        "a = b = c\n",
+        GrammarDialect::Python,
+        &[
+            json!({ "kind": "identifier", "inside": { "field": "left", "kind": "assignment", "stopBy": "end" } }),
+            json!({ "kind": "assignment", "has": { "field": "right", "kind": "identifier", "stopBy": "end" } }),
+        ],
+    );
+}
+
 /// A utility's plan is inlined once per plan and reused by every diamond path that reaches it.
 #[test]
 fn utility_diamonds_inline_anchor_plans_in_linear_visits() {

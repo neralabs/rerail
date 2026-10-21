@@ -1150,6 +1150,7 @@ struct Rec {
     extra: bool,
     error: bool,
     missing: bool,
+    first_field: bool,
 }
 
 #[derive(Clone)]
@@ -1255,7 +1256,7 @@ impl TapeDoc {
         let mut nodes: Vec<Rec> = Vec::with_capacity(count);
         let mut at = 0usize;
         let mut previous = 0i64;
-        let mut parent_stack: Vec<usize> = Vec::new();
+        let mut parent_stack: Vec<(usize, u64)> = Vec::new();
         let mut unwound = 0usize;
         for index in 0..count {
             if index % 256 == 0 {
@@ -1320,7 +1321,7 @@ impl TapeDoc {
             previous = i64::from(start);
             while parent_stack
                 .last()
-                .is_some_and(|&parent| index >= parent + nodes[parent].size as usize)
+                .is_some_and(|&(parent, _)| index >= parent + nodes[parent].size as usize)
             {
                 if unwound.is_multiple_of(256) {
                     checked(budget)?;
@@ -1334,7 +1335,7 @@ impl TapeDoc {
                 }
                 NONE
             } else {
-                let enclosing = *parent_stack.last().ok_or("orphan tape node")?;
+                let enclosing = parent_stack.last().ok_or("orphan tape node")?.0;
                 if pd == 0
                     || pd as usize > index
                     || index - pd as usize != enclosing
@@ -1348,6 +1349,13 @@ impl TapeDoc {
                 }
                 enclosing as u32
             };
+            let first_field = field != 0
+                && parent_stack.last_mut().is_some_and(|(_, fields)| {
+                    let bit = 1_u64 << field;
+                    let first = *fields & bit == 0;
+                    *fields |= bit;
+                    first
+                });
             let extra = image.extra.binary_search(&(index as u32)).is_ok();
             nodes.push(Rec {
                 kind,
@@ -1363,8 +1371,9 @@ impl TapeDoc {
                 extra,
                 error,
                 missing,
+                first_field,
             });
-            parent_stack.push(index);
+            parent_stack.push((index, 0));
         }
         if at != image.spans.len() {
             return Err("trailing span bytes".into());
@@ -1602,6 +1611,15 @@ pub(super) struct TapeNode<'a> {
 }
 
 impl<'a> TapeNode<'a> {
+    pub(super) fn incoming_field(&self) -> u16 {
+        self.rec().field
+    }
+
+    /// Whether this is the first direct child in `field`, as `child_by_field_id` selects it.
+    pub(super) fn is_first_field(&self, field: u16) -> bool {
+        field != 0 && self.rec().field == field && self.rec().first_field
+    }
+
     fn rec(&self) -> &Rec {
         &self.nodes[self.index as usize]
     }
