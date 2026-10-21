@@ -37,6 +37,49 @@ export interface NotOverfitResult {
 /** A regex that touches more distinct unexplained test identifiers than this is a syntax pattern, not a list of names. */
 export const REGEX_NAME_LIMIT = 10;
 
+/**
+ * A test text this long holding fewer than one identifier per SPARSE_TEXT characters is a stress test of upstream's
+ * own engine, which Rerail does not run: not-overfit does not read it. Of every gated tool-pack's test texts, only
+ * ESLint's five qualify (100,000 to 1,000,011 characters with one or two identifiers, none of them unique to these
+ * texts apart from the 100,000- and 200,000-letter `aaaa…` ones); every other text over 20,000 characters holds at least
+ * one identifier per 16. A node regex such as `^[^\[]*[\w$]\[`, tried at every offset of a 1,000,000-backslash string,
+ * backtracks across all of it each time: reading them cost a cold javascript/eslint shard half an hour.
+ */
+const LONG_TEXT = 20_000;
+const SPARSE_TEXT = 1_000;
+
+interface Identifier { start: number; end: number; word: string }
+interface PreparedText { text: string; identifiers: Identifier[] }
+
+/**
+ * Upstream's test texts without its stress tests, each with its identifiers in order: computed once per list, since
+ * every regex of every rule reads the same texts (33,511 for ESLint) and scanning them again per regex cost more than
+ * the regexes did.
+ */
+const preparedTexts = new WeakMap<readonly string[], PreparedText[]>();
+function prepareTexts(texts: readonly string[]): PreparedText[] {
+  let prepared = preparedTexts.get(texts);
+  if (prepared === undefined) {
+    prepared = texts
+      .map((text) => ({ text, identifiers: [...text.matchAll(IDENTIFIER)].map((match) => ({ start: match.index, end: match.index + match[0].length, word: match[0] })) }))
+      .filter(({ text, identifiers }) => text.length <= LONG_TEXT || identifiers.length * SPARSE_TEXT >= text.length);
+    preparedTexts.set(texts, prepared);
+  }
+  return prepared;
+}
+
+/** The index of the first identifier ending after `offset`; a text's identifiers are in order and never overlap. */
+function firstEndingAfter(identifiers: readonly Identifier[], offset: number): number {
+  let low = 0;
+  let high = identifiers.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (identifiers[middle]!.end <= offset) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
 const POSIX_CLASSES: Record<string, string> = {
   alnum: "A-Za-z0-9", alpha: "A-Za-z", digit: "0-9", lower: "a-z", upper: "A-Z", space: "\\s", word: "\\w", xdigit: "0-9A-Fa-f", punct: "!-\\/:-@\\[-`{-~",
 };
@@ -241,7 +284,7 @@ function oneEditVariants(word: string): string[] {
  * matches in its place: there the regex spells upstream's edit-distance check (Next.js's no-typos), not the test's typo.
  * Undefined when the gate cannot run the regex.
  */
-function regexNames(regex: PolicyRegex, texts: string[], unexplained: (word: string) => boolean, explainedNear: (word: string) => string[], limit: number): { selected: Set<string>; named: Set<string> } | undefined {
+function regexNames(regex: PolicyRegex, texts: readonly PreparedText[], unexplained: (word: string) => boolean, explainedNear: (word: string) => string[], limit: number): { selected: Set<string>; named: Set<string> } | undefined {
   const compiled = javascriptRegex(regex.wholeText ? regex.text : boundaryAnchored(regex.text), "g");
   if (compiled === undefined) return undefined;
   const overlaps = (text: string, from: number, to: number): boolean => {
@@ -257,11 +300,10 @@ function regexNames(regex: PolicyRegex, texts: string[], unexplained: (word: str
   const named = new Set<string>();
   // On a string node, letters at the node's start that run into a quote are its prefix (Python's `rb"`), not a name.
   const readsPrefix = !regex.wholeText && anchoredAtStart(regex.text);
-  for (const text of texts) {
+  for (const { text, identifiers } of texts) {
     // An occurrence is tested once per text: the same word at the same offset of another text has other surroundings,
     // so whether the regex depends on it there is a separate question.
     const tested = new Set<number>();
-    const identifiers = [...text.matchAll(IDENTIFIER)].map((match) => ({ start: match.index, end: match.index + match[0].length, word: match[0] }));
     compiled.lastIndex = 0;
     const matches: { start: number; end: number }[] = [];
     for (let match = compiled.exec(text); match !== null; match = compiled.exec(text)) {
@@ -269,8 +311,11 @@ function regexNames(regex: PolicyRegex, texts: string[], unexplained: (word: str
       else matches.push({ start: match.index, end: match.index + match[0].length });
     }
     for (const { start, end } of matches) {
-      for (const identifier of identifiers) {
-        if (identifier.start >= end || identifier.end <= start || selected.has(identifier.word) || !unexplained(identifier.word)) continue;
+      // Only the identifiers the match overlaps: walking every identifier of the text for each match was quadratic in
+      // the text, most of a cold python/ruff run.
+      for (let at = firstEndingAfter(identifiers, start); at < identifiers.length && identifiers[at]!.start < end; at += 1) {
+        const identifier = identifiers[at]!;
+        if (selected.has(identifier.word) || !unexplained(identifier.word)) continue;
         if (readsPrefix && identifier.start === start && identifier.end < end && (text[identifier.end] === "'" || text[identifier.end] === '"')) continue;
         if (tested.has(identifier.start)) continue;
         tested.add(identifier.start);
@@ -367,12 +412,13 @@ export function notOverfitGate(document: { clauses?: unknown }, inputs: NotOverf
   const unchecked: string[] = [];
   const lowerExplained = new Set([...inputs.keywords, ...inputs.implementation, ...inputs.sharedImplementation].map((word) => word.toLowerCase()));
   const lowerComment = new Set([...inputs.commentVocabulary].map((word) => word.toLowerCase()));
+  const fixtureTexts = prepareTexts(inputs.fixtureTexts);
   for (const regex of policyRegexes(document)) {
     // A case-insensitive regex matches upstream's own names in any case, so explain them in any case.
     const caseless = /\(\?[ims]*i[ims]*[:)]/u.test(regex.text);
     const isUnexplained = (word: string) => explained(word, regex.commentText) === undefined
       && !(caseless && (lowerExplained.has(word.toLowerCase()) || (regex.commentText && lowerComment.has(word.toLowerCase()))));
-    const found = regexNames(regex, inputs.fixtureTexts, isUnexplained, explainedNear, REGEX_NAME_LIMIT);
+    const found = regexNames(regex, fixtureTexts, isUnexplained, explainedNear, REGEX_NAME_LIMIT);
     if (found === undefined) {
       unchecked.push(`${regex.pointer}: ${regex.text}`);
       continue;

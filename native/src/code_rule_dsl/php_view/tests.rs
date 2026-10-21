@@ -414,7 +414,7 @@ fn templates_parse_clean_and_read_the_source() {
 /// The shipped `phpcs-squiz-php-eval`: every `eval` construct.
 fn squiz_php_eval() -> crate::code_rule_dsl::CompiledCodeRuleDsl {
     crate::code_rule_dsl::CodeRuleDslRuntime::compile(
-        include_str!("../../../../packs/php/candidates/rules/phpcs-squiz-php-eval.json").to_owned(),
+        include_str!("../../../../packs/php/rules/phpcs-squiz-php-eval.json").to_owned(),
         "json".to_owned(),
         CAPABILITIES.to_owned(),
     )

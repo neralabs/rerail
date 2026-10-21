@@ -17,16 +17,22 @@ import {
   CORPUS_FILE, CORPUS_FORMAT, RECORDING_FILE, RECORDING_FORMAT, gatesCorpusSchema, gatesRecordingSchema, isCleanVerdict, recordedParsers, recordingText, spanTuple,
   type GatesCorpusRecording, type GatesRecording, type RecordedCase, type RecordedRule, type RecordedSpan,
 } from "../../port-readiness/recording/schema.js";
-import { diffRecordings, type RecordedPair, type RecordingChanges, type UnreadRecording } from "../../port-readiness/recording/diff.js";
+import { diffRecordings, type RecordedPair, type RecordingChanges, type ResolvedRuntime, type UnreadRecording } from "../../port-readiness/recording/diff.js";
 import {
   buildRecordingLock, DEFAULT_RELEASE, gzipRecording, readCachedRecording, RECORDING_LOCK, recordingLockSchema, recordingLockText, writeCachedRecording, type RecordingLock,
 } from "../../port-readiness/recording/store.js";
-import { rebuildFixtureTexts, upstreamCheckoutDirectory, type RecordedFixtureTexts } from "../../port-readiness/recorded-adapter.js";
+import { licenseFiles, rebuildFixtureTexts, upstreamCheckoutDirectory, type RecordedFixtureTexts } from "../../port-readiness/recorded-adapter.js";
 import type { PackAdapter, PackManifest, Span, UpstreamCase } from "../../port-readiness/types.js";
 import { createBanditAdapter } from "./adapters/bandit.js";
+import { createBladeParserAdapter } from "./adapters/blade-parser.js";
+import { createBladestanAdapter } from "./adapters/bladestan.js";
 import { createEslintAdapter } from "./adapters/eslint.js";
+import { createPhpcsAdapter } from "./adapters/phpcs.js";
+import { createPhpstanAdapter } from "./adapters/phpstan.js";
+import { createPsalmAdapter } from "./adapters/psalm.js";
 import { createRuffAdapter } from "./adapters/ruff.js";
-import { runtimePinDigests } from "./runtimes.js";
+import { createTlintAdapter } from "./adapters/tlint.js";
+import { resolvedComposerRuntimes, runtimePinDigests } from "./runtimes.js";
 
 export type AdapterFactory = (pack: PackManifest, names: string[], cacheRoot: string, runner: CommandRunner) => Promise<PackAdapter>;
 
@@ -34,6 +40,12 @@ export const LIVE_ADAPTERS: Record<GatesManifest["adapter"], AdapterFactory> = {
   bandit: createBanditAdapter,
   ruff: createRuffAdapter,
   eslint: createEslintAdapter,
+  phpcs: createPhpcsAdapter,
+  tlint: createTlintAdapter,
+  "blade-parser": createBladeParserAdapter,
+  phpstan: createPhpstanAdapter,
+  psalm: createPsalmAdapter,
+  bladestan: createBladestanAdapter,
 };
 
 const sha256 = (value: string | Buffer): string => createHash("sha256").update(value).digest("hex");
@@ -118,13 +130,33 @@ const RUFF_TESTS = "crates/ruff_linter/resources/test/";
 const RUFF_NOTEBOOK_FIXTURES = "crates/ruff_notebook/resources/test/fixtures/";
 /** An ESLint-family case's test file, without the run and case it names (`tests/lib/rules/eqeqeq.js#0/valid[3]`). */
 const eslintTestFile = (fixture: string): string => fixture.replace(/#.*$/u, "");
+/** Where PHP_CodeSniffer keeps its standards; each sniff's unit tests are under <standard>/Tests/<category>/. */
+const PHPCS_STANDARDS = "src/Standards/";
+/** A tlint case's test file, without the test method it names (`tests/Linting/Linters/NoDumpDirectivesTest.php#catches_dd_directive_usage`). */
+const tlintTestFile = (fixture: string): string => fixture.replace(/#.*$/u, "");
+/** Where phpstan-src keeps its tests; a rule test's data files are under tests/PHPStan/Rules/<category>/data/. */
+const PHPSTAN_TESTS = "tests/PHPStan/";
+/** Where Bladestan's rule test keeps the templates of its application (views/ and the Test namespace's). */
+const BLADESTAN_TEMPLATES = "tests/skeleton/resources/";
 
 /**
  * The existing fixtures/ layouts: Ruff's resources/test/fixtures/<dir>/… and Bandit's examples/… map to fixtures/….
  * An ESLint-family case is not a file but a RuleTester case's `code`, so each case is its own source: one the tool-pack
  * already commits byte for byte (upstream/generate.mjs's fixtures/<rule>/<n>.<ext>) is reused, from the test file's own
  * directory and with the case's file type first; any other is copied to fixtures/<test file>/<sha256 prefix><ext>, the
- * extension of the path the case is read at, in lower case.
+ * extension of the path the case is read at, in lower case. PHP_CodeSniffer's unit test files,
+ * src/Standards/<standard>/Tests/<category>/<file>.inc, are fixtures/<standard>/<category>/<file>.inc.php, as
+ * upstream/phpcs/generate.py copied them: verbatim, with a `.php` suffix so Rerail routes them to PHP. A tlint case is
+ * the template a linter test's method hands the linter, so, as for ESLint, one the tool-pack commits byte for byte
+ * (upstream/tlint/generate.py's fixtures/<test class>/<n>.blade.php) is reused, from the test's own directory first;
+ * any other is copied to fixtures/<test class>/<sha256 prefix>.blade.php. A stillat/blade-parser case is the n-th
+ * distinct template a validator test (tests/Validation/<X>Test.php, `#<n>`) hands Document::fromText(), which
+ * upstream/blade-parser/generate.py wrote to fixtures/<X>Test/<n>.blade.php.
+ * PHPStan's test data files, tests/PHPStan/<path>, are fixtures/<path>, as upstream/phpstan/generate.py copied them.
+ * A Psalm case is the `code` of one case of a test class's providerValidCodeParse() or providerInvalidCodeParse()
+ * (`tests/<X>Test.php#<provider>/<case>`), which upstream/psalm/generate.py wrote to fixtures/<X>Test/<provider>/<case>.php.
+ * Bladestan's test application's templates, tests/skeleton/resources/<path>, are fixtures/skeleton/resources/<path>,
+ * as upstream/bladestan/generate.py copied them.
  */
 export const CASE_LAYOUTS: Record<GatesManifest["adapter"], CaseLayout> = {
   ruff: {
@@ -149,6 +181,40 @@ export const CASE_LAYOUTS: Record<GatesManifest["adapter"], CaseLayout> = {
         ?? `${directory}${sha256(bytes).slice(0, 12)}${extension}`;
     },
     row: (fixture) => ({ upstream: eslintTestFile(fixture), copy: "derived" }),
+  },
+  phpcs: {
+    file({ fixture }) {
+      const parts = fixture.startsWith(PHPCS_STANDARDS) ? fixture.slice(PHPCS_STANDARDS.length).split("/") : [];
+      return parts.length === 4 && parts[1] === "Tests" ? `fixtures/${parts[0]}/${parts[2]}/${parts[3]}.php` : null;
+    },
+  },
+  tlint: {
+    file({ fixture, bytes }, committed) {
+      const directory = `fixtures/${(tlintTestFile(fixture).split("/").pop() ?? "").replace(/\.php$/u, "")}/`;
+      const same = committed(bytes);
+      return same.find((file) => file.startsWith(directory)) ?? same[0] ?? `${directory}${sha256(bytes).slice(0, 12)}.blade.php`;
+    },
+    row: (fixture) => ({ upstream: tlintTestFile(fixture), copy: "derived" }),
+  },
+  "blade-parser": {
+    file({ fixture }) {
+      const match = /^tests\/Validation\/(\w+Test)\.php#(\d+)$/u.exec(fixture);
+      return match === null ? null : `fixtures/${match[1]}/${match[2]}.blade.php`;
+    },
+    row: (fixture) => ({ upstream: fixture.replace(/#\d+$/u, ""), copy: "derived" }),
+  },
+  phpstan: {
+    file: ({ fixture }) => (fixture.startsWith(PHPSTAN_TESTS) ? `fixtures/${fixture.slice(PHPSTAN_TESTS.length)}` : null),
+  },
+  psalm: {
+    file({ fixture }) {
+      const match = /^tests\/(\w+Test)\.php#(valid|invalid)\/([\w-]+)$/u.exec(fixture);
+      return match === null ? null : `fixtures/${match[1]}/${match[2]}/${match[3]}.php`;
+    },
+    row: (fixture) => ({ upstream: fixture.replace(/#.*$/u, ""), copy: "derived" }),
+  },
+  bladestan: {
+    file: ({ fixture }) => (fixture.startsWith(BLADESTAN_TEMPLATES) ? `fixtures/${fixture.slice("tests/".length)}` : null),
   },
 };
 
@@ -188,10 +254,19 @@ export const CONTEXT_FILES: Record<GatesManifest["adapter"], (path: string) => s
   ruff: (path) => directoriesOf(path).flatMap((directory) => [`${directory}/__init__.py`, `${directory}/__init__.pyi`]),
   bandit: () => [],
   eslint: () => [],
+  phpcs: () => [],
+  tlint: () => [],
+  "blade-parser": () => [],
+  phpstan: () => [],
+  psalm: () => [],
+  bladestan: () => [],
 };
 
-/** Extensions a corpus could hold, probed against the adapter's inCorpus. */
-const PROBED_EXTENSIONS = [".cjs", ".cts", ".ipynb", ".js", ".jsx", ".mjs", ".mts", ".py", ".pyi", ".ts", ".tsx", ".vue"];
+/**
+ * Extensions a corpus could hold, probed against the adapter's inCorpus. `.blade.php` is a type of its own (a Blade
+ * template), which a tool-pack that lints `.php` leaves out.
+ */
+const PROBED_EXTENSIONS = [".blade.php", ".cjs", ".cts", ".inc", ".ipynb", ".js", ".jsx", ".mjs", ".mts", ".php", ".py", ".pyi", ".ts", ".tsx", ".vue"];
 
 /** A case source the recording needs committed: upstream's bytes, and where they go. */
 export interface CaseCopy {
@@ -206,6 +281,8 @@ export interface Recorded {
   corpus: GatesCorpusRecording;
   /** Every case source the recording names, with upstream's bytes. */
   sources: CaseCopy[];
+  /** The Composer runtimes the adapter used and what each resolved: for the summary, not for the recording or its lock. */
+  resolved: ResolvedRuntime[];
 }
 
 export interface RecordOptions {
@@ -291,7 +368,8 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
   const names = await conformanceRuleNames(root, packId, tool);
   const factory = options.adapters?.[manifest.adapter] ?? LIVE_ADAPTERS[manifest.adapter];
   const adapter = await factory(manifest, names, cacheRoot, runner);
-  const checkout = resolve(cacheRoot, "upstream", tool, manifest.upstream.commit);
+  // The checkout the live adapters make, under the repository's name (rebuildFixtureTexts reads the same one).
+  const checkout = upstreamCheckoutDirectory(cacheRoot, manifest.upstream);
   const upstreamBytes = options.upstreamBytes ?? ((fixture: string) => {
     const path = join(checkout, fixture);
     return existsSync(path) ? readFileSync(path) : undefined;
@@ -466,7 +544,7 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
     }),
   });
 
-  return { recording, corpus, sources: [...sources.values()].sort((a, b) => byText(a.file, b.file)) };
+  return { recording, corpus, sources: [...sources.values()].sort((a, b) => byText(a.file, b.file)), resolved: resolvedComposerRuntimes() };
 }
 
 /** What differs between a fresh recording and what the tool-pack's committed `recording.lock` names. */
@@ -581,6 +659,7 @@ export function withUpstreamRows(text: string, tool: string, copies: CaseCopy[],
 export function inlineTextsSource(manifest: GatesManifest): string {
   if (manifest.adapter === "ruff") return "`crates/ruff_linter/src/rules/*/mod.rs`, `crates/ruff_linter/src/linter.rs`: their test modules' string literals";
   if (manifest.eslint !== undefined) return `${manifest.eslint.tests.map((glob) => `\`${glob}\``).join(", ")}: the \`code\` of each RuleTester case`;
+  if (manifest.adapter === "psalm") return "`tests/**/*.php`: the `code` of each providerValidCodeParse() and providerInvalidCodeParse() case";
   return "upstream's test files";
 }
 
@@ -592,13 +671,17 @@ const NOTE_WIDTH = 120;
 
 /**
  * The note that lists the recording in UPSTREAM.md when it holds upstream test text inline, as a Markdown blockquote
- * wrapped to NOTE_WIDTH: recording.json is then partly upstream's material (excerpts), like a copied fixture.
+ * wrapped to NOTE_WIDTH: recording.json is then partly upstream's material (excerpts), like a copied fixture. It names
+ * the licence files kept beside UPSTREAM.md (recorded-adapter.ts's licenseFiles), as they are named.
  */
-export function recordingNote(source: string): string[] {
+export function recordingNote(source: string, licenses: string[]): string[] {
+  if (licenses.length === 0) throw new Error("UPSTREAM.md has no licence file beside it for the recording note to name");
+  const named = licenses.map((name) => `\`${name}\``);
+  const kept = named.length === 1 ? `${named[0]!} beside this file is` : `${named.slice(0, -1).join(", ")} and ${named.at(-1)!} beside this file are`;
   const text = `${RECORDING_NOTE_START.slice(2)}, and no file of this pack, so it is recorded here rather than in the table above: `
     + `the tool-pack's \`${RECORDING_LOCK}\` names it and a GitHub release holds the bytes (docs/port-readiness.md). It carries `
     + `excerpts of this upstream's tests (${source}), redistributed under the licence above, together with Rerail's Apache-2.0; `
-    + "the LICENSE beside this file is this upstream's own, at the pinned commit.";
+    + `${kept} this upstream's own, at the pinned commit.`;
   const lines: string[] = [];
   let line = ">";
   for (const word of text.split(" ")) {
@@ -617,14 +700,14 @@ export function recordingNote(source: string): string[] {
  * earlier note is replaced, and left as it is when it already says the same in other line breaks; without one, the
  * note goes after the table.
  */
-export function withRecordingNote(text: string, source: string): string {
+export function withRecordingNote(text: string, source: string, licenses: string[]): string {
   const lines = text.split("\n");
   const isRow = (line: string) => line.startsWith("| `upstream/");
   const first = lines.findIndex(isRow);
   if (first < 0) throw new Error("UPSTREAM.md has no file table to list the recording under");
   let last = first;
   while (last + 1 < lines.length && isRow(lines[last + 1]!)) last += 1;
-  const note = recordingNote(source);
+  const note = recordingNote(source, licenses);
   const at = lines.findIndex((line) => line.startsWith(RECORDING_NOTE_START));
   if (at < 0) return [...lines.slice(0, last + 1), "", ...note, ...lines.slice(last + 1)].join("\n");
   let end = at;
@@ -661,7 +744,7 @@ export async function writeRecording(root: string, pack: string, tool: string, r
   // lock the report says it is a first recording; with one whose recording cannot be read, that what moved is unknown.
   const before = readLockedPair(root, options.cacheRoot, pack, tool);
   const texts = { [RECORDING_FILE]: recordingText(recorded.recording), [CORPUS_FILE]: recordingText(recorded.corpus) };
-  const lock = buildRecordingLock(pack, tool, options.release ?? DEFAULT_RELEASE, recorderVersion(root), recorded.recording.pins, recorded.recording.runtimes, texts);
+  const lock = buildRecordingLock(pack, tool, options.release ?? DEFAULT_RELEASE, recorded.recording.pins, recorded.recording.runtimes, texts);
   for (const text of Object.values(texts)) await writeCachedRecording(options.cacheRoot, text);
   await writeFile(join(directory, RECORDING_LOCK), recordingLockText(lock));
 
@@ -685,10 +768,10 @@ export async function writeRecording(root: string, pack: string, tool: string, r
     const upstreamMd = join(root, "packs", pack, "licenses", manifest.rerail.project, "UPSTREAM.md");
     let text = await readFile(upstreamMd, "utf8");
     if (diff.missing.length > 0) text = withUpstreamRows(text, tool, diff.missing, CASE_LAYOUTS[manifest.adapter]);
-    if (inline > 0) text = withRecordingNote(text, inlineTextsSource(manifest));
+    if (inline > 0) text = withRecordingNote(text, inlineTextsSource(manifest), licenseFiles(dirname(upstreamMd)));
     await writeFile(upstreamMd, text);
   }
-  return { ...diff, lock, assets, changes: diffRecordings(pack, tool, before, { recording: recorded.recording, corpus: recorded.corpus }) };
+  return { ...diff, lock, assets, changes: diffRecordings(pack, tool, before, { recording: recorded.recording, corpus: recorded.corpus }, recorded.resolved) };
 }
 
 /**
@@ -710,11 +793,4 @@ export function readLockedPair(root: string, cacheRoot: string, pack: string, to
   const corpus = gatesCorpusSchema.safeParse(JSON.parse(texts[1]!));
   if (!recording.success || !corpus.success) return { unavailable: "the cached recording does not parse" };
   return { recording: recording.data, corpus: corpus.data };
-}
-
-/** The repository version the recorder ran from, written into the lock so a reader can date a recording. */
-function recorderVersion(root: string): string {
-  const path = join(root, "package.json");
-  if (!existsSync(path)) return "0.0.0";
-  return (JSON.parse(readFileSync(path, "utf8")) as { version?: string }).version ?? "0.0.0";
 }

@@ -13,7 +13,7 @@ import { z } from "zod";
 export const GATES_MANIFEST = "gates.yaml";
 
 /** The live adapters a tool-pack can name, one per upstream linter family (recorders/port-readiness/adapters/). */
-export const ADAPTERS = ["bandit", "ruff", "eslint"] as const;
+export const ADAPTERS = ["bandit", "ruff", "eslint", "phpcs", "tlint", "blade-parser", "phpstan", "psalm", "bladestan"] as const;
 
 const nonEmpty = z.string().min(1);
 const commit = z.string().regex(/^[0-9a-f]{40}$/u, "a full commit sha");
@@ -102,11 +102,6 @@ const eslintSchema = z.strictObject({
     version_file: repositoryPath.optional(),
   }),
   /**
-   * Upstream's license file at the pinned commit (vercel/next.js keeps `license.md`); when omitted, LICENSE at the
-   * repository's root in any letter case (eslint-plugin-unicorn keeps `license`).
-   */
-  license: repositoryPath.optional(),
-  /**
    * The shareable configuration whose environment the pack is linted in, when the approved configurations are only the
    * plugin's rules (eslint-config-next for the Next.js and React packs): its file globs, parsers and globals come before
    * the approved configurations for upstream's test cases and the corpus; its plugins, rules and settings are not the
@@ -168,7 +163,11 @@ export const gatesManifestSchema = z.strictObject({
   rerail: z.strictObject({
     /** The pack's id: the directory under packs/ this manifest sits in. */
     pack: z.string().regex(/^[a-z0-9-]+$/u),
-    /** The upstream project's directory under packs/<pack>/licenses/, which keeps its LICENSE and UPSTREAM.md. */
+    /**
+     * The upstream project's directory under packs/<pack>/licenses/, which keeps its UPSTREAM.md and every licence file
+     * at the root of upstream's repository under its own name (recorded-adapter.ts's licenseFiles: LICENSE or LICENCE
+     * in any letter case, with any extension or suffix).
+     */
     project: z.string().regex(/^[A-Za-z0-9._-]+$/u),
     /**
      * The file types rerail's ports of this tool cover, when the pack deliberately covers fewer than upstream lints:
@@ -216,7 +215,7 @@ export const gatesManifestSchema = z.strictObject({
 export type GatesManifest = z.infer<typeof gatesManifestSchema>;
 
 /** The runtimes each adapter runs besides upstream's own (gates.yaml `upstream.runtime`). */
-const EXTRA_RUNTIMES: Record<GatesManifest["adapter"], string[]> = { bandit: ["python"], ruff: ["python"], eslint: ["parsers"] };
+const EXTRA_RUNTIMES: Record<GatesManifest["adapter"], string[]> = { bandit: ["python"], ruff: ["python"], eslint: ["parsers"], phpcs: ["php"], tlint: ["blade", "php"], "blade-parser": ["php"], phpstan: ["php"], psalm: ["php"], bladestan: ["blade", "php"] };
 
 /**
  * Every runtime the adapter installs to record a tool-pack, sorted: upstream's own, the adapter's, and the environment

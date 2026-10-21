@@ -122,6 +122,9 @@ const ROOT_KIND: Record<string, { language: string; kind: string }> = {
   typescript: { language: "typescript", kind: "program" },
   tsx: { language: "typescript", kind: "program" },
   javascript: { language: "javascript", kind: "program" },
+  php: { language: "php", kind: "program" },
+  // Blade's tree is Rerail's port of Forte, whose root is the template's document.
+  blade: { language: "blade", kind: "document" },
 };
 
 /** Whether the engine fails to fully parse a probe, using a policy that matches the root of every file. */

@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "psalm-forbidden-code",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "Remove var_dump(), shell_exec() and backtick shell commands from PHP code; they leak debug output or open the door to command injection.",
   "scope": {
@@ -130,7 +130,7 @@
         }
       },
       "violation": {
-        "anchor": "witness.start",
+        "anchor": "witness.span",
         "code": "ForbiddenCode",
         "message": "Remove this var_dump() or shell command; log debug output instead, and run commands with proc_open() given an argument array.",
         "suppress": {

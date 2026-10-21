@@ -3,7 +3,7 @@
   "id": "blade",
   "name": "Blade",
   "category": "language",
-  "covers": "No rules yet: its 17 Bladestan, tlint and stillat/blade-parser ports are candidates until they pass the V1 rule validation gates.",
+  "covers": "10 Bladestan, tlint and stillat/blade-parser rules ported to Rerail, 8 of them on and 2 off until turned on, each scored against the tool's own recorded findings on its test fixtures.",
   "reason": "matches Blade templates",
   "match": {
     "any": [
@@ -15,5 +15,88 @@
       }
     ]
   },
-  "rules": []
+  "rules": [
+    {
+      "id": "bladestan-if-always-true",
+      "document": "rules/bladestan-if-always-true.json",
+      "title": "Bladestan if.alwaysTrue: If condition always true",
+      "group": "Bladestan",
+      "on": false
+    },
+    {
+      "id": "bladestan-identical-always-true",
+      "document": "rules/bladestan-identical-always-true.json",
+      "title": "Bladestan identical.alwaysTrue: Strict comparison always true",
+      "group": "Bladestan",
+      "on": false
+    },
+    {
+      "id": "tlint-no-json-directive",
+      "document": "rules/tlint-no-json-directive.json",
+      "title": "tlint NoJsonDirective: No @json directive",
+      "group": "tlint",
+      "examples": {
+        "caught": {
+          "path": "resources/views/profile.blade.php",
+          "text": "<script>\n    const user = @json($user);\n</script>\n"
+        },
+        "passes": {
+          "path": "resources/views/profile.blade.php",
+          "text": "<script>\n    const user = {{ Js::from($user) }};\n</script>\n"
+        }
+      }
+    },
+    {
+      "id": "tlint-no-dump-directives",
+      "document": "rules/tlint-no-dump-directives.json",
+      "title": "tlint NoDumpDirectives: No @dd or @dump directive",
+      "group": "tlint"
+    },
+    {
+      "id": "tlint-no-ray-directive",
+      "document": "rules/tlint-no-ray-directive.json",
+      "title": "tlint NoRayDirective: No @ray directive",
+      "group": "tlint"
+    },
+    {
+      "id": "tlint-space-after-blade-directives",
+      "document": "rules/tlint-space-after-blade-directives.json",
+      "title": "tlint SpaceAfterBladeDirectives: Space after control structure directives",
+      "group": "tlint",
+      "examples": {
+        "caught": {
+          "path": "resources/views/profile.blade.php",
+          "text": "@if($user)\n    <p>{{ $user->name }}</p>\n@endif\n"
+        },
+        "passes": {
+          "path": "resources/views/profile.blade.php",
+          "text": "@if ($user)\n    <p>{{ $user->name }}</p>\n@endif\n"
+        }
+      }
+    },
+    {
+      "id": "tlint-spaces-around-blade-render-content",
+      "document": "rules/tlint-spaces-around-blade-render-content.json",
+      "title": "tlint SpacesAroundBladeRenderContent: One space inside echo delimiters",
+      "group": "tlint"
+    },
+    {
+      "id": "blade-parser-debug-directive",
+      "document": "rules/blade-parser-debug-directive.json",
+      "title": "blade-parser DebugDirectiveValidator: No debug directive",
+      "group": "blade-parser"
+    },
+    {
+      "id": "blade-parser-for-else-structure",
+      "document": "rules/blade-parser-for-else-structure.json",
+      "title": "blade-parser ForElseStructureValidator: @forelse with one @empty",
+      "group": "blade-parser"
+    },
+    {
+      "id": "blade-parser-component-shorthand-variable-parameter",
+      "document": "rules/blade-parser-component-shorthand-variable-parameter.json",
+      "title": "blade-parser ComponentShorthandVariableParameterValidator: Malformed component shorthand attribute",
+      "group": "blade-parser"
+    }
+  ]
 }

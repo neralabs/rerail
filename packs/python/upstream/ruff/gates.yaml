@@ -17,7 +17,7 @@ upstream:
   # read from `ruff check --isolated --show-settings`, with every option at its default and the default target
   # version (Python 3.10 under --isolated, recorded in the report's identity). Documents that port rules outside it
   # (E402, E711-E714, E721, E731, E741-E743, F403, F405, F406, F722, the RET50x rules, most SIM rules, B904, B905, ...)
-  # are not `recommended`, so they ship off.
+  # are not `recommended`, so they start off once shipped.
   #
   # How the adapter applies it (decisions for the team; they hold for every Ruff pack):
   # - A rule's upstream tests are every file that the test functions of crates/ruff_linter/src/rules/*/mod.rs and

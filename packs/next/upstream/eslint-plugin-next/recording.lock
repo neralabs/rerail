@@ -2,7 +2,6 @@
   "format": "rerail.port-readiness-recording-lock/v1",
   "tool": "eslint-plugin-next",
   "release": "port-readiness-recordings",
-  "recorder": "0.1.0-next.2",
   "pins": {
     "repository": "https://github.com/vercel/next.js",
     "commit": "b0fad0d45eb4c4430fda5eeeb442e8a5af08a5f6",

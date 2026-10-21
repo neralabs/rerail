@@ -2,7 +2,6 @@
   "format": "rerail.port-readiness-recording-lock/v1",
   "tool": "bandit",
   "release": "port-readiness-recordings",
-  "recorder": "0.1.0-next.2",
   "pins": {
     "repository": "https://github.com/PyCQA/bandit",
     "commit": "92ae8b82fb422a639f0ed8d99e96cea769594e08",

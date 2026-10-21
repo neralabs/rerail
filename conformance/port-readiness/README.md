@@ -49,7 +49,7 @@ and `77c266a` on branch `ner-1762-engine-gaps`.
 | `manifest.ts` | none: `manifest.ts` validates `gates.yaml` with zod |
 
 Only `policy-literals.ts` and `adapters/ruff-tests.ts` are unchanged. Every import points into this tree, and the checks
-read rerail's layout. `upstream-status` is `provenance.ts` without its pack precondition: the kept LICENSE's sha256 is a
+read rerail's layout. `upstream-status` is `provenance.ts` without its pack precondition: the kept licence's sha256 is a
 tool-pack check here, and the pack contract's checks 5 and 6 cover the rest. The adapters record upstream instead of
 answering the gates live, so each also lists the sources of its case texts (`fixtureTextSources`: a file's path and
 sha256, or the inline text); their span code moved to `span-units/`, which the gates read without them; their
@@ -104,8 +104,8 @@ whose sha256 is not the one the lock names fails the run.
 `npm run port-readiness:record -- --pack <id> --tool <tool>` (conformance/recorders/port-readiness/) writes the recordings. A tool-pack
 check that fails fails every rule of the tool-pack: a shipped rule blocks, and a candidate is not ready to promote. The
 recording is stale when pins disagree between `gates.yaml`, `recording.lock`, `recording.json` and `conformance.json`, a
-runtime's pins (`package.json`, `pyproject.toml`, `.python-version`) differ from the ones the lock records, the kept
-LICENSE is not the recorded one, or a rule is not recorded (`corpus-pins` and the recording checks). `corpus-complete` fails when a file `corpus.json` answers for was not fetched with its
+runtime's pins (`package.json`, `pyproject.toml`, `.python-version`, `composer.json`, `.php-version`, PHP's `extensions.txt`) differ from the ones the lock records, the kept
+licence (every `LICENSE` or `LICENCE` file under `licenses/<project>/`, in any letter case and with any extension, read in name order) is not the recorded one, or a rule is not recorded (`corpus-pins` and the recording checks). `corpus-complete` fails when a file `corpus.json` answers for was not fetched with its
 recorded sha256 (a download or git fetch failed); those results are not cached. `bundled-load` loads every document in
 the pack's `rules/` together through rerail's bundled-rule loader, on every run, so a conflict between rules (a
 duplicate id) fails it.

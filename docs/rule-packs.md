@@ -16,7 +16,9 @@ Every pack lives under `packs/` in this repository and is published from there (
 | JavaScript and TypeScript (ESLint core) | language | 65 (22) | JavaScript or TypeScript source: ESLint's core rules apply to both. |
 | TypeScript | language | 22 (11) | a `typescript` dependency, or `*.ts`/`*.tsx` files |
 | Python | language | 138 (113) | Python source outside tests, scripts and docs |
-| PHP, Blade, Rust, SQL | language | 0 | never yet: every port is still a candidate, and a pack with no rule that starts on is never recommended |
+| PHP | language | 7 (3) | PHP source: `*.php` files, not Blade views |
+| Blade | language | 10 (8) | Blade templates: `*.blade.php` files |
+| Rust, SQL | language | 0 | never yet: every port is still a candidate, and a pack with no rule that starts on is never recommended |
 | Next.js | framework | 17 (17) | a `next` dependency |
 | Node.js | framework | 22 (22) | an `@types/node` dependency, or `*.mjs`/`*.cjs` files |
 | React, Vue | framework | 0 | never yet, as above |

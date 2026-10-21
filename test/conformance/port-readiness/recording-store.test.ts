@@ -1,18 +1,18 @@
 /**
  * The recordings outside git: the committed `recording.lock`, the cache they are fetched into, and what happens when
  * the bytes are not the ones the lock names. That last one is the whole point of the manifest — a pull request that
- * writes its own recording must fail, because pull request CI never runs upstream and cannot tell a true recording
- * from a flattering one.
+ * writes its own recording must fail, because the gates take only an attested recording or one CI records from the
+ * commit itself, and cannot tell a true recording from a flattering one by its bytes.
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "vitest";
+import { afterEach, test, vi } from "vitest";
 
 import { PACKAGE_ROOT } from "../../../src/engine/index.js";
-import { fetchToolPackRecordings, LIFTED_ASSETS } from "../../../conformance/port-readiness/recording/fetch.js";
+import { fetchToolPackRecordings, LIFTED_ASSETS, MissingRecordingError } from "../../../conformance/port-readiness/recording/fetch.js";
 import { diffRecordings, renderRecordingChanges, type RecordedPair } from "../../../conformance/port-readiness/recording/diff.js";
 import {
   assetName, buildRecordingLock, gzipRecording, LIFTED_CASE_SOURCES, LIFTED_RUNTIMES, readCachedRecording, readRecordingLock, recordingFromAsset,
@@ -71,8 +71,7 @@ function corpusOf(findings: Record<string, [number, number | null, number | null
 function toolPack(texts: { "recording.json": string; "corpus.json": string }) {
   const root = mkdtempSync(join(tmpdir(), "port-readiness-store-"));
   mkdirSync(join(root, "packs/demo/upstream/bandit"), { recursive: true });
-  writeFileSync(join(root, "package.json"), JSON.stringify({ version: "9.9.9" }));
-  const lock = buildRecordingLock("demo", "bandit", "port-readiness-recordings", "9.9.9", PINS, { "bandit-1.9.4": { "pyproject.toml": "d".repeat(64) } }, texts);
+  const lock = buildRecordingLock("demo", "bandit", "port-readiness-recordings", PINS, { "bandit-1.9.4": { "pyproject.toml": "d".repeat(64) } }, texts);
   writeFileSync(join(root, "packs/demo/upstream/bandit", RECORDING_LOCK), recordingLockText(lock));
   return { root, lock, cacheRoot: join(root, "cache"), cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
@@ -140,7 +139,7 @@ test("an asset whose sha256 is not the one the manifest names fails the fetch, a
   }
 });
 
-test("a hand-edited manifest naming a hash the release does not hold fails, and says a pull request cannot supply its own", async () => {
+test("a hand-edited manifest naming a hash the release does not hold fails as a missing recording", async () => {
   const { root, cacheRoot, lock, cleanup } = toolPack(TEXTS);
   try {
     // What a fork pull request would commit: a lock pointing at a recording nobody uploaded.
@@ -148,10 +147,45 @@ test("a hand-edited manifest naming a hash the release does not hold fails, and 
     writeFileSync(join(root, "packs/demo/upstream/bandit", RECORDING_LOCK), recordingLockText(forged));
     const release = new Set([lock.files["recording.json"].asset, lock.files["corpus.json"].asset]);
     const download = async (asset: { asset: string }) => {
-      if (!release.has(asset.asset)) throw new Error(`the release port-readiness-recordings of neralabs/rerail has no asset ${asset.asset}: the recording this commit names was never uploaded (a pull request cannot supply its own; see port-readiness-record.yml)`);
+      if (!release.has(asset.asset)) throw new MissingRecordingError("port-readiness-recordings", "neralabs/rerail", asset.asset);
       return gzipRecording(TEXTS["recording.json"]);
     };
-    await assert.rejects(fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { download }), /has no asset demo-bandit-recording-f{64}\.json\.gz: the recording this commit names was never uploaded/u);
+    // A missing recording is told apart from every other failure: it is the one a gate leg answers by recording.
+    await assert.rejects(fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { download }), (error: unknown) =>
+      error instanceof MissingRecordingError && /has no asset demo-bandit-recording-f{64}\.json\.gz: the recording this commit names was never uploaded/u.test(error.message));
+  } finally {
+    cleanup();
+  }
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+test("only a release that lacks the asset is a missing recording; an API error is not", async () => {
+  const { root, cacheRoot, cleanup } = toolPack(TEXTS);
+  try {
+    const answering = (status: number, body: unknown) => vi.stubGlobal("fetch", async () => new Response(JSON.stringify(body), { status }));
+    answering(200, { assets: [{ name: "another-asset.json.gz", url: "https://api.github.com/assets/1", size: 1 }] });
+    await assert.rejects(fetchToolPackRecordings(root, cacheRoot, "demo", "bandit"), MissingRecordingError);
+    answering(502, { message: "Bad Gateway" });
+    await assert.rejects(fetchToolPackRecordings(root, cacheRoot, "demo", "bandit"), (error: unknown) =>
+      error instanceof Error && !(error instanceof MissingRecordingError) && /answered 502/u.test(error.message));
+  } finally {
+    cleanup();
+  }
+});
+
+test("a release lookup that answers 404 is a plain error, not a missing recording", async () => {
+  const { root, cacheRoot, cleanup } = toolPack(TEXTS);
+  try {
+    // GitHub answers 404 for a tag with no release, a repository the token cannot read, and a wrong repository: none
+    // is a recording a gate leg should record itself.
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ message: "Not Found" }), { status: 404 }));
+    await assert.rejects(fetchToolPackRecordings(root, cacheRoot, "demo", "bandit", { repository: "someone/elsewhere" }), (error: unknown) =>
+      error instanceof Error && !(error instanceof MissingRecordingError)
+      && /release \S+ of someone\/elsewhere cannot be read .*answered 404/u.test(error.message));
+    assert.equal(existsSync(join(cacheRoot, "recordings")), false);
   } finally {
     cleanup();
   }
@@ -284,6 +318,11 @@ test("the per-rule summary names what moved, and says so plainly when nothing di
   assert.deepEqual(unchanged.pinsChanged, []);
   assert.match(renderRecordingChanges([unchanged]), /re-recorded, and upstream answers the same/u);
   assert.match(renderRecordingChanges([unchanged]), /`demo\/bandit`: unchanged/u);
+  // The Composer packages a recording resolved are listed, so a transitive drift shows, without making it a change.
+  const resolved = renderRecordingChanges([diffRecordings("demo", "bandit", before, before, [{ runtime: "php", packages: ["nikic/php-parser@v5.9.0"] }])]);
+  assert.match(resolved, /re-recorded, and upstream answers the same/u);
+  assert.match(resolved, /^- `runtimes\/php`: `nikic\/php-parser@v5\.9\.0`$/mu);
+  assert.doesNotMatch(renderRecordingChanges([unchanged]), /Composer packages/u);
 
   const changes = diffRecordings("demo", "bandit", before, after);
   assert.deepEqual(changes.rules, [

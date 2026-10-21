@@ -1,6 +1,7 @@
 /**
  * `npm run port-readiness`: the port readiness gates over every gated tool-pack, from its recordings, and the summary CI posts.
- * Exit 1 when a shipped rule fails a blocking check (or the summary has a blocking failure), 2 on an exception.
+ * Exit 1 when a shipped rule fails a blocking check (or the summary has a blocking failure), 2 on an exception, and
+ * `fetch` 3 when a lock names a recording the release does not hold (MissingRecordingError), and nothing else failed.
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -10,7 +11,7 @@ import { DEFAULT_CACHE_ROOT } from "./corpus.js";
 import { staleNativeBinary } from "./engine.js";
 import { mergeDirectory } from "./merge.js";
 import { ProcessCommandRunner } from "./process.js";
-import { fetchToolPackRecordings } from "./recording/fetch.js";
+import { fetchToolPackRecordings, MissingRecordingError } from "./recording/fetch.js";
 import { renderMarkdown } from "./report.js";
 import { blockingFailures, gatedToolPacks, runToolPack } from "./run.js";
 import { parseShard, shardName } from "./shard.js";
@@ -79,7 +80,8 @@ async function gates(args: string[]): Promise<number> {
 /**
  * `gates fetch`: download the recordings the selected tool-packs' locks name into the cache. Each gate shard fetches
  * only its own tool-pack, so a shard downloads what it judges and nothing else, and a job that runs no gate fetches
- * nothing at all. A recording already in the cache is not downloaded again.
+ * nothing at all. A recording already in the cache is not downloaded again. A recording the release does not hold
+ * exits 3, apart from every other failure, since a gate leg records that tool-pack itself (port-readiness.yml).
  */
 async function fetch(args: string[]): Promise<number> {
   const flags = parse(args, ["--pack", "--tool", "--cache", "--repository"], []);
@@ -93,13 +95,20 @@ async function fetch(args: string[]): Promise<number> {
     ...(typeof flags["--repository"] === "string" ? { repository: flags["--repository"] } : process.env.GITHUB_REPOSITORY === undefined ? {} : { repository: process.env.GITHUB_REPOSITORY }),
     ...((process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN) === undefined ? {} : { token: (process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN)! }),
   };
+  let missing = 0;
   for (const { pack, tool } of selected) {
-    for (const entry of await fetchToolPackRecordings(root, cacheRoot, pack, tool, options)) {
-      console.log(`${pack}/${tool} ${entry.file}: ${entry.cached ? "cached" : `downloaded ${entry.asset}`} (${(entry.size / 1024 / 1024).toFixed(1)} MB)`);
+    try {
+      for (const entry of await fetchToolPackRecordings(root, cacheRoot, pack, tool, options)) {
+        console.log(`${pack}/${tool} ${entry.file}: ${entry.cached ? "cached" : `downloaded ${entry.asset}`} (${(entry.size / 1024 / 1024).toFixed(1)} MB)`);
+      }
+    } catch (error) {
+      if (!(error instanceof MissingRecordingError)) throw error;
+      process.stderr.write(`${pack}/${tool}: ${error.message}\n`);
+      missing += 1;
     }
   }
-  console.log(`fetched ${selected.length} tool-pack recording(s) into ${join(cacheRoot, "recordings")}`);
-  return 0;
+  console.log(`fetched ${selected.length - missing} tool-pack recording(s) into ${join(cacheRoot, "recordings")}${missing === 0 ? "" : `; the release holds none for ${missing}`}`);
+  return missing === 0 ? 0 : 3;
 }
 
 async function merge(args: string[]): Promise<number> {

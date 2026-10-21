@@ -67,13 +67,11 @@ export const recordingLockSchema = z.strictObject({
   format: z.literal(RECORDING_LOCK_FORMAT),
   /** The tool, as in recording.json: the directory under the pack's upstream/. */
   tool: nonEmpty,
-  /** The release tag holding both assets. */
-  release: nonEmpty,
   /**
-   * The recorder that wrote it: the repository version it ran from. It dates a recording for a reader without
-   * deciding anything — no check reads it, so it cannot make a gate pass or fail.
+   * The release tag holding both assets. The lock names no recorder version: a re-record of the same upstream writes the
+   * same lock whatever version of rerail runs it, which is what port-readiness.yml's recording leg holds a commit to.
    */
-  recorder: nonEmpty,
+  release: nonEmpty,
   /**
    * The upstream pins the recording was made at, copied from recording.json. The stale-recording checks read them here,
    * from the committed manifest, so a pull request whose pins moved fails before anything is downloaded.
@@ -212,7 +210,6 @@ export function buildRecordingLock(
   pack: string,
   tool: string,
   release: string,
-  recorder: string,
   pins: RecordingLock["pins"],
   runtimes: RecordingLock["runtimes"],
   texts: { [RECORDING_FILE]: string; [CORPUS_FILE]: string },
@@ -225,7 +222,6 @@ export function buildRecordingLock(
     format: RECORDING_LOCK_FORMAT,
     tool,
     release,
-    recorder,
     pins,
     runtimes,
     files: {

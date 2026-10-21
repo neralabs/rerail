@@ -2,7 +2,6 @@
   "format": "rerail.port-readiness-recording-lock/v1",
   "tool": "eslint-plugin-unicorn",
   "release": "port-readiness-recordings",
-  "recorder": "0.1.0-next.2",
   "pins": {
     "repository": "https://github.com/sindresorhus/eslint-plugin-unicorn",
     "commit": "f70155ebe24dbb35b9814c3dbb3ab3620e09c3e1",

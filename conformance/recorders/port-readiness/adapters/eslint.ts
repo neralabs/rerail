@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { appendFile, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, extname, join, matchesGlob, relative, resolve, sep } from "node:path";
@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
 import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
+import { upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js";
 import { eslintSpan, eslintSpanParts, messageSpan } from "../../../port-readiness/span-units/eslint.js";
 import type { Check, EslintUpstream, FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamFile, UpstreamRule } from "../../../port-readiness/types.js";
 import {
@@ -475,16 +476,6 @@ export function testFixtureFiles(checkout: string, globs: string[]): string[] {
   return [...new Set(globs.flatMap((glob) => filesUnder(join(checkout, globRoot(glob)), matches)))].sort();
 }
 
-/**
- * A file at the root of upstream's checkout by name, in any letter case (eslint-plugin-unicorn keeps its license as
- * `license`); the exact name first. Undefined when there is none.
- */
-export function rootFile(directory: string, name: string): string | undefined {
-  const entries = readdirSync(directory);
-  const found = entries.includes(name) ? name : entries.filter((entry) => entry.toUpperCase() === name.toUpperCase()).sort()[0];
-  return found === undefined ? undefined : join(directory, found);
-}
-
 /** The sparse checkout's link to the runtime's packages, so upstream's test files resolve what they import from it. */
 async function linkRuntime(checkout: string, runtime: string): Promise<void> {
   const link = join(checkout, "node_modules");
@@ -508,8 +499,7 @@ async function linkRuntime(checkout: string, runtime: string): Promise<void> {
 export async function createEslintAdapter(pack: PackManifest, names: string[], cacheRoot: string, runner: CommandRunner): Promise<PackAdapter> {
   const setup = pack.eslint;
   if (setup === undefined) throw new Error(`${pack.id}: the eslint adapter needs the manifest's eslint block`);
-  const repositoryName = pack.upstream.repository.slice(pack.upstream.repository.lastIndexOf("/") + 1);
-  const upstream = await checkoutUpstream(cacheRoot, repositoryName, pack.upstream, setup.release.tag, setup.release.path, setup.checkout, runner);
+  const upstream = await checkoutUpstream(cacheRoot, pack.upstream, setup.release.tag, setup.release.path, setup.checkout, runner);
   const runtime = await npmRuntime(pack.upstream.runtime, cacheRoot, runner);
   await linkRuntime(upstream.directory, runtime);
   // Independent parsers for a second opinion on source the engine cannot parse, from runtimes/parsers/package.json.
@@ -673,8 +663,6 @@ export async function createEslintAdapter(pack: PackManifest, names: string[], c
   /** Whether upstream reports end positions for the rule: every finding on its own tests carries both ends. */
   const endsReported = new Map(ruleNames.map((name) => [name, (tests.cases[name] ?? []).every((testCase) => testCase.findings.every(([, , endLine, endColumn]) => endLine !== null && endColumn !== null))]));
   const extensions = new Set(facts.extensions);
-  // The license file the manifest names (vercel/next.js's license.md), or LICENSE at upstream's root in any letter case.
-  const licenseFile = setup.license === undefined ? rootFile(upstream.directory, "LICENSE") ?? join(upstream.directory, "LICENSE") : join(upstream.directory, setup.license);
 
   return {
     identity: {
@@ -690,7 +678,7 @@ export async function createEslintAdapter(pack: PackManifest, names: string[], c
       }),
     },
     packChecks,
-    licenseText: readFileSync(licenseFile, "utf8"),
+    licenseText: upstreamLicenseText(upstream.directory),
 
     rule(name: string): UpstreamRule | undefined {
       const id = bare(name);

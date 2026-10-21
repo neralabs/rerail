@@ -2,7 +2,6 @@
   "format": "rerail.port-readiness-recording-lock/v1",
   "tool": "typescript-eslint",
   "release": "port-readiness-recordings",
-  "recorder": "0.1.0-next.2",
   "pins": {
     "repository": "https://github.com/typescript-eslint/typescript-eslint",
     "commit": "23d38ceeb8fb1237f55cb62fc2b54419e1fa1ed7",

@@ -1,0 +1,36 @@
+{
+  "format": "rerail.port-readiness-recording-lock/v1",
+  "tool": "phpcs",
+  "release": "port-readiness-recordings",
+  "pins": {
+    "repository": "https://github.com/PHPCSStandards/PHP_CodeSniffer",
+    "commit": "bbdc3d0532623e21838b7041a4364383a8126f96",
+    "version": "4.0.4",
+    "runtime": "phpcs-4.0.4"
+  },
+  "runtimes": {
+    "php": {
+      ".php-version": "b5327018c5a535ddfd76fd6e0e83d6a15de58762ccf4ba20ff302c22ee207561",
+      "composer.json": "ad7a9c2cd5b1e654c9b8f856031614e04010bd67a8ad3c6352cc53c623b42213",
+      "extensions.txt": "a79976fa1ad0f348483f383a7c2d603dc4279b137d3d9abb2cc6a27798834ca5"
+    },
+    "phpcs-4.0.4": {
+      ".php-version": "b5327018c5a535ddfd76fd6e0e83d6a15de58762ccf4ba20ff302c22ee207561",
+      "composer.json": "9002a161c4daf1480c318b6d4b69e2b7a24ea332a0792a17f668e1e395feaf0f"
+    }
+  },
+  "files": {
+    "recording.json": {
+      "sha256": "5ade29e5adc92de29b071db3db400044aaf1a44b194837c6ada36d0fee7a32bf",
+      "size": 276516,
+      "format": "rerail.port-readiness-recording/v2",
+      "asset": "php-phpcs-recording-5ade29e5adc92de29b071db3db400044aaf1a44b194837c6ada36d0fee7a32bf.json.gz"
+    },
+    "corpus.json": {
+      "sha256": "c0ac3414c7abbfa6f027a446605f80580ff411e82676418427eb5dd252885e8e",
+      "size": 1244,
+      "format": "rerail.port-readiness-corpus/v2",
+      "asset": "php-phpcs-corpus-c0ac3414c7abbfa6f027a446605f80580ff411e82676418427eb5dd252885e8e.json.gz"
+    }
+  }
+}
