@@ -9,6 +9,7 @@ use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::language::{GrammarDialect, label};
 use crate::code_rule_dsl::packed::Program;
 use crate::code_rule_dsl::test_support::CAPABILITIES;
+use ast_grep_core::Pattern;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -1853,13 +1854,13 @@ fn production_contract_phase_six_has_complete_authored_sql_and_catalogs() {
         "clause-forbid-content-regex",
         "clause-forbid-path-regex",
         "clause-select-when-exists",
-        "clause-select-when-absent",
         "clause-require-each",
         "clause-budget-maximum",
         "clause-budget-distinct",
         "clause-budget-group",
         "clause-file-condition",
         "clause-syntax-error-unknown",
+        "clause-select-when-absent",
     ];
     let sql = phase_six_authored_sql_goldens();
     let catalogs = phase_six_implementation_goldens()
@@ -1893,6 +1894,85 @@ fn production_contract_phase_six_has_complete_authored_sql_and_catalogs() {
             Some(&actual.terminal_catalog),
             "{name}: authored catalog"
         );
+    }
+}
+
+#[test]
+fn production_contract_phase_six_authored_sql_equals_oracles() {
+    let statements = phase_six_authored_sql_goldens();
+    for (name, source, ranges) in [
+        ("clause-forbid-content-regex", "unsafe call\n", vec![(0, 6)]),
+        ("clause-forbid-path-regex", "safe\n", vec![(0, 4)]),
+        (
+            "clause-select-when-exists",
+            "import os\nprint(value)\n",
+            vec![(10, 22)],
+        ),
+        ("clause-select-when-absent", "print(value)\n", vec![(0, 12)]),
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("Phase 6 contract");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .expect("Phase 6 policy compiles");
+        let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+            &compiled,
+            source,
+            GrammarDialect::Python,
+            &statements[name],
+        );
+        assert_eq!(outcome.ranges, ranges, "{name}: authored SQL ranges");
+        assert!(outcome.errors.is_empty(), "{name}: authored SQL failures");
+    }
+    for name in [
+        "clause-require-each",
+        "clause-budget-maximum",
+        "clause-budget-distinct",
+        "clause-budget-group",
+        "clause-file-condition",
+        "clause-syntax-error-unknown",
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("Phase 6 contract");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .expect("Phase 6 policy compiles");
+        let files = case
+            .workspace
+            .files
+            .iter()
+            .map(|file| (file.path.clone(), file.source.clone()))
+            .collect::<Vec<_>>();
+        let outcome = super::policy_lowering_tests::sql_workspace_ranges_for_statement(
+            &compiled,
+            &files,
+            Some(&statements[name]),
+        );
+        let expected = match name {
+            "clause-require-each" => vec![(0, 0, 10), (1, 0, 10)],
+            "clause-budget-maximum" => vec![(0, 0, 4)],
+            "clause-budget-distinct" => vec![(0, 0, 6)],
+            "clause-budget-group" => vec![(0, 0, 4), (1, 0, 4)],
+            "clause-file-condition" => vec![(0, 0, 7)],
+            "clause-syntax-error-unknown" => Vec::new(),
+            _ => unreachable!(),
+        };
+        assert_eq!(outcome.ranges, expected, "{name}: authored SQL ranges");
+        if name == "clause-syntax-error-unknown" {
+            assert_eq!(outcome.errors, ["source-partial"]);
+        } else {
+            assert!(outcome.errors.is_empty(), "{name}: authored SQL failures");
+        }
     }
 }
 
@@ -1966,10 +2046,13 @@ fn production_contract_phase_six_cross_file_clauses_equal_oracles() {
             .into_iter()
             .map(|(path, source)| (path.to_owned(), source.to_owned()))
             .collect::<Vec<_>>();
-        let (ranges, errors, _) =
-            super::policy_lowering_tests::sql_workspace_ranges(&compiled, &files);
-        assert_eq!(ranges, expected, "{name}: SQL ranges");
-        assert!(errors.is_empty(), "{name}: SQL failures: {errors:?}");
+        let outcome = super::policy_lowering_tests::sql_workspace_ranges(&compiled, &files);
+        assert_eq!(outcome.ranges, expected, "{name}: SQL ranges");
+        assert!(
+            outcome.errors.is_empty(),
+            "{name}: SQL failures: {:?}",
+            outcome.errors
+        );
     }
 }
 
@@ -1991,16 +2074,15 @@ fn production_contract_phase_six_rejects_files_before_terminal_demand() {
         .iter()
         .map(|file| (file.path.clone(), file.source.clone()))
         .collect::<Vec<_>>();
-    let (ranges, errors, statuses) =
-        super::policy_lowering_tests::sql_workspace_ranges(&compiled, &files);
-    assert_eq!(ranges, [(0, 0, 7)]);
-    assert!(errors.is_empty());
+    let outcome = super::policy_lowering_tests::sql_workspace_ranges(&compiled, &files);
+    assert_eq!(outcome.ranges, [(0, 0, 7)]);
+    assert!(outcome.errors.is_empty());
     assert!(
-        !statuses.is_empty(),
+        !outcome.statuses.is_empty(),
         "the accepted file creates terminal tasks"
     );
     assert!(
-        statuses.iter().all(|(file, _)| *file == 0),
+        outcome.statuses.iter().all(|(file, _)| *file == 0),
         "rejected files create no producer completion because they create no terminal tasks"
     );
 }
@@ -2059,9 +2141,12 @@ fn production_contract_phase_six_preserves_syntax_error_unknown() {
         .iter()
         .map(|file| (file.path.clone(), file.source.clone()))
         .collect::<Vec<_>>();
-    let (ranges, errors, _) = super::policy_lowering_tests::sql_workspace_ranges(&compiled, &files);
-    assert!(ranges.is_empty(), "unknown cannot prove a violation");
-    assert_eq!(errors, ["source-partial"]);
+    let outcome = super::policy_lowering_tests::sql_workspace_ranges(&compiled, &files);
+    assert!(
+        outcome.ranges.is_empty(),
+        "unknown cannot prove a violation"
+    );
+    assert_eq!(outcome.errors, ["source-partial"]);
 }
 
 #[test]
@@ -2152,6 +2237,136 @@ fn production_contract_phase_five_authored_sql_equals_oracles() {
     assert_eq!(outcome.file_indices, [0]);
     assert_eq!(outcome.document_ids, [(0, 1)]);
     assert!(outcome.errors.is_empty());
+}
+
+#[test]
+fn production_contract_phase_six_catalog_digests_come_from_low_level_programs() {
+    let python = label(GrammarDialect::Python).expect("Python label");
+    let digest_pattern = |source: &str| {
+        let pattern = Pattern::try_new(source, GrammarDialect::Python).expect("Python pattern");
+        Program::compile_ast_grep_pattern(&pattern)
+            .expect("packed pattern")
+            .canonical_digest(python, b"")
+    };
+    let digest_kind = |kind: &str| {
+        Program::compile_kind(GrammarDialect::Python.kind_id(kind))
+            .expect("kind program")
+            .canonical_digest(python, b"")
+    };
+    let universe = Program::compile_universe()
+        .expect("universe")
+        .canonical_digest(python, b"");
+    let navigation = Program::compile_navigation()
+        .expect("navigation")
+        .canonical_digest(python, b"");
+    let regex = Program::compile_regex(&regex::Regex::new("^allowed$").expect("regex"))
+        .expect("regex program")
+        .canonical_digest(python, b"");
+    let catalogs = phase_six_implementation_goldens()
+        .cases
+        .into_iter()
+        .map(|golden| (golden.name, golden.terminal_catalog))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for name in ["clause-forbid-content-regex", "clause-forbid-path-regex"] {
+        assert_eq!(catalogs[name][0].program_digest, universe);
+    }
+    for name in ["clause-select-when-exists", "clause-select-when-absent"] {
+        assert_eq!(
+            catalogs[name][0].program_digest,
+            digest_pattern("print($A)")
+        );
+    }
+    assert_eq!(
+        catalogs["clause-require-each"][0].program_digest,
+        digest_pattern("subject($A)")
+    );
+    assert_eq!(
+        catalogs["clause-require-each"][1].program_digest,
+        digest_pattern("proof($A)")
+    );
+    for name in [
+        "clause-budget-maximum",
+        "clause-budget-distinct",
+        "clause-budget-group",
+    ] {
+        assert_eq!(catalogs[name][0].program_digest, digest_pattern("$A"));
+    }
+    assert_eq!(
+        catalogs["clause-file-condition"][0].program_digest,
+        digest_kind("identifier")
+    );
+    assert_eq!(catalogs["clause-file-condition"][1].program_digest, regex);
+    assert_eq!(
+        catalogs["clause-syntax-error-unknown"][0].program_digest,
+        universe
+    );
+    assert_eq!(
+        catalogs["clause-syntax-error-unknown"][1].program_digest,
+        navigation
+    );
+    assert_eq!(
+        catalogs["clause-syntax-error-unknown"][2].program_digest,
+        digest_kind("identifier")
+    );
+    assert_eq!(
+        catalogs["clause-select-when-absent"][1].program_digest,
+        digest_kind("module")
+    );
+    assert_eq!(
+        catalogs["clause-select-when-absent"][2].program_digest,
+        universe
+    );
+    assert_eq!(
+        catalogs["clause-select-when-absent"][3].program_digest,
+        navigation
+    );
+    assert_eq!(
+        catalogs["clause-select-when-absent"][4].program_digest,
+        digest_kind("import_statement")
+    );
+}
+
+#[test]
+fn production_contract_phase_six_catalogs_are_repeatable_and_concurrent() {
+    let expected = phase_six_implementation_goldens()
+        .cases
+        .into_iter()
+        .map(|golden| (golden.name.clone(), golden.terminal_catalog))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let names = expected.keys().cloned().collect::<Vec<_>>();
+    for _ in 0..3 {
+        for name in &names {
+            let case = cases()
+                .into_iter()
+                .find(|case| &case.name == name)
+                .expect("Phase 6 contract");
+            assert_eq!(
+                actual_implementation_golden(&case).terminal_catalog,
+                expected[name],
+                "{name}: repeatable catalog"
+            );
+        }
+    }
+    let threads = names
+        .into_iter()
+        .map(|name| {
+            let expected = expected[&name].clone();
+            std::thread::spawn(move || {
+                let case = cases()
+                    .into_iter()
+                    .find(|case| case.name == name)
+                    .expect("Phase 6 contract");
+                assert_eq!(
+                    actual_implementation_golden(&case).terminal_catalog,
+                    expected,
+                    "{name}: concurrent catalog"
+                );
+            })
+        })
+        .collect::<Vec<_>>();
+    for thread in threads {
+        thread.join().expect("Phase 6 compiler thread");
+    }
 }
 
 #[test]

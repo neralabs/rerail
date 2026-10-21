@@ -27,6 +27,12 @@ use super::relational_ir::TerminalKind;
 #[cfg(test)]
 pub(super) use super::relational_ir::{SqlOperation as SqlShape, TerminalKind};
 
+#[derive(Clone)]
+struct FileApplicability {
+    condition: Option<Arc<crate::code_rule_dsl::language::FileCondition>>,
+    required: Option<Arc<crate::code_rule_dsl::matcher::RequiredText>>,
+}
+
 pub(super) struct TerminalPlan {
     kind: TerminalKind,
     language: GrammarDialect,
@@ -38,10 +44,7 @@ pub(super) struct TerminalPlan {
     parse_fact: Option<ParseFactDescriptor>,
     file_fact: Option<FileFactDescriptor>,
     sound_under_errors: bool,
-    file_conditions: Vec<(
-        Option<Arc<crate::code_rule_dsl::language::FileCondition>>,
-        Option<Arc<crate::code_rule_dsl::matcher::RequiredText>>,
-    )>,
+    file_conditions: Vec<FileApplicability>,
 }
 
 impl TerminalPlan {
@@ -108,13 +111,19 @@ impl TerminalPlan {
         self.sound_under_errors
     }
 
-    pub(super) fn applies_to_file(&self, path: &str, source: &str) -> bool {
+    pub(super) fn applies_to_file(
+        &self,
+        path: &str,
+        source: &str,
+        module: Option<&crate::code_rule_dsl::module_path::ModulePath>,
+    ) -> bool {
         self.file_conditions.is_empty()
-            || self.file_conditions.iter().any(|(condition, required)| {
-                condition
+            || self.file_conditions.iter().any(|applicability| {
+                applicability
+                    .condition
                     .as_ref()
-                    .is_none_or(|condition| condition.holds(path, None))
-                    && required.as_ref().is_none_or(|required| {
+                    .is_none_or(|condition| condition.holds(path, module))
+                    && applicability.required.as_ref().is_none_or(|required| {
                         required.holds_with(source, &mut |text, literal| text.contains(literal))
                     })
             })
@@ -241,12 +250,6 @@ impl SqlCatalogPlan {
                     builder.clause_irs.push(ir);
                     continue;
                 }
-                if let ClauseKind::Forbid(query @ Query::Ast { .. }) = &clause.kind {
-                    let (terminals, ir) = builder.lower_clause_query(query, &clause_at);
-                    builder.clause_terminal_ids.push(terminals);
-                    builder.clause_irs.push(ir);
-                    continue;
-                }
                 let ClauseKind::Forbid(Query::Ast { matchers, calls }) = &clause.kind else {
                     builder
                         .unsupported
@@ -277,6 +280,17 @@ impl SqlCatalogPlan {
                         );
                     } else {
                         ir = RelationalIr::empty_relation();
+                    }
+                    for producer in &terminals {
+                        if builder.terminals[*producer].kind == TerminalKind::Universe {
+                            builder.terminals[*producer].sound_under_errors = false;
+                        }
+                        builder.terminals[*producer]
+                            .file_conditions
+                            .push(FileApplicability {
+                                condition: matcher.file.clone(),
+                                required: matcher.text.clone(),
+                            });
                     }
                     builder.clause_terminal_ids.push(terminals);
                     builder.clause_irs.push(ir);
@@ -1710,10 +1724,15 @@ impl Builder {
                         &mut ir,
                     );
                     for producer in &matcher_terminals {
-                        self.terminals[*producer].sound_under_errors = false;
+                        if self.terminals[*producer].kind == TerminalKind::Universe {
+                            self.terminals[*producer].sound_under_errors = false;
+                        }
                         self.terminals[*producer]
                             .file_conditions
-                            .push((matcher.file.clone(), matcher.text.clone()));
+                            .push(FileApplicability {
+                                condition: matcher.file.clone(),
+                                required: matcher.text.clone(),
+                            });
                     }
                     terminals.extend(matcher_terminals);
                     relations.push(ir);
@@ -1881,18 +1900,24 @@ impl Builder {
                 .iter()
                 .map(usize::to_string)
                 .collect::<Vec<_>>();
+            let producer_list = producers.join(", ");
             let failure_union = if producers.is_empty() {
                 String::new()
             } else {
-                let producer_list = producers.join(", ");
                 format!(
                     "\n  UNION ALL\n  SELECT {failure_projection}, json('[]') AS bindings, '' AS choice_order, {ordinal} AS clause_ordinal\n  FROM producer_status failed\n  WHERE failed.producer_id IN ({producer_list}) AND failed.complete <> 1\n    AND failed.producer_id = (SELECT min(same.producer_id) FROM producer_status same WHERE same.file_index = failed.file_index AND same.error_code = failed.error_code AND same.complete <> 1 AND same.producer_id IN ({producer_list}))"
                 )
             };
+            let dependency_filter = if producers.is_empty() {
+                "0".to_owned()
+            } else {
+                format!(
+                    "undecided.producer_id IN ({producer_list}) AND (undecided.complete <> 1 OR undecided.verdict IS NULL)"
+                )
+            };
             writeln!(
                 clauses,
-                ",\n{relations},\nclause_{ordinal} AS (\n  SELECT {projection}, result.bindings, result.choice_order, {ordinal} AS clause_ordinal FROM {result} result\n  CROSS JOIN batch_status batch\n  WHERE batch.complete = 1\n    AND NOT EXISTS (\n      SELECT 1 FROM producer_status undecided\n      WHERE undecided.producer_id IN ({}) AND (undecided.complete <> 1 OR undecided.verdict IS NULL)\n    ){failure_union}\n)",
-                producers.join(", ")
+                ",\n{relations},\nclause_{ordinal} AS (\n  SELECT {projection}, result.bindings, result.choice_order, {ordinal} AS clause_ordinal FROM {result} result\n  CROSS JOIN batch_status batch\n  WHERE batch.complete = 1\n    AND NOT EXISTS (\n      SELECT 1 FROM producer_status undecided\n      WHERE {dependency_filter}\n    ){failure_union}\n)"
             )
             .expect("write SQL");
         }

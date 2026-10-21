@@ -496,7 +496,6 @@ impl PackedDemand {
             }
         };
         let mut rows: Vec<PackedRow> = Vec::new();
-        let mut batch_error = None;
         for file in 0..execution.file_count() {
             for program in 0..execution.program_count() {
                 if !self.task_grid[file][program] {
@@ -516,7 +515,6 @@ impl PackedDemand {
                     continue;
                 }
                 if let Some(code) = self.failure_injections.get(&program) {
-                    batch_error.get_or_insert_with(|| code.clone());
                     rows.push(PackedRow::producer_status(
                         token,
                         file,
@@ -650,7 +648,6 @@ impl PackedDemand {
                     });
                     if let Some(code) = failure {
                         rows.truncate(parse_row_start);
-                        batch_error.get_or_insert_with(|| code.clone());
                         rows.push(PackedRow::producer_status(
                             token,
                             file,
@@ -979,7 +976,6 @@ impl PackedDemand {
                     if semantic_capacity_failed.get() {
                         rows.truncate(semantic_row_start);
                         let code = "semantic-fact-capacity".to_owned();
-                        batch_error.get_or_insert_with(|| code.clone());
                         rows.push(PackedRow::producer_status(
                             token,
                             file,
@@ -1122,7 +1118,6 @@ impl PackedDemand {
                         }
                     }
                     if let Some(message) = failed {
-                        batch_error.get_or_insert_with(|| message.clone());
                         rows.push(PackedRow::producer_status(
                             token,
                             file,
@@ -1172,7 +1167,6 @@ impl PackedDemand {
                     }
                     if failed {
                         let message = format!("{:?}", PackedError::WorkLimit);
-                        batch_error.get_or_insert_with(|| message.clone());
                         rows.push(PackedRow::producer_status(
                             token,
                             file,
@@ -1197,7 +1191,6 @@ impl PackedDemand {
                     Ok(result) => result,
                     Err(error) => {
                         let message = format!("{error:?}");
-                        batch_error.get_or_insert_with(|| message.clone());
                         rows.push(PackedRow::producer_status(
                             token,
                             file,
@@ -1211,7 +1204,6 @@ impl PackedDemand {
                 };
                 if let Some(error) = error {
                     let message = format!("{error:?}");
-                    batch_error.get_or_insert_with(|| message.clone());
                     rows.push(PackedRow::producer_status(
                         token,
                         file,
@@ -1317,10 +1309,7 @@ impl PackedDemand {
                 .enumerate()
                 .map(|(index, span)| PackedRow::document_map(token, index, *span)),
         );
-        rows.insert(
-            0,
-            PackedRow::batch_status(token, batch_error.is_none(), batch_error),
-        );
+        rows.insert(0, PackedRow::batch_status(token, true, None));
         rows
     }
 }

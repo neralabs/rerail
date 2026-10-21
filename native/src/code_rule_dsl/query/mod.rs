@@ -29,6 +29,7 @@ pub(super) struct PackedFileInput {
     pub(super) tape: TapeDoc,
     pub(super) language: GrammarDialect,
     pub(super) path: String,
+    pub(super) module: Option<crate::code_rule_dsl::module_path::ModulePath>,
     pub(super) tasks: BTreeMap<ClauseId, Vec<u32>>,
     pub(super) document_maps: Vec<DocumentMapSpan>,
 }
@@ -110,6 +111,7 @@ impl SqlPlans {
                     && terminal.applies_to_file(
                         &file.path,
                         std::str::from_utf8(file.tape.transducer_source()).unwrap_or_default(),
+                        file.module.as_ref(),
                     )
                     && terminal
                         .clauses()

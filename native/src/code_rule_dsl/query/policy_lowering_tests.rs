@@ -1085,10 +1085,24 @@ pub(super) struct SqlOutcome {
     pub(super) columns: Vec<String>,
 }
 
+pub(super) struct SqlWorkspaceOutcome {
+    pub(super) ranges: Vec<(usize, usize, usize)>,
+    pub(super) errors: Vec<String>,
+    pub(super) statuses: Vec<(usize, usize)>,
+}
+
 pub(super) fn sql_workspace_ranges(
     compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
     files: &[(String, String)],
-) -> (Vec<(usize, usize, usize)>, Vec<String>, Vec<(usize, usize)>) {
+) -> SqlWorkspaceOutcome {
+    sql_workspace_ranges_for_statement(compiled, files, None)
+}
+
+pub(super) fn sql_workspace_ranges_for_statement(
+    compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
+    files: &[(String, String)],
+    sql: Option<&str>,
+) -> SqlWorkspaceOutcome {
     let plan =
         SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)]).expect("workspace SQL lowering");
     let grammar = Grammar::new(GrammarDialect::Python).expect("Python grammar");
@@ -1136,7 +1150,7 @@ pub(super) fn sql_workspace_ranges(
             .map(|(path, source)| {
                 plan.terminals()
                     .iter()
-                    .map(|terminal| terminal.applies_to_file(path, source))
+                    .map(|terminal| terminal.applies_to_file(path, source, None))
                     .collect()
             })
             .collect(),
@@ -1194,7 +1208,7 @@ pub(super) fn sql_workspace_ranges(
     register_module(&connection, Arc::clone(&registry)).expect("packed virtual table");
     let token = registry.register(demand);
     let mut statement = connection
-        .prepare(plan.sql())
+        .prepare(sql.unwrap_or_else(|| plan.sql()))
         .expect("workspace SQL statement");
     let columns = statement
         .column_names()
@@ -1241,13 +1255,18 @@ pub(super) fn sql_workspace_ranges(
         .collect::<Vec<_>>();
     ranges.sort_unstable();
     errors.sort();
+    errors.dedup();
     let mut statuses = registry
         .query_producer_status_rows(token)
         .into_iter()
         .map(|row| (row.file as usize, row.producer as usize))
         .collect::<Vec<_>>();
     statuses.sort_unstable();
-    (ranges, errors, statuses)
+    SqlWorkspaceOutcome {
+        ranges,
+        errors,
+        statuses,
+    }
 }
 
 pub(super) fn sql_outcome(
