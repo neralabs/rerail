@@ -1,7 +1,9 @@
 # Complexity opt-in rule pack
 
 Cyclomatic complexity rules for Python, TypeScript and JavaScript, with the decision points of
-[lizard](https://github.com/terryyin/lizard) 1.24.0 and without its tokenizer defects. One document per language, rule id
+[lizard](https://github.com/terryyin/lizard) 1.24.0 and without its tokenizer defects. A `switch` or `match` counts once
+however many cases it has: the lower of lizard's standard count and its modified count (`-m`), as slapkit scores a
+function, so a flat dispatch table is not a reason to split a function. One document per language, rule id
 `complexity-cyclomatic-<language>`. They form the `complexity` rule pack, which set-up offers for a repository with
 Python, TypeScript or JavaScript source outside tests and build output; once a repository adds it, its rules are on
 (see `docs/rule-packs.md`).
@@ -14,11 +16,14 @@ Every document has `mode: "steer"`: a rule that runs steers the agent and never 
 | `complexity-cyclomatic-javascript` | `.js`, `.jsx`, `.mjs`, `.cjs` |
 
 A function's cyclomatic complexity is 1 plus its decision points. A function fails when that exceeds 6, so 7 or more.
-The finding spans the whole function, so under the `ai-output` scope only functions an edit touched are reported, and
-the message carries the number: `Cyclomatic complexity 7 (limit 6). Split this function into smaller ones or simplify
-its branching.` (code `CYCLOMATIC_COMPLEXITY`). The number comes from the count's `as`/`offset` binding: the rule
-counts decision points with `count.has` (`stopBy` the function boundary, so a nested function is not entered), binds
-the count plus 1 as `$CCN`, and fires at `min: 6` decisions.
+The finding spans the whole function, so under the `ai-output` scope only functions an edit touched are reported. The
+message names the function and its number, and offers a recorded way out, as slapkit's advisory does: `` `grade` has
+cyclomatic complexity 7, over the ceiling of 6. Decompose it into smaller functions. If the branching is inherent, put
+`# rerail-ignore complexity-cyclomatic-python -- <reason>` on the line above it. `` (code `CYCLOMATIC_COMPLEXITY`). A
+TypeScript or JavaScript function with no name of its own takes the variable, class field or object key it is assigned
+to; a callback with none of those is "This function" (the `too-complex-anonymous` clause). The number comes from the
+count's `as`/`offset` binding: the rule counts decision points with `count.has` (`stopBy` the function boundary, so a
+nested function is not entered), binds the count plus 1 as `$CCN`, and fires at `min: 6` decisions.
 
 Test files are out of scope: Python `**/test_*.py`, `**/*_test.py`, `**/tests/**`, `**/conftest.py`; TypeScript and
 JavaScript `**/*.test.*`, `**/*.spec.*`, `**/__tests__/**`. So are dependency, virtual-environment, build-output and
@@ -28,8 +33,8 @@ generated directories (`node_modules`, `.venv`, `dist`, `build`, `generated`, ..
 
 Python, per `def` (async, decorated and methods included):
 
-- `if`, `elif`, `for` and `async for`, `while`, `except`, `finally`, each `and` and each `or`, and each `case` of a
-  `match` (the wildcard included);
+- `if`, `elif`, `for` and `async for`, `while`, `except`, `finally`, each `and` and each `or`, and each `match` once,
+  however many `case`s it has (the wildcard included);
 - the `if` of a conditional expression, and every `for` and `if` clause of a comprehension; a `case` guard is an `if`
   too;
 - not `else`, `with`, `assert`, `try` or `return`.
@@ -40,8 +45,8 @@ count toward the enclosing `def`, as lizard counts them.
 TypeScript and JavaScript, per function declaration, function expression, arrow function, method, getter, setter,
 constructor and generator function:
 
-- `if` (`else if` included), `for`, `for...in`, `for...of`, `while`, `do...while`, `catch`, each `case` of a `switch`
-  (not `default`), `&&`, `||`, `||=`, `&&=` and the `?:` conditional;
+- `if` (`else if` included), `for`, `for...in`, `for...of`, `while`, `do...while`, `catch`, each `switch` once however
+  many `case`s it has (a `switch` with only `default` counts 0), `&&`, `||`, `||=`, `&&=` and the `?:` conditional;
 - not optional parameters or properties (`a?: T`), optional chaining (`?.`), default parameters, `??` or `??=`.
 
 Each function is scored on its own: decisions inside a nested function do not count for the function around it. A
@@ -52,8 +57,8 @@ tree-sitter-javascript as vendored under `native/grammars/`):
 
 | Language | Function boundary | Decision |
 |---|---|---|
-| Python | `function_definition` | `if_statement`, `elif_clause`, `for_statement`, `while_statement`, `except_clause`, `finally_clause`, `boolean_operator` (one per operator), `conditional_expression`, `for_in_clause`, `if_clause`, `case_clause` |
-| TypeScript, JavaScript | `function_declaration`, `function_expression`, `arrow_function`, `method_definition`, `generator_function`, `generator_function_declaration` | `if_statement`, `for_statement`, `for_in_statement` (in and of), `while_statement`, `do_statement`, `catch_clause`, `switch_case`, `ternary_expression`, `binary_expression` with `&&` or `\|\|`, `augmented_assignment_expression` with `&&=` or `\|\|=` |
+| Python | `function_definition` | `if_statement`, `elif_clause`, `for_statement`, `while_statement`, `except_clause`, `finally_clause`, `boolean_operator` (one per operator), `conditional_expression`, `for_in_clause`, `if_clause`, `match_statement` |
+| TypeScript, JavaScript | `function_declaration`, `function_expression`, `arrow_function`, `method_definition`, `generator_function`, `generator_function_declaration` | `if_statement`, `for_statement`, `for_in_statement` (in and of), `while_statement`, `do_statement`, `catch_clause`, `switch_statement` with a `switch_case` in its `switch_body`, `ternary_expression`, `binary_expression` with `&&` or `\|\|`, `augmented_assignment_expression` with `&&=` or `\|\|=` |
 
 ## Deviations from lizard 1.24.0
 

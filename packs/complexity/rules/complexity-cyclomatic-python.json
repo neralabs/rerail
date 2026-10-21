@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "complexity-cyclomatic-python",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Keep Python functions at cyclomatic complexity 6 or below, counting each if, elif, loop, except, case, and/or and comprehension clause; branch-heavy functions are hard to follow and test.",
   "scope": {
@@ -30,18 +30,28 @@
         "ast": {
           "language": "python",
           "rule": {
-            "matches": "boundary",
-            "count": {
-              "has": {
-                "matches": "decision",
-                "stopBy": {
-                  "matches": "boundary"
+            "all": [
+              {
+                "matches": "boundary",
+                "count": {
+                  "has": {
+                    "matches": "decision",
+                    "stopBy": {
+                      "matches": "boundary"
+                    }
+                  },
+                  "min": 6,
+                  "as": "CCN",
+                  "offset": 1
                 }
               },
-              "min": 6,
-              "as": "CCN",
-              "offset": 1
-            }
+              {
+                "has": {
+                  "field": "name",
+                  "pattern": "$NAME"
+                }
+              }
+            ]
           },
           "utils": {
             "boundary": {
@@ -80,7 +90,7 @@
                   "kind": "if_clause"
                 },
                 {
-                  "kind": "case_clause"
+                  "kind": "match_statement"
                 }
               ]
             }
@@ -90,7 +100,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "CYCLOMATIC_COMPLEXITY",
-        "message": "Cyclomatic complexity $CCN (limit 6). Split this function into smaller ones or simplify its branching."
+        "message": "`$NAME` has cyclomatic complexity $CCN, over the ceiling of 6. Decompose it into smaller functions. If the branching is inherent, put `# rerail-ignore complexity-cyclomatic-python -- <reason>` on the line above it."
       }
     }
   ]

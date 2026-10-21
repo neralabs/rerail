@@ -1,16 +1,18 @@
-# Recorded by packs/complexity/upstream/lizard/generate.mjs with lizard==1.24.0; paths are relative to fixtures/ beside this file.
+# Recorded by packs/complexity/upstream/lizard/generate.mjs with lizard==1.24.0, ccn = min(standard, -m); paths are relative to fixtures/ beside this file.
 path	function	line	ccn
 javascript/__tests__/excluded.js	testsFolderHelper	3	8
 javascript/branches.js	ifElseAtLimit	3	6
 javascript/branches.js	ifElseOverLimit	18	7
 javascript/branches.js	loopsOverLimit	35	7
 javascript/branches.js	catchOverLimit	57	7
-javascript/branches.js	switchAtLimit	85	6
-javascript/branches.js	switchOverLimit	102	7
-javascript/branches.js	logicalAtLimit	120	6
-javascript/branches.js	logicalOverLimit	124	7
-javascript/branches.js	ternaryOverLimit	128	7
-javascript/branches.js	logicalAssignmentOverLimit	138	7
+javascript/branches.js	switchCountsOnce	85	2
+javascript/branches.js	switchOverLimit	105	8
+javascript/branches.js	nestedSwitches	125	3
+javascript/branches.js	switchDefaultOnly	141	1
+javascript/branches.js	logicalAtLimit	148	6
+javascript/branches.js	logicalOverLimit	152	7
+javascript/branches.js	ternaryOverLimit	156	7
+javascript/branches.js	logicalAssignmentOverLimit	166	7
 javascript/common.cjs	parseOverLimit	3	7
 javascript/common.cjs	(anonymous)	14	4
 javascript/common.cjs	plain	25	2
@@ -23,8 +25,8 @@ javascript/nesting.js	generatorOverLimit	28	7
 javascript/nesting.js	constructor	45	7
 javascript/nesting.js	get level	61	6
 javascript/nesting.js	set level	74	7
-javascript/nesting.js	events	97	2
-javascript/nesting.js	onEvent	103	8
+javascript/nesting.js	events	90	2
+javascript/nesting.js	onEvent	96	8
 javascript/nullish.js	nullishCoalescing	4	8
 javascript/nullish.js	nullishAssignment	17	7
 javascript/simple.js	add	3	1
@@ -53,9 +55,10 @@ python/expressions.py	ternary_over_limit	13	7
 python/expressions.py	comprehension_at_limit	23	6
 python/expressions.py	comprehension_over_limit	28	9
 python/expressions.py	async_comprehension_over_limit	34	7
-python/match_case.py	match_at_limit	4	6
-python/match_case.py	match_over_limit	18	7
-python/match_case.py	guarded_match_over_limit	34	7
+python/match_case.py	match_counts_once	4	2
+python/match_case.py	match_over_limit	22	7
+python/match_case.py	nested_matches	37	3
+python/match_case.py	guarded_match_over_limit	51	7
 python/nesting.py	outer_with_complex_inner	5	3
 python/nesting.py	outer_with_complex_inner.inner	6	7
 python/nesting.py	outer_with_lambdas	26	7
@@ -78,12 +81,14 @@ typescript/branches.ts	ifElseOverLimit	19	7
 typescript/branches.ts	loopsAtLimit	36	6
 typescript/branches.ts	loopsOverLimit	56	7
 typescript/branches.ts	catchOverLimit	78	7
-typescript/branches.ts	switchAtLimit	106	6
-typescript/branches.ts	switchOverLimit	123	7
-typescript/branches.ts	logicalAtLimit	141	6
-typescript/branches.ts	logicalOverLimit	145	7
-typescript/branches.ts	ternaryOverLimit	149	7
-typescript/branches.ts	logicalAssignmentOverLimit	159	7
+typescript/branches.ts	switchCountsOnce	106	2
+typescript/branches.ts	switchOverLimit	126	8
+typescript/branches.ts	nestedSwitches	146	3
+typescript/branches.ts	switchDefaultOnly	162	1
+typescript/branches.ts	logicalAtLimit	169	6
+typescript/branches.ts	logicalOverLimit	173	7
+typescript/branches.ts	ternaryOverLimit	177	7
+typescript/branches.ts	logicalAssignmentOverLimit	187	7
 typescript/nesting.ts	outerWithComplexInner	3	2
 typescript/nesting.ts	label	4	6
 typescript/nesting.ts	pick	16	6
@@ -91,10 +96,10 @@ typescript/nesting.ts	generatorOverLimit	25	7
 typescript/nesting.ts	constructor	45	7
 typescript/nesting.ts	get level	59	6
 typescript/nesting.ts	set level	72	7
-typescript/nesting.ts	dispatch	95	4
-typescript/nesting.ts	events	105	2
-typescript/nesting.ts	onEvent	111	8
-typescript/nesting.ts	parse	129	2
+typescript/nesting.ts	dispatch	88	4
+typescript/nesting.ts	events	98	2
+typescript/nesting.ts	onEvent	104	8
+typescript/nesting.ts	parse	122	2
 typescript/nullish.ts	nullishCoalescing	3	8
 typescript/nullish.ts	nullishAssignment	16	7
 typescript/optional.ts	optionalAtLimit	9	6
