@@ -130,3 +130,17 @@ test("a multi-row input statement is not diagnosed as one call per root", () => 
   assert.ok(!summary.actions.some(action => action.key === "root-input-loading"));
   assert.equal(summary.costBreakdown[0].label, "Other input-table SQL");
 });
+
+
+test("virtual root publication reports removal of the insertion path", () => {
+  const summary = actionableSummary({ workload: {}, queries: [
+    query({ id: 1, kind: "operator", sql: "/*ROOT_INPUT*/ publish selected root slices", selfCpuNs: 1_000_000, runs: 16, rows: 919_765 }),
+    query({ id: 2, sql: "SELECT * FROM roots WHERE run=0", selfCpuNs: 500_000_000, runs: 16 }),
+  ] });
+  assert.equal(summary.rootInput.mode, "virtual-slices");
+  assert.equal(summary.rootInput.executions, 0);
+  assert.equal(summary.rootInput.publication.executions, 16);
+  assert.equal(summary.rootInput.publication.returnedRows, 919_765);
+  assert.match(summary.rootInput.explanation, /without per-root INSERT/);
+  assert.ok(!summary.actions.some(action => action.key === "root-input-loading"));
+});

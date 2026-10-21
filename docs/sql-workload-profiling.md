@@ -166,19 +166,35 @@ A batch checkpoint flushes events and explains new SQL before the session can le
 The command requires a new directory to prevent stale traces from entering a report.
 The full trace can be large because it preserves every repeated statement.
 
-## Why selected roots create many input calls
+## Selected-root inputs
+
+The SQL engine exposes selected roots through a read-only `roots` virtual table.
+Each batch publishes immutable root slices and small `(run, file)` metadata records.
+SQL reads the existing slices directly, without per-root INSERT calls or a B-tree copy.
+Equality lookups restrict the input by run, file, and node.
+
+The usual ascending, unique slices retain their existing allocation.
+Other slices are sorted and deduplicated to preserve the old `INSERT OR IGNORE` behavior.
+The engine releases its input snapshot after each successful or failed batch.
+An all-root selection still uses the small `runs` table.
+An empty selected-root slice produces no candidate rows.
+
+The profile records one `ROOT_INPUT` publication operation per batch.
+Its row count measures candidate memberships exposed to SQL and does not imply copied rows.
+The summary reports publication time and individual root INSERT calls separately.
+A current capture can therefore show many published memberships and zero individual inserts.
+
+## Why older captures contain many input calls
 
 The anchor index selects candidate node IDs for each clause and file.
-`select_roots` returns these IDs in Rust slices.
-`Session::run_batch` copies each `(run, file, node)` tuple into the `roots` table through `INSERT_ROOT`.
+Previously, `Session::run_batch` copied each `(run, file, node)` tuple into a B-tree through `INSERT_ROOT`.
 The same node can be a candidate for many clauses, so memberships accumulate across clauses and files.
 These memberships are candidates rather than findings.
 
-The batch already uses one transaction and a cached prepared statement.
-These mechanisms avoid repeated commits and preparation, but the loader still calls SQLite once for each tuple.
+The old loader used one transaction and a cached prepared statement.
+These mechanisms avoided repeated commits and preparation, but the loader still called SQLite once for each tuple.
 The old statement profile recorded generated rule statements and omitted these input calls.
 The complete profile includes them and reports their share of SQL calls and recorded CPU.
 
-The proposed change exposes the existing selected-root slices through a virtual input relation.
-It must preserve run/file isolation, duplicate handling, and the difference between all roots and an empty selection.
-An unprofiled benchmark must establish the benefit because short calls are sensitive to profiling overhead.
+Historical captures retain the insertion-path recommendation because it applies to their recorded binary.
+An unprofiled benchmark must establish the benefit of a change because profiling affects short calls.

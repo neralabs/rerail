@@ -5,6 +5,7 @@ const ms = ns => ns / 1e6;
 const percent = (part, whole) => whole ? 100 * part / whole : 0;
 const names = query => new Set((query.flags ?? []).map(flag => flag.code));
 const rootInsert = sql => /^\s*INSERT(?:\s+OR\s+IGNORE)?\s+INTO\s+roots\s*\(\s*run\s*,\s*file\s*,\s*node\s*\)\s*VALUES\s*\(\s*\?\d*\s*,\s*\?\d*\s*,\s*\?\d*\s*\)\s*;?\s*$/i.test(sql);
+const rootPublication = query => query.kind === "operator" && query.sql.startsWith("/*ROOT_INPUT*/");
 const setupCreate = query => query.kind === "sql" && /^\s*CREATE\s+(?:TEMP\s+)?TABLE\b/i.test(query.sql);
 
 /** Structural grouping only: preserve quoted text and repeated-table identity. */
@@ -81,6 +82,7 @@ function recommendation(query) {
 function bucket(query) {
   if (rootInsert(query.sql)) return "Selected-root input inserts";
   if (/^\s*(?:INSERT(?:\s+OR\s+IGNORE)?\s+INTO\s+(?:roots|runs)|DELETE\s+FROM\s+(?:roots|runs))\b/i.test(query.sql)) return "Other input-table SQL";
+  if (rootPublication(query)) return "Selected-root slice publication";
   if (query.kind === "operator") return "Native operations and SQL submission overhead";
   if (/^\s*(?:CREATE|PRAGMA|BEGIN|COMMIT|ROLLBACK)\b/i.test(query.sql)) return "Setup and transaction SQL";
   return "Rule, stage, result, and control SQL";
@@ -106,6 +108,7 @@ export function actionableSummary(report) {
   const sqlExecutions = total(sqlQueries, "runs");
   const roots = sqlQueries.filter(query => rootInsert(query.sql));
   const rootMetrics = metrics(roots, measuredCpuNs);
+  const publication = metrics(queries.filter(rootPublication), measuredCpuNs);
   const costBuckets = new Map(), candidates = new Map(), shapes = new Map();
   for (const query of queries) {
     const label = bucket(query);
@@ -141,10 +144,14 @@ export function actionableSummary(report) {
       nativeApplyCpuMs: report.workload?.results?.native?.apply?.cpuMs ?? null,
       interpretation: "Recorded spans do not partition apply CPU. Profiling, parsing, preparation outside operators, and report work contribute to the difference. Some setup spans precede apply. These costs are not an unprofiled speedup estimate.",
     },
-    rootInput: { ...rootMetrics, prioritized: rootMetrics.cpuMs >= minimumCpuMs && rootMetrics.measuredCpuPercent >= minimumShare, sqlExecutionPercent: percent(rootMetrics.executions, sqlExecutions),
-      explanation: "The loader iterates selected roots for each clause and file, then calls INSERT_ROOT once per tuple. A surrounding transaction batches commits, but not statement execution. Broad or overlapping clause selections repeat roots across runs. The old generated-statement profile omitted these input calls.",
-      source: "native/src/code_rule_dsl/sql/exec.rs: Session::run_batch; native/src/code_rule_dsl/workspace/evaluate.rs: select_roots",
-      nextChange: rootMetrics.cpuMs >= minimumCpuMs && rootMetrics.measuredCpuPercent >= minimumShare
+    rootInput: { ...rootMetrics, publication, mode: publication.executions && !rootMetrics.executions ? "virtual-slices" : rootMetrics.executions ? "per-row-inserts" : "not-observed", prioritized: rootMetrics.cpuMs >= minimumCpuMs && rootMetrics.measuredCpuPercent >= minimumShare, sqlExecutionPercent: percent(rootMetrics.executions, sqlExecutions),
+      explanation: publication.executions && !rootMetrics.executions
+        ? "Selected roots are published as immutable slices once per batch. SQLite reads the roots virtual table directly, without per-root INSERT calls or a B-tree copy."
+        : "The loader iterates selected roots for each clause and file, then calls INSERT_ROOT once per tuple. A surrounding transaction batches commits, but not statement execution. Broad or overlapping clause selections repeat roots across runs. The old generated-statement profile omitted these input calls.",
+      source: "native/src/code_rule_dsl/sql/exec.rs: Session::run_batch; native/src/code_rule_dsl/sql/inputs.rs: RootInputs",
+      nextChange: publication.executions && !rootMetrics.executions
+        ? "Per-root insertion is gone. Compare unprofiled input and apply CPU, then investigate the remaining highest-cost actions."
+        : rootMetrics.cpuMs >= minimumCpuMs && rootMetrics.measuredCpuPercent >= minimumShare
         ? "Expose selected root slices as a virtual input relation. Preserve clause/file isolation, uniqueness, and the distinction between all roots and an empty selection."
         : "Root loading is below the action threshold in this capture. Use a larger representative capture before changing this path." },
     quality: { expectedSetupExplainFailures: expectedSetupFailures.length,
@@ -179,8 +186,9 @@ export function summaryMarkdown(report) {
       `Check: ${action.verify}`, "", `Queries: ${action.representativeQueryIds.map(id => `Q${id}`).join(", ")}.`, "",
       `Contexts: ${action.contexts.slice(0, 6).join(", ") || "session"}${action.contexts.length > 6 ? ` (+${action.contexts.length - 6} more)` : ""}.`);
   }
-  lines.push("", "## Why there are individual root inserts", "",
-    `${fmt(summary.rootInput.executions)} executions account for ${fmt(summary.rootInput.sqlExecutionPercent)}% of SQL calls and ${fmt(summary.rootInput.measuredCpuPercent)}% of recorded CPU.`, "",
+  lines.push("", "## Selected-root input", "",
+    `Published ${fmt(summary.rootInput.publication.returnedRows)} candidate memberships in ${fmt(summary.rootInput.publication.executions)} slice-publication operations (${fmt(summary.rootInput.publication.cpuMs)} ms).`, "",
+    `${fmt(summary.rootInput.executions)} individual INSERT executions account for ${fmt(summary.rootInput.sqlExecutionPercent)}% of SQL calls and ${fmt(summary.rootInput.measuredCpuPercent)}% of recorded CPU.`, "",
     summary.rootInput.explanation, "", `Next change: ${summary.rootInput.nextChange}`, "", `Code: ${summary.rootInput.source}`, "",
     "## Measurement quality", "",
     `${summary.quality.expectedSetupExplainFailures} expected setup explanation failures, ${summary.quality.unexpectedExplainFailures} unexpected explanation failures, and ${summary.quality.incompleteOperations} incomplete operations.`, "",

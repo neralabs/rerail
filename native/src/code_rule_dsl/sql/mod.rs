@@ -10,6 +10,7 @@ mod diagnostics;
 mod emit;
 mod exec;
 mod frames;
+mod inputs;
 mod lower;
 mod nearest;
 mod nodes;

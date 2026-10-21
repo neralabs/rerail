@@ -4,6 +4,7 @@
 
 use super::emit::{self, Effect, Emitted, Writes};
 use super::frames::{self, FrameStore};
+use super::inputs::RootInputs;
 use super::lower::{ProgramBuilder, Stage};
 use super::nearest::NearestTable;
 use super::nodes::{NodeFacts, NodeTable};
@@ -1811,11 +1812,9 @@ fn run_id(stage: Option<usize>, clause: usize) -> i64 {
 }
 
 const CLEAR_RUNS: &str = "DELETE FROM runs";
-const CLEAR_ROOTS: &str = "DELETE FROM roots";
 const INSERT_RUN: &str = "INSERT INTO runs(run, file) VALUES (?1, ?2)";
-const INSERT_ROOT: &str = "INSERT OR IGNORE INTO roots(run, file, node) VALUES (?1, ?2, ?3)";
 /// The statements every batch runs besides its stages' and clauses'.
-const BATCH_STATEMENTS: usize = 4;
+const BATCH_STATEMENTS: usize = 2;
 
 /// A connection running one compiled program's batches (`Plan`). A session starts with only the
 /// tables of the batch's own rows, `runs` and `roots`: the files and roots a statement's root
@@ -1829,6 +1828,7 @@ pub(in crate::code_rule_dsl) struct Session {
     #[cfg(any(test, feature = "unbounded-work"))]
     profiling: Option<Box<super::profiling::Profiler>>,
     connection: Connection,
+    roots: Arc<RootInputs>,
     slot: Arc<BatchSlot>,
     program: Arc<Program>,
     plan: Arc<Plan>,
@@ -1860,10 +1860,10 @@ impl Session {
         connection.execute_batch(
             "PRAGMA temp_store = MEMORY; \
              CREATE TEMP TABLE runs(run INTEGER NOT NULL, file INTEGER NOT NULL, \
-             PRIMARY KEY (run, file)) WITHOUT ROWID; \
-             CREATE TEMP TABLE roots(run INTEGER NOT NULL, file INTEGER NOT NULL, \
-             node INTEGER NOT NULL, PRIMARY KEY (run, file, node)) WITHOUT ROWID;",
+             PRIMARY KEY (run, file)) WITHOUT ROWID;",
         )?;
+        let roots = Arc::new(RootInputs::default());
+        roots.register(&connection)?;
         #[cfg(feature = "unbounded-work")]
         super::diagnostics::configure(&connection)?;
         connection.set_prepared_statement_cache_capacity(BATCH_STATEMENTS);
@@ -1876,6 +1876,7 @@ impl Session {
             #[cfg(any(test, feature = "unbounded-work"))]
             profiling,
             connection,
+            roots,
             slot,
             program: Arc::clone(&compiled.program),
             counts: Counts::new(Arc::clone(&frames), names, plan.marks),
@@ -2055,6 +2056,7 @@ impl Session {
         );
         drop(scopes);
         *self.slot.current.write() = None;
+        self.roots.clear();
         if result.is_err() {
             for (table, made) in self.plan.tables.iter().zip(&self.made) {
                 if !made {
@@ -2071,9 +2073,7 @@ impl Session {
                     }
                 }
             }
-            for clear in [CLEAR_RUNS, CLEAR_ROOTS] {
-                self.connection.execute(clear, [])?;
-            }
+            self.connection.execute(CLEAR_RUNS, [])?;
             self.counts.reset();
         }
         self.frames.trim();
@@ -2093,6 +2093,7 @@ impl Session {
             #[cfg(any(test, feature = "unbounded-work"))]
             profiling,
             connection,
+            roots,
             plan,
             stats,
             frames,
@@ -2116,28 +2117,31 @@ impl Session {
         };
         let inputs = Started::now();
         connection.prepare_cached(CLEAR_RUNS)?.execute([])?;
-        connection.prepare_cached(CLEAR_ROOTS)?.execute([])?;
+        #[cfg(any(test, feature = "unbounded-work"))]
+        let publication = profiling.as_deref().map(|profiler| {
+            profiler.operation(
+                "/*ROOT_INPUT*/ publish selected root slices",
+                ("input", 0),
+                0,
+                Vec::new(),
+            )
+        });
+        let selected_roots = roots.install(runs);
+        #[cfg(any(test, feature = "unbounded-work"))]
+        if let Some(publication) = publication {
+            publication.finish(selected_roots);
+        }
+        #[cfg(not(any(test, feature = "unbounded-work")))]
+        let _ = selected_roots;
         // Each stage runs over the whole files of the clauses that read it, directly or not.
         let mut stage_files: Vec<Vec<usize>> = stages.iter().map(|_| Vec::new()).collect();
         {
             let mut insert_run = connection.prepare_cached(INSERT_RUN)?;
-            let mut insert_root = connection.prepare_cached(INSERT_ROOT)?;
             for run in runs.iter().filter(|run| !run.files.is_empty()) {
                 let id = run_id(None, run.statement);
                 for (file, roots) in &run.files {
-                    match roots {
-                        None => {
-                            insert_run.execute(rusqlite::params![id, *file as i64])?;
-                        }
-                        Some(roots) => {
-                            for root in roots.iter() {
-                                insert_root.execute(rusqlite::params![
-                                    id,
-                                    *file as i64,
-                                    i64::from(*root)
-                                ])?;
-                            }
-                        }
+                    if roots.is_none() {
+                        insert_run.execute(rusqlite::params![id, *file as i64])?;
                     }
                 }
                 let mut reads = plan
@@ -3121,3 +3125,7 @@ mod tests {
         assert_ne!(registers["x2"], registers["x1"]);
     }
 }
+
+#[cfg(test)]
+#[path = "inputs/session_tests.rs"]
+mod input_tests;

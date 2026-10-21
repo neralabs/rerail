@@ -20,7 +20,7 @@ const metadata = {
   runnerSha256: hash(readFileSync(runner)),
   capabilitiesSha256: hash(readFileSync(base.capabilities)),
   sourceHashesDescription: "Driver working tree at invocation; per-variant buildManifest records binary source provenance when supplied.",
-  sourceHashes: ["nodes.rs", "lower.rs", "emit/scan.rs", "emit/frontier.rs", "frames/frontier.rs", "terminals/scan.rs", "terminals/fact.rs", "../compile/artifacts.rs", "../compile/mod.rs", "../compile/ast_rule.rs", "../matcher/mod.rs", "../tape.rs", "plan.rs", "emit/demand.rs", "emit.rs", "emit/keyed.rs", "emit/guards.rs", "emit/fusion.rs", "emit/shared_search.rs", "emit/inline.rs", "emit/three.rs", "exec.rs", "frames.rs", "diagnostics.rs", "terminals/mod.rs", "terminals/pattern.rs", "../../lib.rs"].map(name => {
+  sourceHashes: ["inputs.rs", "nodes.rs", "lower.rs", "emit/scan.rs", "emit/frontier.rs", "frames/frontier.rs", "terminals/scan.rs", "terminals/fact.rs", "../compile/artifacts.rs", "../compile/mod.rs", "../compile/ast_rule.rs", "../matcher/mod.rs", "../tape.rs", "plan.rs", "emit/demand.rs", "emit.rs", "emit/keyed.rs", "emit/guards.rs", "emit/fusion.rs", "emit/shared_search.rs", "emit/inline.rs", "emit/three.rs", "exec.rs", "frames.rs", "diagnostics.rs", "terminals/mod.rs", "terminals/pattern.rs", "../../lib.rs"].map(name => {
     const path = fileURLToPath(new URL(`../native/src/code_rule_dsl/sql/${name}`, import.meta.url));
     return { path, sha256: hash(readFileSync(path)) };
   }),

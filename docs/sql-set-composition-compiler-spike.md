@@ -868,3 +868,77 @@ The earlier timing sources also retain hash-checked copies of their new source f
 
 The final binary also preserves all 33 and 580 findings after both storage corrections.
 Its trace retains the same VM, demand, and logical-row counters as the timing build.
+
+
+## Shared root-input slices, 21 October 2026
+
+The selected-root loader now exposes immutable Rust slices through a read-only `roots` virtual table.
+It replaces the per-root SQLite INSERT loop and its temporary B-tree.
+The SQL interface remains `(run, file, node)`, so emitted rule SQL needs no changes.
+This is the selected-root input path, with no optimizer switch.
+The small `runs` table still represents files that use all roots.
+
+`RootInputs::install` retains the existing ascending, unique `Arc<[u32]>` slices.
+It builds and sorts small metadata records for each `(run, file)` selection.
+Unsorted or duplicate inputs are normalized to preserve the old `INSERT OR IGNORE` behavior.
+Repeated selected-file entries merge their roots.
+An empty selection remains empty and does not become an all-root selection.
+
+Each SQLite cursor retains an immutable input snapshot.
+Integer equality probes restrict the scan by run, file, and node.
+SQLite rechecks affinity and collation, while unsupported probes use a conservative scan.
+The planner leaves the unique-scan flag unset.
+The session clears its input snapshot after both successful and failed batches.
+
+Implementation: [inputs.rs](../native/src/code_rule_dsl/sql/inputs.rs) and [exec.rs](../native/src/code_rule_dsl/sql/exec.rs).
+The original B-tree remains only as a correctness oracle in tests.
+
+### Measurements
+
+The comparison uses the existing 135-policy Python workload and its native output digests.
+The 32-file tuning corpus and the 138-file corpus retain the earlier file lists and exclusions.
+Each variant uses four workers, two files per batch, and the same release build settings.
+Runs alternate between the frozen baseline and the new implementation, reversing their order each round.
+Profiling is disabled during these measurements.
+
+The baseline contains the native source from `72d4ca09`.
+Both addons use the same diagnostic system-malloc shim and `unbounded-work` feature.
+The shim is `/tmp/librerail_jemalloc_check_shim.dylib`.
+The host is an Apple M5 Max with other concurrent work.
+These results describe this diagnostic build and do not establish production allocator performance.
+
+| Corpus | Rounds per variant | Baseline apply CPU | Virtual-root apply CPU | CPU reduction | Input/clear CPU | Peak RSS |
+|---|---:|---:|---:|---:|---:|---:|
+| 32 files | 5 | 5.280 s | 4.746 s | 10.1% | 460.9 ms → 16.7 ms | 374.7 → 365.5 MiB |
+| 138 files | 3 | 29.356 s | 26.120 s | 11.0% | 2760.0 ms → 88.5 ms | 574.8 → 588.8 MiB |
+
+Times are medians across fresh-process runs.
+The input timer includes input maintenance and frame clearing, rather than root publication alone.
+Peak RSS is the maximum across those runs.
+Memory results are mixed, and wall times vary with host load.
+The measured benefit is lower CPU, while rule execution still dominates the workload.
+
+Earlier runs of the initial spike showed smaller CPU reductions, approximately 6.5% and 7.1%.
+The table records fresh measurements of that final implementation.
+Both sets showed a CPU reduction on both corpora.
+
+### Profile and correctness checks
+
+The final 32-file profile publishes **919,765 candidate memberships in 16 batch operations**.
+Publication takes **0.666 ms of recorded thread CPU** and creates **zero per-root input INSERT executions**.
+These published memberships refer to existing slices and do not represent copied rows.
+The trace contains **105,837 events**, compared with **1,025,596** in the earlier insertion-path capture.
+The report recognizes virtual publication and removes the per-root insertion recommendation for this capture.
+
+All final benchmark runs match the stored native output digests, including complete captures and findings.
+The profiled run also matches a fresh native evaluation.
+The SQL suite passes **156 tests**, including 500 generated differential comparisons.
+Tests compare root queries against the old B-tree, including duplicates, ordering, joins, NULLs, numeric text, real values, and blobs.
+Additional tests establish slice sharing, cached-query reuse, cleanup after a forced read failure, and capture preservation.
+Clippy and the production-feature build check pass.
+
+Raw artifacts are under `/tmp/rerail-root-input-spike-20261021`.
+`final-comparison-32.json` and `final-comparison-138.json` contain all measured runs and parity results.
+`baseline-build.json` and `final-build.json` record binary hashes and native source hashes.
+`final-source/` preserves the changed native files, including the new input module.
+`profile-32/summary.md` and `profile-32/profile.html` contain the updated actionable profile.
