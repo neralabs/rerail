@@ -1,0 +1,35 @@
+/* Add rule packs and the review before starting (views/packs.js). */
+
+.catalog{margin-top:16px;max-width:880px}
+.catalog > .ghead h2{font-size:20px;letter-spacing:-.01em;line-height:28px}
+.cattools{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:14px 0 12px}
+.prow2{display:flex;align-items:center;gap:16px;padding:14px 16px;border-top:1px solid var(--border);cursor:pointer;text-align:left}
+.prow2:first-child{border-top:0}
+.prow2:hover{background:var(--subtle-fill)}
+.prow2 .pt2{flex:1;min-width:0;display:grid;gap:3px}
+.prow2 .pt2 b{font-size:14px;font-weight:600}
+.prow2 .pt2 .sub{font-size:13px;color:var(--foreground);line-height:1.45}
+.prow2 .pt2 .meta{font-size:12.5px;color:var(--muted-foreground)}
+.prow2 .pstatus{flex:none;width:120px;text-align:right;font-size:12.5px;color:var(--muted-foreground);white-space:nowrap}
+.prow2 .pact2{flex:none;width:136px;display:flex;justify-content:flex-end}
+.prow2 .pact2.ask{width:auto;max-width:70%}
+.prow2.review .pact2{width:60px}
+.added{display:inline-flex;align-items:center;gap:6px}
+.added .ico{color:var(--success-foreground)}
+/* Narrow, or beside an open sheet: the row wraps, its text full width, the state and action under it. */
+@media (max-width:1100px){.prow2{flex-wrap:wrap;row-gap:10px} .prow2 .pt2{flex:1 1 calc(100% - 52px)} .prow2 .pstatus{width:auto;flex:1;text-align:left} .prow2 .pact2{width:auto}}
+body[data-panel="open"] .prow2{flex-wrap:wrap;row-gap:10px}
+body[data-panel="open"] .prow2 .pt2{flex:1 1 calc(100% - 52px)}
+body[data-panel="open"] .prow2 .pstatus{width:auto;flex:1;text-align:left}
+body[data-panel="open"] .prow2 .pact2{width:auto}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(272px,1fr));gap:16px}
+.pcard{display:flex;flex-direction:column;gap:12px;padding:18px;min-height:220px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-xl);box-shadow:var(--nera-card-shadow);cursor:pointer;text-align:left;min-width:0}
+.pcard:hover{border-color:var(--border-strong)}
+.pcard .pc-top{display:flex;align-items:center;gap:14px}
+.pcard .pc-top b{display:block;font-size:15px;font-weight:600}
+.pcard .pc-top .kind{display:block;font-size:12px;color:var(--muted-foreground);margin-top:1px}
+.pcard .sub{font-size:13.5px;line-height:1.5;flex:1}
+.pcard .meta{font-size:12.5px;color:var(--muted-foreground)}
+.pcard .pc-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:14px;border-top:1px solid var(--border);min-height:42px}
+.pcard .pc-foot .pstatus{font-size:12.5px;color:var(--muted-foreground)}
+.pcard .pc-foot .btn,.pcard .pc-foot .rmask{margin-left:auto}

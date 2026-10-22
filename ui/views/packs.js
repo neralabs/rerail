@@ -1,13 +1,19 @@
 /**
- * WP: every rule pack that comes with Rerail, added or not, with Add pack and Remove pack.
- * WR (`#rule-packs?review=1`): the packs set-up picked for this repository, each with why and a
- * switch, before Rerail starts. The person starts Rerail back in the terminal or coding agent.
+ * Add rule packs (`#packs`; `#rule-packs` before v8): every rule pack that comes with Rerail, added or not, with Add
+ * pack and Remove pack. The review (`#packs?review=1`, set-up's `#rule-packs?review=1`): the packs set-up picked for
+ * this repository, each with why and a switch, before Rerail starts. The person starts Rerail back in the terminal
+ * or coding agent.
  */
 import { h, setContent, icon } from "../dom.js";
 import { fmt, plural } from "../format.js";
 import { isRunning } from "../derive.js";
 import { data, ui, isAttached, packGroups, repoName, stateHere, isSetUp, keptPacks, runningCount } from "../state.js";
-import { packAction, packIcon, packKind, startModeText } from "./pack-panel.js";
+import { loadRecommendations } from "../poll.js";
+import { invalidate, toast } from "../shell.js";
+import { keepPack } from "../actions.js";
+import { packAction, packIcon, packKind, startModeText } from "../render/pack-panel.js";
+
+export const needs = ["rules", "packs", "activity"];
 
 /** "3 groups · 8 rules", plus how many are on once Rerail is started here: before that, nothing is on. */
 function packMeta(pack) {
@@ -37,9 +43,8 @@ function catalog() {
   const added = shown.filter(isAttached).length;
   const repo = repoName() || "this repo";
   return h("div.catalog", null,
-    h("div.cathead", null, h("button.btn.sm.ghost.link", { "data-act": "backrules" }, icon("back"), "Rules")),
     h("div.ghead", null, h("h2", null, "Rule packs", h("span.n2", null, `${fmt(added)} of ${fmt(shown.length)} added`)),
-      h("p", null, `Each rule pack is a set of rules that come with Rerail, filed in smaller groups. Each repo has its own rule packs: these are for ${repo}. Added rules file under their rule pack on Rules.`)),
+      h("p", null, `Each rule pack is a set of rules that come with Rerail, filed in smaller groups. Each repo has its own rule packs: these are for ${repo}. Each rule pack added gets its own page in the menu.`)),
     h("div.cattools", null,
       h("div.rangectl.viewctl", { role: "group", "aria-label": "View" },
         h("button", { "data-act": "catview", "data-i": "list", "aria-pressed": String(ui.catView === "list") }, "List"),
@@ -81,8 +86,20 @@ function review() {
     others.length ? h("div.list", null, others.map(pack => reviewRow(pack, null))) : null);
 }
 
-export function renderPacks(root, view) {
+export function render(root) {
+  const view = ui.view;
   const sig = JSON.stringify([view, data.packs.map(p => p.id), [...data.attachedPacks], isSetUp(), data.recommendations, ui.catView, ui.removeAsk,
     repoName(), stateHere(), runningCount()]);
   setContent(root, sig, () => (view === "review" ? review() : catalog()));
 }
+
+/** The review reads the repository for the packs set-up would pick, once per repository. */
+export function enter() {
+  if (ui.view !== "review" || ui.scope === null || data.recommendations !== null) return;
+  loadRecommendations().then(invalidate, error => toast(`Could not read the repo: ${error.message}`));
+}
+
+export const actions = {
+  catview: v => { ui.catView = v; invalidate(); },
+  reviewtoggle: id => keepPack(id, !keptPacks().includes(id)),
+};

@@ -1,7 +1,7 @@
 /**
- * One store for fetched data and one for view state. Render modules read both; only
- * `app.js` (user actions) and `poll.js` (fetches) write. Rules are keyed by id so a poll can
- * patch the row that changed and nothing else.
+ * One store for fetched data and one for view state. Render modules read both; user actions (the shell, `actions.js`,
+ * `sheet.js`, the frame and each view's own actions) write `ui` and optimistic `data`, and `poll.js` writes fetches.
+ * Rules are keyed by id so a poll can patch the row that changed and nothing else.
  */
 import { isLog, isByRerail, isRunning, ruleTitle, rulePrefix, scopeText, categoryLabel } from "./derive.js";
 import { startOfDay } from "./format.js";
@@ -52,7 +52,7 @@ export const data = {
   /** `{ started, withViolations }`: sessions in the range, and since install, from the activity answers. */
   activitySessions: null,
   activityAllSessions: null,
-  /** Activity: the range's violations, newest first, the pages loaded so far (`pagedList`). */
+  /** History: the range's violations, newest first, the pages loaded so far (`pagedList`). */
   findings: pagedList(),
   /** The open rule panel's violations in range (`owner`: the rule id). */
   ruleFindings: pagedList(),
@@ -99,22 +99,24 @@ export const ui = {
   /** Who a rule change belongs to: this worktree or the repository. */
   owner: "repository",
   settingUp: false,
-  view: "rules",
+  /** The open view (`routes.js`), and the pack the `pack` view shows. */
+  view: "overview",
+  pack: null,
   range: 7,
   filter: "all",
   query: "",
   sort: "violations",
-  /** The side panel: `{ kind: "rule", id }`, `{ kind: "pack", id }`, `{ kind: "create" }`, or null. */
+  /** The sheet: `{ kind: "rule", id }`, `{ kind: "pack", id }`, or null. */
   panel: null,
   /** Where Back goes from a rule opened inside a pack's panel. */
   backToPack: null,
   askOpen: false,
   askIntent: "ask",
   recentShown: 50,
-  /** Activity filters: one rule pack, then one rule. */
+  /** History filters: one rule pack, then one rule. */
   actPack: "",
   actRule: null,
-  /** Rules view folds: sections hidden, and groups folded ("section:group" → open?). */
+  /** Rule list folds (Overview and the pack pages): sections hidden, and groups folded ("section:group" → open?). */
   hiddenSections: new Set(),
   groupOpen: new Map(),
   foldedSections: new Set(),
@@ -135,7 +137,6 @@ export const ui = {
   openFolds: new Set(),
   resumeOpen: false,
   theme: "",
-  wide: false,
 };
 
 /**
@@ -259,7 +260,7 @@ export function sortRules(list) {
 }
 
 /**
- * The Rules view's sections, in order: Created rules, one per rule pack added here, then every other
+ * The rule list's sections, in order: Created rules, one per rule pack added here, then every other
  * rule by Rerail (added on its own, not through a pack). Each section holds its groups; a group holds
  * every rule (`all`) and the ones the filters let through (`shown`).
  */
@@ -323,13 +324,13 @@ export function summary() {
   };
 }
 
-/** Activity's fallback pack name for a By Rerail rule not added through a pack. */
+/** History's fallback pack name for a By Rerail rule not added through a pack. */
 const OTHER_RULES = "Other rules";
-/** The rule pack a violation files under on Activity: the added pack its rule is present through, else Other or Created rules. */
+/** The rule pack a violation files under on History: the added pack its rule is present through, else Other or Created rules. */
 export const activityPackOf = stored => (stored ? attachedPackOf(stored)?.name ?? (isByRerail(stored) ? OTHER_RULES : "Created rules") : OTHER_RULES);
 
 /**
- * What Activity shows under its pack and rule filters. The loaded pages are a prefix of the range, so
+ * What History shows under its pack and rule filters. The loaded pages are a prefix of the range, so
  * while the server has more (`findings.next`) a filter's matches may lie further back: `more` stays
  * available and an empty filtered list is not yet "none".
  */

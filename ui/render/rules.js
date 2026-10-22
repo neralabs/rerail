@@ -1,11 +1,14 @@
 /**
- * W1: Created rules first, then one section per rule pack added here with its groups, then any rules by
- * Rerail added on their own. Sections, group bands and rows are reconciled in place on every poll.
+ * The rule list Overview and the pack pages share: Created rules first, then one section per rule pack added here
+ * with its groups, then any rules by Rerail added on their own (or one of those sections alone). Sections, group
+ * bands and rows are reconciled in place on every poll. Its folds and group switches are `ruleListActions`; a view
+ * that shows the list spreads them into its own actions.
  */
 import { h, setAttr, setText, setClass, chevron, icon, syncChildren } from "../dom.js";
 import { fmt, plural, whenLabel } from "../format.js";
 import { INTERNAL_TESTING, isByRerail, isInternalTesting, isRunning } from "../derive.js";
 import { isMeasured, isAudited, fires, allFires, activityAllOf, data, ui, rangeLabel, ruleSections, filtering, titleOf, originChip, panelRuleId } from "../state.js";
+import { invalidate, ownerWords, writes } from "../shell.js";
 
 export const CREATE_COMMAND = "/rerail-create";
 
@@ -119,7 +122,7 @@ function emptyMine() {
     h("p", null, h("b", null, "Nothing created yet")),
     h("p", null, "Rule packs cover the common ground. The rules that matter most are the ones only your team would write. Run ",
       h("span.mono", null, CREATE_COMMAND), " in a session to write one."),
-    h("p", null, h("button.btn.sm", { "data-act": "newrule" }, icon("plus"), "Create a rule")));
+    h("p", null, h("button.btn.sm", { "data-act": "nav", "data-i": "create" }, icon("plus"), "Create a rule")));
 }
 
 function createSection(section) {
@@ -170,7 +173,7 @@ function updateSection(node, section, total) {
     (el, i) => { if (i.group) updateBand(el, i); else if (i.r) updateRow(el, i.r); });
 }
 
-/* ---------- the view ---------- */
+/* ---------- the list ---------- */
 
 let pane = null;
 
@@ -180,33 +183,69 @@ function build() {
   const noPacks = h("section.group.layer", { hidden: true },
     h("div.ghead", null, h("h2", null, "Rule packs", h("span.n2", null, "0 added")), h("p", null, "Rule packs by Rerail are off until you add them.")),
     h("div.list", null, h("div.empty", null, h("h3", null, "No rule packs added yet"),
-      h("p", null, h("button.btn.sm", { "data-act": "catalog" }, icon("plus"), "Add rule packs")))));
+      h("p", null, h("button.btn.sm", { "data-act": "nav", "data-i": "packs" }, icon("plus"), "Add rule packs")))));
   pane = h("div.rules", null, sections, noMatch, noPacks);
   pane._p = { sections, noMatch, noPacks };
 }
 
-export function renderRules(root, sum) {
+/**
+ * Render the rule list into `root`: every section, or with `only` the section of that key ("mine", "pack:<id>",
+ * "legacy"; the caller checks it exists). `sum` is `summary()`, for each section's share of the violations.
+ */
+export function renderRules(root, sum, only = null) {
   if (pane === null) build();
   if (pane.parentNode !== root) root.replaceChildren(pane);
   const p = pane._p, active = filtering();
-  const sections = ruleSections().filter(s => !active || s.groups.some(g => g.shown.length));
+  const sections = ruleSections().filter(s => (only === null || s.key === only) && (!active || s.groups.some(g => g.shown.length)));
   syncChildren(p.sections, sections, s => s.key, createSection, (node, s) => updateSection(node, s, sum.triggers));
   setAttr(p.noMatch, "hidden", !active || sections.length > 0);
-  setAttr(p.noPacks, "hidden", active || !data.loaded || sections.some(s => s.kind !== "mine"));
+  setAttr(p.noPacks, "hidden", only !== null || active || !data.loaded || sections.some(s => s.kind !== "mine"));
 }
 
-/** "Collapse all groups" folds every section's groups; "Expand all groups" opens them again. */
-export function allGroupsFolded() {
-  const keys = ruleSections().filter(s => s.kind !== "mine").map(s => s.key);
+/** The pack sections' keys, or with `only` that one when it is a pack section. */
+export function sectionKeys(only = null) {
+  return ruleSections().filter(s => s.kind !== "mine" && (only === null || s.key === only)).map(s => s.key);
+}
+
+/** "Collapse all groups" folds every shown section's groups; "Expand all groups" opens them again. */
+export function allGroupsFolded(only = null) {
+  const keys = sectionKeys(only);
   return keys.length > 0 && keys.every(k => ui.foldedSections.has(k));
 }
 
-export function sectionKeys() {
-  return ruleSections().filter(s => s.kind !== "mine").map(s => s.key);
-}
-
 /** Every rule in one group band, by its `section|group` key. */
-export function groupRules(key) {
+function groupRules(key) {
   const [sectionKey, name] = [key.slice(0, key.indexOf("|")), key.slice(key.indexOf("|") + 1)];
   return ruleSections().find(s => s.key === sectionKey)?.groups.find(g => g.name === name)?.all ?? [];
 }
+
+function toggleSet(set, key) {
+  if (set.has(key)) set.delete(key); else set.add(key);
+}
+
+function foldSection(key) {
+  toggleSet(ui.foldedSections, key);
+  for (const k of [...ui.groupOpen.keys()]) if (k.startsWith(`${key}|`)) ui.groupOpen.delete(k);
+}
+
+/** Fold every group of the shown sections (all, or `only`), or open them again once they all are. */
+export function foldAll(only = null) {
+  const fold = !allGroupsFolded(only);
+  for (const key of sectionKeys(only)) if (ui.foldedSections.has(key) !== fold) foldSection(key);
+  invalidate();
+}
+
+export const ruleListActions = {
+  gtoggle: key => {
+    const all = groupRules(key), allOn = all.every(r => r.enabled), name = key.slice(key.indexOf("|") + 1);
+    writes.setEnabled(all.map(r => r.rule.id), !allOn, `${name}: ${all.length === 1 ? "its rule" : `all ${all.length} rules`} ${allOn ? "off" : "on"} ${ownerWords()}.`);
+  },
+  gfold: key => {
+    const section = key.slice(0, key.indexOf("|"));
+    const open = ui.groupOpen.get(key) ?? !ui.foldedSections.has(section);
+    ui.groupOpen.set(key, !open);
+    invalidate();
+  },
+  gfoldall: key => { foldSection(key); invalidate(); },
+  layer: key => { toggleSet(ui.hiddenSections, key); invalidate(); },
+};

@@ -56,6 +56,8 @@ declare module "*/ui/sessions-model.js" {
 
 declare module "*/ui/poll.js" {
   export function titleFromPrompts(prompts: readonly string[]): string | null;
+  /** What each poll loads for a repository in scope, by need name (`NEEDS` in poll.js). */
+  export function setNeeds(needs: () => Iterable<string>): void;
   export function attachedPacksOf(
     entries: ReadonlyArray<{ folder: string; source: { kind: string; id: string } }>,
     unavailable: ReadonlyArray<{ sourceKind: string; sourceId: string; folder: string; reason?: string }>,
@@ -163,4 +165,19 @@ declare module "*/ui/settings-writes.js" {
     setSuppressions(ids: readonly string[], suppressions: "honour" | "ignore", label: string): Promise<void>;
     setPackSuppressions(packId: string, suppressions: "honour" | "ignore", label: string): Promise<void>;
   };
+}
+
+declare module "*/ui/routes.js" {
+  export type ViewName = "overview" | "pack" | "created" | "packs" | "review" | "create" | "history" | "sessions" | "settings";
+  export interface Route { view: ViewName | null; pack?: string; filterRule?: string; rule?: string; session?: string; jump?: boolean }
+  export function parseRoute(hash: string): Route;
+  export function hashOf(route: Partial<Route>): string;
+  export function bootRoute(search: string, hash: string): Route & { view: ViewName };
+  export function urlFor(href: string, route: Partial<Route>, session?: string | null): string;
+  export function repositoryUrl(href: string, key: string | null): string;
+}
+
+declare module "*/ui/views/index.js" {
+  /** The need names a poll loads for the page now: the sidebar's, the open view's and an open sheet's. */
+  export function currentNeeds(): string[];
 }

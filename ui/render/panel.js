@@ -1,16 +1,14 @@
 /**
- * The side panel. A rule (W1b, W3): what it checks with a caught and a passing example, what Rerail
+ * The sheet. A rule (W1b, W3): what it checks with a caught and a passing example, what Rerail
  * does on a violation (the rule's mode, Log / Steer / Block, read-only here), its numbers, where it came
  * from (with the folders it is added at, what decided its on, mode and suppression comments, a switch for
- * those comments, and its configured options) and its recent activity.
- * Create a rule (W2) and a rule pack's contents render here too.
+ * those comments, and its configured options) and its recent activity. A rule pack's contents render here too.
  */
 import { h, setAttr, setText, setContent, icon } from "../dom.js";
 import { fmt, plural, whenLabel, clock, shortSessionId } from "../format.js";
 import { kindLabel, modeLabel, ruleMode, isLog, isByRerail, originLabel, scopeText, technical, conditionText, messageText, folderText, deciderText, onText, suppressionsText, nextSuppressions, optionsText, MODE_LABEL, MODE_PLAIN } from "../derive.js";
-import { data, ui, rangeLabel, fires, allFires, isMeasured, activityOf, activityAllOf, ruleFindings, ruleFindingsTotal, titleOf, originChip, packRuleOf, packOfRule, attachedPackOf, repoName } from "../state.js";
+import { data, ui, rangeLabel, fires, allFires, isMeasured, activityOf, activityAllOf, ruleFindings, ruleFindingsTotal, titleOf, originChip, packRuleOf, packOfRule, attachedPackOf } from "../state.js";
 import { renderPackPanel } from "./pack-panel.js";
-import { CREATE_COMMAND } from "./rules.js";
 
 export const ASK = [["ask", "Ask about it"], ["check", "Change what it checks"], ["scope", "Change where it applies"], ["delivery", "Change what happens"], ["delete", "Delete it"]];
 const ASK_OPEN = { check: true, scope: true, delivery: true };
@@ -186,7 +184,7 @@ function renderRecent(id) {
       h("span.when", null, `${whenLabel(x.at)} · ${clock(x.at)}`),
       h("div.what", null, x.path ? h("span.mono", null, `${x.path}${lineOf(x)}`) : h("span.muted", null, "no path recorded"),
         h("button.open", { "data-act": "session", "data-i": x.sessionId }, shortSessionId(x.sessionId, x.host)))))),
-    h("button.btn.sm.ghost.link", { "data-act": "actrule", "data-i": id, style: "margin-top:6px" }, total > 3 ? `See all ${fmt(total)} in Activity` : "See it in Activity")];
+    h("button.btn.sm.ghost.link", { "data-act": "actrule", "data-i": id, style: "margin-top:6px" }, total > 3 ? `See all ${fmt(total)} in History` : "See it in History")];
   });
 }
 
@@ -226,35 +224,16 @@ function renderRule(root, stored) {
   renderTechnical(stored, id);
 }
 
-/* ---------- create a rule (W2) ---------- */
-
-function commandBlock(command) {
-  return h("div.cmd", null, h("code", null, command), h("button.btn.sm.solid", { "data-act": "cmdcopy", "data-i": command }, icon("copy"), "Copy"));
-}
-
-function renderCreate(root) {
-  setContent(root, `create|${repoName()}`, () => h("div.pwrap", null,
-    h("div.phead", null, h("div.ptop", null, h("div", null, h("div.eyebrow", null, "Created rules"), h("h2", null, "Create a rule")),
-      h("button.x", { "data-act": "close", "aria-label": "Close" }, "✕"))),
-    h("div.pbody", null,
-      h("p.pintro", null, "You create rules with your coding agent, in your own words. Type this in a session in ", h("span.mono", null, repoName() || "this repo"), ", a new one or one you already have open:"),
-      commandBlock(CREATE_COMMAND),
-      h("p.pintro", null, "It asks what the rule should look for, where it applies and what happens on a violation. Then it writes the rule and tells you its id."),
-      h("p.pintro", null, "Your rule shows here under Created rules, on by default, with every violation it logs or steers from the first session on."))));
-}
-
-/** Render whichever panel `ui.panel` names, and mark the page so the grid makes room for it. */
+/** Render whichever sheet `ui.panel` names, and mark the page so the grid makes room for it. */
 export function renderPanel(root) {
   const panel = ui.panel;
   const stored = panel?.kind === "rule" ? data.rules.get(panel.id) : undefined;
   const pack = panel?.kind === "pack" ? data.packs.find(x => x.id === panel.id) : undefined;
-  const open = stored !== undefined || pack !== undefined || panel?.kind === "create";
+  const open = stored !== undefined || pack !== undefined;
   const state = open ? "open" : "";
   if (document.body.dataset.panel !== state) document.body.dataset.panel = state;
-  if (!open) return;
   if (stored) renderRule(root, stored);
   else if (pack) renderPackPanel(root, pack);
-  else renderCreate(root);
 }
 
 /** Scroll the body back to the top when a different rule opens. */

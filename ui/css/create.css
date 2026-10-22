@@ -1,0 +1,8 @@
+/* Create a rule (views/create.js): the sheet's content (sheet.css) as one readable column on the page. */
+
+.cpage{max-width:640px;margin-top:18px}
+.cpage.pbody{overflow:visible;padding:0;flex:none}
+.cpage h1{margin:0;font-size:20px;line-height:28px;font-weight:500;color:var(--header-primary);letter-spacing:-.01em}
+.cpage > .pintro:first-of-type{margin-top:36px}
+.cpage .cmd{margin-top:22px;max-width:52ch;font-size:14px}
+.cpage .cmd + .pintro{margin-top:22px}

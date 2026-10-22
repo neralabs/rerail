@@ -1,0 +1,5 @@
+/* A rule pack's page and Created by you (views/pack.js): its tools, then its section of the rule list (base.css). */
+
+.pk{margin-top:16px}
+.pktools{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;margin-bottom:12px}
+.pk > .list .empty p.acts{display:flex;flex-wrap:wrap;justify-content:center;gap:8px}

@@ -1,15 +1,19 @@
 /**
- * Activity: every violation logged in the range, newest first, by day. Narrow to one rule pack with
- * the menu, or to one rule from a row (or from the rule panel's "See it in Activity").
+ * History, by rule (`#history`; `#activity` before v8, `?rule=<id>` narrows it): every violation logged in the range,
+ * newest first, by day. Narrow to one rule pack with the menu, or to one rule from a row (or from the rule sheet's
+ * "See it in History").
  */
 import { h, setAttr, setText, setContent, syncChildren, icon } from "../dom.js";
 import { fmt, clock, dayLabel, daysAgo, shortSessionId } from "../format.js";
 import { data, ui, rangeLabel, titleOf, activityPackOf, activityView } from "../state.js";
 import { violationOutcome } from "../derive.js";
-import { rangeControl, syncRange } from "./overview.js";
+import { showMoreActivity } from "../poll.js";
+import { invalidate, loadMore } from "../shell.js";
+import { rangeControl, syncRange } from "../render/range.js";
+
+export const needs = ["rules", "packs", "findings"];
 
 let pane = null;
-
 
 function build() {
   const rows = h("div.list.recent-rows");
@@ -19,7 +23,7 @@ function build() {
   const packSelect = h("select", { id: "actpack", "aria-label": "Show one rule pack" });
   const range = rangeControl();
   pane = h("section.group.activity", null,
-    h("div.ghead.top", null, h("h2", null, "Activity"), lead,
+    h("div.ghead.top", null, h("h2", null, "History"), lead,
       h("div.act", null, h("label.sortctl", null, h("span", null, "Show"), packSelect), range)),
     empty, rows, more);
   pane._a = { rows, empty, more, lead, packSelect, range };
@@ -71,7 +75,7 @@ function syncPackSelect(select, findings) {
   if (select.value !== ui.actPack) select.value = ui.actPack;
 }
 
-export function renderActivity(root) {
+export function render(root) {
   if (pane === null) build();
   if (pane.parentNode !== root) root.replaceChildren(pane);
   const a = pane._a, label = rangeLabel();
@@ -94,4 +98,25 @@ export function renderActivity(root) {
   syncChildren(a.rows, items, i => i.key, createRow, updateRow);
   setAttr(a.more, "hidden", !more);
   if (more) setText(a.more.firstChild, `Show ${more.count === null ? "" : `${fmt(more.count)} `}more${more.of === null ? "" : ` of ${fmt(more.of)}`}`);
+}
+
+/** Entered with a rule (`#history?rule=<id>`, a rule's "See it in History"): narrowed to that rule. */
+export function enter(route) {
+  if (route.filterRule === undefined) return;
+  ui.actRule = route.filterRule;
+  ui.actPack = "";
+  ui.recentShown = 50;
+}
+
+export const actions = {
+  more: () => loadMore(showMoreActivity),
+  actclear: () => { ui.actRule = null; invalidate(); },
+};
+
+export function onChange(el) {
+  if (el.id !== "actpack") return;
+  ui.actPack = el.value;
+  ui.actRule = null;
+  ui.recentShown = 50;
+  invalidate();
 }

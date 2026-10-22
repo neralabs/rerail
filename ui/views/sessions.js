@@ -1,9 +1,70 @@
+/**
+ * History, by session (`#sessions`, `?sessionId=<id>&host=<agent>` selects one): the repository's coding agent
+ * sessions by day, and the selected one's transcript with the violations Rerail logged and steered in it.
+ */
 import { h, setAttr, setText, setClass, chevron, searchIcon, syncChildren } from "../dom.js";
 import { fmt, plural, ago, duration, stamp, dayLabel, daysAgo, shortSessionId } from "../format.js";
 import { data, ui } from "../state.js";
-import { ensureTitle } from "../poll.js";
+import { ensureTitle, loadSession, loadSessionFindings, loadMoreSessions, loadEarlier } from "../poll.js";
 import { sessionTurns, sessionCorrections, sessionViolationTotal, loadedFrom, placeCorrections, resumeCommand, openState, lastEventAt, isOpen } from "../sessions-model.js";
-import { renderTimeline } from "./timeline.js";
+import { copyText, invalidate, loadMore, renderNow, toast } from "../shell.js";
+import { renderTimeline, jumpTo, placeTicks } from "../render/timeline.js";
+
+export const needs = ["rules", "sessions", "selectedSession"];
+
+/* ---------- selection ---------- */
+
+/** The load behind the current selection, while it runs; a fallback must not pre-empt a deep link's 404 check. */
+let selecting = null;
+
+/**
+ * Select a session and load it: its head and first transcript page, and its violations (the previous selection's are
+ * dropped). Resolves to the transcript's load error (`null` on success) so a caller can tell a missing session from a slow one.
+ */
+async function selectSession(id, then) {
+  ui.selectedSession = id;
+  ui.resumeOpen = false;
+  invalidate();
+  if (id === null) return null;
+  const violations = loadSessionFindings(id).catch(e => console.warn("session violations failed", e));
+  const load = loadSession(id).then(() => null, e => e);
+  selecting = load;
+  const [error] = await Promise.all([load, violations]);
+  if (selecting === load) selecting = null;
+  if (error) console.warn("session load failed", error);
+  renderNow();
+  if (then) then();
+  return error;
+}
+
+/** Scroll the transcript to its first violation. */
+function jumpToFirst() {
+  const first = document.querySelector(".tl .corr");
+  if (first) jumpTo(first.dataset.key);
+}
+
+/** Select session `id` from a link; the default one, with a note, when the daemon has no such session. */
+async function selectLinked(id, jump) {
+  const error = await selectSession(id, jump ? jumpToFirst : undefined);
+  if (error === null || !error.message.endsWith("answered 404")) return;
+  if (ui.selectedSession === id) selectSession(currentSession()?.sessionId ?? null);
+  toast(`Session ${shortSessionId(id, new URLSearchParams(location.search).get("host"))} is not in this repo`);
+}
+
+/** Entered with a session (a link, a violation's session): that one; else the one the view would show anyway. */
+export function enter(route) {
+  if (route.session !== undefined) selectLinked(route.session, route.jump === true);
+  else selectSession(ui.selectedSession ?? currentSession()?.sessionId ?? null);
+}
+
+/** No selection, or one the list no longer has: pick what the view would show anyway and load it now, as a click would. */
+export function afterPoll() {
+  if (selecting !== null) return;
+  const sess = currentSession();
+  if (sess !== null && sess.sessionId !== ui.selectedSession) selectSession(sess.sessionId);
+}
+
+/* ---------- the view ---------- */
 
 let v = null;
 /** Session whose day group was last revealed; a new selection opens its day once, then the user owns the fold. */
@@ -14,7 +75,7 @@ function dayKey(d) {
   if (d < 30) return `w${Math.floor(d / 7)}`;
   return "older";
 }
-export const titleOf = id => data.titles.get(id) ?? "Untitled session";
+const titleOf = id => data.titles.get(id) ?? "Untitled session";
 
 function build() {
   const el = {};
@@ -109,14 +170,14 @@ function rowState(st, s) {
 
 /**
  * The session the right column shows: the selected one (from the loaded list, else its own head, so a deep-linked
- * session past the loaded pages still shows), else the newest. `app.js` selects (and loads) the fallback.
+ * session past the loaded pages still shows), else the newest. `afterPoll` selects (and loads) the fallback.
  */
-export function currentSession() {
+function currentSession() {
   const rows = data.sessions.rows, id = ui.selectedSession;
   return rows.find(s => s.sessionId === id) ?? (id === null ? null : data.sessionDetail.get(id)?.head) ?? rows[0] ?? null;
 }
 
-export function renderSessions(root) {
+export function render(root) {
   if (v === null) build();
   if (v.root.parentNode !== root) root.replaceChildren(v.root);
   const all = data.sessions.rows;
@@ -252,4 +313,47 @@ function renderTranscript(sess) {
       events: detail.events.length, eventCount: Math.max(sess.eventCount, detail.events.length), violations, total: total ?? violations,
     },
   });
+}
+
+/* ---------- actions ---------- */
+
+function toggleSet(set, key) {
+  if (set.has(key)) set.delete(key); else set.add(key);
+}
+
+export const actions = {
+  ssel: id => { ui.evFilter = "all"; selectSession(id); },
+  copyid: id => copyText(id, null, `Copied ${id}`),
+  jump: id => jumpTo(id),
+  etoggle: (id, b) => {
+    const wasOpen = b.parentElement.dataset.open === "true";
+    if (wasOpen) { ui.openEvents.delete(id); ui.closedEvents.add(id); } else { ui.openEvents.add(id); ui.closedEvents.delete(id); }
+    invalidate();
+  },
+  foldtoggle: id => { toggleSet(ui.openFolds, id); invalidate(); },
+  evfilter: id => { ui.evFilter = id; invalidate(); },
+  showall: () => { ui.showAll = true; ui.evFilter = "all"; invalidate(); },
+  sfilter: id => { ui.sessFilter = id; invalidate(); },
+  daytoggle: id => { toggleSet(ui.openDays, id); invalidate(); },
+  sessmore: () => loadMore(loadMoreSessions),
+  earlier: () => { const s = currentSession(); if (s) loadMore(() => loadEarlier(s.sessionId)); },
+  resumetoggle: () => { ui.resumeOpen = !ui.resumeOpen; invalidate(); },
+  resumecopy: () => {
+    const s = currentSession(); if (!s) return;
+    const rc = resumeCommand(s);
+    copyText(rc.cmd ?? s.sessionId, document.getElementById("resumeText"), rc.cmd ? "Copied. Run it in your terminal." : "Copied the session id.");
+  },
+};
+
+export function onInput(el) {
+  if (el.id === "sq") { ui.sessQuery = el.value; invalidate(); }
+}
+
+export function onChange(el) {
+  if (el.id === "showAll") { ui.showAll = el.checked; ui.evFilter = "all"; invalidate(); }
+  else if (el.id === "spick") selectSession(el.value);
+}
+
+export function onResize() {
+  placeTicks(document.getElementById("rail"), document.getElementById("tl"));
 }

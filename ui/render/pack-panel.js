@@ -69,8 +69,8 @@ export function renderPackPanel(root, pack) {
         h("span.grow"), packAction(pack, true))),
     h("div.pbody", null,
       h("p.pintro", null, pack.covers, " ", added
-        ? `Its rules sit under ${pack.name} on Rules; turn them on or off there.`
-        : "Add it and its rules file under it on Rules, each on or off and in Log or Steer as listed below. Nothing else changes."),
+        ? `Its rules are on its page in the menu; turn them on or off there.`
+        : "Add it and its rules get a page of their own in the menu, each on or off and in Log or Steer as listed below. Nothing else changes."),
       suppressionsLine(pack, suppressions),
       groups.map(group => {
         const rules = pack.rules.filter(r => r.group === group);

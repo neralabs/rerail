@@ -1,11 +1,17 @@
 /**
- * Settings (W6). General: theme, rule panel width, the status line, the scoped repo's Follow .gitignore, history
- * and the daemon. Repos: each Started or Stopped, with a switch. Coding agents: which are connected. Uninstall: the
- * command and where the backup goes. Rerail starts per repo; there is no every-repo setting.
+ * Settings (`#settings`, W6). General: theme, the status line, the scoped repo's Follow .gitignore, history and the
+ * daemon. Repos: each Started or Stopped, with a switch. Coding agents: which are connected. Uninstall: the command
+ * and where the backup goes. Rerail starts per repo; there is no every-repo setting. Settings are the machine's: the
+ * page shows with or without a repository in scope.
  */
 import { h, setContent, icon } from "../dom.js";
 import { andList, fmt, plural } from "../format.js";
+import { send } from "../api.js";
 import { data, ui, runningCount } from "../state.js";
+import { loadAgents, loadPresence, loadFollowGitignore, saveFollowGitignore } from "../poll.js";
+import { applyTheme, invalidate, toast } from "../shell.js";
+
+export const needs = [];
 
 const UNINSTALL_COMMAND = "rerail install --remove";
 
@@ -24,7 +30,6 @@ function general() {
   return h("section", null, h("div.ghead", null, h("h2", null, "General")),
     h("div.list", null,
       row("Theme", "System follows your OS or editor.", seg("theme", [["", "System"], ["light", "Light"], ["dark", "Dark"]], ui.theme)),
-      row("Rule panel", "Wide gives long titles and rule pack lists more room.", seg("pwidth", [["0", "Default"], ["1", "Wide"]], ui.wide ? "1" : "0")),
       row("Status line", "Rerail’s line in your coding agent’s footer: how many rules are on, and how often it steered.",
         data.presence === null ? h("span.val", null, "…") : seg("presence", [["compact", "Show"], ["silent", "Do not show"]], data.presence)),
       ui.scope === null ? null : row("Follow .gitignore",
@@ -91,8 +96,32 @@ function uninstall() {
       copyButton(UNINSTALL_COMMAND, "Copy uninstall command"))));
 }
 
-export function renderSettings(root) {
-  const sig = JSON.stringify([ui.theme, ui.wide, data.presence, ui.scope, data.followGitignore, data.health?.version, data.health?.database.path, data.loaded,
+export function render(root) {
+  const sig = JSON.stringify([ui.theme, data.presence, ui.scope, data.followGitignore, data.health?.version, data.health?.database.path, data.loaded,
     data.disconnected, data.repositories, data.repository?.repositoryKey, data.repository?.name, runningCount(), data.agents, data.agentsError]);
   setContent(root, sig, () => h("div.settings", null, general(), repos(), agents(), uninstall()));
 }
+
+/** The coding agents, the status line and Follow .gitignore are read on demand, each time Settings opens. */
+export function enter() {
+  data.agentsError = null;
+  loadAgents().catch(error => { data.agentsError = error.message; }).then(invalidate);
+  loadPresence().then(invalidate, error => toast(`Could not read the status line setting: ${error.message}`));
+  if (ui.scope !== null) loadFollowGitignore().then(invalidate, error => toast(`Could not read the Follow .gitignore setting: ${error.message}`));
+}
+
+async function savePresence(presence) {
+  const was = data.presence;
+  data.presence = presence; invalidate();
+  try {
+    await send("PUT", "/api/presentation-preferences", { repository: "", host: "", presence });
+    toast(presence === "silent" ? "The status line is hidden in new turns." : "The status line shows in new turns.");
+  } catch (error) { data.presence = was; toast(`Could not save: ${error.message}`); }
+  invalidate();
+}
+
+export const actions = {
+  theme: v => applyTheme(v),
+  presence: v => savePresence(v),
+  gitignore: v => saveFollowGitignore(v === "on", { toast, invalidate }),
+};
