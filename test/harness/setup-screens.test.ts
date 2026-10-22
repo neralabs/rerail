@@ -445,7 +445,7 @@ describe("E5 skip for now", () => {
 describe("E6 no browser", () => {
   it.each(LANES)("still shows the link, and one line saying no browser opened (%s)", lane => {
     const text = stripAnsi(renderSummary({ ...SUMMARY, dashboard: NOT_OPENED }, lane));
-    expect(text).toContain("  Manage    http://127.0.0.1:7777/#rules\n            △ Couldn’t open your browser (this looks like a remote session). Copy the link instead.");
+    expect(text).toContain("  Manage    http://127.0.0.1:7777/#rules\n            △ Couldn’t open your browser. Copy the link instead.");
     expect(text).not.toContain("Opening in your browser");
   });
 

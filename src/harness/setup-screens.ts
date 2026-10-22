@@ -586,8 +586,8 @@ function manageRows(link: DashboardLink, style: Style): string[] {
   const url = clean(link.url);
   if (link.browserOpened) return [url, style.dim("Opening in your browser.")];
   if (link.linkOnly === true) return [url];
-  const reason = link.noBrowserReason === undefined ? "" : ` (${clean(link.noBrowserReason)})`;
-  return [url, `${style.yellow("△")} Couldn’t open your browser${reason}. Copy the link instead.`];
+  // The reason (a remote session, BROWSER=none) means nothing to the person, so the line leaves it out.
+  return [url, `${style.yellow("△")} Couldn’t open your browser. Copy the link instead.`];
 }
 
 function otherReposLine(repo: string, others: readonly string[]): string {

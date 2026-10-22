@@ -376,7 +376,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     const summary = agentIo();
     await runSetup(summary, request(setup, fakeSetupEnvironment({ browser: false }), { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
     expect(summary.text()).toContain("http://127.0.0.1:4737/#rules");
-    expect(summary.text()).toContain("Couldn’t open your browser (this looks like a remote session). Copy the link instead.");
+    expect(summary.text()).toContain("Couldn’t open your browser. Copy the link instead.");
   });
 
   it("rejects an answer set-up does not know", async () => {
