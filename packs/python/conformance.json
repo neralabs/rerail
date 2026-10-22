@@ -23,6 +23,12 @@
       ]
     }
   ],
+  "suppressionExemptions": [
+    {
+      "rule": "ruff-pgh004-blanket-noqa",
+      "reason": "Ruff never lets a noqa comment silence PGH004, which reports the noqa comments themselves: crates/ruff_linter/src/checkers/noqa.rs:65 skips PGH004 when it applies noqa directives, and only a file-level directive that names it (noqa.rs:273) turns it off, which the document matches."
+    }
+  ],
   "corpora": [
     {
       "name": "django",
@@ -2711,7 +2717,6 @@
         "compare",
         "arguments",
         "scope",
-        "calls",
         "formatArgs",
         "suppression"
       ],
@@ -2728,7 +2733,6 @@
         "syntax",
         "arguments",
         "scope",
-        "calls",
         "suppression"
       ],
       "match": "line+column"
@@ -2746,7 +2750,6 @@
         "compare",
         "arguments",
         "scope",
-        "calls",
         "formatArgs",
         "annotation",
         "suppression"
@@ -4554,7 +4557,6 @@
         "value",
         "arguments",
         "scope",
-        "calls",
         "annotation",
         "suppression"
       ],
@@ -4573,7 +4575,6 @@
         "compare",
         "arguments",
         "scope",
-        "calls",
         "annotation",
         "suppression"
       ],
@@ -6088,7 +6089,6 @@
       "capabilities": [
         "syntax",
         "scope",
-        "calls",
         "suppression"
       ],
       "match": "line+column"
@@ -6105,7 +6105,6 @@
         "value",
         "compare",
         "scope",
-        "calls",
         "annotation",
         "suppression"
       ],
@@ -6496,7 +6495,6 @@
         "syntax",
         "value",
         "scope",
-        "calls",
         "annotation",
         "suppression"
       ],
@@ -6972,7 +6970,6 @@
         "value",
         "arguments",
         "scope",
-        "calls",
         "annotation",
         "suppression"
       ],
@@ -7004,7 +7001,6 @@
       "capabilities": [
         "syntax",
         "scope",
-        "calls",
         "annotation",
         "suppression"
       ],
@@ -7066,7 +7062,6 @@
         "value",
         "arguments",
         "scope",
-        "calls",
         "annotation",
         "suppression"
       ],
@@ -7084,7 +7079,6 @@
         "value",
         "arguments",
         "scope",
-        "calls",
         "annotation",
         "suppression"
       ],
@@ -7357,7 +7351,6 @@
         "compare",
         "arguments",
         "scope",
-        "calls",
         "annotation",
         "suppression"
       ],
@@ -7375,7 +7368,6 @@
         "value",
         "arguments",
         "scope",
-        "calls",
         "annotation",
         "suppression"
       ],
@@ -7393,7 +7385,6 @@
         "value",
         "arguments",
         "scope",
-        "calls",
         "annotation",
         "suppression"
       ],
@@ -7442,7 +7433,6 @@
         "compare",
         "arguments",
         "scope",
-        "calls",
         "annotation",
         "suppression"
       ],
@@ -7461,7 +7451,6 @@
         "compare",
         "arguments",
         "scope",
-        "calls",
         "annotation",
         "suppression"
       ],
@@ -7480,7 +7469,6 @@
         "compare",
         "arguments",
         "scope",
-        "calls",
         "annotation",
         "suppression"
       ],
@@ -7498,7 +7486,6 @@
         "value",
         "compare",
         "scope",
-        "calls",
         "annotation",
         "suppression"
       ],
@@ -7531,7 +7518,6 @@
         "value",
         "arguments",
         "scope",
-        "calls",
         "annotation",
         "suppression"
       ],
@@ -7784,7 +7770,6 @@
         "value",
         "compare",
         "scope",
-        "calls",
         "suppression"
       ],
       "match": "line+column"
@@ -7801,7 +7786,6 @@
         "value",
         "arguments",
         "scope",
-        "calls",
         "suppression"
       ],
       "match": "line+column"
@@ -7818,7 +7802,6 @@
         "value",
         "arguments",
         "scope",
-        "calls",
         "suppression"
       ],
       "match": "line+column"
@@ -7990,7 +7973,6 @@
         "value",
         "arguments",
         "scope",
-        "calls",
         "annotation",
         "suppression"
       ],
@@ -8008,7 +7990,6 @@
         "value",
         "arguments",
         "scope",
-        "calls",
         "annotation",
         "suppression"
       ],
@@ -8026,7 +8007,6 @@
         "value",
         "arguments",
         "scope",
-        "calls",
         "annotation",
         "suppression"
       ],
@@ -8059,7 +8039,6 @@
         "value",
         "arguments",
         "scope",
-        "calls",
         "annotation",
         "suppression"
       ],
@@ -8090,7 +8069,6 @@
       "capabilities": [
         "syntax",
         "scope",
-        "calls",
         "annotation",
         "suppression"
       ],
@@ -8107,7 +8085,6 @@
         "syntax",
         "arguments",
         "scope",
-        "calls",
         "annotation",
         "suppression"
       ],
@@ -8123,7 +8100,6 @@
       "capabilities": [
         "syntax",
         "scope",
-        "calls",
         "suppression"
       ],
       "match": "line+column"
@@ -8356,7 +8332,6 @@
         "compare",
         "arguments",
         "scope",
-        "calls",
         "suppression"
       ],
       "match": "line+column"
