@@ -231,9 +231,9 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/ruff/fixtures/flake8_implicit_str_concat/ISC.py` | `crates/ruff_linter/resources/test/fixtures/flake8_implicit_str_concat/ISC.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_implicit_str_concat/ISC003_docstring.py` | `crates/ruff_linter/resources/test/fixtures/flake8_implicit_str_concat/ISC003_docstring.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_implicit_str_concat/ISC004.py` | `crates/ruff_linter/resources/test/fixtures/flake8_implicit_str_concat/ISC004.py` | verbatim |
+| `upstream/ruff/fixtures/flake8_implicit_str_concat/ISC_syntax_error.py` | `crates/ruff_linter/resources/test/fixtures/flake8_implicit_str_concat/ISC_syntax_error.py` | verbatim |
+| `upstream/ruff/fixtures/flake8_implicit_str_concat/ISC_syntax_error_2.py` | `crates/ruff_linter/resources/test/fixtures/flake8_implicit_str_concat/ISC_syntax_error_2.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_import_conventions/custom.py` | `crates/ruff_linter/resources/test/fixtures/flake8_import_conventions/custom.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_import_conventions/custom_banned.py` | `crates/ruff_linter/resources/test/fixtures/flake8_import_conventions/custom_banned.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_import_conventions/custom_banned_from.py` | `crates/ruff_linter/resources/test/fixtures/flake8_import_conventions/custom_banned_from.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_import_conventions/defaults.py` | `crates/ruff_linter/resources/test/fixtures/flake8_import_conventions/defaults.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_import_conventions/from_imports.py` | `crates/ruff_linter/resources/test/fixtures/flake8_import_conventions/from_imports.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_import_conventions/override_default.py` | `crates/ruff_linter/resources/test/fixtures/flake8_import_conventions/override_default.py` | verbatim |
@@ -491,9 +491,7 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/ruff/fixtures/flake8_slots/SLOT001.py` | `crates/ruff_linter/resources/test/fixtures/flake8_slots/SLOT001.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_slots/SLOT002.py` | `crates/ruff_linter/resources/test/fixtures/flake8_slots/SLOT002.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_tidy_imports/TID/my_package/sublib/api/application.py` | `crates/ruff_linter/resources/test/fixtures/flake8_tidy_imports/TID/my_package/sublib/api/application.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_tidy_imports/TID251.py` | `crates/ruff_linter/resources/test/fixtures/flake8_tidy_imports/TID251.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_tidy_imports/TID252.py` | `crates/ruff_linter/resources/test/fixtures/flake8_tidy_imports/TID252.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_tidy_imports/TID253.py` | `crates/ruff_linter/resources/test/fixtures/flake8_tidy_imports/TID253.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_todos/TD001.py` | `crates/ruff_linter/resources/test/fixtures/flake8_todos/TD001.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_todos/TD002.py` | `crates/ruff_linter/resources/test/fixtures/flake8_todos/TD002.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_todos/TD003.py` | `crates/ruff_linter/resources/test/fixtures/flake8_todos/TD003.py` | verbatim |
@@ -679,7 +677,9 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/ruff/fixtures/pydocstyle/D.py` | `crates/ruff_linter/resources/test/fixtures/pydocstyle/D.py` | verbatim |
 | `upstream/ruff/fixtures/pydocstyle/D100.ipynb` | `crates/ruff_linter/resources/test/fixtures/pydocstyle/D100.ipynb` | verbatim |
 | `upstream/ruff/fixtures/pydocstyle/D104/__init__.py` | `crates/ruff_linter/resources/test/fixtures/pydocstyle/D104/__init__.py` | verbatim |
+| `upstream/ruff/fixtures/pydocstyle/D200.py` | `crates/ruff_linter/resources/test/fixtures/pydocstyle/D200.py` | verbatim |
 | `upstream/ruff/fixtures/pydocstyle/D209_D400.py` | `crates/ruff_linter/resources/test/fixtures/pydocstyle/D209_D400.py` | verbatim |
+| `upstream/ruff/fixtures/pydocstyle/D215.py` | `crates/ruff_linter/resources/test/fixtures/pydocstyle/D215.py` | verbatim |
 | `upstream/ruff/fixtures/pydocstyle/D300.py` | `crates/ruff_linter/resources/test/fixtures/pydocstyle/D300.py` | verbatim |
 | `upstream/ruff/fixtures/pydocstyle/D301.py` | `crates/ruff_linter/resources/test/fixtures/pydocstyle/D301.py` | verbatim |
 | `upstream/ruff/fixtures/pydocstyle/D400.py` | `crates/ruff_linter/resources/test/fixtures/pydocstyle/D400.py` | verbatim |
@@ -689,15 +689,12 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/ruff/fixtures/pydocstyle/D403.py` | `crates/ruff_linter/resources/test/fixtures/pydocstyle/D403.py` | verbatim |
 | `upstream/ruff/fixtures/pydocstyle/D410.py` | `crates/ruff_linter/resources/test/fixtures/pydocstyle/D410.py` | verbatim |
 | `upstream/ruff/fixtures/pydocstyle/D413.py` | `crates/ruff_linter/resources/test/fixtures/pydocstyle/D413.py` | verbatim |
-| `upstream/ruff/fixtures/pydocstyle/D417.py` | `crates/ruff_linter/resources/test/fixtures/pydocstyle/D417.py` | verbatim |
 | `upstream/ruff/fixtures/pydocstyle/D418.pyi` | `crates/ruff_linter/resources/test/fixtures/pydocstyle/D418.pyi` | verbatim |
 | `upstream/ruff/fixtures/pydocstyle/_unrelated/_no_pkg_priv.py` | `crates/ruff_linter/resources/test/fixtures/pydocstyle/_unrelated/_no_pkg_priv.py` | verbatim |
 | `upstream/ruff/fixtures/pydocstyle/_unrelated/pkg/D100_pub.py` | `crates/ruff_linter/resources/test/fixtures/pydocstyle/_unrelated/pkg/D100_pub.py` | verbatim |
 | `upstream/ruff/fixtures/pydocstyle/_unrelated/pkg/_priv/no_D100_priv.py` | `crates/ruff_linter/resources/test/fixtures/pydocstyle/_unrelated/pkg/_priv/no_D100_priv.py` | verbatim |
 | `upstream/ruff/fixtures/pydocstyle/all.py` | `crates/ruff_linter/resources/test/fixtures/pydocstyle/all.py` | verbatim |
 | `upstream/ruff/fixtures/pydocstyle/bom.py` | `crates/ruff_linter/resources/test/fixtures/pydocstyle/bom.py` | verbatim |
-| `upstream/ruff/fixtures/pydocstyle/canonical_google_examples.py` | `crates/ruff_linter/resources/test/fixtures/pydocstyle/canonical_google_examples.py` | verbatim |
-| `upstream/ruff/fixtures/pydocstyle/canonical_numpy_examples.py` | `crates/ruff_linter/resources/test/fixtures/pydocstyle/canonical_numpy_examples.py` | verbatim |
 | `upstream/ruff/fixtures/pydocstyle/sections.py` | `crates/ruff_linter/resources/test/fixtures/pydocstyle/sections.py` | verbatim |
 | `upstream/ruff/fixtures/pydocstyle/setter.py` | `crates/ruff_linter/resources/test/fixtures/pydocstyle/setter.py` | verbatim |
 | `upstream/ruff/fixtures/pydocstyle/sphinx.py` | `crates/ruff_linter/resources/test/fixtures/pydocstyle/sphinx.py` | verbatim |

@@ -1,0 +1,10 @@
+x = 1  # type: ignore # type: ignore
+x = 1  # type: ignore # pyright: ignore
+x = 1  # type: ignore[a] # foo # type: ignore
+x = 1  # foo # pyright: ignore
+x = 1  #type:ignore#
+x = 1  # type: ignore[]
+x = 1  # type: ignore [a, b] # pyright: ignore[c]
+x = 1  # type: ignoreme # type: ignore
+x = 1  # type: ignore[a]  # type: ignore[b]
+x = 1  # type: ignore # pyright: ignore # type: ignore

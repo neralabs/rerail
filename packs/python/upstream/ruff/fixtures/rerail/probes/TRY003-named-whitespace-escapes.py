@@ -1,0 +1,12 @@
+def f(x):
+    raise ValueError("\N{SPACE}")
+    raise ValueError("a\N{no-break space}b")
+    raise ValueError("\N{NBSP}")
+    raise ValueError(f"\N{EM SPACE}")
+    raise ValueError("ab" "\N{LINE FEED}")
+    raise ValueError(u"\N{IDEOGRAPHIC SPACE}")
+    raise ValueError("\N{ZERO WIDTH SPACE}")
+    raise ValueError("\N{TAG SPACE}")
+    raise ValueError("\N{SYMBOL FOR SPACE}")
+    raise ValueError("\N{MONGOLIAN VOWEL SEPARATOR}")
+    raise ValueError("\N{ZERO WIDTH NO-BREAK SPACE}")

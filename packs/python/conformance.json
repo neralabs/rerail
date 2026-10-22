@@ -2704,9 +2704,15 @@
         "tool": "ruff",
         "rule": "AIR001"
       },
-      "policy": "candidates/rules/ruff-air001-airflow-variable-name-task-id-mismatch.json",
+      "policy": "rules/ruff-air001-airflow-variable-name-task-id-mismatch.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "arguments",
+        "scope",
+        "calls",
+        "formatArgs",
         "suppression"
       ],
       "match": "line+column"
@@ -2717,9 +2723,12 @@
         "tool": "ruff",
         "rule": "AIR002"
       },
-      "policy": "candidates/rules/ruff-air002-airflow-dag-no-schedule-argument.json",
+      "policy": "rules/ruff-air002-airflow-dag-no-schedule-argument.json",
       "capabilities": [
         "syntax",
+        "arguments",
+        "scope",
+        "calls",
         "suppression"
       ],
       "match": "line+column"
@@ -2733,6 +2742,13 @@
       "policy": "candidates/rules/ruff-air301-airflow3-removal.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "arguments",
+        "scope",
+        "calls",
+        "formatArgs",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -2743,9 +2759,10 @@
         "tool": "ruff",
         "rule": "AIR302"
       },
-      "policy": "candidates/rules/ruff-air302-airflow3-moved-to-provider.json",
+      "policy": "rules/ruff-air302-airflow3-moved-to-provider.json",
       "capabilities": [
-        "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -2756,9 +2773,9 @@
         "tool": "ruff",
         "rule": "AIR303"
       },
-      "policy": "candidates/rules/ruff-air303-airflow3-incompatible-function-signature.json",
+      "policy": "rules/ruff-air303-airflow3-incompatible-function-signature.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -2769,9 +2786,10 @@
         "tool": "ruff",
         "rule": "AIR311"
       },
-      "policy": "candidates/rules/ruff-air311-airflow3-suggested-update.json",
+      "policy": "rules/ruff-air311-airflow3-suggested-update.json",
       "capabilities": [
-        "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -2782,9 +2800,12 @@
         "tool": "ruff",
         "rule": "AIR312"
       },
-      "policy": "candidates/rules/ruff-air312-airflow3-suggested-to-move-to-provider.json",
+      "policy": "rules/ruff-air312-airflow3-suggested-to-move-to-provider.json",
       "capabilities": [
         "syntax",
+        "compare",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -2795,9 +2816,10 @@
         "tool": "ruff",
         "rule": "ANN001"
       },
-      "policy": "candidates/rules/ruff-ann001-missing-type-function-argument.json",
+      "policy": "rules/ruff-ann001-missing-type-function-argument.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -2808,9 +2830,10 @@
         "tool": "ruff",
         "rule": "ANN002"
       },
-      "policy": "candidates/rules/ruff-ann002-missing-type-args.json",
+      "policy": "rules/ruff-ann002-missing-type-args.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -2821,9 +2844,10 @@
         "tool": "ruff",
         "rule": "ANN003"
       },
-      "policy": "candidates/rules/ruff-ann003-missing-type-kwargs.json",
+      "policy": "rules/ruff-ann003-missing-type-kwargs.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -2834,9 +2858,11 @@
         "tool": "ruff",
         "rule": "ANN201"
       },
-      "policy": "candidates/rules/ruff-ann201-missing-return-type-undocumented-public-function.json",
+      "policy": "rules/ruff-ann201-missing-return-type-undocumented-public-function.json",
       "capabilities": [
         "syntax",
+        "compare",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -2847,9 +2873,11 @@
         "tool": "ruff",
         "rule": "ANN202"
       },
-      "policy": "candidates/rules/ruff-ann202-missing-return-type-private-function.json",
+      "policy": "rules/ruff-ann202-missing-return-type-private-function.json",
       "capabilities": [
         "syntax",
+        "compare",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -2860,9 +2888,10 @@
         "tool": "ruff",
         "rule": "ANN204"
       },
-      "policy": "candidates/rules/ruff-ann204-missing-return-type-special-method.json",
+      "policy": "rules/ruff-ann204-missing-return-type-special-method.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -2873,9 +2902,10 @@
         "tool": "ruff",
         "rule": "ANN205"
       },
-      "policy": "candidates/rules/ruff-ann205-missing-return-type-static-method.json",
+      "policy": "rules/ruff-ann205-missing-return-type-static-method.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -2886,9 +2916,10 @@
         "tool": "ruff",
         "rule": "ANN206"
       },
-      "policy": "candidates/rules/ruff-ann206-missing-return-type-class-method.json",
+      "policy": "rules/ruff-ann206-missing-return-type-class-method.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -2899,9 +2930,11 @@
         "tool": "ruff",
         "rule": "ANN401"
       },
-      "policy": "candidates/rules/ruff-ann401-any-type.json",
+      "policy": "rules/ruff-ann401-any-type.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -2914,7 +2947,7 @@
       },
       "policy": "candidates/rules/ruff-arg001-unused-function-argument.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -2927,7 +2960,7 @@
       },
       "policy": "candidates/rules/ruff-arg002-unused-method-argument.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -2938,9 +2971,9 @@
         "tool": "ruff",
         "rule": "ARG003"
       },
-      "policy": "candidates/rules/ruff-arg003-unused-class-method-argument.json",
+      "policy": "rules/ruff-arg003-unused-class-method-argument.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -2951,9 +2984,9 @@
         "tool": "ruff",
         "rule": "ARG004"
       },
-      "policy": "candidates/rules/ruff-arg004-unused-static-method-argument.json",
+      "policy": "rules/ruff-arg004-unused-static-method-argument.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -2964,9 +2997,9 @@
         "tool": "ruff",
         "rule": "ARG005"
       },
-      "policy": "candidates/rules/ruff-arg005-unused-lambda-argument.json",
+      "policy": "rules/ruff-arg005-unused-lambda-argument.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -2977,9 +3010,12 @@
         "tool": "ruff",
         "rule": "C400"
       },
-      "policy": "candidates/rules/ruff-c400-unnecessary-generator-list.json",
+      "policy": "rules/ruff-c400-unnecessary-generator-list.json",
       "capabilities": [
         "syntax",
+        "compare",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -2990,9 +3026,12 @@
         "tool": "ruff",
         "rule": "C401"
       },
-      "policy": "candidates/rules/ruff-c401-unnecessary-generator-set.json",
+      "policy": "rules/ruff-c401-unnecessary-generator-set.json",
       "capabilities": [
         "syntax",
+        "compare",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -3003,9 +3042,10 @@
         "tool": "ruff",
         "rule": "C402"
       },
-      "policy": "candidates/rules/ruff-c402-unnecessary-generator-dict.json",
+      "policy": "rules/ruff-c402-unnecessary-generator-dict.json",
       "capabilities": [
         "syntax",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -3016,9 +3056,11 @@
         "tool": "ruff",
         "rule": "C403"
       },
-      "policy": "candidates/rules/ruff-c403-unnecessary-list-comprehension-set.json",
+      "policy": "rules/ruff-c403-unnecessary-list-comprehension-set.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -3029,9 +3071,11 @@
         "tool": "ruff",
         "rule": "C404"
       },
-      "policy": "candidates/rules/ruff-c404-unnecessary-list-comprehension-dict.json",
+      "policy": "rules/ruff-c404-unnecessary-list-comprehension-dict.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -3042,9 +3086,11 @@
         "tool": "ruff",
         "rule": "C405"
       },
-      "policy": "candidates/rules/ruff-c405-unnecessary-literal-set.json",
+      "policy": "rules/ruff-c405-unnecessary-literal-set.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -3055,9 +3101,11 @@
         "tool": "ruff",
         "rule": "C406"
       },
-      "policy": "candidates/rules/ruff-c406-unnecessary-literal-dict.json",
+      "policy": "rules/ruff-c406-unnecessary-literal-dict.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -3068,9 +3116,11 @@
         "tool": "ruff",
         "rule": "C408"
       },
-      "policy": "candidates/rules/ruff-c408-unnecessary-collection-call.json",
+      "policy": "rules/ruff-c408-unnecessary-collection-call.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -3081,9 +3131,11 @@
         "tool": "ruff",
         "rule": "C409"
       },
-      "policy": "candidates/rules/ruff-c409-unnecessary-literal-within-tuple-call.json",
+      "policy": "rules/ruff-c409-unnecessary-literal-within-tuple-call.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -3094,9 +3146,11 @@
         "tool": "ruff",
         "rule": "C410"
       },
-      "policy": "candidates/rules/ruff-c410-unnecessary-literal-within-list-call.json",
+      "policy": "rules/ruff-c410-unnecessary-literal-within-list-call.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -3107,9 +3161,11 @@
         "tool": "ruff",
         "rule": "C411"
       },
-      "policy": "candidates/rules/ruff-c411-unnecessary-list-call.json",
+      "policy": "rules/ruff-c411-unnecessary-list-call.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -3120,9 +3176,11 @@
         "tool": "ruff",
         "rule": "C413"
       },
-      "policy": "candidates/rules/ruff-c413-unnecessary-call-around-sorted.json",
+      "policy": "rules/ruff-c413-unnecessary-call-around-sorted.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -3133,9 +3191,12 @@
         "tool": "ruff",
         "rule": "C414"
       },
-      "policy": "candidates/rules/ruff-c414-unnecessary-double-cast-or-process.json",
+      "policy": "rules/ruff-c414-unnecessary-double-cast-or-process.json",
       "capabilities": [
         "syntax",
+        "compare",
+        "arguments",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -3146,9 +3207,11 @@
         "tool": "ruff",
         "rule": "C415"
       },
-      "policy": "candidates/rules/ruff-c415-unnecessary-subscript-reversal.json",
+      "policy": "rules/ruff-c415-unnecessary-subscript-reversal.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -3159,9 +3222,13 @@
         "tool": "ruff",
         "rule": "C416"
       },
-      "policy": "candidates/rules/ruff-c416-unnecessary-comprehension.json",
+      "policy": "rules/ruff-c416-unnecessary-comprehension.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -3172,9 +3239,12 @@
         "tool": "ruff",
         "rule": "C417"
       },
-      "policy": "candidates/rules/ruff-c417-unnecessary-map.json",
+      "policy": "rules/ruff-c417-unnecessary-map.json",
       "capabilities": [
         "syntax",
+        "compare",
+        "arguments",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -3188,6 +3258,8 @@
       "policy": "candidates/rules/ruff-c418-unnecessary-literal-within-dict-call.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -3198,9 +3270,11 @@
         "tool": "ruff",
         "rule": "C419"
       },
-      "policy": "candidates/rules/ruff-c419-unnecessary-comprehension-in-call.json",
+      "policy": "rules/ruff-c419-unnecessary-comprehension-in-call.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -3211,9 +3285,11 @@
         "tool": "ruff",
         "rule": "C420"
       },
-      "policy": "candidates/rules/ruff-c420-unnecessary-dict-comprehension-for-iterable.json",
+      "policy": "rules/ruff-c420-unnecessary-dict-comprehension-for-iterable.json",
       "capabilities": [
         "syntax",
+        "compare",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -3237,7 +3313,7 @@
         "tool": "ruff",
         "rule": "COM818"
       },
-      "policy": "candidates/rules/ruff-com818-trailing-comma-on-bare-tuple.json",
+      "policy": "rules/ruff-com818-trailing-comma-on-bare-tuple.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -3263,9 +3339,11 @@
         "tool": "ruff",
         "rule": "D101"
       },
-      "policy": "candidates/rules/ruff-d101-undocumented-public-class.json",
+      "policy": "rules/ruff-d101-undocumented-public-class.json",
       "capabilities": [
         "syntax",
+        "compare",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -3276,9 +3354,11 @@
         "tool": "ruff",
         "rule": "D102"
       },
-      "policy": "candidates/rules/ruff-d102-undocumented-public-method.json",
+      "policy": "rules/ruff-d102-undocumented-public-method.json",
       "capabilities": [
         "syntax",
+        "compare",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -3289,9 +3369,11 @@
         "tool": "ruff",
         "rule": "D103"
       },
-      "policy": "candidates/rules/ruff-d103-undocumented-public-function.json",
+      "policy": "rules/ruff-d103-undocumented-public-function.json",
       "capabilities": [
         "syntax",
+        "compare",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -3302,7 +3384,7 @@
         "tool": "ruff",
         "rule": "D104"
       },
-      "policy": "candidates/rules/ruff-d104-undocumented-public-package.json",
+      "policy": "rules/ruff-d104-undocumented-public-package.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -3315,9 +3397,10 @@
         "tool": "ruff",
         "rule": "D105"
       },
-      "policy": "candidates/rules/ruff-d105-undocumented-magic-method.json",
+      "policy": "rules/ruff-d105-undocumented-magic-method.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -3328,9 +3411,10 @@
         "tool": "ruff",
         "rule": "D106"
       },
-      "policy": "candidates/rules/ruff-d106-undocumented-public-nested-class.json",
+      "policy": "rules/ruff-d106-undocumented-public-nested-class.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -3341,9 +3425,10 @@
         "tool": "ruff",
         "rule": "D107"
       },
-      "policy": "candidates/rules/ruff-d107-undocumented-public-init.json",
+      "policy": "rules/ruff-d107-undocumented-public-init.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -3354,7 +3439,7 @@
         "tool": "ruff",
         "rule": "D200"
       },
-      "policy": "candidates/rules/ruff-d200-unnecessary-multiline-docstring.json",
+      "policy": "rules/ruff-d200-unnecessary-multiline-docstring.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -3367,7 +3452,7 @@
         "tool": "ruff",
         "rule": "D205"
       },
-      "policy": "candidates/rules/ruff-d205-missing-blank-line-after-summary.json",
+      "policy": "rules/ruff-d205-missing-blank-line-after-summary.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -3380,7 +3465,7 @@
         "tool": "ruff",
         "rule": "D209"
       },
-      "policy": "candidates/rules/ruff-d209-new-line-after-last-paragraph.json",
+      "policy": "rules/ruff-d209-new-line-after-last-paragraph.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -3393,7 +3478,7 @@
         "tool": "ruff",
         "rule": "D212"
       },
-      "policy": "candidates/rules/ruff-d212-multi-line-summary-first-line.json",
+      "policy": "rules/ruff-d212-multi-line-summary-first-line.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -3409,6 +3494,7 @@
       "policy": "candidates/rules/ruff-d215-overindented-section-underline.json",
       "capabilities": [
         "syntax",
+        "value",
         "suppression"
       ],
       "match": "line+column"
@@ -3419,7 +3505,7 @@
         "tool": "ruff",
         "rule": "D300"
       },
-      "policy": "candidates/rules/ruff-d300-triple-single-quotes.json",
+      "policy": "rules/ruff-d300-triple-single-quotes.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -3432,7 +3518,7 @@
         "tool": "ruff",
         "rule": "D301"
       },
-      "policy": "candidates/rules/ruff-d301-escape-sequence-in-docstring.json",
+      "policy": "rules/ruff-d301-escape-sequence-in-docstring.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -3448,6 +3534,8 @@
       "policy": "candidates/rules/ruff-d400-missing-trailing-period.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
         "suppression"
       ],
       "match": "line+column"
@@ -3461,6 +3549,9 @@
       "policy": "candidates/rules/ruff-d401-non-imperative-mood.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -3471,9 +3562,11 @@
         "tool": "ruff",
         "rule": "D402"
       },
-      "policy": "candidates/rules/ruff-d402-signature-in-docstring.json",
+      "policy": "rules/ruff-d402-signature-in-docstring.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
         "suppression"
       ],
       "match": "line+column"
@@ -3484,9 +3577,10 @@
         "tool": "ruff",
         "rule": "D403"
       },
-      "policy": "candidates/rules/ruff-d403-first-word-uncapitalized.json",
+      "policy": "rules/ruff-d403-first-word-uncapitalized.json",
       "capabilities": [
         "syntax",
+        "value",
         "suppression"
       ],
       "match": "line+column"
@@ -3497,9 +3591,11 @@
         "tool": "ruff",
         "rule": "D404"
       },
-      "policy": "candidates/rules/ruff-d404-docstring-starts-with-this.json",
+      "policy": "rules/ruff-d404-docstring-starts-with-this.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
         "suppression"
       ],
       "match": "line+column"
@@ -3513,6 +3609,7 @@
       "policy": "candidates/rules/ruff-d405-non-capitalized-section-name.json",
       "capabilities": [
         "syntax",
+        "value",
         "suppression"
       ],
       "match": "line+column"
@@ -3526,6 +3623,7 @@
       "policy": "candidates/rules/ruff-d406-missing-new-line-after-section-name.json",
       "capabilities": [
         "syntax",
+        "value",
         "suppression"
       ],
       "match": "line+column"
@@ -3539,6 +3637,7 @@
       "policy": "candidates/rules/ruff-d407-missing-dashed-underline-after-section.json",
       "capabilities": [
         "syntax",
+        "value",
         "suppression"
       ],
       "match": "line+column"
@@ -3552,6 +3651,7 @@
       "policy": "candidates/rules/ruff-d408-missing-section-underline-after-name.json",
       "capabilities": [
         "syntax",
+        "value",
         "suppression"
       ],
       "match": "line+column"
@@ -3565,6 +3665,7 @@
       "policy": "candidates/rules/ruff-d409-mismatched-section-underline-length.json",
       "capabilities": [
         "syntax",
+        "value",
         "suppression"
       ],
       "match": "line+column"
@@ -3578,6 +3679,7 @@
       "policy": "candidates/rules/ruff-d410-no-blank-line-after-section.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -3591,6 +3693,7 @@
       "policy": "candidates/rules/ruff-d411-no-blank-line-before-section.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -3604,6 +3707,7 @@
       "policy": "candidates/rules/ruff-d412-blank-lines-between-header-and-content.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -3617,6 +3721,7 @@
       "policy": "candidates/rules/ruff-d413-missing-blank-line-after-last-section.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -3630,6 +3735,7 @@
       "policy": "candidates/rules/ruff-d414-empty-docstring-section.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -3656,6 +3762,7 @@
       "policy": "candidates/rules/ruff-d416-missing-section-name-colon.json",
       "capabilities": [
         "syntax",
+        "value",
         "suppression"
       ],
       "match": "line+column"
@@ -3666,9 +3773,9 @@
         "tool": "ruff",
         "rule": "D418"
       },
-      "policy": "candidates/rules/ruff-d418-overload-with-docstring.json",
+      "policy": "rules/ruff-d418-overload-with-docstring.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -3679,7 +3786,7 @@
         "tool": "ruff",
         "rule": "D419"
       },
-      "policy": "candidates/rules/ruff-d419-empty-docstring.json",
+      "policy": "rules/ruff-d419-empty-docstring.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -3692,7 +3799,7 @@
         "tool": "ruff",
         "rule": "DTZ001"
       },
-      "policy": "candidates/rules/ruff-dtz001-call-datetime-without-tzinfo.json",
+      "policy": "rules/ruff-dtz001-call-datetime-without-tzinfo.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -3705,7 +3812,7 @@
         "tool": "ruff",
         "rule": "DTZ002"
       },
-      "policy": "candidates/rules/ruff-dtz002-call-datetime-today.json",
+      "policy": "rules/ruff-dtz002-call-datetime-today.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -3718,7 +3825,7 @@
         "tool": "ruff",
         "rule": "DTZ003"
       },
-      "policy": "candidates/rules/ruff-dtz003-call-datetime-utcnow.json",
+      "policy": "rules/ruff-dtz003-call-datetime-utcnow.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -3731,7 +3838,7 @@
         "tool": "ruff",
         "rule": "DTZ004"
       },
-      "policy": "candidates/rules/ruff-dtz004-call-datetime-utcfromtimestamp.json",
+      "policy": "rules/ruff-dtz004-call-datetime-utcfromtimestamp.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -3744,7 +3851,7 @@
         "tool": "ruff",
         "rule": "DTZ005"
       },
-      "policy": "candidates/rules/ruff-dtz005-call-datetime-now-without-tzinfo.json",
+      "policy": "rules/ruff-dtz005-call-datetime-now-without-tzinfo.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -3757,7 +3864,7 @@
         "tool": "ruff",
         "rule": "DTZ006"
       },
-      "policy": "candidates/rules/ruff-dtz006-call-datetime-fromtimestamp.json",
+      "policy": "rules/ruff-dtz006-call-datetime-fromtimestamp.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -3783,7 +3890,7 @@
         "tool": "ruff",
         "rule": "DTZ011"
       },
-      "policy": "candidates/rules/ruff-dtz011-call-date-today.json",
+      "policy": "rules/ruff-dtz011-call-date-today.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -3796,7 +3903,7 @@
         "tool": "ruff",
         "rule": "DTZ012"
       },
-      "policy": "candidates/rules/ruff-dtz012-call-date-fromtimestamp.json",
+      "policy": "rules/ruff-dtz012-call-date-fromtimestamp.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -3809,7 +3916,7 @@
         "tool": "ruff",
         "rule": "DTZ901"
       },
-      "policy": "candidates/rules/ruff-dtz901-datetime-min-max.json",
+      "policy": "rules/ruff-dtz901-datetime-min-max.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -3822,7 +3929,7 @@
         "tool": "ruff",
         "rule": "E401"
       },
-      "policy": "candidates/rules/ruff-e401-multiple-imports-on-one-line.json",
+      "policy": "rules/ruff-e401-multiple-imports-on-one-line.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -3835,9 +3942,10 @@
         "tool": "ruff",
         "rule": "EM101"
       },
-      "policy": "candidates/rules/ruff-em101-raw-string-in-exception.json",
+      "policy": "rules/ruff-em101-raw-string-in-exception.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -3848,9 +3956,10 @@
         "tool": "ruff",
         "rule": "EM102"
       },
-      "policy": "candidates/rules/ruff-em102-f-string-in-exception.json",
+      "policy": "rules/ruff-em102-f-string-in-exception.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -3861,9 +3970,10 @@
         "tool": "ruff",
         "rule": "EM103"
       },
-      "policy": "candidates/rules/ruff-em103-dot-format-in-exception.json",
+      "policy": "rules/ruff-em103-dot-format-in-exception.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -3877,6 +3987,7 @@
       "policy": "candidates/rules/ruff-era001-commented-out-code.json",
       "capabilities": [
         "syntax",
+        "compare",
         "suppression"
       ],
       "match": "line+column"
@@ -3890,6 +4001,8 @@
       "policy": "candidates/rules/ruff-fa100-future-rewritable-type-annotation.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -3903,6 +4016,9 @@
       "policy": "candidates/rules/ruff-fa102-future-required-type-annotation.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -3916,6 +4032,8 @@
       "policy": "candidates/rules/ruff-fast001-fast-api-redundant-response-model.json",
       "capabilities": [
         "syntax",
+        "compare",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -3926,9 +4044,10 @@
         "tool": "ruff",
         "rule": "FAST002"
       },
-      "policy": "candidates/rules/ruff-fast002-fast-api-non-annotated-dependency.json",
+      "policy": "rules/ruff-fast002-fast-api-non-annotated-dependency.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -3939,9 +4058,12 @@
         "tool": "ruff",
         "rule": "FAST003"
       },
-      "policy": "candidates/rules/ruff-fast003-fast-api-unused-path-parameter.json",
+      "policy": "rules/ruff-fast003-fast-api-unused-path-parameter.json",
       "capabilities": [
         "syntax",
+        "compare",
+        "scope",
+        "formatArgs",
         "suppression"
       ],
       "match": "line+column"
@@ -3952,9 +4074,11 @@
         "tool": "ruff",
         "rule": "FBT001"
       },
-      "policy": "candidates/rules/ruff-fbt001-boolean-type-hint-positional-argument.json",
+      "policy": "rules/ruff-fbt001-boolean-type-hint-positional-argument.json",
       "capabilities": [
-        "syntax",
+        "value",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -3965,9 +4089,9 @@
         "tool": "ruff",
         "rule": "FBT002"
       },
-      "policy": "candidates/rules/ruff-fbt002-boolean-default-value-positional-argument.json",
+      "policy": "rules/ruff-fbt002-boolean-default-value-positional-argument.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -3978,9 +4102,11 @@
         "tool": "ruff",
         "rule": "FBT003"
       },
-      "policy": "candidates/rules/ruff-fbt003-boolean-positional-value-in-call.json",
+      "policy": "rules/ruff-fbt003-boolean-positional-value-in-call.json",
       "capabilities": [
-        "syntax",
+        "arguments",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -3991,7 +4117,7 @@
         "tool": "ruff",
         "rule": "FIX001"
       },
-      "policy": "candidates/rules/ruff-fix001-line-contains-fixme.json",
+      "policy": "rules/ruff-fix001-line-contains-fixme.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -4004,7 +4130,7 @@
         "tool": "ruff",
         "rule": "FIX002"
       },
-      "policy": "candidates/rules/ruff-fix002-line-contains-todo.json",
+      "policy": "rules/ruff-fix002-line-contains-todo.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -4017,7 +4143,7 @@
         "tool": "ruff",
         "rule": "FIX003"
       },
-      "policy": "candidates/rules/ruff-fix003-line-contains-xxx.json",
+      "policy": "rules/ruff-fix003-line-contains-xxx.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -4030,7 +4156,7 @@
         "tool": "ruff",
         "rule": "FIX004"
       },
-      "policy": "candidates/rules/ruff-fix004-line-contains-hack.json",
+      "policy": "rules/ruff-fix004-line-contains-hack.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -4043,9 +4169,11 @@
         "tool": "ruff",
         "rule": "FLY002"
       },
-      "policy": "candidates/rules/ruff-fly002-static-join-to-f-string.json",
+      "policy": "rules/ruff-fly002-static-join-to-f-string.json",
       "capabilities": [
         "syntax",
+        "value",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -4056,9 +4184,11 @@
         "tool": "ruff",
         "rule": "G001"
       },
-      "policy": "candidates/rules/ruff-g001-logging-string-format.json",
+      "policy": "rules/ruff-g001-logging-string-format.json",
       "capabilities": [
         "syntax",
+        "arguments",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4069,9 +4199,11 @@
         "tool": "ruff",
         "rule": "G002"
       },
-      "policy": "candidates/rules/ruff-g002-logging-percent-format.json",
+      "policy": "rules/ruff-g002-logging-percent-format.json",
       "capabilities": [
         "syntax",
+        "arguments",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4082,9 +4214,11 @@
         "tool": "ruff",
         "rule": "G003"
       },
-      "policy": "candidates/rules/ruff-g003-logging-string-concat.json",
+      "policy": "rules/ruff-g003-logging-string-concat.json",
       "capabilities": [
         "syntax",
+        "arguments",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4095,9 +4229,11 @@
         "tool": "ruff",
         "rule": "G004"
       },
-      "policy": "candidates/rules/ruff-g004-logging-f-string.json",
+      "policy": "rules/ruff-g004-logging-f-string.json",
       "capabilities": [
         "syntax",
+        "arguments",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4108,9 +4244,10 @@
         "tool": "ruff",
         "rule": "G010"
       },
-      "policy": "candidates/rules/ruff-g010-logging-warn.json",
+      "policy": "rules/ruff-g010-logging-warn.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4121,9 +4258,11 @@
         "tool": "ruff",
         "rule": "G101"
       },
-      "policy": "candidates/rules/ruff-g101-logging-extra-attr-clash.json",
+      "policy": "rules/ruff-g101-logging-extra-attr-clash.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4134,9 +4273,10 @@
         "tool": "ruff",
         "rule": "G201"
       },
-      "policy": "candidates/rules/ruff-g201-logging-exc-info.json",
+      "policy": "rules/ruff-g201-logging-exc-info.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4147,9 +4287,10 @@
         "tool": "ruff",
         "rule": "G202"
       },
-      "policy": "candidates/rules/ruff-g202-logging-redundant-exc-info.json",
+      "policy": "rules/ruff-g202-logging-redundant-exc-info.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4160,9 +4301,11 @@
         "tool": "ruff",
         "rule": "ICN001"
       },
-      "policy": "candidates/rules/ruff-icn001-unconventional-import-alias.json",
+      "policy": "rules/ruff-icn001-unconventional-import-alias.json",
       "capabilities": [
         "syntax",
+        "compare",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4186,9 +4329,10 @@
         "tool": "ruff",
         "rule": "INT001"
       },
-      "policy": "candidates/rules/ruff-int001-f-string-in-get-text-func-call.json",
+      "policy": "rules/ruff-int001-f-string-in-get-text-func-call.json",
       "capabilities": [
-        "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -4199,9 +4343,10 @@
         "tool": "ruff",
         "rule": "INT002"
       },
-      "policy": "candidates/rules/ruff-int002-format-in-get-text-func-call.json",
+      "policy": "rules/ruff-int002-format-in-get-text-func-call.json",
       "capabilities": [
-        "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -4212,9 +4357,10 @@
         "tool": "ruff",
         "rule": "INT003"
       },
-      "policy": "candidates/rules/ruff-int003-printf-in-get-text-func-call.json",
+      "policy": "rules/ruff-int003-printf-in-get-text-func-call.json",
       "capabilities": [
-        "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -4225,7 +4371,7 @@
         "tool": "ruff",
         "rule": "ISC003"
       },
-      "policy": "candidates/rules/ruff-isc003-explicit-string-concatenation.json",
+      "policy": "rules/ruff-isc003-explicit-string-concatenation.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -4238,7 +4384,7 @@
         "tool": "ruff",
         "rule": "ISC004"
       },
-      "policy": "candidates/rules/ruff-isc004-implicit-string-concatenation-in-collection-literal.json",
+      "policy": "rules/ruff-isc004-implicit-string-concatenation-in-collection-literal.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -4251,7 +4397,7 @@
         "tool": "ruff",
         "rule": "LOG001"
       },
-      "policy": "candidates/rules/ruff-log001-direct-logger-instantiation.json",
+      "policy": "rules/ruff-log001-direct-logger-instantiation.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -4264,7 +4410,7 @@
         "tool": "ruff",
         "rule": "LOG002"
       },
-      "policy": "candidates/rules/ruff-log002-invalid-get-logger-argument.json",
+      "policy": "rules/ruff-log002-invalid-get-logger-argument.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -4277,9 +4423,11 @@
         "tool": "ruff",
         "rule": "LOG004"
       },
-      "policy": "candidates/rules/ruff-log004-log-exception-outside-except-handler.json",
+      "policy": "rules/ruff-log004-log-exception-outside-except-handler.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -4290,9 +4438,12 @@
         "tool": "ruff",
         "rule": "LOG007"
       },
-      "policy": "candidates/rules/ruff-log007-exception-without-exc-info.json",
+      "policy": "rules/ruff-log007-exception-without-exc-info.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -4303,7 +4454,7 @@
         "tool": "ruff",
         "rule": "LOG009"
       },
-      "policy": "candidates/rules/ruff-log009-undocumented-warn.json",
+      "policy": "rules/ruff-log009-undocumented-warn.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -4316,9 +4467,12 @@
         "tool": "ruff",
         "rule": "LOG014"
       },
-      "policy": "candidates/rules/ruff-log014-exc-info-outside-except-handler.json",
+      "policy": "rules/ruff-log014-exc-info-outside-except-handler.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -4329,7 +4483,7 @@
         "tool": "ruff",
         "rule": "LOG015"
       },
-      "policy": "candidates/rules/ruff-log015-root-logger-call.json",
+      "policy": "rules/ruff-log015-root-logger-call.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -4342,7 +4496,7 @@
         "tool": "ruff",
         "rule": "N801"
       },
-      "policy": "candidates/rules/ruff-n801-invalid-class-name.json",
+      "policy": "rules/ruff-n801-invalid-class-name.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -4355,9 +4509,9 @@
         "tool": "ruff",
         "rule": "N802"
       },
-      "policy": "candidates/rules/ruff-n802-invalid-function-name.json",
+      "policy": "rules/ruff-n802-invalid-function-name.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4368,9 +4522,9 @@
         "tool": "ruff",
         "rule": "N803"
       },
-      "policy": "candidates/rules/ruff-n803-invalid-argument-name.json",
+      "policy": "rules/ruff-n803-invalid-argument-name.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4381,9 +4535,9 @@
         "tool": "ruff",
         "rule": "N804"
       },
-      "policy": "candidates/rules/ruff-n804-invalid-first-argument-name-for-class-method.json",
+      "policy": "rules/ruff-n804-invalid-first-argument-name-for-class-method.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4394,9 +4548,14 @@
         "tool": "ruff",
         "rule": "N805"
       },
-      "policy": "candidates/rules/ruff-n805-invalid-first-argument-name-for-method.json",
+      "policy": "rules/ruff-n805-invalid-first-argument-name-for-method.json",
       "capabilities": [
         "syntax",
+        "value",
+        "arguments",
+        "scope",
+        "calls",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -4407,9 +4566,15 @@
         "tool": "ruff",
         "rule": "N806"
       },
-      "policy": "candidates/rules/ruff-n806-non-lowercase-variable-in-function.json",
+      "policy": "rules/ruff-n806-non-lowercase-variable-in-function.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "arguments",
+        "scope",
+        "calls",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -4420,9 +4585,11 @@
         "tool": "ruff",
         "rule": "N807"
       },
-      "policy": "candidates/rules/ruff-n807-dunder-function-name.json",
+      "policy": "rules/ruff-n807-dunder-function-name.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4433,9 +4600,13 @@
         "tool": "ruff",
         "rule": "N811"
       },
-      "policy": "candidates/rules/ruff-n811-constant-imported-as-non-constant.json",
+      "policy": "rules/ruff-n811-constant-imported-as-non-constant.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "scope",
+        "formatArgs",
         "suppression"
       ],
       "match": "line+column"
@@ -4446,7 +4617,7 @@
         "tool": "ruff",
         "rule": "N812"
       },
-      "policy": "candidates/rules/ruff-n812-lowercase-imported-as-non-lowercase.json",
+      "policy": "rules/ruff-n812-lowercase-imported-as-non-lowercase.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -4459,7 +4630,7 @@
         "tool": "ruff",
         "rule": "N813"
       },
-      "policy": "candidates/rules/ruff-n813-camelcase-imported-as-lowercase.json",
+      "policy": "rules/ruff-n813-camelcase-imported-as-lowercase.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -4472,9 +4643,9 @@
         "tool": "ruff",
         "rule": "N814"
       },
-      "policy": "candidates/rules/ruff-n814-camelcase-imported-as-constant.json",
+      "policy": "rules/ruff-n814-camelcase-imported-as-constant.json",
       "capabilities": [
-        "syntax",
+        "compare",
         "suppression"
       ],
       "match": "line+column"
@@ -4485,9 +4656,9 @@
         "tool": "ruff",
         "rule": "N815"
       },
-      "policy": "candidates/rules/ruff-n815-mixed-case-variable-in-class-scope.json",
+      "policy": "rules/ruff-n815-mixed-case-variable-in-class-scope.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4498,9 +4669,10 @@
         "tool": "ruff",
         "rule": "N816"
       },
-      "policy": "candidates/rules/ruff-n816-mixed-case-variable-in-global-scope.json",
+      "policy": "rules/ruff-n816-mixed-case-variable-in-global-scope.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4514,6 +4686,7 @@
       "policy": "candidates/rules/ruff-n817-camelcase-imported-as-acronym.json",
       "capabilities": [
         "syntax",
+        "compare",
         "suppression"
       ],
       "match": "line+column"
@@ -4524,7 +4697,7 @@
         "tool": "ruff",
         "rule": "N818"
       },
-      "policy": "candidates/rules/ruff-n818-error-suffix-on-exception-name.json",
+      "policy": "rules/ruff-n818-error-suffix-on-exception-name.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -4537,9 +4710,10 @@
         "tool": "ruff",
         "rule": "NPY001"
       },
-      "policy": "candidates/rules/ruff-npy001-numpy-deprecated-type-alias.json",
+      "policy": "rules/ruff-npy001-numpy-deprecated-type-alias.json",
       "capabilities": [
-        "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -4550,9 +4724,10 @@
         "tool": "ruff",
         "rule": "NPY002"
       },
-      "policy": "candidates/rules/ruff-npy002-numpy-legacy-random.json",
+      "policy": "rules/ruff-npy002-numpy-legacy-random.json",
       "capabilities": [
-        "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -4563,9 +4738,10 @@
         "tool": "ruff",
         "rule": "NPY003"
       },
-      "policy": "candidates/rules/ruff-npy003-numpy-deprecated-function.json",
+      "policy": "rules/ruff-npy003-numpy-deprecated-function.json",
       "capabilities": [
-        "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -4576,9 +4752,11 @@
         "tool": "ruff",
         "rule": "NPY201"
       },
-      "policy": "candidates/rules/ruff-npy201-numpy2-deprecation.json",
+      "policy": "rules/ruff-npy201-numpy2-deprecation.json",
       "capabilities": [
-        "syntax",
+        "compare",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -4591,7 +4769,8 @@
       },
       "policy": "candidates/rules/ruff-pd002-pandas-use-of-inplace-argument.json",
       "capabilities": [
-        "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -4602,9 +4781,11 @@
         "tool": "ruff",
         "rule": "PD012"
       },
-      "policy": "candidates/rules/ruff-pd012-pandas-use-of-dot-read-table.json",
+      "policy": "rules/ruff-pd012-pandas-use-of-dot-read-table.json",
       "capabilities": [
-        "syntax",
+        "value",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -4617,7 +4798,9 @@
       },
       "policy": "candidates/rules/ruff-pd101-pandas-nunique-constant-series-check.json",
       "capabilities": [
-        "syntax",
+        "value",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -4628,9 +4811,9 @@
         "tool": "ruff",
         "rule": "PERF101"
       },
-      "policy": "candidates/rules/ruff-perf101-unnecessary-list-cast.json",
+      "policy": "rules/ruff-perf101-unnecessary-list-cast.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4641,9 +4824,9 @@
         "tool": "ruff",
         "rule": "PERF102"
       },
-      "policy": "candidates/rules/ruff-perf102-incorrect-dict-iterator.json",
+      "policy": "rules/ruff-perf102-incorrect-dict-iterator.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4654,7 +4837,7 @@
         "tool": "ruff",
         "rule": "PERF203"
       },
-      "policy": "candidates/rules/ruff-perf203-try-except-in-loop.json",
+      "policy": "rules/ruff-perf203-try-except-in-loop.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -4667,9 +4850,12 @@
         "tool": "ruff",
         "rule": "PERF401"
       },
-      "policy": "candidates/rules/ruff-perf401-manual-list-comprehension.json",
+      "policy": "rules/ruff-perf401-manual-list-comprehension.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4680,9 +4866,12 @@
         "tool": "ruff",
         "rule": "PERF402"
       },
-      "policy": "candidates/rules/ruff-perf402-manual-list-copy.json",
+      "policy": "rules/ruff-perf402-manual-list-copy.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4693,9 +4882,12 @@
         "tool": "ruff",
         "rule": "PERF403"
       },
-      "policy": "candidates/rules/ruff-perf403-manual-dict-comprehension.json",
+      "policy": "rules/ruff-perf403-manual-dict-comprehension.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4706,7 +4898,7 @@
         "tool": "ruff",
         "rule": "PGH003"
       },
-      "policy": "candidates/rules/ruff-pgh003-blanket-type-ignore.json",
+      "policy": "rules/ruff-pgh003-blanket-type-ignore.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -4732,7 +4924,7 @@
         "tool": "ruff",
         "rule": "PGH005"
       },
-      "policy": "candidates/rules/ruff-pgh005-invalid-mock-access.json",
+      "policy": "rules/ruff-pgh005-invalid-mock-access.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -4745,9 +4937,10 @@
         "tool": "ruff",
         "rule": "PT001"
       },
-      "policy": "candidates/rules/ruff-pt001-pytest-fixture-incorrect-parentheses-style.json",
+      "policy": "rules/ruff-pt001-pytest-fixture-incorrect-parentheses-style.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4758,9 +4951,10 @@
         "tool": "ruff",
         "rule": "PT002"
       },
-      "policy": "candidates/rules/ruff-pt002-pytest-fixture-positional-args.json",
+      "policy": "rules/ruff-pt002-pytest-fixture-positional-args.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4771,9 +4965,11 @@
         "tool": "ruff",
         "rule": "PT003"
       },
-      "policy": "candidates/rules/ruff-pt003-pytest-extraneous-scope-function.json",
+      "policy": "rules/ruff-pt003-pytest-extraneous-scope-function.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4784,9 +4980,11 @@
         "tool": "ruff",
         "rule": "PT006"
       },
-      "policy": "candidates/rules/ruff-pt006-pytest-parametrize-names-wrong-type.json",
+      "policy": "rules/ruff-pt006-pytest-parametrize-names-wrong-type.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4797,9 +4995,11 @@
         "tool": "ruff",
         "rule": "PT007"
       },
-      "policy": "candidates/rules/ruff-pt007-pytest-parametrize-values-wrong-type.json",
+      "policy": "rules/ruff-pt007-pytest-parametrize-values-wrong-type.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4810,7 +5010,7 @@
         "tool": "ruff",
         "rule": "PT008"
       },
-      "policy": "candidates/rules/ruff-pt008-pytest-patch-with-lambda.json",
+      "policy": "rules/ruff-pt008-pytest-patch-with-lambda.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -4823,7 +5023,7 @@
         "tool": "ruff",
         "rule": "PT009"
       },
-      "policy": "candidates/rules/ruff-pt009-pytest-unittest-assertion.json",
+      "policy": "rules/ruff-pt009-pytest-unittest-assertion.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -4836,7 +5036,7 @@
         "tool": "ruff",
         "rule": "PT010"
       },
-      "policy": "candidates/rules/ruff-pt010-pytest-raises-without-exception.json",
+      "policy": "rules/ruff-pt010-pytest-raises-without-exception.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -4849,7 +5049,7 @@
         "tool": "ruff",
         "rule": "PT011"
       },
-      "policy": "candidates/rules/ruff-pt011-pytest-raises-too-broad.json",
+      "policy": "rules/ruff-pt011-pytest-raises-too-broad.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -4862,9 +5062,10 @@
         "tool": "ruff",
         "rule": "PT012"
       },
-      "policy": "candidates/rules/ruff-pt012-pytest-raises-with-multiple-statements.json",
+      "policy": "rules/ruff-pt012-pytest-raises-with-multiple-statements.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4875,7 +5076,7 @@
         "tool": "ruff",
         "rule": "PT013"
       },
-      "policy": "candidates/rules/ruff-pt013-pytest-incorrect-pytest-import.json",
+      "policy": "rules/ruff-pt013-pytest-incorrect-pytest-import.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -4888,9 +5089,12 @@
         "tool": "ruff",
         "rule": "PT014"
       },
-      "policy": "candidates/rules/ruff-pt014-pytest-duplicate-parametrize-test-cases.json",
+      "policy": "rules/ruff-pt014-pytest-duplicate-parametrize-test-cases.json",
       "capabilities": [
         "syntax",
+        "compare",
+        "arguments",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4901,9 +5105,11 @@
         "tool": "ruff",
         "rule": "PT015"
       },
-      "policy": "candidates/rules/ruff-pt015-pytest-assert-always-false.json",
+      "policy": "rules/ruff-pt015-pytest-assert-always-false.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -4914,7 +5120,7 @@
         "tool": "ruff",
         "rule": "PT016"
       },
-      "policy": "candidates/rules/ruff-pt016-pytest-fail-without-message.json",
+      "policy": "rules/ruff-pt016-pytest-fail-without-message.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -4927,9 +5133,10 @@
         "tool": "ruff",
         "rule": "PT017"
       },
-      "policy": "candidates/rules/ruff-pt017-pytest-assert-in-except.json",
+      "policy": "rules/ruff-pt017-pytest-assert-in-except.json",
       "capabilities": [
         "syntax",
+        "compare",
         "suppression"
       ],
       "match": "line+column"
@@ -4940,7 +5147,7 @@
         "tool": "ruff",
         "rule": "PT018"
       },
-      "policy": "candidates/rules/ruff-pt018-pytest-composite-assertion.json",
+      "policy": "rules/ruff-pt018-pytest-composite-assertion.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -4953,9 +5160,12 @@
         "tool": "ruff",
         "rule": "PT019"
       },
-      "policy": "candidates/rules/ruff-pt019-pytest-fixture-param-without-value.json",
+      "policy": "rules/ruff-pt019-pytest-fixture-param-without-value.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "arguments",
         "suppression"
       ],
       "match": "line+column"
@@ -4966,7 +5176,7 @@
         "tool": "ruff",
         "rule": "PT020"
       },
-      "policy": "candidates/rules/ruff-pt020-pytest-deprecated-yield-fixture.json",
+      "policy": "rules/ruff-pt020-pytest-deprecated-yield-fixture.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -4979,7 +5189,7 @@
         "tool": "ruff",
         "rule": "PT021"
       },
-      "policy": "candidates/rules/ruff-pt021-pytest-fixture-finalizer-callback.json",
+      "policy": "rules/ruff-pt021-pytest-fixture-finalizer-callback.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -4992,9 +5202,9 @@
         "tool": "ruff",
         "rule": "PT022"
       },
-      "policy": "candidates/rules/ruff-pt022-pytest-useless-yield-fixture.json",
+      "policy": "rules/ruff-pt022-pytest-useless-yield-fixture.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5005,9 +5215,9 @@
         "tool": "ruff",
         "rule": "PT023"
       },
-      "policy": "candidates/rules/ruff-pt023-pytest-incorrect-mark-parentheses-style.json",
+      "policy": "rules/ruff-pt023-pytest-incorrect-mark-parentheses-style.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5018,9 +5228,9 @@
         "tool": "ruff",
         "rule": "PT024"
       },
-      "policy": "candidates/rules/ruff-pt024-pytest-unnecessary-asyncio-mark-on-fixture.json",
+      "policy": "rules/ruff-pt024-pytest-unnecessary-asyncio-mark-on-fixture.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5031,7 +5241,7 @@
         "tool": "ruff",
         "rule": "PT025"
       },
-      "policy": "candidates/rules/ruff-pt025-pytest-erroneous-use-fixtures-on-fixture.json",
+      "policy": "rules/ruff-pt025-pytest-erroneous-use-fixtures-on-fixture.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -5044,7 +5254,7 @@
         "tool": "ruff",
         "rule": "PT026"
       },
-      "policy": "candidates/rules/ruff-pt026-pytest-use-fixtures-without-parameters.json",
+      "policy": "rules/ruff-pt026-pytest-use-fixtures-without-parameters.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -5057,7 +5267,7 @@
         "tool": "ruff",
         "rule": "PT027"
       },
-      "policy": "candidates/rules/ruff-pt027-pytest-unittest-raises-assertion.json",
+      "policy": "rules/ruff-pt027-pytest-unittest-raises-assertion.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -5070,7 +5280,7 @@
         "tool": "ruff",
         "rule": "PT028"
       },
-      "policy": "candidates/rules/ruff-pt028-pytest-parameter-with-default-argument.json",
+      "policy": "rules/ruff-pt028-pytest-parameter-with-default-argument.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -5083,9 +5293,10 @@
         "tool": "ruff",
         "rule": "PT030"
       },
-      "policy": "candidates/rules/ruff-pt030-pytest-warns-too-broad.json",
+      "policy": "rules/ruff-pt030-pytest-warns-too-broad.json",
       "capabilities": [
-        "syntax",
+        "value",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5096,9 +5307,9 @@
         "tool": "ruff",
         "rule": "PT031"
       },
-      "policy": "candidates/rules/ruff-pt031-pytest-warns-with-multiple-statements.json",
+      "policy": "rules/ruff-pt031-pytest-warns-with-multiple-statements.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5109,9 +5320,10 @@
         "tool": "ruff",
         "rule": "PTH100"
       },
-      "policy": "candidates/rules/ruff-pth100-os-path-abspath.json",
+      "policy": "rules/ruff-pth100-os-path-abspath.json",
       "capabilities": [
-        "syntax",
+        "arguments",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5122,9 +5334,10 @@
         "tool": "ruff",
         "rule": "PTH101"
       },
-      "policy": "candidates/rules/ruff-pth101-os-chmod.json",
+      "policy": "rules/ruff-pth101-os-chmod.json",
       "capabilities": [
-        "syntax",
+        "arguments",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5135,9 +5348,9 @@
         "tool": "ruff",
         "rule": "PTH102"
       },
-      "policy": "candidates/rules/ruff-pth102-os-mkdir.json",
+      "policy": "rules/ruff-pth102-os-mkdir.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5148,9 +5361,9 @@
         "tool": "ruff",
         "rule": "PTH103"
       },
-      "policy": "candidates/rules/ruff-pth103-os-makedirs.json",
+      "policy": "rules/ruff-pth103-os-makedirs.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5161,9 +5374,9 @@
         "tool": "ruff",
         "rule": "PTH104"
       },
-      "policy": "candidates/rules/ruff-pth104-os-rename.json",
+      "policy": "rules/ruff-pth104-os-rename.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5174,9 +5387,9 @@
         "tool": "ruff",
         "rule": "PTH105"
       },
-      "policy": "candidates/rules/ruff-pth105-os-replace.json",
+      "policy": "rules/ruff-pth105-os-replace.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5187,9 +5400,12 @@
         "tool": "ruff",
         "rule": "PTH106"
       },
-      "policy": "candidates/rules/ruff-pth106-os-rmdir.json",
+      "policy": "rules/ruff-pth106-os-rmdir.json",
       "capabilities": [
         "syntax",
+        "arguments",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -5200,9 +5416,12 @@
         "tool": "ruff",
         "rule": "PTH107"
       },
-      "policy": "candidates/rules/ruff-pth107-os-remove.json",
+      "policy": "rules/ruff-pth107-os-remove.json",
       "capabilities": [
         "syntax",
+        "arguments",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -5213,9 +5432,12 @@
         "tool": "ruff",
         "rule": "PTH108"
       },
-      "policy": "candidates/rules/ruff-pth108-os-unlink.json",
+      "policy": "rules/ruff-pth108-os-unlink.json",
       "capabilities": [
         "syntax",
+        "arguments",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -5226,9 +5448,11 @@
         "tool": "ruff",
         "rule": "PTH109"
       },
-      "policy": "candidates/rules/ruff-pth109-os-getcwd.json",
+      "policy": "rules/ruff-pth109-os-getcwd.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -5239,9 +5463,12 @@
         "tool": "ruff",
         "rule": "PTH110"
       },
-      "policy": "candidates/rules/ruff-pth110-os-path-exists.json",
+      "policy": "rules/ruff-pth110-os-path-exists.json",
       "capabilities": [
         "syntax",
+        "arguments",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -5252,9 +5479,12 @@
         "tool": "ruff",
         "rule": "PTH111"
       },
-      "policy": "candidates/rules/ruff-pth111-os-path-expanduser.json",
+      "policy": "rules/ruff-pth111-os-path-expanduser.json",
       "capabilities": [
         "syntax",
+        "arguments",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -5265,9 +5495,10 @@
         "tool": "ruff",
         "rule": "PTH112"
       },
-      "policy": "candidates/rules/ruff-pth112-os-path-isdir.json",
+      "policy": "rules/ruff-pth112-os-path-isdir.json",
       "capabilities": [
-        "syntax",
+        "arguments",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5278,9 +5509,10 @@
         "tool": "ruff",
         "rule": "PTH113"
       },
-      "policy": "candidates/rules/ruff-pth113-os-path-isfile.json",
+      "policy": "rules/ruff-pth113-os-path-isfile.json",
       "capabilities": [
-        "syntax",
+        "arguments",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5291,9 +5523,10 @@
         "tool": "ruff",
         "rule": "PTH114"
       },
-      "policy": "candidates/rules/ruff-pth114-os-path-islink.json",
+      "policy": "rules/ruff-pth114-os-path-islink.json",
       "capabilities": [
-        "syntax",
+        "arguments",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5304,9 +5537,10 @@
         "tool": "ruff",
         "rule": "PTH115"
       },
-      "policy": "candidates/rules/ruff-pth115-os-readlink.json",
+      "policy": "rules/ruff-pth115-os-readlink.json",
       "capabilities": [
-        "syntax",
+        "arguments",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5317,9 +5551,11 @@
         "tool": "ruff",
         "rule": "PTH116"
       },
-      "policy": "candidates/rules/ruff-pth116-os-stat.json",
+      "policy": "rules/ruff-pth116-os-stat.json",
       "capabilities": [
-        "syntax",
+        "value",
+        "arguments",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5330,9 +5566,10 @@
         "tool": "ruff",
         "rule": "PTH117"
       },
-      "policy": "candidates/rules/ruff-pth117-os-path-isabs.json",
+      "policy": "rules/ruff-pth117-os-path-isabs.json",
       "capabilities": [
-        "syntax",
+        "arguments",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5343,9 +5580,11 @@
         "tool": "ruff",
         "rule": "PTH118"
       },
-      "policy": "candidates/rules/ruff-pth118-os-path-join.json",
+      "policy": "rules/ruff-pth118-os-path-join.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -5356,9 +5595,11 @@
         "tool": "ruff",
         "rule": "PTH119"
       },
-      "policy": "candidates/rules/ruff-pth119-os-path-basename.json",
+      "policy": "rules/ruff-pth119-os-path-basename.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -5369,9 +5610,11 @@
         "tool": "ruff",
         "rule": "PTH120"
       },
-      "policy": "candidates/rules/ruff-pth120-os-path-dirname.json",
+      "policy": "rules/ruff-pth120-os-path-dirname.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -5382,9 +5625,11 @@
         "tool": "ruff",
         "rule": "PTH121"
       },
-      "policy": "candidates/rules/ruff-pth121-os-path-samefile.json",
+      "policy": "rules/ruff-pth121-os-path-samefile.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -5395,9 +5640,11 @@
         "tool": "ruff",
         "rule": "PTH122"
       },
-      "policy": "candidates/rules/ruff-pth122-os-path-splitext.json",
+      "policy": "rules/ruff-pth122-os-path-splitext.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -5408,9 +5655,13 @@
         "tool": "ruff",
         "rule": "PTH123"
       },
-      "policy": "candidates/rules/ruff-pth123-builtin-open.json",
+      "policy": "rules/ruff-pth123-builtin-open.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "arguments",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5421,9 +5672,11 @@
         "tool": "ruff",
         "rule": "PTH124"
       },
-      "policy": "candidates/rules/ruff-pth124-py-path.json",
+      "policy": "rules/ruff-pth124-py-path.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -5434,9 +5687,12 @@
         "tool": "ruff",
         "rule": "PTH201"
       },
-      "policy": "candidates/rules/ruff-pth201-path-constructor-current-directory.json",
+      "policy": "rules/ruff-pth201-path-constructor-current-directory.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -5447,9 +5703,12 @@
         "tool": "ruff",
         "rule": "PTH202"
       },
-      "policy": "candidates/rules/ruff-pth202-os-path-getsize.json",
+      "policy": "rules/ruff-pth202-os-path-getsize.json",
       "capabilities": [
         "syntax",
+        "arguments",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -5460,9 +5719,12 @@
         "tool": "ruff",
         "rule": "PTH203"
       },
-      "policy": "candidates/rules/ruff-pth203-os-path-getatime.json",
+      "policy": "rules/ruff-pth203-os-path-getatime.json",
       "capabilities": [
         "syntax",
+        "arguments",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -5473,9 +5735,12 @@
         "tool": "ruff",
         "rule": "PTH204"
       },
-      "policy": "candidates/rules/ruff-pth204-os-path-getmtime.json",
+      "policy": "rules/ruff-pth204-os-path-getmtime.json",
       "capabilities": [
         "syntax",
+        "arguments",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -5486,9 +5751,12 @@
         "tool": "ruff",
         "rule": "PTH205"
       },
-      "policy": "candidates/rules/ruff-pth205-os-path-getctime.json",
+      "policy": "rules/ruff-pth205-os-path-getctime.json",
       "capabilities": [
         "syntax",
+        "arguments",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -5499,9 +5767,10 @@
         "tool": "ruff",
         "rule": "PTH206"
       },
-      "policy": "candidates/rules/ruff-pth206-os-sep-split.json",
+      "policy": "rules/ruff-pth206-os-sep-split.json",
       "capabilities": [
         "syntax",
+        "arguments",
         "suppression"
       ],
       "match": "line+column"
@@ -5512,9 +5781,10 @@
         "tool": "ruff",
         "rule": "PTH207"
       },
-      "policy": "candidates/rules/ruff-pth207-glob.json",
+      "policy": "rules/ruff-pth207-glob.json",
       "capabilities": [
         "syntax",
+        "arguments",
         "suppression"
       ],
       "match": "line+column"
@@ -5525,9 +5795,12 @@
         "tool": "ruff",
         "rule": "PTH208"
       },
-      "policy": "candidates/rules/ruff-pth208-os-listdir.json",
+      "policy": "rules/ruff-pth208-os-listdir.json",
       "capabilities": [
         "syntax",
+        "value",
+        "arguments",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5538,9 +5811,12 @@
         "tool": "ruff",
         "rule": "PTH210"
       },
-      "policy": "candidates/rules/ruff-pth210-invalid-pathlib-with-suffix.json",
+      "policy": "rules/ruff-pth210-invalid-pathlib-with-suffix.json",
       "capabilities": [
         "syntax",
+        "value",
+        "arguments",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5551,9 +5827,10 @@
         "tool": "ruff",
         "rule": "PTH211"
       },
-      "policy": "candidates/rules/ruff-pth211-os-symlink.json",
+      "policy": "rules/ruff-pth211-os-symlink.json",
       "capabilities": [
         "syntax",
+        "arguments",
         "suppression"
       ],
       "match": "line+column"
@@ -5564,9 +5841,10 @@
         "tool": "ruff",
         "rule": "PYI001"
       },
-      "policy": "candidates/rules/ruff-pyi001-unprefixed-type-param.json",
+      "policy": "rules/ruff-pyi001-unprefixed-type-param.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5577,9 +5855,10 @@
         "tool": "ruff",
         "rule": "PYI002"
       },
-      "policy": "candidates/rules/ruff-pyi002-complex-if-statement-in-stub.json",
+      "policy": "rules/ruff-pyi002-complex-if-statement-in-stub.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5590,9 +5869,11 @@
         "tool": "ruff",
         "rule": "PYI003"
       },
-      "policy": "candidates/rules/ruff-pyi003-unrecognized-version-info-check.json",
+      "policy": "rules/ruff-pyi003-unrecognized-version-info-check.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5603,9 +5884,11 @@
         "tool": "ruff",
         "rule": "PYI004"
       },
-      "policy": "candidates/rules/ruff-pyi004-patch-version-comparison.json",
+      "policy": "rules/ruff-pyi004-patch-version-comparison.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5616,9 +5899,11 @@
         "tool": "ruff",
         "rule": "PYI005"
       },
-      "policy": "candidates/rules/ruff-pyi005-wrong-tuple-length-version-comparison.json",
+      "policy": "rules/ruff-pyi005-wrong-tuple-length-version-comparison.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5629,9 +5914,10 @@
         "tool": "ruff",
         "rule": "PYI006"
       },
-      "policy": "candidates/rules/ruff-pyi006-bad-version-info-comparison.json",
+      "policy": "rules/ruff-pyi006-bad-version-info-comparison.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5642,9 +5928,10 @@
         "tool": "ruff",
         "rule": "PYI007"
       },
-      "policy": "candidates/rules/ruff-pyi007-unrecognized-platform-check.json",
+      "policy": "rules/ruff-pyi007-unrecognized-platform-check.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5655,9 +5942,11 @@
         "tool": "ruff",
         "rule": "PYI008"
       },
-      "policy": "candidates/rules/ruff-pyi008-unrecognized-platform-name.json",
+      "policy": "rules/ruff-pyi008-unrecognized-platform-name.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5668,7 +5957,7 @@
         "tool": "ruff",
         "rule": "PYI009"
       },
-      "policy": "candidates/rules/ruff-pyi009-pass-statement-stub-body.json",
+      "policy": "rules/ruff-pyi009-pass-statement-stub-body.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -5681,7 +5970,7 @@
         "tool": "ruff",
         "rule": "PYI010"
       },
-      "policy": "candidates/rules/ruff-pyi010-non-empty-stub-body.json",
+      "policy": "rules/ruff-pyi010-non-empty-stub-body.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -5694,9 +5983,10 @@
         "tool": "ruff",
         "rule": "PYI011"
       },
-      "policy": "candidates/rules/ruff-pyi011-typed-argument-default-in-stub.json",
+      "policy": "rules/ruff-pyi011-typed-argument-default-in-stub.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5707,7 +5997,7 @@
         "tool": "ruff",
         "rule": "PYI012"
       },
-      "policy": "candidates/rules/ruff-pyi012-pass-in-class-body.json",
+      "policy": "rules/ruff-pyi012-pass-in-class-body.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -5720,9 +6010,10 @@
         "tool": "ruff",
         "rule": "PYI013"
       },
-      "policy": "candidates/rules/ruff-pyi013-ellipsis-in-non-empty-class-body.json",
+      "policy": "rules/ruff-pyi013-ellipsis-in-non-empty-class-body.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5733,9 +6024,11 @@
         "tool": "ruff",
         "rule": "PYI014"
       },
-      "policy": "candidates/rules/ruff-pyi014-argument-default-in-stub.json",
+      "policy": "rules/ruff-pyi014-argument-default-in-stub.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5746,9 +6039,11 @@
         "tool": "ruff",
         "rule": "PYI015"
       },
-      "policy": "candidates/rules/ruff-pyi015-assignment-default-in-stub.json",
+      "policy": "rules/ruff-pyi015-assignment-default-in-stub.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5762,6 +6057,9 @@
       "policy": "candidates/rules/ruff-pyi016-duplicate-union-member.json",
       "capabilities": [
         "syntax",
+        "compare",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -5772,9 +6070,10 @@
         "tool": "ruff",
         "rule": "PYI017"
       },
-      "policy": "candidates/rules/ruff-pyi017-complex-assignment-in-stub.json",
+      "policy": "rules/ruff-pyi017-complex-assignment-in-stub.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5785,9 +6084,11 @@
         "tool": "ruff",
         "rule": "PYI018"
       },
-      "policy": "candidates/rules/ruff-pyi018-unused-private-type-var.json",
+      "policy": "rules/ruff-pyi018-unused-private-type-var.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "calls",
         "suppression"
       ],
       "match": "line+column"
@@ -5798,9 +6099,14 @@
         "tool": "ruff",
         "rule": "PYI019"
       },
-      "policy": "candidates/rules/ruff-pyi019-custom-type-var-for-self.json",
+      "policy": "rules/ruff-pyi019-custom-type-var-for-self.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "scope",
+        "calls",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -5811,9 +6117,10 @@
         "tool": "ruff",
         "rule": "PYI020"
       },
-      "policy": "candidates/rules/ruff-pyi020-quoted-annotation-in-stub.json",
+      "policy": "rules/ruff-pyi020-quoted-annotation-in-stub.json",
       "capabilities": [
         "syntax",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -5824,7 +6131,7 @@
         "tool": "ruff",
         "rule": "PYI021"
       },
-      "policy": "candidates/rules/ruff-pyi021-docstring-in-stub.json",
+      "policy": "rules/ruff-pyi021-docstring-in-stub.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -5837,9 +6144,11 @@
         "tool": "ruff",
         "rule": "PYI024"
       },
-      "policy": "candidates/rules/ruff-pyi024-collections-named-tuple.json",
+      "policy": "rules/ruff-pyi024-collections-named-tuple.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -5850,9 +6159,10 @@
         "tool": "ruff",
         "rule": "PYI025"
       },
-      "policy": "candidates/rules/ruff-pyi025-unaliased-collections-abc-set-import.json",
+      "policy": "rules/ruff-pyi025-unaliased-collections-abc-set-import.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5863,9 +6173,10 @@
         "tool": "ruff",
         "rule": "PYI026"
       },
-      "policy": "candidates/rules/ruff-pyi026-type-alias-without-annotation.json",
+      "policy": "rules/ruff-pyi026-type-alias-without-annotation.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5876,9 +6187,11 @@
         "tool": "ruff",
         "rule": "PYI029"
       },
-      "policy": "candidates/rules/ruff-pyi029-str-or-repr-defined-in-stub.json",
+      "policy": "rules/ruff-pyi029-str-or-repr-defined-in-stub.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -5889,9 +6202,11 @@
         "tool": "ruff",
         "rule": "PYI030"
       },
-      "policy": "candidates/rules/ruff-pyi030-unnecessary-literal-union.json",
+      "policy": "rules/ruff-pyi030-unnecessary-literal-union.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -5902,9 +6217,11 @@
         "tool": "ruff",
         "rule": "PYI032"
       },
-      "policy": "candidates/rules/ruff-pyi032-any-eq-ne-annotation.json",
+      "policy": "rules/ruff-pyi032-any-eq-ne-annotation.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -5915,7 +6232,7 @@
         "tool": "ruff",
         "rule": "PYI033"
       },
-      "policy": "candidates/rules/ruff-pyi033-legacy-type-comment.json",
+      "policy": "rules/ruff-pyi033-legacy-type-comment.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -5928,9 +6245,12 @@
         "tool": "ruff",
         "rule": "PYI034"
       },
-      "policy": "candidates/rules/ruff-pyi034-non-self-return-type.json",
+      "policy": "rules/ruff-pyi034-non-self-return-type.json",
       "capabilities": [
         "syntax",
+        "compare",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -5941,9 +6261,10 @@
         "tool": "ruff",
         "rule": "PYI035"
       },
-      "policy": "candidates/rules/ruff-pyi035-unassigned-special-variable-in-stub.json",
+      "policy": "rules/ruff-pyi035-unassigned-special-variable-in-stub.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5954,9 +6275,10 @@
         "tool": "ruff",
         "rule": "PYI036"
       },
-      "policy": "candidates/rules/ruff-pyi036-bad-exit-annotation.json",
+      "policy": "rules/ruff-pyi036-bad-exit-annotation.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5967,9 +6289,10 @@
         "tool": "ruff",
         "rule": "PYI041"
       },
-      "policy": "candidates/rules/ruff-pyi041-redundant-numeric-union.json",
+      "policy": "rules/ruff-pyi041-redundant-numeric-union.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5980,9 +6303,9 @@
         "tool": "ruff",
         "rule": "PYI042"
       },
-      "policy": "candidates/rules/ruff-pyi042-snake-case-type-alias.json",
+      "policy": "rules/ruff-pyi042-snake-case-type-alias.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -5993,9 +6316,9 @@
         "tool": "ruff",
         "rule": "PYI043"
       },
-      "policy": "candidates/rules/ruff-pyi043-t-suffixed-type-alias.json",
+      "policy": "rules/ruff-pyi043-t-suffixed-type-alias.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6006,7 +6329,7 @@
         "tool": "ruff",
         "rule": "PYI044"
       },
-      "policy": "candidates/rules/ruff-pyi044-future-annotations-in-stub.json",
+      "policy": "rules/ruff-pyi044-future-annotations-in-stub.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -6019,9 +6342,9 @@
         "tool": "ruff",
         "rule": "PYI045"
       },
-      "policy": "candidates/rules/ruff-pyi045-iter-method-return-iterable.json",
+      "policy": "rules/ruff-pyi045-iter-method-return-iterable.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6032,9 +6355,10 @@
         "tool": "ruff",
         "rule": "PYI046"
       },
-      "policy": "candidates/rules/ruff-pyi046-unused-private-protocol.json",
+      "policy": "rules/ruff-pyi046-unused-private-protocol.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6045,9 +6369,10 @@
         "tool": "ruff",
         "rule": "PYI047"
       },
-      "policy": "candidates/rules/ruff-pyi047-unused-private-type-alias.json",
+      "policy": "rules/ruff-pyi047-unused-private-type-alias.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6058,7 +6383,7 @@
         "tool": "ruff",
         "rule": "PYI048"
       },
-      "policy": "candidates/rules/ruff-pyi048-stub-body-multiple-statements.json",
+      "policy": "rules/ruff-pyi048-stub-body-multiple-statements.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -6071,9 +6396,10 @@
         "tool": "ruff",
         "rule": "PYI049"
       },
-      "policy": "candidates/rules/ruff-pyi049-unused-private-typed-dict.json",
+      "policy": "rules/ruff-pyi049-unused-private-typed-dict.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6084,9 +6410,12 @@
         "tool": "ruff",
         "rule": "PYI050"
       },
-      "policy": "candidates/rules/ruff-pyi050-no-return-argument-annotation-in-stub.json",
+      "policy": "rules/ruff-pyi050-no-return-argument-annotation-in-stub.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6097,9 +6426,13 @@
         "tool": "ruff",
         "rule": "PYI051"
       },
-      "policy": "candidates/rules/ruff-pyi051-redundant-literal-union.json",
+      "policy": "rules/ruff-pyi051-redundant-literal-union.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6110,9 +6443,12 @@
         "tool": "ruff",
         "rule": "PYI052"
       },
-      "policy": "candidates/rules/ruff-pyi052-unannotated-assignment-in-stub.json",
+      "policy": "rules/ruff-pyi052-unannotated-assignment-in-stub.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6126,6 +6462,9 @@
       "policy": "candidates/rules/ruff-pyi053-string-or-bytes-too-long.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6136,9 +6475,12 @@
         "tool": "ruff",
         "rule": "PYI054"
       },
-      "policy": "candidates/rules/ruff-pyi054-numeric-literal-too-long.json",
+      "policy": "rules/ruff-pyi054-numeric-literal-too-long.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6152,6 +6494,10 @@
       "policy": "candidates/rules/ruff-pyi055-unnecessary-type-union.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
+        "calls",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6162,9 +6508,12 @@
         "tool": "ruff",
         "rule": "PYI056"
       },
-      "policy": "candidates/rules/ruff-pyi056-unsupported-method-call-on-all.json",
+      "policy": "rules/ruff-pyi056-unsupported-method-call-on-all.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6175,9 +6524,12 @@
         "tool": "ruff",
         "rule": "PYI057"
       },
-      "policy": "candidates/rules/ruff-pyi057-byte-string-usage.json",
+      "policy": "rules/ruff-pyi057-byte-string-usage.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6188,9 +6540,13 @@
         "tool": "ruff",
         "rule": "PYI058"
       },
-      "policy": "candidates/rules/ruff-pyi058-generator-return-from-iter-method.json",
+      "policy": "rules/ruff-pyi058-generator-return-from-iter-method.json",
       "capabilities": [
         "syntax",
+        "value",
+        "arguments",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6201,9 +6557,10 @@
         "tool": "ruff",
         "rule": "PYI059"
       },
-      "policy": "candidates/rules/ruff-pyi059-generic-not-last-base-class.json",
+      "policy": "rules/ruff-pyi059-generic-not-last-base-class.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6214,9 +6571,13 @@
         "tool": "ruff",
         "rule": "PYI061"
       },
-      "policy": "candidates/rules/ruff-pyi061-redundant-none-literal.json",
+      "policy": "rules/ruff-pyi061-redundant-none-literal.json",
       "capabilities": [
         "syntax",
+        "value",
+        "arguments",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6227,9 +6588,14 @@
         "tool": "ruff",
         "rule": "PYI062"
       },
-      "policy": "candidates/rules/ruff-pyi062-duplicate-literal-member.json",
+      "policy": "rules/ruff-pyi062-duplicate-literal-member.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "arguments",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6240,9 +6606,9 @@
         "tool": "ruff",
         "rule": "PYI063"
       },
-      "policy": "candidates/rules/ruff-pyi063-pep484-style-positional-only-parameter.json",
+      "policy": "rules/ruff-pyi063-pep484-style-positional-only-parameter.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6253,9 +6619,10 @@
         "tool": "ruff",
         "rule": "PYI064"
       },
-      "policy": "candidates/rules/ruff-pyi064-redundant-final-literal.json",
+      "policy": "rules/ruff-pyi064-redundant-final-literal.json",
       "capabilities": [
-        "syntax",
+        "compare",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6266,9 +6633,9 @@
         "tool": "ruff",
         "rule": "PYI066"
       },
-      "policy": "candidates/rules/ruff-pyi066-bad-version-info-order.json",
+      "policy": "rules/ruff-pyi066-bad-version-info-order.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6279,9 +6646,11 @@
         "tool": "ruff",
         "rule": "RSE102"
       },
-      "policy": "candidates/rules/ruff-rse102-unnecessary-paren-on-raise-exception.json",
+      "policy": "rules/ruff-rse102-unnecessary-paren-on-raise-exception.json",
       "capabilities": [
         "syntax",
+        "compare",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6305,7 +6674,7 @@
         "tool": "ruff",
         "rule": "RUF002"
       },
-      "policy": "candidates/rules/ruff-ruf002-ambiguous-unicode-character-docstring.json",
+      "policy": "rules/ruff-ruf002-ambiguous-unicode-character-docstring.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -6318,7 +6687,7 @@
         "tool": "ruff",
         "rule": "RUF003"
       },
-      "policy": "candidates/rules/ruff-ruf003-ambiguous-unicode-character-comment.json",
+      "policy": "rules/ruff-ruf003-ambiguous-unicode-character-comment.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -6331,9 +6700,10 @@
         "tool": "ruff",
         "rule": "RUF005"
       },
-      "policy": "candidates/rules/ruff-ruf005-collection-literal-concatenation.json",
+      "policy": "rules/ruff-ruf005-collection-literal-concatenation.json",
       "capabilities": [
         "syntax",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6344,9 +6714,10 @@
         "tool": "ruff",
         "rule": "RUF006"
       },
-      "policy": "candidates/rules/ruff-ruf006-asyncio-dangling-task.json",
+      "policy": "rules/ruff-ruf006-asyncio-dangling-task.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6357,9 +6728,12 @@
         "tool": "ruff",
         "rule": "RUF007"
       },
-      "policy": "candidates/rules/ruff-ruf007-zip-instead-of-pairwise.json",
+      "policy": "rules/ruff-ruf007-zip-instead-of-pairwise.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6370,9 +6744,9 @@
         "tool": "ruff",
         "rule": "RUF008"
       },
-      "policy": "candidates/rules/ruff-ruf008-mutable-dataclass-default.json",
+      "policy": "rules/ruff-ruf008-mutable-dataclass-default.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6383,9 +6757,12 @@
         "tool": "ruff",
         "rule": "RUF009"
       },
-      "policy": "candidates/rules/ruff-ruf009-function-call-in-dataclass-default-argument.json",
+      "policy": "rules/ruff-ruf009-function-call-in-dataclass-default-argument.json",
       "capabilities": [
-        "syntax",
+        "value",
+        "compare",
+        "arguments",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6396,9 +6773,9 @@
         "tool": "ruff",
         "rule": "RUF010"
       },
-      "policy": "candidates/rules/ruff-ruf010-explicit-f-string-type-conversion.json",
+      "policy": "rules/ruff-ruf010-explicit-f-string-type-conversion.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6409,9 +6786,11 @@
         "tool": "ruff",
         "rule": "RUF012"
       },
-      "policy": "candidates/rules/ruff-ruf012-mutable-class-default.json",
+      "policy": "rules/ruff-ruf012-mutable-class-default.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6422,9 +6801,12 @@
         "tool": "ruff",
         "rule": "RUF013"
       },
-      "policy": "candidates/rules/ruff-ruf013-implicit-optional.json",
+      "policy": "rules/ruff-ruf013-implicit-optional.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6435,9 +6817,12 @@
         "tool": "ruff",
         "rule": "RUF015"
       },
-      "policy": "candidates/rules/ruff-ruf015-unnecessary-iterable-allocation-for-first-element.json",
+      "policy": "rules/ruff-ruf015-unnecessary-iterable-allocation-for-first-element.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6448,9 +6833,10 @@
         "tool": "ruff",
         "rule": "RUF016"
       },
-      "policy": "candidates/rules/ruff-ruf016-invalid-index-type.json",
+      "policy": "rules/ruff-ruf016-invalid-index-type.json",
       "capabilities": [
         "syntax",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6461,9 +6847,11 @@
         "tool": "ruff",
         "rule": "RUF017"
       },
-      "policy": "candidates/rules/ruff-ruf017-quadratic-list-summation.json",
+      "policy": "rules/ruff-ruf017-quadratic-list-summation.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6474,9 +6862,11 @@
         "tool": "ruff",
         "rule": "RUF018"
       },
-      "policy": "candidates/rules/ruff-ruf018-assignment-in-assert.json",
+      "policy": "rules/ruff-ruf018-assignment-in-assert.json",
       "capabilities": [
         "syntax",
+        "compare",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6487,9 +6877,12 @@
         "tool": "ruff",
         "rule": "RUF019"
       },
-      "policy": "candidates/rules/ruff-ruf019-unnecessary-key-check.json",
+      "policy": "rules/ruff-ruf019-unnecessary-key-check.json",
       "capabilities": [
         "syntax",
+        "compare",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6500,9 +6893,11 @@
         "tool": "ruff",
         "rule": "RUF020"
       },
-      "policy": "candidates/rules/ruff-ruf020-never-union.json",
+      "policy": "rules/ruff-ruf020-never-union.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6513,9 +6908,10 @@
         "tool": "ruff",
         "rule": "RUF021"
       },
-      "policy": "candidates/rules/ruff-ruf021-parenthesize-chained-operators.json",
+      "policy": "rules/ruff-ruf021-parenthesize-chained-operators.json",
       "capabilities": [
         "syntax",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6526,9 +6922,11 @@
         "tool": "ruff",
         "rule": "RUF022"
       },
-      "policy": "candidates/rules/ruff-ruf022-unsorted-dunder-all.json",
+      "policy": "rules/ruff-ruf022-unsorted-dunder-all.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
         "suppression"
       ],
       "match": "line+column"
@@ -6539,9 +6937,11 @@
         "tool": "ruff",
         "rule": "RUF023"
       },
-      "policy": "candidates/rules/ruff-ruf023-unsorted-dunder-slots.json",
+      "policy": "rules/ruff-ruf023-unsorted-dunder-slots.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
         "suppression"
       ],
       "match": "line+column"
@@ -6552,9 +6952,10 @@
         "tool": "ruff",
         "rule": "RUF024"
       },
-      "policy": "candidates/rules/ruff-ruf024-mutable-fromkeys-value.json",
+      "policy": "rules/ruff-ruf024-mutable-fromkeys-value.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6565,9 +6966,14 @@
         "tool": "ruff",
         "rule": "RUF026"
       },
-      "policy": "candidates/rules/ruff-ruf026-default-factory-kwarg.json",
+      "policy": "rules/ruff-ruf026-default-factory-kwarg.json",
       "capabilities": [
         "syntax",
+        "value",
+        "arguments",
+        "scope",
+        "calls",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6581,6 +6987,9 @@
       "policy": "candidates/rules/ruff-ruf028-invalid-formatter-suppression-comment.json",
       "capabilities": [
         "syntax",
+        "compare",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6591,9 +7000,12 @@
         "tool": "ruff",
         "rule": "RUF030"
       },
-      "policy": "candidates/rules/ruff-ruf030-assert-with-print-message.json",
+      "policy": "rules/ruff-ruf030-assert-with-print-message.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "calls",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6604,9 +7016,11 @@
         "tool": "ruff",
         "rule": "RUF032"
       },
-      "policy": "candidates/rules/ruff-ruf032-decimal-from-float-literal.json",
+      "policy": "rules/ruff-ruf032-decimal-from-float-literal.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6617,9 +7031,10 @@
         "tool": "ruff",
         "rule": "RUF033"
       },
-      "policy": "candidates/rules/ruff-ruf033-post-init-default.json",
+      "policy": "rules/ruff-ruf033-post-init-default.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6630,9 +7045,11 @@
         "tool": "ruff",
         "rule": "RUF034"
       },
-      "policy": "candidates/rules/ruff-ruf034-useless-if-else.json",
+      "policy": "rules/ruff-ruf034-useless-if-else.json",
       "capabilities": [
         "syntax",
+        "compare",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6646,6 +7063,11 @@
       "policy": "candidates/rules/ruff-ruf036-none-not-at-end-of-union.json",
       "capabilities": [
         "syntax",
+        "value",
+        "arguments",
+        "scope",
+        "calls",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6656,9 +7078,14 @@
         "tool": "ruff",
         "rule": "RUF037"
       },
-      "policy": "candidates/rules/ruff-ruf037-unnecessary-empty-iterable-within-deque-call.json",
+      "policy": "rules/ruff-ruf037-unnecessary-empty-iterable-within-deque-call.json",
       "capabilities": [
         "syntax",
+        "value",
+        "arguments",
+        "scope",
+        "calls",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6669,9 +7096,10 @@
         "tool": "ruff",
         "rule": "RUF040"
       },
-      "policy": "candidates/rules/ruff-ruf040-invalid-assert-message-literal-argument.json",
+      "policy": "rules/ruff-ruf040-invalid-assert-message-literal-argument.json",
       "capabilities": [
         "syntax",
+        "value",
         "suppression"
       ],
       "match": "line+column"
@@ -6682,9 +7110,10 @@
         "tool": "ruff",
         "rule": "RUF041"
       },
-      "policy": "candidates/rules/ruff-ruf041-unnecessary-nested-literal.json",
+      "policy": "rules/ruff-ruf041-unnecessary-nested-literal.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6698,6 +7127,8 @@
       "policy": "candidates/rules/ruff-ruf043-pytest-raises-ambiguous-pattern.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6708,9 +7139,10 @@
         "tool": "ruff",
         "rule": "RUF046"
       },
-      "policy": "candidates/rules/ruff-ruf046-unnecessary-cast-to-int.json",
+      "policy": "rules/ruff-ruf046-unnecessary-cast-to-int.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6721,9 +7153,13 @@
         "tool": "ruff",
         "rule": "RUF048"
       },
-      "policy": "candidates/rules/ruff-ruf048-map-int-version-parsing.json",
+      "policy": "rules/ruff-ruf048-map-int-version-parsing.json",
       "capabilities": [
         "syntax",
+        "value",
+        "arguments",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6734,9 +7170,11 @@
         "tool": "ruff",
         "rule": "RUF049"
       },
-      "policy": "candidates/rules/ruff-ruf049-dataclass-enum.json",
+      "policy": "rules/ruff-ruf049-dataclass-enum.json",
       "capabilities": [
         "syntax",
+        "compare",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6747,9 +7185,12 @@
         "tool": "ruff",
         "rule": "RUF051"
       },
-      "policy": "candidates/rules/ruff-ruf051-if-key-in-dict-del.json",
+      "policy": "rules/ruff-ruf051-if-key-in-dict-del.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6763,6 +7204,7 @@
       "policy": "candidates/rules/ruff-ruf053-class-with-mixed-type-vars.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6773,9 +7215,12 @@
         "tool": "ruff",
         "rule": "RUF057"
       },
-      "policy": "candidates/rules/ruff-ruf057-unnecessary-round.json",
+      "policy": "rules/ruff-ruf057-unnecessary-round.json",
       "capabilities": [
         "syntax",
+        "value",
+        "arguments",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6786,9 +7231,11 @@
         "tool": "ruff",
         "rule": "RUF058"
       },
-      "policy": "candidates/rules/ruff-ruf058-starmap-zip.json",
+      "policy": "rules/ruff-ruf058-starmap-zip.json",
       "capabilities": [
         "syntax",
+        "arguments",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6799,9 +7246,9 @@
         "tool": "ruff",
         "rule": "RUF059"
       },
-      "policy": "candidates/rules/ruff-ruf059-unused-unpacked-variable.json",
+      "policy": "rules/ruff-ruf059-unused-unpacked-variable.json",
       "capabilities": [
-        "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6812,9 +7259,11 @@
         "tool": "ruff",
         "rule": "RUF060"
       },
-      "policy": "candidates/rules/ruff-ruf060-in-empty-collection.json",
+      "policy": "rules/ruff-ruf060-in-empty-collection.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6825,9 +7274,11 @@
         "tool": "ruff",
         "rule": "RUF061"
       },
-      "policy": "candidates/rules/ruff-ruf061-legacy-form-pytest-raises.json",
+      "policy": "rules/ruff-ruf061-legacy-form-pytest-raises.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6838,9 +7289,11 @@
         "tool": "ruff",
         "rule": "RUF063"
       },
-      "policy": "candidates/rules/ruff-ruf063-access-annotations-from-class-dict.json",
+      "policy": "rules/ruff-ruf063-access-annotations-from-class-dict.json",
       "capabilities": [
         "syntax",
+        "value",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6851,9 +7304,10 @@
         "tool": "ruff",
         "rule": "RUF064"
       },
-      "policy": "candidates/rules/ruff-ruf064-non-octal-permissions.json",
+      "policy": "rules/ruff-ruf064-non-octal-permissions.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -6864,9 +7318,12 @@
         "tool": "ruff",
         "rule": "RUF068"
       },
-      "policy": "candidates/rules/ruff-ruf068-duplicate-entry-in-dunder-all.json",
+      "policy": "rules/ruff-ruf068-duplicate-entry-in-dunder-all.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6877,9 +7334,12 @@
         "tool": "ruff",
         "rule": "SLF001"
       },
-      "policy": "candidates/rules/ruff-slf001-private-member-access.json",
+      "policy": "rules/ruff-slf001-private-member-access.json",
       "capabilities": [
         "syntax",
+        "compare",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6890,9 +7350,15 @@
         "tool": "ruff",
         "rule": "SLOT000"
       },
-      "policy": "candidates/rules/ruff-slot000-no-slots-in-str-subclass.json",
+      "policy": "rules/ruff-slot000-no-slots-in-str-subclass.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "arguments",
+        "scope",
+        "calls",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6903,9 +7369,14 @@
         "tool": "ruff",
         "rule": "SLOT001"
       },
-      "policy": "candidates/rules/ruff-slot001-no-slots-in-tuple-subclass.json",
+      "policy": "rules/ruff-slot001-no-slots-in-tuple-subclass.json",
       "capabilities": [
         "syntax",
+        "value",
+        "arguments",
+        "scope",
+        "calls",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6916,9 +7387,14 @@
         "tool": "ruff",
         "rule": "SLOT002"
       },
-      "policy": "candidates/rules/ruff-slot002-no-slots-in-namedtuple-subclass.json",
+      "policy": "rules/ruff-slot002-no-slots-in-namedtuple-subclass.json",
       "capabilities": [
         "syntax",
+        "value",
+        "arguments",
+        "scope",
+        "calls",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6929,9 +7405,11 @@
         "tool": "ruff",
         "rule": "T201"
       },
-      "policy": "candidates/rules/ruff-t201-print.json",
+      "policy": "rules/ruff-t201-print.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6942,9 +7420,11 @@
         "tool": "ruff",
         "rule": "T203"
       },
-      "policy": "candidates/rules/ruff-t203-p-print.json",
+      "policy": "rules/ruff-t203-p-print.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6958,6 +7438,12 @@
       "policy": "candidates/rules/ruff-tc001-typing-only-first-party-import.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "arguments",
+        "scope",
+        "calls",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6971,6 +7457,12 @@
       "policy": "candidates/rules/ruff-tc002-typing-only-third-party-import.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "arguments",
+        "scope",
+        "calls",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6984,6 +7476,12 @@
       "policy": "candidates/rules/ruff-tc003-typing-only-standard-library-import.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "arguments",
+        "scope",
+        "calls",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -6997,6 +7495,11 @@
       "policy": "candidates/rules/ruff-tc004-runtime-import-in-type-checking-block.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "scope",
+        "calls",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7007,9 +7510,11 @@
         "tool": "ruff",
         "rule": "TC005"
       },
-      "policy": "candidates/rules/ruff-tc005-empty-type-checking-block.json",
+      "policy": "rules/ruff-tc005-empty-type-checking-block.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -7023,6 +7528,11 @@
       "policy": "candidates/rules/ruff-tc006-runtime-cast-value.json",
       "capabilities": [
         "syntax",
+        "value",
+        "arguments",
+        "scope",
+        "calls",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7036,6 +7546,7 @@
       "policy": "candidates/rules/ruff-tc007-unquoted-type-alias.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -7049,6 +7560,8 @@
       "policy": "candidates/rules/ruff-tc010-runtime-string-union.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7059,7 +7572,7 @@
         "tool": "ruff",
         "rule": "TD001"
       },
-      "policy": "candidates/rules/ruff-td001-invalid-todo-tag.json",
+      "policy": "rules/ruff-td001-invalid-todo-tag.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -7072,7 +7585,7 @@
         "tool": "ruff",
         "rule": "TD002"
       },
-      "policy": "candidates/rules/ruff-td002-missing-todo-author.json",
+      "policy": "rules/ruff-td002-missing-todo-author.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -7085,7 +7598,7 @@
         "tool": "ruff",
         "rule": "TD003"
       },
-      "policy": "candidates/rules/ruff-td003-missing-todo-link.json",
+      "policy": "rules/ruff-td003-missing-todo-link.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -7098,7 +7611,7 @@
         "tool": "ruff",
         "rule": "TD004"
       },
-      "policy": "candidates/rules/ruff-td004-missing-todo-colon.json",
+      "policy": "rules/ruff-td004-missing-todo-colon.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -7111,9 +7624,10 @@
         "tool": "ruff",
         "rule": "TD005"
       },
-      "policy": "candidates/rules/ruff-td005-missing-todo-description.json",
+      "policy": "rules/ruff-td005-missing-todo-description.json",
       "capabilities": [
         "syntax",
+        "value",
         "suppression"
       ],
       "match": "line+column"
@@ -7124,9 +7638,10 @@
         "tool": "ruff",
         "rule": "TD006"
       },
-      "policy": "candidates/rules/ruff-td006-invalid-todo-capitalization.json",
+      "policy": "rules/ruff-td006-invalid-todo-capitalization.json",
       "capabilities": [
         "syntax",
+        "value",
         "suppression"
       ],
       "match": "line+column"
@@ -7137,9 +7652,10 @@
         "tool": "ruff",
         "rule": "TD007"
       },
-      "policy": "candidates/rules/ruff-td007-missing-space-after-todo-colon.json",
+      "policy": "rules/ruff-td007-missing-space-after-todo-colon.json",
       "capabilities": [
         "syntax",
+        "value",
         "suppression"
       ],
       "match": "line+column"
@@ -7150,7 +7666,7 @@
         "tool": "ruff",
         "rule": "TID252"
       },
-      "policy": "candidates/rules/ruff-tid252-relative-imports.json",
+      "policy": "rules/ruff-tid252-relative-imports.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -7163,9 +7679,12 @@
         "tool": "ruff",
         "rule": "TRY002"
       },
-      "policy": "candidates/rules/ruff-try002-raise-vanilla-class.json",
+      "policy": "rules/ruff-try002-raise-vanilla-class.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7176,9 +7695,12 @@
         "tool": "ruff",
         "rule": "TRY003"
       },
-      "policy": "candidates/rules/ruff-try003-raise-vanilla-args.json",
+      "policy": "rules/ruff-try003-raise-vanilla-args.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7189,9 +7711,13 @@
         "tool": "ruff",
         "rule": "TRY004"
       },
-      "policy": "candidates/rules/ruff-try004-type-check-without-type-error.json",
+      "policy": "rules/ruff-try004-type-check-without-type-error.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7202,9 +7728,13 @@
         "tool": "ruff",
         "rule": "TRY201"
       },
-      "policy": "candidates/rules/ruff-try201-verbose-raise.json",
+      "policy": "rules/ruff-try201-verbose-raise.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7215,9 +7745,13 @@
         "tool": "ruff",
         "rule": "TRY203"
       },
-      "policy": "candidates/rules/ruff-try203-useless-try-except.json",
+      "policy": "rules/ruff-try203-useless-try-except.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7228,9 +7762,12 @@
         "tool": "ruff",
         "rule": "TRY300"
       },
-      "policy": "candidates/rules/ruff-try300-try-consider-else.json",
+      "policy": "rules/ruff-try300-try-consider-else.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7241,9 +7778,13 @@
         "tool": "ruff",
         "rule": "TRY301"
       },
-      "policy": "candidates/rules/ruff-try301-raise-within-try.json",
+      "policy": "rules/ruff-try301-raise-within-try.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "scope",
+        "calls",
         "suppression"
       ],
       "match": "line+column"
@@ -7254,9 +7795,13 @@
         "tool": "ruff",
         "rule": "TRY400"
       },
-      "policy": "candidates/rules/ruff-try400-error-instead-of-exception.json",
+      "policy": "rules/ruff-try400-error-instead-of-exception.json",
       "capabilities": [
         "syntax",
+        "value",
+        "arguments",
+        "scope",
+        "calls",
         "suppression"
       ],
       "match": "line+column"
@@ -7267,9 +7812,13 @@
         "tool": "ruff",
         "rule": "TRY401"
       },
-      "policy": "candidates/rules/ruff-try401-verbose-log-message.json",
+      "policy": "rules/ruff-try401-verbose-log-message.json",
       "capabilities": [
         "syntax",
+        "value",
+        "arguments",
+        "scope",
+        "calls",
         "suppression"
       ],
       "match": "line+column"
@@ -7280,7 +7829,7 @@
         "tool": "ruff",
         "rule": "UP001"
       },
-      "policy": "candidates/rules/ruff-up001-useless-metaclass-type.json",
+      "policy": "rules/ruff-up001-useless-metaclass-type.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -7293,7 +7842,7 @@
         "tool": "ruff",
         "rule": "UP003"
       },
-      "policy": "candidates/rules/ruff-up003-type-of-primitive.json",
+      "policy": "rules/ruff-up003-type-of-primitive.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -7306,7 +7855,7 @@
         "tool": "ruff",
         "rule": "UP004"
       },
-      "policy": "candidates/rules/ruff-up004-useless-object-inheritance.json",
+      "policy": "rules/ruff-up004-useless-object-inheritance.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -7319,7 +7868,7 @@
         "tool": "ruff",
         "rule": "UP005"
       },
-      "policy": "candidates/rules/ruff-up005-deprecated-unittest-alias.json",
+      "policy": "rules/ruff-up005-deprecated-unittest-alias.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -7332,9 +7881,11 @@
         "tool": "ruff",
         "rule": "UP006"
       },
-      "policy": "candidates/rules/ruff-up006-non-pep585-annotation.json",
+      "policy": "rules/ruff-up006-non-pep585-annotation.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7345,9 +7896,11 @@
         "tool": "ruff",
         "rule": "UP007"
       },
-      "policy": "candidates/rules/ruff-up007-non-pep604-annotation-union.json",
+      "policy": "rules/ruff-up007-non-pep604-annotation-union.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7358,9 +7911,12 @@
         "tool": "ruff",
         "rule": "UP008"
       },
-      "policy": "candidates/rules/ruff-up008-super-call-with-parameters.json",
+      "policy": "rules/ruff-up008-super-call-with-parameters.json",
       "capabilities": [
         "syntax",
+        "compare",
+        "arguments",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -7384,9 +7940,10 @@
         "tool": "ruff",
         "rule": "UP010"
       },
-      "policy": "candidates/rules/ruff-up010-unnecessary-future-import.json",
+      "policy": "rules/ruff-up010-unnecessary-future-import.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -7397,9 +7954,10 @@
         "tool": "ruff",
         "rule": "UP011"
       },
-      "policy": "candidates/rules/ruff-up011-lru-cache-without-parameters.json",
+      "policy": "rules/ruff-up011-lru-cache-without-parameters.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -7410,9 +7968,12 @@
         "tool": "ruff",
         "rule": "UP012"
       },
-      "policy": "candidates/rules/ruff-up012-unnecessary-encode-utf8.json",
+      "policy": "rules/ruff-up012-unnecessary-encode-utf8.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7423,9 +7984,14 @@
         "tool": "ruff",
         "rule": "UP013"
       },
-      "policy": "candidates/rules/ruff-up013-convert-typed-dict-functional-to-class.json",
+      "policy": "rules/ruff-up013-convert-typed-dict-functional-to-class.json",
       "capabilities": [
         "syntax",
+        "value",
+        "arguments",
+        "scope",
+        "calls",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7436,9 +8002,14 @@
         "tool": "ruff",
         "rule": "UP014"
       },
-      "policy": "candidates/rules/ruff-up014-convert-named-tuple-functional-to-class.json",
+      "policy": "rules/ruff-up014-convert-named-tuple-functional-to-class.json",
       "capabilities": [
         "syntax",
+        "value",
+        "arguments",
+        "scope",
+        "calls",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7449,9 +8020,14 @@
         "tool": "ruff",
         "rule": "UP015"
       },
-      "policy": "candidates/rules/ruff-up015-redundant-open-modes.json",
+      "policy": "rules/ruff-up015-redundant-open-modes.json",
       "capabilities": [
         "syntax",
+        "value",
+        "arguments",
+        "scope",
+        "calls",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7465,6 +8041,8 @@
       "policy": "candidates/rules/ruff-up017-datetime-timezone-utc.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7475,9 +8053,14 @@
         "tool": "ruff",
         "rule": "UP018"
       },
-      "policy": "candidates/rules/ruff-up018-native-literals.json",
+      "policy": "rules/ruff-up018-native-literals.json",
       "capabilities": [
         "syntax",
+        "value",
+        "arguments",
+        "scope",
+        "calls",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7488,9 +8071,11 @@
         "tool": "ruff",
         "rule": "UP019"
       },
-      "policy": "candidates/rules/ruff-up019-typing-text-str-alias.json",
+      "policy": "rules/ruff-up019-typing-text-str-alias.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7501,9 +8086,12 @@
         "tool": "ruff",
         "rule": "UP020"
       },
-      "policy": "candidates/rules/ruff-up020-open-alias.json",
+      "policy": "rules/ruff-up020-open-alias.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "calls",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7514,9 +8102,13 @@
         "tool": "ruff",
         "rule": "UP021"
       },
-      "policy": "candidates/rules/ruff-up021-replace-universal-newlines.json",
+      "policy": "rules/ruff-up021-replace-universal-newlines.json",
       "capabilities": [
         "syntax",
+        "arguments",
+        "scope",
+        "calls",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7527,9 +8119,11 @@
         "tool": "ruff",
         "rule": "UP022"
       },
-      "policy": "candidates/rules/ruff-up022-replace-stdout-stderr.json",
+      "policy": "rules/ruff-up022-replace-stdout-stderr.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "calls",
         "suppression"
       ],
       "match": "line+column"
@@ -7540,7 +8134,7 @@
         "tool": "ruff",
         "rule": "UP023"
       },
-      "policy": "candidates/rules/ruff-up023-deprecated-c-element-tree.json",
+      "policy": "rules/ruff-up023-deprecated-c-element-tree.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -7553,9 +8147,10 @@
         "tool": "ruff",
         "rule": "UP024"
       },
-      "policy": "candidates/rules/ruff-up024-os-error-alias.json",
+      "policy": "rules/ruff-up024-os-error-alias.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -7566,7 +8161,7 @@
         "tool": "ruff",
         "rule": "UP025"
       },
-      "policy": "candidates/rules/ruff-up025-unicode-kind-prefix.json",
+      "policy": "rules/ruff-up025-unicode-kind-prefix.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -7582,6 +8177,7 @@
       "policy": "candidates/rules/ruff-up026-deprecated-mock-import.json",
       "capabilities": [
         "syntax",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7592,9 +8188,11 @@
         "tool": "ruff",
         "rule": "UP028"
       },
-      "policy": "candidates/rules/ruff-up028-yield-in-for-loop.json",
+      "policy": "rules/ruff-up028-yield-in-for-loop.json",
       "capabilities": [
         "syntax",
+        "compare",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -7605,9 +8203,11 @@
         "tool": "ruff",
         "rule": "UP029"
       },
-      "policy": "candidates/rules/ruff-up029-unnecessary-builtin-import.json",
+      "policy": "rules/ruff-up029-unnecessary-builtin-import.json",
       "capabilities": [
         "syntax",
+        "compare",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -7618,9 +8218,13 @@
         "tool": "ruff",
         "rule": "UP030"
       },
-      "policy": "candidates/rules/ruff-up030-format-literals.json",
+      "policy": "rules/ruff-up030-format-literals.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "formatArgs",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7634,6 +8238,9 @@
       "policy": "candidates/rules/ruff-up031-printf-string-formatting.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7644,9 +8251,14 @@
         "tool": "ruff",
         "rule": "UP032"
       },
-      "policy": "candidates/rules/ruff-up032-f-string.json",
+      "policy": "rules/ruff-up032-f-string.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "scope",
+        "formatArgs",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7657,9 +8269,10 @@
         "tool": "ruff",
         "rule": "UP033"
       },
-      "policy": "candidates/rules/ruff-up033-lru-cache-with-maxsize-none.json",
+      "policy": "rules/ruff-up033-lru-cache-with-maxsize-none.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -7670,7 +8283,7 @@
         "tool": "ruff",
         "rule": "UP034"
       },
-      "policy": "candidates/rules/ruff-up034-extraneous-parentheses.json",
+      "policy": "rules/ruff-up034-extraneous-parentheses.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -7683,7 +8296,7 @@
         "tool": "ruff",
         "rule": "UP035"
       },
-      "policy": "candidates/rules/ruff-up035-deprecated-import.json",
+      "policy": "rules/ruff-up035-deprecated-import.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -7696,9 +8309,10 @@
         "tool": "ruff",
         "rule": "UP036"
       },
-      "policy": "candidates/rules/ruff-up036-outdated-version-block.json",
+      "policy": "rules/ruff-up036-outdated-version-block.json",
       "capabilities": [
-        "syntax",
+        "value",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -7711,7 +8325,9 @@
       },
       "policy": "candidates/rules/ruff-up037-quoted-annotation.json",
       "capabilities": [
-        "syntax",
+        "value",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7722,7 +8338,7 @@
         "tool": "ruff",
         "rule": "UP039"
       },
-      "policy": "candidates/rules/ruff-up039-unnecessary-class-parentheses.json",
+      "policy": "rules/ruff-up039-unnecessary-class-parentheses.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -7737,7 +8353,10 @@
       },
       "policy": "candidates/rules/ruff-up040-non-pep695-type-alias.json",
       "capabilities": [
-        "syntax",
+        "compare",
+        "arguments",
+        "scope",
+        "calls",
         "suppression"
       ],
       "match": "line+column"
@@ -7748,7 +8367,7 @@
         "tool": "ruff",
         "rule": "UP041"
       },
-      "policy": "candidates/rules/ruff-up041-timeout-error-alias.json",
+      "policy": "rules/ruff-up041-timeout-error-alias.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -7764,6 +8383,7 @@
       "policy": "candidates/rules/ruff-up042-replace-str-enum.json",
       "capabilities": [
         "syntax",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -7774,9 +8394,11 @@
         "tool": "ruff",
         "rule": "UP043"
       },
-      "policy": "candidates/rules/ruff-up043-unnecessary-default-type-args.json",
+      "policy": "rules/ruff-up043-unnecessary-default-type-args.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7790,6 +8412,8 @@
       "policy": "candidates/rules/ruff-up044-non-pep646-unpack.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7803,6 +8427,11 @@
       "policy": "candidates/rules/ruff-up045-non-pep604-annotation-optional.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "arguments",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7816,6 +8445,10 @@
       "policy": "candidates/rules/ruff-up046-non-pep695-generic-class.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "arguments",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -7829,6 +8462,9 @@
       "policy": "candidates/rules/ruff-up047-non-pep695-generic-function.json",
       "capabilities": [
         "syntax",
+        "value",
+        "arguments",
+        "scope",
         "suppression"
       ],
       "match": "line+column"
@@ -7839,9 +8475,12 @@
         "tool": "ruff",
         "rule": "UP049"
       },
-      "policy": "candidates/rules/ruff-up049-private-type-parameter.json",
+      "policy": "rules/ruff-up049-private-type-parameter.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7852,7 +8491,7 @@
         "tool": "ruff",
         "rule": "UP050"
       },
-      "policy": "candidates/rules/ruff-up050-useless-class-metaclass-type.json",
+      "policy": "rules/ruff-up050-useless-class-metaclass-type.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -7865,9 +8504,12 @@
         "tool": "ruff",
         "rule": "YTT101"
       },
-      "policy": "candidates/rules/ruff-ytt101-sys-version-slice3.json",
+      "policy": "rules/ruff-ytt101-sys-version-slice3.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7878,9 +8520,12 @@
         "tool": "ruff",
         "rule": "YTT102"
       },
-      "policy": "candidates/rules/ruff-ytt102-sys-version2.json",
+      "policy": "rules/ruff-ytt102-sys-version2.json",
       "capabilities": [
         "syntax",
+        "value",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7891,9 +8536,13 @@
         "tool": "ruff",
         "rule": "YTT103"
       },
-      "policy": "candidates/rules/ruff-ytt103-sys-version-cmp-str3.json",
+      "policy": "rules/ruff-ytt103-sys-version-cmp-str3.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7904,9 +8553,13 @@
         "tool": "ruff",
         "rule": "YTT201"
       },
-      "policy": "candidates/rules/ruff-ytt201-sys-version-info0-eq3.json",
+      "policy": "rules/ruff-ytt201-sys-version-info0-eq3.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7917,9 +8570,11 @@
         "tool": "ruff",
         "rule": "YTT202"
       },
-      "policy": "candidates/rules/ruff-ytt202-six-py3.json",
+      "policy": "rules/ruff-ytt202-six-py3.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7930,9 +8585,13 @@
         "tool": "ruff",
         "rule": "YTT203"
       },
-      "policy": "candidates/rules/ruff-ytt203-sys-version-info1-cmp-int.json",
+      "policy": "rules/ruff-ytt203-sys-version-info1-cmp-int.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7943,9 +8602,13 @@
         "tool": "ruff",
         "rule": "YTT204"
       },
-      "policy": "candidates/rules/ruff-ytt204-sys-version-info-minor-cmp-int.json",
+      "policy": "rules/ruff-ytt204-sys-version-info-minor-cmp-int.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7956,9 +8619,13 @@
         "tool": "ruff",
         "rule": "YTT301"
       },
-      "policy": "candidates/rules/ruff-ytt301-sys-version0.json",
+      "policy": "rules/ruff-ytt301-sys-version0.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7969,9 +8636,13 @@
         "tool": "ruff",
         "rule": "YTT302"
       },
-      "policy": "candidates/rules/ruff-ytt302-sys-version-cmp-str10.json",
+      "policy": "rules/ruff-ytt302-sys-version-cmp-str10.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -7982,9 +8653,13 @@
         "tool": "ruff",
         "rule": "YTT303"
       },
-      "policy": "candidates/rules/ruff-ytt303-sys-version-slice1.json",
+      "policy": "rules/ruff-ytt303-sys-version-slice1.json",
       "capabilities": [
         "syntax",
+        "value",
+        "compare",
+        "scope",
+        "annotation",
         "suppression"
       ],
       "match": "line+column"
@@ -8431,7 +9106,7 @@
         "tool": "ruff",
         "rule": "ISC001"
       },
-      "policy": "candidates/rules/ruff-isc001-single-line-implicit-string-concatenation.json",
+      "policy": "rules/ruff-isc001-single-line-implicit-string-concatenation.json",
       "capabilities": [
         "syntax",
         "suppression"

@@ -1,0 +1,5 @@
+("a".encode)()
+("a".encode)("utf-8")
+("é".encode)("utf-8")
+(("a").encode)(encoding="utf8")
+("a" .encode)()

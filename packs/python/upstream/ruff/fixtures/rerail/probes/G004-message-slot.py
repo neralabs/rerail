@@ -1,0 +1,25 @@
+import logging
+
+x = 1
+args = ()
+kw = {}
+logging.info(*args)
+logging.info(*args, "a" + str(x))
+logging.log(*args, "%s" % x)
+logging.log(10, *args)
+logging.log(f"{x}")
+logging.log("a" + "b", 10)
+logging.info("a", "b" + str(x))
+logging.info("a" + str(x), msg="x")
+logging.info(x, msg="a" + str(x))
+logging.info(**{"msg": "a" + str(x)})
+logging.log(level=10, msg=f"{x}")
+logging.log(msg="%s" % x)
+logging.info(msg="{}".format(x), extra={})
+logging.info("{}".format(x), *args)
+logging.info(f"{x}", **kw)
+logging.log(10, f"{x}", *args)
+logging.log(10, msg=("a" + "b"))
+logging.info(f"{x}" for x in args)
+logging.info()
+logging.log(*args, msg="a" + "b")
