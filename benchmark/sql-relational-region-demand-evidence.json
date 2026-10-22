@@ -1,0 +1,2926 @@
+{
+  "scope": "Profile compiler-generated structural region demand over a frozen workload.\n\nThis is transition phase 1's demand slice, not the complete B023 rule or policy job.\nTimings include counters. This driver makes no repeated-timing speedup claim.",
+  "revision": "2aca389318c807ce91b1fc87edf69e7c626d663c",
+  "workingTree": " M benchmark/relational-compiler-spike.py\n M docs/sql-set-composition-compiler-spike.md\n M native/src/code_rule_dsl/sql/relational/analysis.rs\n M native/src/code_rule_dsl/sql/relational/emit.rs\n M native/src/code_rule_dsl/sql/relational/ir.rs\n M native/src/code_rule_dsl/sql/relational/lower.rs\n M native/src/code_rule_dsl/sql/relational/mod.rs\n M native/src/code_rule_dsl/sql/relational/physical.rs\n M native/src/code_rule_dsl/sql/relational/tests.rs\n M native/src/code_rule_dsl/sql/spikes/whole_call/b023.rs\n?? native/src/code_rule_dsl/sql/relational/demand.rs\n?? native/src/code_rule_dsl/sql/relational/leaves.rs\n",
+  "sourceHashes": {
+    "native/src/code_rule_dsl/sql/relational/analysis.rs": "8a433680fb8fe678c358fa587dea5067991b675e990ac403e92c91ec8d6e5cdd",
+    "native/src/code_rule_dsl/sql/relational/demand.rs": "8ef1a552ce7ae982b9ad3a14dfc4cfc2fcacd02c9754bb9ec8a249ab03f120de",
+    "native/src/code_rule_dsl/sql/relational/emit.rs": "f6f28ce2f48883ce3718ce6c34c39878457e444e3132853a46c5502e5791a670",
+    "native/src/code_rule_dsl/sql/relational/ir.rs": "767b5df49ad335c22f54b61428e65d937d63c15c5b2c4d35ab63de947398694e",
+    "native/src/code_rule_dsl/sql/relational/leaves.rs": "c528e351c14cb7474c73001e499b5979b559ae3ff5fc484325a6ce8437705a8f",
+    "native/src/code_rule_dsl/sql/relational/lower.rs": "34c07c64db37efb6513bf9ee69676c9a45eb4c4f0712b47061ac366f546d806f",
+    "native/src/code_rule_dsl/sql/relational/mod.rs": "7e1bfdaf2744b18836e1251885df1258d22c5897ffcb32202d587805099d9b04",
+    "native/src/code_rule_dsl/sql/relational/physical.rs": "ab23ec338bdd0982a35e5b43d9c429440d3bb88acac4aadd4cbd091249e19ac6",
+    "native/src/code_rule_dsl/sql/relational/tests.rs": "7d910dbb970d4ad3391447359104fe7e0493b89f27d50acd6a73138ee1790ce3",
+    "native/src/code_rule_dsl/sql/spikes/whole_call/b023.rs": "2e8c88ecf73860b51de1e02f29180fd52b5cfb4af8ef1c8b71e5b7cb83b4143b",
+    "native/src/code_rule_dsl/sql/mod.rs": "abdaa15b5c97a7351091a3b924d886d092d2457cf507b3e04d9d9a3a31efaceb",
+    "packs/python/rules/ruff-b023-function-uses-loop-variable.json": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff",
+    "benchmark/relational-compiler-spike.py": "5d90778e0d7d0614e709a3a9bdaa7d8f290620cfa8a5360551a760e614d850f5"
+  },
+  "executableSha256": "6968f990b95ae49da22260c773cedff3fbda10bf3724bb7b2e4731c4dae2193f",
+  "querySha256": "a5399b398ddbfd46a8b92676af76af175096c458ada9a5a10a485e8eeeded908",
+  "result": {
+    "automaticIndexRows": 12701,
+    "baseline": {
+      "diagnosticKernelCpuNs": 2543352125,
+      "frameAdvances": 5436495,
+      "framePublications": 2476234,
+      "matchingStatements": 1
+    },
+    "diagnosticCpuNs": 51862958,
+    "diagnosticRelationRows": [
+      {
+        "relation": "r0",
+        "rows": 457
+      },
+      {
+        "relation": "r2",
+        "rows": 16
+      },
+      {
+        "relation": "r3",
+        "rows": 3637
+      },
+      {
+        "relation": "r4",
+        "rows": 8489
+      },
+      {
+        "relation": "r6",
+        "rows": 4176
+      },
+      {
+        "relation": "r7",
+        "rows": 24
+      },
+      {
+        "relation": "r8",
+        "rows": 457
+      },
+      {
+        "relation": "regions2",
+        "rows": 10
+      },
+      {
+        "relation": "needed7",
+        "rows": 143
+      }
+    ],
+    "explain": [
+      {
+        "detail": "MATERIALIZE r8",
+        "id": 3,
+        "parent": 0
+      },
+      {
+        "detail": "SETUP",
+        "id": 8,
+        "parent": 3
+      },
+      {
+        "detail": "MERGE (UNION)",
+        "id": 10,
+        "parent": 8
+      },
+      {
+        "detail": "LEFT",
+        "id": 12,
+        "parent": 10
+      },
+      {
+        "detail": "MATERIALIZE regions2",
+        "id": 15,
+        "parent": 12
+      },
+      {
+        "detail": "MATERIALIZE bounds2",
+        "id": 18,
+        "parent": 15
+      },
+      {
+        "detail": "MATERIALIZE r2",
+        "id": 21,
+        "parent": 18
+      },
+      {
+        "detail": "MATERIALIZE r3",
+        "id": 24,
+        "parent": 21
+      },
+      {
+        "detail": "SCAN a1n0 VIRTUAL TABLE INDEX 0:k*",
+        "id": 28,
+        "parent": 24
+      },
+      {
+        "detail": "SCAN seed0",
+        "id": 71,
+        "parent": 21
+      },
+      {
+        "detail": "SCAN a0n0 VIRTUAL TABLE INDEX 0:f=i=",
+        "id": 73,
+        "parent": 21
+      },
+      {
+        "detail": "CORRELATED SCALAR SUBQUERY 7",
+        "id": 80,
+        "parent": 21
+      },
+      {
+        "detail": "MATERIALIZE r6",
+        "id": 84,
+        "parent": 80
+      },
+      {
+        "detail": "SETUP",
+        "id": 89,
+        "parent": 84
+      },
+      {
+        "detail": "MATERIALIZE r4",
+        "id": 92,
+        "parent": 89
+      },
+      {
+        "detail": "MERGE (UNION)",
+        "id": 95,
+        "parent": 92
+      },
+      {
+        "detail": "LEFT",
+        "id": 97,
+        "parent": 95
+      },
+      {
+        "detail": "SCAN a2n0 VIRTUAL TABLE INDEX 0:k=",
+        "id": 100,
+        "parent": 97
+      },
+      {
+        "detail": "RIGHT",
+        "id": 111,
+        "parent": 95
+      },
+      {
+        "detail": "SCAN a3n0 VIRTUAL TABLE INDEX 0:k=",
+        "id": 114,
+        "parent": 111
+      },
+      {
+        "detail": "CORRELATED SCALAR SUBQUERY 12",
+        "id": 120,
+        "parent": 111
+      },
+      {
+        "detail": "SCAN CONSTANT ROW",
+        "id": 123,
+        "parent": 120
+      },
+      {
+        "detail": "CORRELATED SCALAR SUBQUERY 11",
+        "id": 125,
+        "parent": 120
+      },
+      {
+        "detail": "MATERIALIZE r7",
+        "id": 129,
+        "parent": 125
+      },
+      {
+        "detail": "SETUP",
+        "id": 134,
+        "parent": 129
+      },
+      {
+        "detail": "MERGE (UNION)",
+        "id": 136,
+        "parent": 134
+      },
+      {
+        "detail": "LEFT",
+        "id": 138,
+        "parent": 136
+      },
+      {
+        "detail": "MERGE (UNION)",
+        "id": 140,
+        "parent": 138
+      },
+      {
+        "detail": "LEFT",
+        "id": 142,
+        "parent": 140
+      },
+      {
+        "detail": "MATERIALIZE needed7",
+        "id": 145,
+        "parent": 142
+      },
+      {
+        "detail": "SETUP",
+        "id": 150,
+        "parent": 145
+      },
+      {
+        "detail": "SCAN node VIRTUAL TABLE INDEX 0:k=",
+        "id": 152,
+        "parent": 150
+      },
+      {
+        "detail": "RECURSIVE STEP",
+        "id": 174,
+        "parent": 145
+      },
+      {
+        "detail": "SCAN k",
+        "id": 177,
+        "parent": 174
+      },
+      {
+        "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+        "id": 178,
+        "parent": 174
+      },
+      {
+        "detail": "SCAN p VIRTUAL TABLE INDEX 0:f=i=k=",
+        "id": 184,
+        "parent": 174
+      },
+      {
+        "detail": "SCAN keys5",
+        "id": 207,
+        "parent": 142
+      },
+      {
+        "detail": "SCAN a5n0 VIRTUAL TABLE INDEX 0:f=i=",
+        "id": 209,
+        "parent": 142
+      },
+      {
+        "detail": "SCAN a5n1 VIRTUAL TABLE INDEX 0:f=i=k=",
+        "id": 215,
+        "parent": 142
+      },
+      {
+        "detail": "USE TEMP B-TREE FOR ORDER BY",
+        "id": 229,
+        "parent": 142
+      },
+      {
+        "detail": "RIGHT",
+        "id": 239,
+        "parent": 140
+      },
+      {
+        "detail": "SCAN keys6",
+        "id": 246,
+        "parent": 239
+      },
+      {
+        "detail": "SCAN a6n0 VIRTUAL TABLE INDEX 0:f=i=",
+        "id": 248,
+        "parent": 239
+      },
+      {
+        "detail": "SCAN a6n1 VIRTUAL TABLE INDEX 0:f=i=k=",
+        "id": 254,
+        "parent": 239
+      },
+      {
+        "detail": "SCAN a6n2 VIRTUAL TABLE INDEX 0:f=i=k*",
+        "id": 261,
+        "parent": 239
+      },
+      {
+        "detail": "USE TEMP B-TREE FOR ORDER BY",
+        "id": 287,
+        "parent": 239
+      },
+      {
+        "detail": "RIGHT",
+        "id": 330,
+        "parent": 136
+      },
+      {
+        "detail": "MERGE (UNION)",
+        "id": 332,
+        "parent": 330
+      },
+      {
+        "detail": "LEFT",
+        "id": 334,
+        "parent": 332
+      },
+      {
+        "detail": "MERGE (UNION)",
+        "id": 336,
+        "parent": 334
+      },
+      {
+        "detail": "LEFT",
+        "id": 338,
+        "parent": 336
+      },
+      {
+        "detail": "SCAN keys7",
+        "id": 345,
+        "parent": 338
+      },
+      {
+        "detail": "SCAN a7n0 VIRTUAL TABLE INDEX 0:f=i=",
+        "id": 347,
+        "parent": 338
+      },
+      {
+        "detail": "SCAN a7n1 VIRTUAL TABLE INDEX 0:f=i=k=",
+        "id": 353,
+        "parent": 338
+      },
+      {
+        "detail": "SCAN a7n2 VIRTUAL TABLE INDEX 0:f=i=k=",
+        "id": 360,
+        "parent": 338
+      },
+      {
+        "detail": "USE TEMP B-TREE FOR ORDER BY",
+        "id": 379,
+        "parent": 338
+      },
+      {
+        "detail": "RIGHT",
+        "id": 389,
+        "parent": 336
+      },
+      {
+        "detail": "SCAN keys8",
+        "id": 396,
+        "parent": 389
+      },
+      {
+        "detail": "SCAN a8n0 VIRTUAL TABLE INDEX 0:f=i=",
+        "id": 398,
+        "parent": 389
+      },
+      {
+        "detail": "SCAN a8n1 VIRTUAL TABLE INDEX 0:f=i=k=",
+        "id": 404,
+        "parent": 389
+      },
+      {
+        "detail": "SCAN a8n2 VIRTUAL TABLE INDEX 0:f=i=k=",
+        "id": 411,
+        "parent": 389
+      },
+      {
+        "detail": "USE TEMP B-TREE FOR ORDER BY",
+        "id": 430,
+        "parent": 389
+      },
+      {
+        "detail": "RIGHT",
+        "id": 473,
+        "parent": 332
+      },
+      {
+        "detail": "SCAN keys9",
+        "id": 482,
+        "parent": 473
+      },
+      {
+        "detail": "SCAN a9n0 VIRTUAL TABLE INDEX 0:f=i=",
+        "id": 484,
+        "parent": 473
+      },
+      {
+        "detail": "SCAN a9n1 VIRTUAL TABLE INDEX 0:f=i=k=",
+        "id": 490,
+        "parent": 473
+      },
+      {
+        "detail": "SCAN a9n2 VIRTUAL TABLE INDEX 0:f=p=k=",
+        "id": 497,
+        "parent": 473
+      },
+      {
+        "detail": "SCAN a9n3 VIRTUAL TABLE INDEX 0:f=i=",
+        "id": 508,
+        "parent": 473
+      },
+      {
+        "detail": "SCAN a9n4 VIRTUAL TABLE INDEX 0:f=i=",
+        "id": 518,
+        "parent": 473
+      },
+      {
+        "detail": "USE TEMP B-TREE FOR ORDER BY",
+        "id": 538,
+        "parent": 473
+      },
+      {
+        "detail": "RECURSIVE STEP",
+        "id": 625,
+        "parent": 129
+      },
+      {
+        "detail": "SCAN seed10",
+        "id": 628,
+        "parent": 625
+      },
+      {
+        "detail": "SCAN a10n1 VIRTUAL TABLE INDEX 0:f=i=k=",
+        "id": 629,
+        "parent": 625
+      },
+      {
+        "detail": "SCAN a10n0 VIRTUAL TABLE INDEX 0:f=p=",
+        "id": 636,
+        "parent": 625
+      },
+      {
+        "detail": "CORRELATED SCALAR SUBQUERY 22",
+        "id": 643,
+        "parent": 625
+      },
+      {
+        "detail": "BLOOM FILTER ON k (file=? AND node=?)",
+        "id": 650,
+        "parent": 643
+      },
+      {
+        "detail": "SEARCH k USING AUTOMATIC COVERING INDEX (file=? AND node=?)",
+        "id": 660,
+        "parent": 643
+      },
+      {
+        "detail": "BLOOM FILTER ON k (file=? AND node=?)",
+        "id": 689,
+        "parent": 125
+      },
+      {
+        "detail": "SEARCH k USING AUTOMATIC COVERING INDEX (file=? AND node=?)",
+        "id": 699,
+        "parent": 125
+      },
+      {
+        "detail": "SCAN seed",
+        "id": 759,
+        "parent": 89
+      },
+      {
+        "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+        "id": 761,
+        "parent": 89
+      },
+      {
+        "detail": "RECURSIVE STEP",
+        "id": 787,
+        "parent": 84
+      },
+      {
+        "detail": "SCAN w",
+        "id": 789,
+        "parent": 787
+      },
+      {
+        "detail": "CORRELATED SCALAR SUBQUERY 15",
+        "id": 791,
+        "parent": 787
+      },
+      {
+        "detail": "BLOOM FILTER ON s (file=? AND node=?)",
+        "id": 798,
+        "parent": 791
+      },
+      {
+        "detail": "SEARCH s USING AUTOMATIC COVERING INDEX (file=? AND node=?)",
+        "id": 808,
+        "parent": 791
+      },
+      {
+        "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+        "id": 821,
+        "parent": 787
+      },
+      {
+        "detail": "BLOOM FILTER ON k (file=? AND node=?)",
+        "id": 844,
+        "parent": 80
+      },
+      {
+        "detail": "SEARCH k USING AUTOMATIC COVERING INDEX (file=? AND node=?)",
+        "id": 854,
+        "parent": 80
+      },
+      {
+        "detail": "USE TEMP B-TREE FOR DISTINCT",
+        "id": 877,
+        "parent": 21
+      },
+      {
+        "detail": "SCAN k",
+        "id": 883,
+        "parent": 18
+      },
+      {
+        "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+        "id": 885,
+        "parent": 18
+      },
+      {
+        "detail": "SCAN b",
+        "id": 903,
+        "parent": 15
+      },
+      {
+        "detail": "CORRELATED SCALAR SUBQUERY 4",
+        "id": 906,
+        "parent": 15
+      },
+      {
+        "detail": "BLOOM FILTER ON outer_region (file=?)",
+        "id": 913,
+        "parent": 906
+      },
+      {
+        "detail": "SEARCH outer_region USING AUTOMATIC COVERING INDEX (file=?)",
+        "id": 924,
+        "parent": 906
+      },
+      {
+        "detail": "SCAN domain11",
+        "id": 954,
+        "parent": 12
+      },
+      {
+        "detail": "SCAN a11n1 VIRTUAL TABLE INDEX 0:f=i}i{k*",
+        "id": 956,
+        "parent": 12
+      },
+      {
+        "detail": "SCAN a11n0 VIRTUAL TABLE INDEX 0:f=p=",
+        "id": 975,
+        "parent": 12
+      },
+      {
+        "detail": "CORRELATED SCALAR SUBQUERY 25",
+        "id": 982,
+        "parent": 12
+      },
+      {
+        "detail": "CO-ROUTINE unit12",
+        "id": 985,
+        "parent": 982
+      },
+      {
+        "detail": "SCAN CONSTANT ROW",
+        "id": 986,
+        "parent": 985
+      },
+      {
+        "detail": "SCAN unit12",
+        "id": 992,
+        "parent": 982
+      },
+      {
+        "detail": "SCAN a12n1 VIRTUAL TABLE INDEX 0:f=i=",
+        "id": 995,
+        "parent": 982
+      },
+      {
+        "detail": "USE TEMP B-TREE FOR ORDER BY",
+        "id": 1018,
+        "parent": 12
+      },
+      {
+        "detail": "RIGHT",
+        "id": 1028,
+        "parent": 10
+      },
+      {
+        "detail": "SCAN domain13",
+        "id": 1035,
+        "parent": 1028
+      },
+      {
+        "detail": "SCAN a13n1 VIRTUAL TABLE INDEX 0:f=i}i{k*",
+        "id": 1037,
+        "parent": 1028
+      },
+      {
+        "detail": "SCAN a13n0 VIRTUAL TABLE INDEX 0:f=p=",
+        "id": 1056,
+        "parent": 1028
+      },
+      {
+        "detail": "SCAN a13n2 VIRTUAL TABLE INDEX 0:f=i=",
+        "id": 1062,
+        "parent": 1028
+      },
+      {
+        "detail": "USE TEMP B-TREE FOR ORDER BY",
+        "id": 1080,
+        "parent": 1028
+      },
+      {
+        "detail": "RECURSIVE STEP",
+        "id": 1134,
+        "parent": 3
+      },
+      {
+        "detail": "SCAN seed14",
+        "id": 1137,
+        "parent": 1134
+      },
+      {
+        "detail": "SCAN a14n1 VIRTUAL TABLE INDEX 0:f=i=k*",
+        "id": 1138,
+        "parent": 1134
+      },
+      {
+        "detail": "SCAN a14n0 VIRTUAL TABLE INDEX 0:f=p=",
+        "id": 1171,
+        "parent": 1134
+      },
+      {
+        "detail": "SCAN r8",
+        "id": 1191,
+        "parent": 0
+      },
+      {
+        "detail": "USE TEMP B-TREE FOR ORDER BY",
+        "id": 1202,
+        "parent": 0
+      }
+    ],
+    "files": 138,
+    "framePublications": 0,
+    "fullscanSteps": 13338,
+    "generationCpuNs": 212166,
+    "inputs": [
+      {
+        "path": "benchmarks/tests/test_exact_graph_publication_benchmark_contract.py",
+        "sha256": "9ecb5bf184bd15c6c1d99bd3ea1978914a694338523d55a5788ae85750e70ee1"
+      },
+      {
+        "path": "conform/api_types/__init__.py",
+        "sha256": "7fd3c3ec43f7456251a503def545385ca36f630a3d670a50bedcf3a9bfcc0a20"
+      },
+      {
+        "path": "conform/l6500_evidence/__init__.py",
+        "sha256": "5c1f593f467c212ae86643c8625ad31e3761ccb2ad9cc2611d429b918e3f8fa8"
+      },
+      {
+        "path": "consumer_contracts/landing/test_dependent_read_contract.py",
+        "sha256": "0caf5ca7ea0285319a756c86591ae7f234631f29af0f75cb19b953c700f1fda9"
+      },
+      {
+        "path": "data_layer/_internal.py",
+        "sha256": "3f90db10d045e816460acda6d89ae7055b9c1f38d493a588b5c991936b8f457e"
+      },
+      {
+        "path": "data_layer/batching.py",
+        "sha256": "a07cc1688a865f15a82e0116087cdc3ab4cf7d5506bd18887101a3ac61c8bace"
+      },
+      {
+        "path": "data_layer/binary_diff.py",
+        "sha256": "3fff293e82c0f2f1a84992af99eef93e7f525d5d4babad9e2ae7817e282adc10"
+      },
+      {
+        "path": "data_layer/cache.py",
+        "sha256": "456b077b8a510a504217bc316d53f131f0567f37ca0f636eb4eca39ce235c796"
+      },
+      {
+        "path": "data_layer/credentials.py",
+        "sha256": "af7c1cc1dec300d18299d75b464319be326982e432c11fb3a12124e1f0886c4c"
+      },
+      {
+        "path": "data_layer/llm_cache.py",
+        "sha256": "32f5c668c3ac42da5fcb6cdc52f4dbf8525fc8853aa6e5b943d9bb4f21871ec2"
+      },
+      {
+        "path": "data_layer/transaction.py",
+        "sha256": "19dd0f6b013e03794d5686491b13ab3219b8d2ad666b0fb51af80b5c2c0f2dac"
+      },
+      {
+        "path": "data_layer/versioned_connection.py",
+        "sha256": "fa99fdf4cc5b507428d5b9ce3b50064cb690611c515b1e803a7d7b9643896c55"
+      },
+      {
+        "path": "data_layer_testing/helpers/lazy.py",
+        "sha256": "8931cfc7a19448119568cd505d38895b73dc7e36bc33ee994140641593f7707f"
+      },
+      {
+        "path": "data_layer_testing/utils/versioned_ddl_bypass.py",
+        "sha256": "463dfe5c29abd0d51c282042acb77e9d8efb2613a83496cb6fdacf16eb21838e"
+      },
+      {
+        "path": "examples/fastapi_app/connection_pool.py",
+        "sha256": "1197dea4694657cb43524af2b3eb575b36f34a42ad944760ef5aa80b6c56d187"
+      },
+      {
+        "path": "impl/common/l1000_cache/transaction.py",
+        "sha256": "5d401005dfdaa08edceba31ad6c48651e45b045808eb1ad36b88c1de451edbe5"
+      },
+      {
+        "path": "impl/common/l1400_config/file_loader.py",
+        "sha256": "a68b377ddbc4e2f81f4904b9b55a771b935494462f380a3535102b27e328c22d"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/backend_profiles.py",
+        "sha256": "cec69ab5ebc376b290c9462646a8247c899311aaf19e7e5a9621306b88877da3"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/base_server_plan.py",
+        "sha256": "0d64ef6a42d37dab90d47c88c2cad76ecb8a93bed24078291361cc0ca7a74999"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/intent_vector_index_maintenance.py",
+        "sha256": "0b175ba8a866f02324a291141a55dd174c04e7789e3ffc44497e257196391762"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/optimizers/staging_bypass.py",
+        "sha256": "e67da32d24e988a1f89dc55d88625dace89b9b5bd306476a3cc3c8b7aa0bbb00"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/sql_backend_executor.py",
+        "sha256": "70886ac7a78b623c0a8e366f03ad54320dfcef5cd05ecbcb8329663bcf752480"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/_compile_helpers.py",
+        "sha256": "b340e7e5cd7c3e3c4d5ffb96d3f583eeab95ee3dc0b1af0fac72ef4fb611d5ce"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/_compile_server_ref.py",
+        "sha256": "c3baa453bd6f86fafdc8f2c03f24cfd094f6239ef2d5e6b2706c5d1c36057933"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/_conditional_compile.py",
+        "sha256": "39274a4a5c4dd7a2ef2df11c954c5b88f968d25d50f61f535f60d2198e6fee9e"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/_cte_field_ref.py",
+        "sha256": "4effb0b63fe28325c11e4a4e0e108ded9b2810741891e3570bfa45e59348c1e3"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/_cte_insert_helper.py",
+        "sha256": "e73371af80193b6eaf96f2b4739678181288bee2d7f9ff07d6c050b4511fe47f"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/_resolve.py",
+        "sha256": "658e2fc6f839cc952312f11757518673cf044312dc3e82d87b24dcbc75289e81"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/_runtime_nested_plan.py",
+        "sha256": "d55a70a841ccbf116dc41abffa569fab54f00cd43ef4f594ac36a550c25198f0"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/_server_ref_identity.py",
+        "sha256": "2c06ebf0b5884849e835f26402b7727a15c015ae37fc035c5569e9bb84b42390"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/collect_results.py",
+        "sha256": "7e42f1425cb4169a73e70c2e242e8a3b4b2ab19a17f7b2d868e7d04d453c751b"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+        "sha256": "a4b8d25532e172502bca942fef8048ebd91775e3026d8810857c89a1094103fa"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/error_step.py",
+        "sha256": "164633d7ccca99f42e60164ed39584d060555500c0a05d994a5d518e5dc1ec91"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/fk_cascade_step.py",
+        "sha256": "9e63c1cb62c0a8916a97b3c73b61ac15c8a4200be29875e93b631ea2d9ff46e5"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/intent_crud.py",
+        "sha256": "d9bddaf66b9a7e0ff283c4b2b4c2a790065b61492ae638b4b55cc4e1f22d3dd2"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/intent_embedding_runtime_projection.py",
+        "sha256": "0e6db4af2641bbddf8ab780feb6ca5b179a323f7edf57ab4a22c76fb2cdf3613"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/intent_graph_reads.py",
+        "sha256": "cf4775ce8c4e242d453f45f9aa6ba43065e489a1b8a5fa57622596f6bf6502de"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/intent_include.py",
+        "sha256": "7ce914ec420ae173d1f4ac84eb2e1a9c0d0d6569d2cc97f7e24a70aadd0a19c7"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/intent_transaction.py",
+        "sha256": "2e6445d48c3e66c3e38c3ba15e059966ab6df22ed694a11188e6485a9edb3c24"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/intent_vector_query.py",
+        "sha256": "124fc264866620ffc082ba7628211f1b17880e44a598c39515e55ccbc7f5227c"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/rebase_steps.py",
+        "sha256": "d01723ddb4ae5197177bce3375d04afbf92a5c9179c973334fce14feb04f887a"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/session_context_resolution.py",
+        "sha256": "058977b7e38e1e15772a4621d03944469bf55e4dac2b5d6310e5fa279d429901"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/session_validation.py",
+        "sha256": "0d12be1fc2fd31de351f6873ea2dd633274df55ef16566ee2adcfff17bb03bdb"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/sql_conditional.py",
+        "sha256": "571a18be03c93b2a089a9066c731c52092e364583936685189121bc3e1e1d38d"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/squash_steps.py",
+        "sha256": "87ee6d85af2d572c7eab43c1264fd06b604001cce3618bce0f22eb900a54c30f"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/table_exists.py",
+        "sha256": "84b7b5a687a9d0dd9e7791e7cc8010a71e94cebd3c8945195321cbeba94a5b6b"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py",
+        "sha256": "d0d285d910847e6397fd8710b87b87b57f107fdf6885e551dc105b60f6085fed"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/tests/test_query_scalar_variants.py",
+        "sha256": "7aa8db67845e2cd6b90154b4615ac5528c947769c365e1ef07ad4cca26f59b43"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/upsert_many.py",
+        "sha256": "b1744cce0a1d93811f6db8be299d9835fc6423cfa0d3f90cc35c51ff86203bf1"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/versioned_hybrid_search.py",
+        "sha256": "ec238d2bd119dca274c7be3e5cb451163f45f8b5291c22db28561644bdcebd3b"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/versioned_vector_search.py",
+        "sha256": "a60a328c88f406000e0de49a5e9dc7ef29153325f29e2047562988d9aab87caf"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/versioning_intent_steps.py",
+        "sha256": "7cd5777a72f35de58aa3e9a15b834f94bc0515c20327f52accc9787c1d0759fd"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/strategies/data_modifying_cte.py",
+        "sha256": "4e85d92b336655747843491a8755b2a12ce3cf67e5213be5ada71b365ca79ce2"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/strategies/data_modifying_cte_ordering.py",
+        "sha256": "91028fda800a3af5d8d44eef0979fa99f85e57ad0908cd37f7d279eb4c51b78c"
+      },
+      {
+        "path": "impl/common/l2100_sql_grammar/domain/infra/column_name_utils.py",
+        "sha256": "6c47ad6d6c892fa4e2f3afb67a1dc145d31be1b669a602a014f8bbb0517ff757"
+      },
+      {
+        "path": "impl/common/l2100_sql_grammar/domain/notification.py",
+        "sha256": "3f5570b3ea1d78db46c52f14d613f78675f8281414ae323ef84659fb6fc59d11"
+      },
+      {
+        "path": "impl/common/l2100_sql_grammar/domain/versioning/stmt_squash_validation.py",
+        "sha256": "902edcc70989ff215da3d0881fac997bc3b662bc78430d061a43c1d1a468a648"
+      },
+      {
+        "path": "impl/common/l2200_sql_dialect/sql_connection.py",
+        "sha256": "a4e543d624689d49be6393a53ccf411b0c1c5ab4a8b1705b6db3ba65dd1a0d7d"
+      },
+      {
+        "path": "impl/common/l2550_storage_backend/content_storage_service.py",
+        "sha256": "ff0007fad14ecd42286ac47b129f49b740c40e28c82726091114b1d226ce4b4f"
+      },
+      {
+        "path": "impl/common/l2550_storage_backend/database_backend.py",
+        "sha256": "e49fd4b0fdcb6b1300b02c20166cf6ee979700cccb9d2bdeecf83f4e764fe1b3"
+      },
+      {
+        "path": "impl/common/l3500_bulk_ops/sql_export_cursor.py",
+        "sha256": "0452cafef3d71124c7e94dd65d06ae75e2459abeb89724edc2cadeca48ffc238"
+      },
+      {
+        "path": "impl/common/l5200_sql_query/__init__.py",
+        "sha256": "a0a05e939840eb0b8d8df787e4a2d464fe4c2e8f5adee31f8c03f325c3aa5450"
+      },
+      {
+        "path": "impl/common/l5200_vector_index/__init__.py",
+        "sha256": "22cb4a8722aa95ddb7a0ebc85993cc6a5fc20117a6489b4b174d798cbc778e2a"
+      },
+      {
+        "path": "impl/common/l6300_config/__init__.py",
+        "sha256": "1f4a0b79b7d34e6777d37da988f6f6a29d80be9ba8c84cc2c168cebe983743ae"
+      },
+      {
+        "path": "impl/common/l7125_versioned_ops_shared/branch_model_sync.py",
+        "sha256": "24817236eaeecf3a537a3e31d8df66798c1108dd148dae699822454f4ef85d17"
+      },
+      {
+        "path": "impl/common/l7125_versioned_txn_side_effects/__init__.py",
+        "sha256": "86fb29ab1e8fb4ac2b59eb6258bd2b2f3d729d1f867bfc78e8c63c93c3552689"
+      },
+      {
+        "path": "impl/common/l7245_versioned_backends/__init__.py",
+        "sha256": "2f4efc45b00195a749dfd029fe51966aee2d9cbd3978dbdf7fbc85c62392a60a"
+      },
+      {
+        "path": "impl/common/l7245_versioned_backends/generic_sparse.py",
+        "sha256": "fe8ad3ab2b2dd92ece06f2d73e5c01582eaad2bc10ed51cee2e961aa495951a6"
+      },
+      {
+        "path": "impl/common/l7248_sparse_versioned_transactions/sparse_versioned_write_query.py",
+        "sha256": "36bae109bf9b68b8d6ae245edbc273c215fd79d1f1df9d3390f33c180d2f57eb"
+      },
+      {
+        "path": "impl/common/l7300_sql_versioned_transactions/sql_versioned_read_transaction.py",
+        "sha256": "52990b4cf093474e335e15699fd7f567a278334131d790eb50a0ef682fe02850"
+      },
+      {
+        "path": "impl/common/l7300_sql_versioned_transactions/sql_versioned_write_transaction.py",
+        "sha256": "9c95570d2f26c96eb4327c7d70cf4442d357adb28afa7b1f09d23936f013c478"
+      },
+      {
+        "path": "impl/common/l8000_admin/approval_db_runtime.py",
+        "sha256": "5093829c6d12405932810c0a6e93db4747ae0c9fdd89adfe0e3eacf7b481a0d5"
+      },
+      {
+        "path": "impl/common/l9700_sql_graph_query/grammar_expression_translator.py",
+        "sha256": "1079a07c13f1ebc24d6ee6aa015560d903b81f1945f835444072f1aba91ce138"
+      },
+      {
+        "path": "impl/common/l9700_sql_graph_query/graph_direction_helpers.py",
+        "sha256": "a539bda782867ab0e36e9f232ff9acc527b750f377b35e1da32cb923b5183f43"
+      },
+      {
+        "path": "impl/common/l9700_sql_graph_query/where_clause_builder.py",
+        "sha256": "22ae21e7facc911895e8bfa0d616696da865d352ef502c1e39886cfce9f85260"
+      },
+      {
+        "path": "impl/l1590_llm_test_fixtures/cli.py",
+        "sha256": "2d76831e9bb5632beb3e9b49ca44ea7660ad7f6fe9ee866b81aa99db5463b801"
+      },
+      {
+        "path": "impl/l1595_llm_cache/frontend_adapters/__init__.py",
+        "sha256": "2701183af3eeff62da2df271116676f9d8307ceb6329e32fefe56cb3687fbf86"
+      },
+      {
+        "path": "impl/neo4j/versioned_read_transaction_sparse.py",
+        "sha256": "34a9f455f7c9ef065e5b806539ca335c5369739a6074aefd090bef6f15cedb44"
+      },
+      {
+        "path": "impl/read_through/transaction.py",
+        "sha256": "5c94359a7aec32aaa3b504a4c2559c3db65d71b61657f3fe4a2adec58c705700"
+      },
+      {
+        "path": "impl/sqlite/export_cursor.py",
+        "sha256": "f9a4aac4ead8b12025adce7583742a36fed3cefdaa923cc7d6476314b4a06590"
+      },
+      {
+        "path": "impl/sqlite/fts/fts_searcher.py",
+        "sha256": "7b99f1adcc7d1447da433ae16990275694ddacca6d8e3c323f5b4361ee8d5079"
+      },
+      {
+        "path": "l1300_session/system_grant.py",
+        "sha256": "debb95d4dc86f5392cf680b1cad7dbdca9d3f2794a958bc3e5e6aed35b28b33d"
+      },
+      {
+        "path": "l1400_config/secrets_provider.py",
+        "sha256": "372f1c3da37d05a771a7b7595a6e711358acb79490cb5c293a580340d83a8c83"
+      },
+      {
+        "path": "l2000_connection/schema_transaction.py",
+        "sha256": "5d48d594cf52b540b2ff21547d1cec15276b32c5e24db5a38e6f44459fd5b61d"
+      },
+      {
+        "path": "l2000_connection/server_plan_execution_context.py",
+        "sha256": "aebd29cad26184d6091fb4b1553cb105eadf7da7f480ab24b4588788c89970aa"
+      },
+      {
+        "path": "l2000_connection/sync_async_guard.py",
+        "sha256": "b94ded8b1136bdd63a49c37b520f840dd680ebe4e4be3c6f800ce9b065c716a6"
+      },
+      {
+        "path": "l2050_transaction/tests/test_insert_lazy_materialization.py",
+        "sha256": "16a27e1104a2ee753d424af9a06b41b459a21b4fbb86ce86eeffb3416f2eac78"
+      },
+      {
+        "path": "l2050_transaction/transaction.py",
+        "sha256": "675c87aed5b4d9a4374d8915956c46e2f5bcfbf42029caa7e3ff47645f8b76a8"
+      },
+      {
+        "path": "l2055_lazy_result/lazy_model.py",
+        "sha256": "61d42a4495543348b650de9eee4bb37b962529e87a07b654a26cb02ba99d2a62"
+      },
+      {
+        "path": "l2055_lazy_result/lazy_seq.py",
+        "sha256": "9549878522416340179f9868b19ca4609a34d76190218f50949e2dab56aaf002"
+      },
+      {
+        "path": "l2055_lazy_result/lazy_writes.py",
+        "sha256": "bf4245ebd8dac613b323114902f4c0e582be09472dbf29cc904bd1313de80c4e"
+      },
+      {
+        "path": "l2070_batching/_tripwires.py",
+        "sha256": "4edc67dca918666cbf772a052d381f2d192dd420c52a912d389cc77193b7f327"
+      },
+      {
+        "path": "l2070_batching/cardinality.py",
+        "sha256": "f0de6e5c8d41df86d0dc4533ba3c830171f119c10e213b348fbf1ffb87ed596d"
+      },
+      {
+        "path": "l2070_batching/conditional_step.py",
+        "sha256": "e1fd1850d4fcee9a7e517ed9eab9a9a115466d5b17c5ff98b12db4d229494aff"
+      },
+      {
+        "path": "l2070_batching/optimizer.py",
+        "sha256": "19757697306bcb14498417a044de45261218959f72b701846d85b96ceb83baba"
+      },
+      {
+        "path": "l2070_batching/post_op.py",
+        "sha256": "80947215bcf330f4df9dbc5b99332804e238323206724b50b9383a4460d08ae1"
+      },
+      {
+        "path": "l2070_batching/step.py",
+        "sha256": "dcd578cff016774e09b049efed8cb820c786fea2f0ad67db34c5cc716175432d"
+      },
+      {
+        "path": "l2070_batching/tests/test_step_scheduling_facts.py",
+        "sha256": "92270d4660c5098cc27705ce0bfad6b46c3b0e653eb6a45d877ef5e484d8268a"
+      },
+      {
+        "path": "l2091_rtt_tracking/__init__.py",
+        "sha256": "eb129d2fb4257745eb528f38949c649c7dbb9975a1282b206db30d1fcaea31b6"
+      },
+      {
+        "path": "l2150_prepared_cache/promotion_registry.py",
+        "sha256": "d4df00be55535f19327c2f00802939190a67189e3b06be601c1c2eedbb2273e2"
+      },
+      {
+        "path": "l3100_schema_introspector/introspected_types.py",
+        "sha256": "0ab5159e73df265c8e336fd1d4459708d843bc70765ea24c34aa8a7717b06f48"
+      },
+      {
+        "path": "l3200_metadata/sql_types.py",
+        "sha256": "fca2b8846444e96c6160711508419afececbebd184c6519f216689b3fdb9f6fe"
+      },
+      {
+        "path": "l4000_permissions/rbac_models.py",
+        "sha256": "f3b027e2dfb81dc1d8cd059753257528710b8635e316dcd43ed169de827650ce"
+      },
+      {
+        "path": "l4300_timers/timer.py",
+        "sha256": "e43aee12845ff0a2e662bb6df548027044c39c9fdeb7ce64e3d3cdbe51af1e91"
+      },
+      {
+        "path": "l5000_subscriptions/deferred_dispatch.py",
+        "sha256": "028cf3212865f6df7c3fdd7533e3806d964c07182de2faf6e510ee57ddc83318"
+      },
+      {
+        "path": "l5100_fts/fts_registry.py",
+        "sha256": "138a29ff747268ec6d3c9ffd17cb3d9ba00d886423e26ef13399c400b670b05b"
+      },
+      {
+        "path": "l5200_vector_index/diagnostics.py",
+        "sha256": "8553dcafaa1aaac8cd520b13dd5dd90077a705405a8635a4fbbc0712a48d26c9"
+      },
+      {
+        "path": "l5200_vector_index/hnsw_models.py",
+        "sha256": "77d9c3a7ee2138fc8f47854c8766718d3365406703b553ec38ca909dfb66ff09"
+      },
+      {
+        "path": "l5200_vector_index/index_implementations/usearch_index.py",
+        "sha256": "e57a68d2ca041e93d6650eb83f4f48851577dde1519aadb070a659fbb51dd0fc"
+      },
+      {
+        "path": "l6500_evidence/__init__.py",
+        "sha256": "74e43375dfbb71c875e3a5c183e7e5c6c307109f388d7ed0912dbb1632351ed3"
+      },
+      {
+        "path": "l6500_evidence/blob_service.py",
+        "sha256": "b91dbb9cc3de025dcb14eefbcd00701bb24db24bd9174e9787c1d98a426f717a"
+      },
+      {
+        "path": "l6510_credentials/renewable_capability_runtime.py",
+        "sha256": "595f1cc49b9b429d26aade656d0607bc89e7f7b2482c23370bb95ebe35722a62"
+      },
+      {
+        "path": "l6510_credentials/renewable_orchestration.py",
+        "sha256": "ba932aabe8e3fece9fffb818e2ca6d309a3435af0e10921de7286f6015882154"
+      },
+      {
+        "path": "l6530_managed_secrets/_grants.py",
+        "sha256": "8f07bd973b73dc26979cbe94ade3e7ffcb19599d177a248727255dd0b646dad0"
+      },
+      {
+        "path": "l6530_managed_secrets/permission_scheme.py",
+        "sha256": "974044db933c0dff24ee0d6c9d37da15746bb981d4fdfaf3ad5a270ecc62c999"
+      },
+      {
+        "path": "l6530_managed_secrets/reaper.py",
+        "sha256": "722abfedc81bc429a3f821f25e834b15edd4240a2d70b982ee7e163cdddb9b75"
+      },
+      {
+        "path": "l7000_versioned_schema/index_policy.py",
+        "sha256": "1742f90f29c183d3074d2ae21af050ef201bf77632f0a1657bee1b289f82e2d9"
+      },
+      {
+        "path": "l7000_versioned_schema/public_helpers.py",
+        "sha256": "d3bfd6cede04b9ce9995305638cf653b53f452a70315f821c9f7e6cb05d66a94"
+      },
+      {
+        "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+        "sha256": "4e0f639dd5a1b1e69a53aba70ebeb5810ef1eb67a95ec7b3f5f9a8010efe08d2"
+      },
+      {
+        "path": "l8000_admin/tools/config_tools.py",
+        "sha256": "8b1c8c6e7e9abf7a5562fcb38af2a1a396391cff45148e0f0451ddb5e6532dd9"
+      },
+      {
+        "path": "l8100_ops_analytics/_plan_scopes.py",
+        "sha256": "f82ba8f8670365845a78a458a5d48d63867086d2b57bd2fcd8b83824387411cc"
+      },
+      {
+        "path": "l9600_graphs/cross_graph_validation.py",
+        "sha256": "a9577d09d2494d3d1880437297de8d3f686b33be27c3bf15f124e4977137bfb8"
+      },
+      {
+        "path": "l9600_graphs/dynamic_schema_evolution.py",
+        "sha256": "62b5aec4a3aad92f230553c4caea6ba4e9da9ac020ba0cc8d91c634f56038faa"
+      },
+      {
+        "path": "l9700_graph_query/predicate_rewrite.py",
+        "sha256": "a3402dd0eb30330273cbd2c50d3552dfbb9d9131aa54d0ff4014116223ddf701"
+      },
+      {
+        "path": "l9700_graph_query/tests/test_predicate_rewrite.py",
+        "sha256": "646a94ce9a0a57c3ef7a7ac39f708c9f1df5900bf6ac68d6ea844b23ce1fdd52"
+      },
+      {
+        "path": "l9720_sparql/executor.py",
+        "sha256": "4d16703b67a74d07ab4a34c8dbf3dbd6872eb469436cb4f7d908a257aafa6b73"
+      },
+      {
+        "path": "l9750_graphql/executor.py",
+        "sha256": "d77c98e3c0ce9fe83d7487be58ad50dadc3244e1a16d97d22dcd1d60fb846436"
+      },
+      {
+        "path": "l9800_rippling/_queue_auth.py",
+        "sha256": "f5c6b3e544de75d2ac5f56bb7f89ccc35a77eec43a007b9a5e3a6337c57a57c5"
+      },
+      {
+        "path": "l9800_rippling/processor.py",
+        "sha256": "273dcc909a25c30ea5234f543b791a24ca729bcd1c9d8868dc6c922c2a734d73"
+      },
+      {
+        "path": "l9900_auto_api/actions.py",
+        "sha256": "3d09d4022cf195b3ab28e63b2f51ca00ac2488fba843fad4903a203a7d27954f"
+      },
+      {
+        "path": "l9900_auto_api/query_capabilities.py",
+        "sha256": "2a8e146c047fbbf878f8c2331806d7aec3f7f3da710d24b58306ca0fd518577c"
+      },
+      {
+        "path": "l9900_auto_api/rest_router.py",
+        "sha256": "0be6753ab5a737aef6fc8319d1bcea18528e674a72d5e4d4705442e2e194644d"
+      },
+      {
+        "path": "l9900_auto_api/tests/test_expand_serverplan_lowering.py",
+        "sha256": "9ab674816008c1f847baa1b4dc78b04ddea15b0fcd08bad239fca8b86e4b0095"
+      },
+      {
+        "path": "scripts/lint_async_sync_delegation.py",
+        "sha256": "146081378fa4f83f15a7f509a2030a168cb4f6ab07f34fb2782324b466970d16"
+      },
+      {
+        "path": "scripts/lint_lazy_architecture.py",
+        "sha256": "3fc3dbb2e3dd96fcf34286bc2e73cbcbd3b549fa81bab6af27cfbbe39c7ffbe3"
+      },
+      {
+        "path": "scripts/lint_serverplan_quality.py",
+        "sha256": "31f2a216df4e73ee7fd2730a9db2bc1ec919df8380ab79adf309248db99b3734"
+      },
+      {
+        "path": "scripts/tests/test_lint_async_def_naming.py",
+        "sha256": "1dafafed59996eee101999c3c331ad57a549d2b56e39e8f80998879d6a5b9fe1"
+      },
+      {
+        "path": "tests/test_serverplan_publication_linter.py",
+        "sha256": "df2da4f224d98bbe18c7c7910280d3918ee75c1fa0cdb36771a7111ebcaad7d7"
+      }
+    ],
+    "matches": 457,
+    "matchingStatements": 1,
+    "nodeAdvances": 31689,
+    "nodeFilters": 20275,
+    "parity": true,
+    "patternRequests": 9,
+    "prepareAndExecuteCpuNs": 33458958,
+    "prepareCpuNs": 1353792,
+    "regexRequests": 1148,
+    "relations": {
+      "captureReads": [],
+      "captureWrites": [],
+      "demandDecisions": [
+        "r5 -> r7: candidate keys plus required parent dependencies",
+        "r1 -> r8: seed keys restricted to r2; recursive boundary is closed"
+      ],
+      "key": [
+        "file",
+        "node"
+      ],
+      "limitations": [
+        "Native utility work and stack/depth budgets are not reproduced by this test-only kernel."
+      ],
+      "multiplicity": "set",
+      "nativeComposition": false,
+      "outcomes": "two-valued",
+      "regionRoots": [
+        2
+      ],
+      "relations": [
+        {
+          "arms": 1,
+          "domain": null,
+          "id": 0,
+          "keyDemand": null,
+          "operator": "Reference(8)",
+          "recursive": false,
+          "schema": [
+            [
+              "file",
+              "FileId"
+            ],
+            [
+              "node",
+              "NodeId"
+            ]
+          ],
+          "source": "clause"
+        },
+        {
+          "arms": 1,
+          "domain": null,
+          "id": 2,
+          "keyDemand": null,
+          "operator": "Intersect([Reference(3), Reference(6)])",
+          "recursive": false,
+          "schema": [
+            [
+              "file",
+              "FileId"
+            ],
+            [
+              "node",
+              "NodeId"
+            ]
+          ],
+          "source": "utility[7]"
+        },
+        {
+          "arms": 1,
+          "domain": null,
+          "id": 3,
+          "keyDemand": null,
+          "operator": "Kinds([137, 138, 221, 222, 223, 224])",
+          "recursive": false,
+          "schema": [
+            [
+              "file",
+              "FileId"
+            ],
+            [
+              "node",
+              "NodeId"
+            ]
+          ],
+          "source": "utility[3]"
+        },
+        {
+          "arms": 2,
+          "domain": null,
+          "id": 4,
+          "keyDemand": null,
+          "operator": "Union([Kinds([145]), Intersect([Kinds([197]), Complement(Reference(7))])])",
+          "recursive": false,
+          "schema": [
+            [
+              "file",
+              "FileId"
+            ],
+            [
+              "node",
+              "NodeId"
+            ]
+          ],
+          "source": "utility[0]"
+        },
+        {
+          "arms": 2,
+          "domain": null,
+          "id": 6,
+          "keyDemand": null,
+          "operator": "Ancestors { seeds: 4, stop: Some(4) }",
+          "recursive": true,
+          "schema": [
+            [
+              "file",
+              "FileId"
+            ],
+            [
+              "node",
+              "NodeId"
+            ]
+          ],
+          "source": "inverse descendant closure"
+        },
+        {
+          "arms": 6,
+          "domain": null,
+          "id": 7,
+          "keyDemand": {
+            "parent_kinds": [
+              226
+            ],
+            "root_kinds": [
+              197
+            ]
+          },
+          "operator": "Union([Preimage(Parent, Kinds([125])), Intersect([Preimage(Parent, Kinds([207])), Preimage(Next, Kinds([158, 224]))]), Preimage(Parent, Intersect([Kinds([158]), Preimage(Previous, Union([Intersect([Kinds([1]), Regex(2)]), Intersect([Pattern(3), Kinds([204])])]))])), Intersect([Preimage(Parent, Intersect([Kinds([215]), Preimage(Child, Intersect([Kinds([1]), Regex(4), Preimage(Next, Regex(5))]))])), Preimage(Previous, Regex(5))]), Preimage(Parent, Intersect([Kinds([226]), Reference(7)]))])",
+          "recursive": true,
+          "schema": [
+            [
+              "file",
+              "FileId"
+            ],
+            [
+              "node",
+              "NodeId"
+            ]
+          ],
+          "source": "utility[8] for consumer kinds"
+        },
+        {
+          "arms": 3,
+          "domain": 2,
+          "id": 8,
+          "keyDemand": null,
+          "operator": "Union([Intersect([Complement(Preimage(Previous, Regex(0))), Preimage(Parent, Kinds([199, 200]))]), Intersect([Preimage(Parent, Kinds([137, 228])), Preimage(Previous, Regex(1))]), Preimage(Parent, Intersect([Kinds([180, 181, 184, 201, 216, 218, 226]), Reference(8)]))])",
+          "recursive": true,
+          "schema": [
+            [
+              "file",
+              "FileId"
+            ],
+            [
+              "node",
+              "NodeId"
+            ]
+          ],
+          "source": "utility[10] within r2"
+        }
+      ],
+      "scope": "capture-free total relations, ancestor closure, and proved subtree demand"
+    },
+    "sql": "WITH RECURSIVE\nneeded7(file,node) AS MATERIALIZED (SELECT file,id FROM node WHERE kind IN (197) UNION SELECT p.file,p.id FROM needed7 k CROSS JOIN node n ON n.file=k.file AND n.id=k.node CROSS JOIN node p ON p.file=n.file AND p.id=n.parent WHERE p.kind IN (226)),\nbounds2(file,node,last) AS MATERIALIZED (SELECT k.file,k.node,n.\"last\" FROM r2 k CROSS JOIN node n ON n.file=k.file AND n.id=k.node),\nregions2(file,node,last) AS MATERIALIZED (SELECT b.file,b.node,b.last FROM bounds2 b WHERE NOT EXISTS (SELECT 1 FROM bounds2 outer_region WHERE outer_region.file=b.file AND outer_region.node<b.node AND outer_region.last>=b.node)),\n-- clause\nr0(file,node) AS (\nSELECT file,node FROM r8\n),\n-- utility[7]\nr2(file,node) AS MATERIALIZED (\nSELECT DISTINCT a0n0.file,a0n0.id FROM r3 AS seed0 CROSS JOIN node AS a0n0 ON a0n0.file=seed0.file AND a0n0.id=seed0.node WHERE EXISTS (SELECT 1 FROM r6 k WHERE k.file=a0n0.file AND k.node=a0n0.id)\n),\n-- utility[3]\nr3(file,node) AS MATERIALIZED (\nSELECT DISTINCT a1n0.file,a1n0.id FROM node AS a1n0 WHERE a1n0.kind IN (137,138,221,222,223,224)\n),\n-- utility[0]\nr4(file,node) AS MATERIALIZED (\nSELECT a2n0.file,a2n0.id FROM node AS a2n0 WHERE a2n0.kind IN (145)\nUNION\nSELECT a3n0.file,a3n0.id FROM node AS a3n0 WHERE a3n0.kind IN (197) AND NOT EXISTS (SELECT 1 WHERE EXISTS (SELECT 1 FROM r7 k WHERE k.file=a3n0.file AND k.node=a3n0.id))\n),\n-- inverse descendant closure\nr6(file,node) AS MATERIALIZED (SELECT n.file,n.parent FROM r4 seed CROSS JOIN node n ON n.file=seed.file AND n.id=seed.node WHERE n.parent IS NOT NULL UNION SELECT n.file,n.parent FROM r6 w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE n.parent IS NOT NULL AND NOT EXISTS (SELECT 1 FROM r4 s WHERE s.file=w.file AND s.node=w.node)),\n-- utility[8] for consumer kinds\nr7(file,node) AS MATERIALIZED (\nSELECT a5n0.file,a5n0.id FROM needed7 AS keys5 CROSS JOIN node AS a5n0 ON a5n0.file=keys5.file AND a5n0.id=keys5.node CROSS JOIN node AS a5n1 ON a5n1.file=a5n0.file AND a5n1.id=a5n0.parent WHERE a5n1.kind IN (125)\nUNION\nSELECT a6n0.file,a6n0.id FROM needed7 AS keys6 CROSS JOIN node AS a6n0 ON a6n0.file=keys6.file AND a6n0.id=keys6.node CROSS JOIN node AS a6n1 ON a6n1.file=a6n0.file AND a6n1.id=a6n0.parent CROSS JOIN node AS a6n2 ON a6n2.file=a6n0.file AND a6n2.id=a6n0.next WHERE a6n1.kind IN (207) AND a6n2.kind IN (158,224)\nUNION\nSELECT a7n0.file,a7n0.id FROM needed7 AS keys7 CROSS JOIN node AS a7n0 ON a7n0.file=keys7.file AND a7n0.id=keys7.node CROSS JOIN node AS a7n1 ON a7n1.file=a7n0.file AND a7n1.id=a7n0.parent CROSS JOIN node AS a7n2 ON a7n2.file=a7n1.file AND a7n2.id=a7n1.prev WHERE a7n1.kind IN (158) AND a7n2.kind IN (1) AND node_regex(2,a7n2.file,a7n2.id)\nUNION\nSELECT a8n0.file,a8n0.id FROM needed7 AS keys8 CROSS JOIN node AS a8n0 ON a8n0.file=keys8.file AND a8n0.id=keys8.node CROSS JOIN node AS a8n1 ON a8n1.file=a8n0.file AND a8n1.id=a8n0.parent CROSS JOIN node AS a8n2 ON a8n2.file=a8n1.file AND a8n2.id=a8n1.prev WHERE a8n1.kind IN (158) AND relation_pattern(3,a8n2.file,a8n2.id) AND a8n2.kind IN (204)\nUNION\nSELECT a9n0.file,a9n0.id FROM needed7 AS keys9 CROSS JOIN node AS a9n0 ON a9n0.file=keys9.file AND a9n0.id=keys9.node CROSS JOIN node AS a9n1 ON a9n1.file=a9n0.file AND a9n1.id=a9n0.parent CROSS JOIN node AS a9n2 ON a9n2.file=a9n1.file AND a9n2.parent=a9n1.id CROSS JOIN node AS a9n3 ON a9n3.file=a9n2.file AND a9n3.id=a9n2.next CROSS JOIN node AS a9n4 ON a9n4.file=a9n0.file AND a9n4.id=a9n0.prev WHERE a9n1.kind IN (215) AND a9n2.kind IN (1) AND node_regex(4,a9n2.file,a9n2.id) AND node_regex(5,a9n3.file,a9n3.id) AND node_regex(5,a9n4.file,a9n4.id)\nUNION\nSELECT a10n0.file,a10n0.id FROM r7 AS seed10 CROSS JOIN node AS a10n1 ON a10n1.file=seed10.file AND a10n1.id=seed10.node CROSS JOIN node AS a10n0 ON a10n0.file=a10n1.file AND a10n0.parent=a10n1.id WHERE a10n1.kind IN (226) AND EXISTS (SELECT 1 FROM needed7 k WHERE k.file=a10n0.file AND k.node=a10n0.id)\n),\n-- utility[10] within r2\nr8(file,node) AS MATERIALIZED (\nSELECT a11n0.file,a11n0.id FROM regions2 AS domain11 CROSS JOIN node AS a11n1 ON a11n1.file=domain11.file AND a11n1.id>=domain11.node AND a11n1.id<=domain11.last CROSS JOIN node AS a11n0 ON a11n0.file=a11n1.file AND a11n0.parent=a11n1.id WHERE NOT EXISTS (SELECT 1 FROM (SELECT 1) AS unit12 CROSS JOIN node AS a12n1 ON a12n1.file=a11n0.file AND a12n1.id=a11n0.prev WHERE node_regex(0,a12n1.file,a12n1.id)) AND a11n1.kind IN (199,200)\nUNION\nSELECT a13n0.file,a13n0.id FROM regions2 AS domain13 CROSS JOIN node AS a13n1 ON a13n1.file=domain13.file AND a13n1.id>=domain13.node AND a13n1.id<=domain13.last CROSS JOIN node AS a13n0 ON a13n0.file=a13n1.file AND a13n0.parent=a13n1.id CROSS JOIN node AS a13n2 ON a13n2.file=a13n0.file AND a13n2.id=a13n0.prev WHERE a13n1.kind IN (137,228) AND node_regex(1,a13n2.file,a13n2.id)\nUNION\nSELECT a14n0.file,a14n0.id FROM r8 AS seed14 CROSS JOIN node AS a14n1 ON a14n1.file=seed14.file AND a14n1.id=seed14.node CROSS JOIN node AS a14n0 ON a14n0.file=a14n1.file AND a14n0.parent=a14n1.id WHERE a14n1.kind IN (180,181,184,201,216,218,226)\n)\nSELECT 0,file,node,json_array() FROM r0 ORDER BY file,node",
+    "statementMemoryBytes": 107040,
+    "timingScope": "Counters enabled. diagnosticCpuNs includes EXPLAIN; prepareAndExecuteCpuNs excludes EXPLAIN, connection setup, and generation. No speedup claim.",
+    "vmSteps": 704585
+  },
+  "scaling": [
+    {
+      "automaticIndexRows": 4,
+      "baseline": {
+        "diagnosticKernelCpuNs": 15083417,
+        "frameAdvances": 428,
+        "framePublications": 238,
+        "matchingStatements": 1
+      },
+      "case": "outside-region",
+      "diagnosticCpuNs": 5173001,
+      "files": 1,
+      "framePublications": 0,
+      "fullscanSteps": 1,
+      "generationCpuNs": 170084,
+      "matches": 2,
+      "matchingStatements": 1,
+      "nodeAdvances": 33,
+      "nodeFilters": 39,
+      "parity": true,
+      "patternRequests": 0,
+      "prepareAndExecuteCpuNs": 1223000,
+      "prepareCpuNs": 1109667,
+      "regexRequests": 7,
+      "size": 32,
+      "statementMemoryBytes": 107040,
+      "timingScope": "Counters enabled. diagnosticCpuNs includes EXPLAIN; prepareAndExecuteCpuNs excludes EXPLAIN, connection setup, and generation. No speedup claim.",
+      "vmSteps": 1044
+    },
+    {
+      "automaticIndexRows": 4,
+      "baseline": {
+        "diagnosticKernelCpuNs": 24711083,
+        "frameAdvances": 36494,
+        "framePublications": 17076,
+        "matchingStatements": 1
+      },
+      "case": "inside-region",
+      "diagnosticCpuNs": 6253791,
+      "files": 1,
+      "framePublications": 0,
+      "fullscanSteps": 353,
+      "generationCpuNs": 153833,
+      "matches": 354,
+      "matchingStatements": 1,
+      "nodeAdvances": 577,
+      "nodeFilters": 615,
+      "parity": true,
+      "patternRequests": 0,
+      "prepareAndExecuteCpuNs": 1627125,
+      "prepareCpuNs": 1187292,
+      "regexRequests": 71,
+      "size": 32,
+      "statementMemoryBytes": 107040,
+      "timingScope": "Counters enabled. diagnosticCpuNs includes EXPLAIN; prepareAndExecuteCpuNs excludes EXPLAIN, connection setup, and generation. No speedup claim.",
+      "vmSteps": 19860
+    },
+    {
+      "automaticIndexRows": 4,
+      "baseline": {
+        "diagnosticKernelCpuNs": 17140167,
+        "frameAdvances": 428,
+        "framePublications": 238,
+        "matchingStatements": 1
+      },
+      "case": "outside-region",
+      "diagnosticCpuNs": 5251999,
+      "files": 1,
+      "framePublications": 0,
+      "fullscanSteps": 1,
+      "generationCpuNs": 155791,
+      "matches": 2,
+      "matchingStatements": 1,
+      "nodeAdvances": 33,
+      "nodeFilters": 39,
+      "parity": true,
+      "patternRequests": 0,
+      "prepareAndExecuteCpuNs": 1274084,
+      "prepareCpuNs": 1151709,
+      "regexRequests": 7,
+      "size": 128,
+      "statementMemoryBytes": 107040,
+      "timingScope": "Counters enabled. diagnosticCpuNs includes EXPLAIN; prepareAndExecuteCpuNs excludes EXPLAIN, connection setup, and generation. No speedup claim.",
+      "vmSteps": 1044
+    },
+    {
+      "automaticIndexRows": 4,
+      "baseline": {
+        "diagnosticKernelCpuNs": 48155792,
+        "frameAdvances": 144302,
+        "framePublications": 67572,
+        "matchingStatements": 1
+      },
+      "case": "inside-region",
+      "diagnosticCpuNs": 7449959,
+      "files": 1,
+      "framePublications": 0,
+      "fullscanSteps": 1409,
+      "generationCpuNs": 157084,
+      "matches": 1410,
+      "matchingStatements": 1,
+      "nodeAdvances": 2209,
+      "nodeFilters": 2343,
+      "parity": true,
+      "patternRequests": 0,
+      "prepareAndExecuteCpuNs": 2604625,
+      "prepareCpuNs": 1068250,
+      "regexRequests": 263,
+      "size": 128,
+      "statementMemoryBytes": 107040,
+      "timingScope": "Counters enabled. diagnosticCpuNs includes EXPLAIN; prepareAndExecuteCpuNs excludes EXPLAIN, connection setup, and generation. No speedup claim.",
+      "vmSteps": 76308
+    },
+    {
+      "automaticIndexRows": 4,
+      "baseline": {
+        "diagnosticKernelCpuNs": 19528625,
+        "frameAdvances": 428,
+        "framePublications": 238,
+        "matchingStatements": 1
+      },
+      "case": "outside-region",
+      "diagnosticCpuNs": 4730501,
+      "files": 1,
+      "framePublications": 0,
+      "fullscanSteps": 1,
+      "generationCpuNs": 153292,
+      "matches": 2,
+      "matchingStatements": 1,
+      "nodeAdvances": 33,
+      "nodeFilters": 39,
+      "parity": true,
+      "patternRequests": 0,
+      "prepareAndExecuteCpuNs": 1207416,
+      "prepareCpuNs": 1021083,
+      "regexRequests": 7,
+      "size": 512,
+      "statementMemoryBytes": 107040,
+      "timingScope": "Counters enabled. diagnosticCpuNs includes EXPLAIN; prepareAndExecuteCpuNs excludes EXPLAIN, connection setup, and generation. No speedup claim.",
+      "vmSteps": 1044
+    },
+    {
+      "automaticIndexRows": 4,
+      "baseline": {
+        "diagnosticKernelCpuNs": 154225083,
+        "frameAdvances": 575534,
+        "framePublications": 269556,
+        "matchingStatements": 1
+      },
+      "case": "inside-region",
+      "diagnosticCpuNs": 17663916,
+      "files": 1,
+      "framePublications": 0,
+      "fullscanSteps": 5633,
+      "generationCpuNs": 160750,
+      "matches": 5634,
+      "matchingStatements": 1,
+      "nodeAdvances": 8737,
+      "nodeFilters": 9255,
+      "parity": true,
+      "patternRequests": 0,
+      "prepareAndExecuteCpuNs": 8057083,
+      "prepareCpuNs": 1073375,
+      "regexRequests": 1031,
+      "size": 512,
+      "statementMemoryBytes": 107040,
+      "timingScope": "Counters enabled. diagnosticCpuNs includes EXPLAIN; prepareAndExecuteCpuNs excludes EXPLAIN, connection setup, and generation. No speedup claim.",
+      "vmSteps": 302100
+    },
+    {
+      "automaticIndexRows": 4,
+      "baseline": {
+        "diagnosticKernelCpuNs": 15228042,
+        "frameAdvances": 428,
+        "framePublications": 238,
+        "matchingStatements": 1
+      },
+      "case": "outside-calls",
+      "diagnosticCpuNs": 6281958,
+      "files": 1,
+      "framePublications": 0,
+      "fullscanSteps": 1,
+      "generationCpuNs": 159458,
+      "matches": 2,
+      "matchingStatements": 1,
+      "nodeAdvances": 33,
+      "nodeFilters": 39,
+      "parity": true,
+      "patternRequests": 0,
+      "prepareAndExecuteCpuNs": 1261500,
+      "prepareCpuNs": 1129084,
+      "regexRequests": 7,
+      "size": 32,
+      "statementMemoryBytes": 107040,
+      "timingScope": "Counters enabled. diagnosticCpuNs includes EXPLAIN; prepareAndExecuteCpuNs excludes EXPLAIN, connection setup, and generation. No speedup claim.",
+      "vmSteps": 1044
+    },
+    {
+      "automaticIndexRows": 4,
+      "baseline": {
+        "diagnosticKernelCpuNs": 16824125,
+        "frameAdvances": 428,
+        "framePublications": 238,
+        "matchingStatements": 1
+      },
+      "case": "outside-calls",
+      "diagnosticCpuNs": 5581126,
+      "files": 1,
+      "framePublications": 0,
+      "fullscanSteps": 1,
+      "generationCpuNs": 149792,
+      "matches": 2,
+      "matchingStatements": 1,
+      "nodeAdvances": 33,
+      "nodeFilters": 39,
+      "parity": true,
+      "patternRequests": 0,
+      "prepareAndExecuteCpuNs": 1141292,
+      "prepareCpuNs": 1038125,
+      "regexRequests": 7,
+      "size": 128,
+      "statementMemoryBytes": 107040,
+      "timingScope": "Counters enabled. diagnosticCpuNs includes EXPLAIN; prepareAndExecuteCpuNs excludes EXPLAIN, connection setup, and generation. No speedup claim.",
+      "vmSteps": 1044
+    },
+    {
+      "automaticIndexRows": 4,
+      "baseline": {
+        "diagnosticKernelCpuNs": 18705250,
+        "frameAdvances": 428,
+        "framePublications": 238,
+        "matchingStatements": 1
+      },
+      "case": "outside-calls",
+      "diagnosticCpuNs": 5292792,
+      "files": 1,
+      "framePublications": 0,
+      "fullscanSteps": 1,
+      "generationCpuNs": 250500,
+      "matches": 2,
+      "matchingStatements": 1,
+      "nodeAdvances": 33,
+      "nodeFilters": 39,
+      "parity": true,
+      "patternRequests": 0,
+      "prepareAndExecuteCpuNs": 1392208,
+      "prepareCpuNs": 1244125,
+      "regexRequests": 7,
+      "size": 512,
+      "statementMemoryBytes": 107040,
+      "timingScope": "Counters enabled. diagnosticCpuNs includes EXPLAIN; prepareAndExecuteCpuNs excludes EXPLAIN, connection setup, and generation. No speedup claim.",
+      "vmSteps": 1044
+    }
+  ],
+  "optimizationHistory": [
+    {
+      "shape": "region-only",
+      "files": 138,
+      "matches": 457,
+      "parity": true,
+      "vmSteps": 13419168,
+      "automaticIndexRows": 84433,
+      "patternRequests": 54258,
+      "matchingStatements": 1,
+      "diagnosticRelationRows": [
+        {
+          "relation": "r0",
+          "rows": 457
+        },
+        {
+          "relation": "r2",
+          "rows": 16
+        },
+        {
+          "relation": "r3",
+          "rows": 3637
+        },
+        {
+          "relation": "r4",
+          "rows": 8489
+        },
+        {
+          "relation": "r5",
+          "rows": 71729
+        },
+        {
+          "relation": "r6",
+          "rows": 4176
+        },
+        {
+          "relation": "r7",
+          "rows": 457
+        },
+        {
+          "relation": "regions2",
+          "rows": 10
+        }
+      ],
+      "sql": "WITH RECURSIVE\nbounds2(file,node,last) AS MATERIALIZED (SELECT k.file,k.node,n.\"last\" FROM r2 k CROSS JOIN node n ON n.file=k.file AND n.id=k.node),\nregions2(file,node,last) AS MATERIALIZED (SELECT b.file,b.node,b.last FROM bounds2 b WHERE NOT EXISTS (SELECT 1 FROM bounds2 outer_region WHERE outer_region.file=b.file AND outer_region.node<b.node AND outer_region.last>=b.node)),\n-- clause\nr0(file,node) AS (\nSELECT DISTINCT a0n0.file,a0n0.id FROM r7 AS seed0 CROSS JOIN node AS a0n0 ON a0n0.file=seed0.file AND a0n0.id=seed0.node WHERE EXISTS (SELECT 1 FROM regions2 domain WHERE domain.file=a0n0.file AND a0n0.id>domain.node AND a0n0.id<=domain.last)\n),\n-- utility[7]\nr2(file,node) AS MATERIALIZED (\nSELECT DISTINCT a1n0.file,a1n0.id FROM r3 AS seed1 CROSS JOIN node AS a1n0 ON a1n0.file=seed1.file AND a1n0.id=seed1.node WHERE EXISTS (SELECT 1 FROM r6 k WHERE k.file=a1n0.file AND k.node=a1n0.id)\n),\n-- utility[3]\nr3(file,node) AS MATERIALIZED (\nSELECT DISTINCT a2n0.file,a2n0.id FROM node AS a2n0 WHERE a2n0.kind IN (137,138,221,222,223,224)\n),\n-- utility[0]\nr4(file,node) AS MATERIALIZED (\nSELECT a3n0.file,a3n0.id FROM node AS a3n0 WHERE a3n0.kind IN (145)\nUNION\nSELECT a4n0.file,a4n0.id FROM node AS a4n0 WHERE a4n0.kind IN (197) AND NOT EXISTS (SELECT 1 WHERE EXISTS (SELECT 1 FROM r5 k WHERE k.file=a4n0.file AND k.node=a4n0.id))\n),\n-- utility[8]\nr5(file,node) AS MATERIALIZED (\nSELECT a6n0.file,a6n0.id FROM node AS a6n1 CROSS JOIN node AS a6n0 ON a6n0.file=a6n1.file AND a6n0.parent=a6n1.id WHERE a6n1.kind IN (125)\nUNION\nSELECT a7n0.file,a7n0.id FROM node AS a7n1 CROSS JOIN node AS a7n0 ON a7n0.file=a7n1.file AND a7n0.parent=a7n1.id CROSS JOIN node AS a7n2 ON a7n2.file=a7n0.file AND a7n2.id=a7n0.next WHERE a7n1.kind IN (207) AND a7n2.kind IN (158,224)\nUNION\nSELECT a8n0.file,a8n0.id FROM node AS a8n1 CROSS JOIN node AS a8n0 ON a8n0.file=a8n1.file AND a8n0.parent=a8n1.id CROSS JOIN node AS a8n2 ON a8n2.file=a8n1.file AND a8n2.id=a8n1.prev WHERE a8n1.kind IN (158) AND a8n2.kind IN (1) AND node_regex(2,a8n2.file,a8n2.id)\nUNION\nSELECT a9n0.file,a9n0.id FROM node AS a9n1 CROSS JOIN node AS a9n0 ON a9n0.file=a9n1.file AND a9n0.parent=a9n1.id CROSS JOIN node AS a9n2 ON a9n2.file=a9n1.file AND a9n2.id=a9n1.prev WHERE a9n1.kind IN (158) AND relation_pattern(3,a9n2.file,a9n2.id) AND a9n2.kind IN (204)\nUNION\nSELECT a10n0.file,a10n0.id FROM node AS a10n1 CROSS JOIN node AS a10n0 ON a10n0.file=a10n1.file AND a10n0.parent=a10n1.id CROSS JOIN node AS a10n2 ON a10n2.file=a10n1.file AND a10n2.parent=a10n1.id CROSS JOIN node AS a10n3 ON a10n3.file=a10n2.file AND a10n3.id=a10n2.next CROSS JOIN node AS a10n4 ON a10n4.file=a10n0.file AND a10n4.id=a10n0.prev WHERE a10n1.kind IN (215) AND a10n2.kind IN (1) AND node_regex(4,a10n2.file,a10n2.id) AND node_regex(5,a10n3.file,a10n3.id) AND node_regex(5,a10n4.file,a10n4.id)\nUNION\nSELECT a11n0.file,a11n0.id FROM r5 AS seed11 CROSS JOIN node AS a11n1 ON a11n1.file=seed11.file AND a11n1.id=seed11.node CROSS JOIN node AS a11n0 ON a11n0.file=a11n1.file AND a11n0.parent=a11n1.id WHERE a11n1.kind IN (226)\n),\n-- inverse descendant closure\nr6(file,node) AS MATERIALIZED (SELECT n.file,n.parent FROM r4 seed CROSS JOIN node n ON n.file=seed.file AND n.id=seed.node WHERE n.parent IS NOT NULL UNION SELECT n.file,n.parent FROM r6 w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE n.parent IS NOT NULL AND NOT EXISTS (SELECT 1 FROM r4 s WHERE s.file=w.file AND s.node=w.node)),\n-- utility[10] within r2\nr7(file,node) AS MATERIALIZED (\nSELECT a12n0.file,a12n0.id FROM regions2 AS domain12 CROSS JOIN node AS a12n0 ON a12n0.file=domain12.file AND a12n0.id>domain12.node AND a12n0.id<=domain12.last CROSS JOIN node AS a12n1 ON a12n1.file=a12n0.file AND a12n1.id=a12n0.parent WHERE NOT EXISTS (SELECT 1 FROM (SELECT 1) AS unit13 CROSS JOIN node AS a13n1 ON a13n1.file=a12n0.file AND a13n1.id=a12n0.prev WHERE node_regex(0,a13n1.file,a13n1.id)) AND a12n1.kind IN (199,200) AND EXISTS (SELECT 1 FROM regions2 domain WHERE domain.file=a12n0.file AND a12n0.id>domain.node AND a12n0.id<=domain.last)\nUNION\nSELECT a14n0.file,a14n0.id FROM regions2 AS domain14 CROSS JOIN node AS a14n0 ON a14n0.file=domain14.file AND a14n0.id>domain14.node AND a14n0.id<=domain14.last CROSS JOIN node AS a14n1 ON a14n1.file=a14n0.file AND a14n1.id=a14n0.parent CROSS JOIN node AS a14n2 ON a14n2.file=a14n0.file AND a14n2.id=a14n0.prev WHERE a14n1.kind IN (137,228) AND node_regex(1,a14n2.file,a14n2.id) AND EXISTS (SELECT 1 FROM regions2 domain WHERE domain.file=a14n0.file AND a14n0.id>domain.node AND a14n0.id<=domain.last)\nUNION\nSELECT a15n0.file,a15n0.id FROM r7 AS seed15 CROSS JOIN node AS a15n1 ON a15n1.file=seed15.file AND a15n1.id=seed15.node CROSS JOIN node AS a15n0 ON a15n0.file=a15n1.file AND a15n0.parent=a15n1.id WHERE a15n1.kind IN (180,181,184,201,216,218,226)\n)\nSELECT 0,file,node,json_array() FROM r0 ORDER BY file,node",
+      "explain": [
+        {
+          "detail": "CO-ROUTINE r0",
+          "id": 2,
+          "parent": 0
+        },
+        {
+          "detail": "MATERIALIZE r7",
+          "id": 5,
+          "parent": 2
+        },
+        {
+          "detail": "SETUP",
+          "id": 10,
+          "parent": 5
+        },
+        {
+          "detail": "MERGE (UNION)",
+          "id": 12,
+          "parent": 10
+        },
+        {
+          "detail": "LEFT",
+          "id": 14,
+          "parent": 12
+        },
+        {
+          "detail": "MATERIALIZE regions2",
+          "id": 17,
+          "parent": 14
+        },
+        {
+          "detail": "MATERIALIZE bounds2",
+          "id": 20,
+          "parent": 17
+        },
+        {
+          "detail": "MATERIALIZE r2",
+          "id": 23,
+          "parent": 20
+        },
+        {
+          "detail": "MATERIALIZE r3",
+          "id": 26,
+          "parent": 23
+        },
+        {
+          "detail": "SCAN a2n0 VIRTUAL TABLE INDEX 0:k*",
+          "id": 30,
+          "parent": 26
+        },
+        {
+          "detail": "SCAN seed1",
+          "id": 73,
+          "parent": 23
+        },
+        {
+          "detail": "SCAN a1n0 VIRTUAL TABLE INDEX 0:f=i=",
+          "id": 75,
+          "parent": 23
+        },
+        {
+          "detail": "CORRELATED SCALAR SUBQUERY 6",
+          "id": 82,
+          "parent": 23
+        },
+        {
+          "detail": "MATERIALIZE r6",
+          "id": 86,
+          "parent": 82
+        },
+        {
+          "detail": "SETUP",
+          "id": 91,
+          "parent": 86
+        },
+        {
+          "detail": "MATERIALIZE r4",
+          "id": 94,
+          "parent": 91
+        },
+        {
+          "detail": "MERGE (UNION)",
+          "id": 97,
+          "parent": 94
+        },
+        {
+          "detail": "LEFT",
+          "id": 99,
+          "parent": 97
+        },
+        {
+          "detail": "SCAN a3n0 VIRTUAL TABLE INDEX 0:k=",
+          "id": 102,
+          "parent": 99
+        },
+        {
+          "detail": "RIGHT",
+          "id": 113,
+          "parent": 97
+        },
+        {
+          "detail": "SCAN a4n0 VIRTUAL TABLE INDEX 0:k=",
+          "id": 116,
+          "parent": 113
+        },
+        {
+          "detail": "CORRELATED SCALAR SUBQUERY 11",
+          "id": 122,
+          "parent": 113
+        },
+        {
+          "detail": "SCAN CONSTANT ROW",
+          "id": 125,
+          "parent": 122
+        },
+        {
+          "detail": "CORRELATED SCALAR SUBQUERY 10",
+          "id": 127,
+          "parent": 122
+        },
+        {
+          "detail": "MATERIALIZE r5",
+          "id": 131,
+          "parent": 127
+        },
+        {
+          "detail": "SETUP",
+          "id": 136,
+          "parent": 131
+        },
+        {
+          "detail": "MERGE (UNION)",
+          "id": 138,
+          "parent": 136
+        },
+        {
+          "detail": "LEFT",
+          "id": 140,
+          "parent": 138
+        },
+        {
+          "detail": "MERGE (UNION)",
+          "id": 142,
+          "parent": 140
+        },
+        {
+          "detail": "LEFT",
+          "id": 144,
+          "parent": 142
+        },
+        {
+          "detail": "SCAN a6n1 VIRTUAL TABLE INDEX 0:k=",
+          "id": 148,
+          "parent": 144
+        },
+        {
+          "detail": "SCAN a6n0 VIRTUAL TABLE INDEX 0:f=p=",
+          "id": 153,
+          "parent": 144
+        },
+        {
+          "detail": "USE TEMP B-TREE FOR ORDER BY",
+          "id": 165,
+          "parent": 144
+        },
+        {
+          "detail": "RIGHT",
+          "id": 175,
+          "parent": 142
+        },
+        {
+          "detail": "SCAN a7n1 VIRTUAL TABLE INDEX 0:k=",
+          "id": 180,
+          "parent": 175
+        },
+        {
+          "detail": "SCAN a7n0 VIRTUAL TABLE INDEX 0:f=p=",
+          "id": 185,
+          "parent": 175
+        },
+        {
+          "detail": "SCAN a7n2 VIRTUAL TABLE INDEX 0:f=i=k*",
+          "id": 191,
+          "parent": 175
+        },
+        {
+          "detail": "USE TEMP B-TREE FOR ORDER BY",
+          "id": 216,
+          "parent": 175
+        },
+        {
+          "detail": "RIGHT",
+          "id": 259,
+          "parent": 138
+        },
+        {
+          "detail": "MERGE (UNION)",
+          "id": 261,
+          "parent": 259
+        },
+        {
+          "detail": "LEFT",
+          "id": 263,
+          "parent": 261
+        },
+        {
+          "detail": "MERGE (UNION)",
+          "id": 265,
+          "parent": 263
+        },
+        {
+          "detail": "LEFT",
+          "id": 267,
+          "parent": 265
+        },
+        {
+          "detail": "SCAN a8n1 VIRTUAL TABLE INDEX 0:k=",
+          "id": 272,
+          "parent": 267
+        },
+        {
+          "detail": "SCAN a8n0 VIRTUAL TABLE INDEX 0:f=p=",
+          "id": 277,
+          "parent": 267
+        },
+        {
+          "detail": "SCAN a8n2 VIRTUAL TABLE INDEX 0:f=i=k=",
+          "id": 283,
+          "parent": 267
+        },
+        {
+          "detail": "USE TEMP B-TREE FOR ORDER BY",
+          "id": 301,
+          "parent": 267
+        },
+        {
+          "detail": "RIGHT",
+          "id": 311,
+          "parent": 265
+        },
+        {
+          "detail": "SCAN a9n1 VIRTUAL TABLE INDEX 0:k=",
+          "id": 316,
+          "parent": 311
+        },
+        {
+          "detail": "SCAN a9n0 VIRTUAL TABLE INDEX 0:f=p=",
+          "id": 321,
+          "parent": 311
+        },
+        {
+          "detail": "SCAN a9n2 VIRTUAL TABLE INDEX 0:f=i=k=",
+          "id": 327,
+          "parent": 311
+        },
+        {
+          "detail": "USE TEMP B-TREE FOR ORDER BY",
+          "id": 345,
+          "parent": 311
+        },
+        {
+          "detail": "RIGHT",
+          "id": 388,
+          "parent": 261
+        },
+        {
+          "detail": "SCAN a10n1 VIRTUAL TABLE INDEX 0:k=",
+          "id": 395,
+          "parent": 388
+        },
+        {
+          "detail": "SCAN a10n0 VIRTUAL TABLE INDEX 0:f=p=",
+          "id": 400,
+          "parent": 388
+        },
+        {
+          "detail": "SCAN a10n2 VIRTUAL TABLE INDEX 0:f=p=k=",
+          "id": 406,
+          "parent": 388
+        },
+        {
+          "detail": "SCAN a10n3 VIRTUAL TABLE INDEX 0:f=i=",
+          "id": 417,
+          "parent": 388
+        },
+        {
+          "detail": "SCAN a10n4 VIRTUAL TABLE INDEX 0:f=i=",
+          "id": 427,
+          "parent": 388
+        },
+        {
+          "detail": "USE TEMP B-TREE FOR ORDER BY",
+          "id": 446,
+          "parent": 388
+        },
+        {
+          "detail": "RECURSIVE STEP",
+          "id": 533,
+          "parent": 131
+        },
+        {
+          "detail": "SCAN seed11",
+          "id": 536,
+          "parent": 533
+        },
+        {
+          "detail": "SCAN a11n1 VIRTUAL TABLE INDEX 0:f=i=k=",
+          "id": 537,
+          "parent": 533
+        },
+        {
+          "detail": "SCAN a11n0 VIRTUAL TABLE INDEX 0:f=p=",
+          "id": 544,
+          "parent": 533
+        },
+        {
+          "detail": "BLOOM FILTER ON k (file=? AND node=?)",
+          "id": 566,
+          "parent": 127
+        },
+        {
+          "detail": "SEARCH k USING AUTOMATIC COVERING INDEX (file=? AND node=?)",
+          "id": 576,
+          "parent": 127
+        },
+        {
+          "detail": "SCAN seed",
+          "id": 636,
+          "parent": 91
+        },
+        {
+          "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+          "id": 638,
+          "parent": 91
+        },
+        {
+          "detail": "RECURSIVE STEP",
+          "id": 664,
+          "parent": 86
+        },
+        {
+          "detail": "SCAN w",
+          "id": 666,
+          "parent": 664
+        },
+        {
+          "detail": "CORRELATED SCALAR SUBQUERY 20",
+          "id": 668,
+          "parent": 664
+        },
+        {
+          "detail": "BLOOM FILTER ON s (file=? AND node=?)",
+          "id": 675,
+          "parent": 668
+        },
+        {
+          "detail": "SEARCH s USING AUTOMATIC COVERING INDEX (file=? AND node=?)",
+          "id": 685,
+          "parent": 668
+        },
+        {
+          "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+          "id": 698,
+          "parent": 664
+        },
+        {
+          "detail": "BLOOM FILTER ON k (file=? AND node=?)",
+          "id": 721,
+          "parent": 82
+        },
+        {
+          "detail": "SEARCH k USING AUTOMATIC COVERING INDEX (file=? AND node=?)",
+          "id": 731,
+          "parent": 82
+        },
+        {
+          "detail": "USE TEMP B-TREE FOR DISTINCT",
+          "id": 754,
+          "parent": 23
+        },
+        {
+          "detail": "SCAN k",
+          "id": 760,
+          "parent": 20
+        },
+        {
+          "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+          "id": 762,
+          "parent": 20
+        },
+        {
+          "detail": "SCAN b",
+          "id": 780,
+          "parent": 17
+        },
+        {
+          "detail": "CORRELATED SCALAR SUBQUERY 2",
+          "id": 783,
+          "parent": 17
+        },
+        {
+          "detail": "BLOOM FILTER ON outer_region (file=?)",
+          "id": 790,
+          "parent": 783
+        },
+        {
+          "detail": "SEARCH outer_region USING AUTOMATIC COVERING INDEX (file=?)",
+          "id": 801,
+          "parent": 783
+        },
+        {
+          "detail": "SCAN domain12",
+          "id": 831,
+          "parent": 14
+        },
+        {
+          "detail": "SCAN a12n0 VIRTUAL TABLE INDEX 0:f=i>i{",
+          "id": 833,
+          "parent": 14
+        },
+        {
+          "detail": "CORRELATED SCALAR SUBQUERY 23",
+          "id": 841,
+          "parent": 14
+        },
+        {
+          "detail": "CO-ROUTINE unit13",
+          "id": 844,
+          "parent": 841
+        },
+        {
+          "detail": "SCAN CONSTANT ROW",
+          "id": 845,
+          "parent": 844
+        },
+        {
+          "detail": "SCAN unit13",
+          "id": 851,
+          "parent": 841
+        },
+        {
+          "detail": "SCAN a13n1 VIRTUAL TABLE INDEX 0:f=i=",
+          "id": 854,
+          "parent": 841
+        },
+        {
+          "detail": "CORRELATED SCALAR SUBQUERY 24",
+          "id": 871,
+          "parent": 14
+        },
+        {
+          "detail": "BLOOM FILTER ON domain (file=?)",
+          "id": 878,
+          "parent": 871
+        },
+        {
+          "detail": "SEARCH domain USING AUTOMATIC COVERING INDEX (file=?)",
+          "id": 889,
+          "parent": 871
+        },
+        {
+          "detail": "SCAN a12n1 VIRTUAL TABLE INDEX 0:f=i=k*",
+          "id": 906,
+          "parent": 14
+        },
+        {
+          "detail": "USE TEMP B-TREE FOR ORDER BY",
+          "id": 931,
+          "parent": 14
+        },
+        {
+          "detail": "RIGHT",
+          "id": 941,
+          "parent": 12
+        },
+        {
+          "detail": "SCAN domain14",
+          "id": 948,
+          "parent": 941
+        },
+        {
+          "detail": "SCAN a14n0 VIRTUAL TABLE INDEX 0:f=i>i{",
+          "id": 950,
+          "parent": 941
+        },
+        {
+          "detail": "CORRELATED SCALAR SUBQUERY 26",
+          "id": 958,
+          "parent": 941
+        },
+        {
+          "detail": "BLOOM FILTER ON domain (file=?)",
+          "id": 965,
+          "parent": 958
+        },
+        {
+          "detail": "SEARCH domain USING AUTOMATIC COVERING INDEX (file=?)",
+          "id": 976,
+          "parent": 958
+        },
+        {
+          "detail": "SCAN a14n1 VIRTUAL TABLE INDEX 0:f=i=k*",
+          "id": 993,
+          "parent": 941
+        },
+        {
+          "detail": "SCAN a14n2 VIRTUAL TABLE INDEX 0:f=i=",
+          "id": 1011,
+          "parent": 941
+        },
+        {
+          "detail": "USE TEMP B-TREE FOR ORDER BY",
+          "id": 1029,
+          "parent": 941
+        },
+        {
+          "detail": "RECURSIVE STEP",
+          "id": 1083,
+          "parent": 5
+        },
+        {
+          "detail": "SCAN seed15",
+          "id": 1086,
+          "parent": 1083
+        },
+        {
+          "detail": "SCAN a15n1 VIRTUAL TABLE INDEX 0:f=i=k*",
+          "id": 1087,
+          "parent": 1083
+        },
+        {
+          "detail": "SCAN a15n0 VIRTUAL TABLE INDEX 0:f=p=",
+          "id": 1120,
+          "parent": 1083
+        },
+        {
+          "detail": "SCAN seed0",
+          "id": 1141,
+          "parent": 2
+        },
+        {
+          "detail": "SCAN a0n0 VIRTUAL TABLE INDEX 0:f=i=",
+          "id": 1143,
+          "parent": 2
+        },
+        {
+          "detail": "CORRELATED SCALAR SUBQUERY 4",
+          "id": 1150,
+          "parent": 2
+        },
+        {
+          "detail": "BLOOM FILTER ON domain (file=?)",
+          "id": 1157,
+          "parent": 1150
+        },
+        {
+          "detail": "SEARCH domain USING AUTOMATIC COVERING INDEX (file=?)",
+          "id": 1168,
+          "parent": 1150
+        },
+        {
+          "detail": "USE TEMP B-TREE FOR DISTINCT",
+          "id": 1193,
+          "parent": 2
+        },
+        {
+          "detail": "SCAN r0",
+          "id": 1196,
+          "parent": 0
+        },
+        {
+          "detail": "USE TEMP B-TREE FOR ORDER BY",
+          "id": 1208,
+          "parent": 0
+        }
+      ],
+      "querySha256": "3e97adc20acc1734499e82f9560c7402fc1148cf54e0fc9df2034c3ae19ab6f1",
+      "counterScope": "VM and pattern requests cover matching only. Initial node and regex counters included diagnostic queries and are omitted."
+    },
+    {
+      "shape": "recursive-key-demand",
+      "files": 138,
+      "matches": 457,
+      "parity": true,
+      "vmSteps": 1184676,
+      "automaticIndexRows": 12701,
+      "patternRequests": 9,
+      "matchingStatements": 1,
+      "diagnosticRelationRows": [
+        {
+          "relation": "r0",
+          "rows": 457
+        },
+        {
+          "relation": "r2",
+          "rows": 16
+        },
+        {
+          "relation": "r3",
+          "rows": 3637
+        },
+        {
+          "relation": "r4",
+          "rows": 8489
+        },
+        {
+          "relation": "r6",
+          "rows": 4176
+        },
+        {
+          "relation": "r7",
+          "rows": 24
+        },
+        {
+          "relation": "r8",
+          "rows": 457
+        },
+        {
+          "relation": "regions2",
+          "rows": 10
+        },
+        {
+          "relation": "needed7",
+          "rows": 143
+        }
+      ],
+      "sql": "WITH RECURSIVE\nneeded7(file,node) AS MATERIALIZED (SELECT file,id FROM node WHERE kind IN (197) UNION SELECT p.file,p.id FROM needed7 k CROSS JOIN node n ON n.file=k.file AND n.id=k.node CROSS JOIN node p ON p.file=n.file AND p.id=n.parent WHERE p.kind IN (226)),\nbounds2(file,node,last) AS MATERIALIZED (SELECT k.file,k.node,n.\"last\" FROM r2 k CROSS JOIN node n ON n.file=k.file AND n.id=k.node),\nregions2(file,node,last) AS MATERIALIZED (SELECT b.file,b.node,b.last FROM bounds2 b WHERE NOT EXISTS (SELECT 1 FROM bounds2 outer_region WHERE outer_region.file=b.file AND outer_region.node<b.node AND outer_region.last>=b.node)),\n-- clause\nr0(file,node) AS (\nSELECT file,node FROM r8\n),\n-- utility[7]\nr2(file,node) AS MATERIALIZED (\nSELECT DISTINCT a0n0.file,a0n0.id FROM r3 AS seed0 CROSS JOIN node AS a0n0 ON a0n0.file=seed0.file AND a0n0.id=seed0.node WHERE EXISTS (SELECT 1 FROM r6 k WHERE k.file=a0n0.file AND k.node=a0n0.id)\n),\n-- utility[3]\nr3(file,node) AS MATERIALIZED (\nSELECT DISTINCT a1n0.file,a1n0.id FROM node AS a1n0 WHERE a1n0.kind IN (137,138,221,222,223,224)\n),\n-- utility[0]\nr4(file,node) AS MATERIALIZED (\nSELECT a2n0.file,a2n0.id FROM node AS a2n0 WHERE a2n0.kind IN (145)\nUNION\nSELECT a3n0.file,a3n0.id FROM node AS a3n0 WHERE a3n0.kind IN (197) AND NOT EXISTS (SELECT 1 WHERE EXISTS (SELECT 1 FROM r7 k WHERE k.file=a3n0.file AND k.node=a3n0.id))\n),\n-- inverse descendant closure\nr6(file,node) AS MATERIALIZED (SELECT n.file,n.parent FROM r4 seed CROSS JOIN node n ON n.file=seed.file AND n.id=seed.node WHERE n.parent IS NOT NULL UNION SELECT n.file,n.parent FROM r6 w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE n.parent IS NOT NULL AND NOT EXISTS (SELECT 1 FROM r4 s WHERE s.file=w.file AND s.node=w.node)),\n-- utility[8] for consumer kinds\nr7(file,node) AS MATERIALIZED (\nSELECT a5n0.file,a5n0.id FROM needed7 AS keys5 CROSS JOIN node AS a5n0 ON a5n0.file=keys5.file AND a5n0.id=keys5.node CROSS JOIN node AS a5n1 ON a5n1.file=a5n0.file AND a5n1.id=a5n0.parent WHERE a5n1.kind IN (125)\nUNION\nSELECT a6n0.file,a6n0.id FROM needed7 AS keys6 CROSS JOIN node AS a6n0 ON a6n0.file=keys6.file AND a6n0.id=keys6.node CROSS JOIN node AS a6n1 ON a6n1.file=a6n0.file AND a6n1.id=a6n0.parent CROSS JOIN node AS a6n2 ON a6n2.file=a6n0.file AND a6n2.id=a6n0.next WHERE a6n1.kind IN (207) AND a6n2.kind IN (158,224)\nUNION\nSELECT a7n0.file,a7n0.id FROM needed7 AS keys7 CROSS JOIN node AS a7n0 ON a7n0.file=keys7.file AND a7n0.id=keys7.node CROSS JOIN node AS a7n1 ON a7n1.file=a7n0.file AND a7n1.id=a7n0.parent CROSS JOIN node AS a7n2 ON a7n2.file=a7n1.file AND a7n2.id=a7n1.prev WHERE a7n1.kind IN (158) AND a7n2.kind IN (1) AND node_regex(2,a7n2.file,a7n2.id)\nUNION\nSELECT a8n0.file,a8n0.id FROM needed7 AS keys8 CROSS JOIN node AS a8n0 ON a8n0.file=keys8.file AND a8n0.id=keys8.node CROSS JOIN node AS a8n1 ON a8n1.file=a8n0.file AND a8n1.id=a8n0.parent CROSS JOIN node AS a8n2 ON a8n2.file=a8n1.file AND a8n2.id=a8n1.prev WHERE a8n1.kind IN (158) AND relation_pattern(3,a8n2.file,a8n2.id) AND a8n2.kind IN (204)\nUNION\nSELECT a9n0.file,a9n0.id FROM needed7 AS keys9 CROSS JOIN node AS a9n0 ON a9n0.file=keys9.file AND a9n0.id=keys9.node CROSS JOIN node AS a9n1 ON a9n1.file=a9n0.file AND a9n1.id=a9n0.parent CROSS JOIN node AS a9n2 ON a9n2.file=a9n1.file AND a9n2.parent=a9n1.id CROSS JOIN node AS a9n3 ON a9n3.file=a9n2.file AND a9n3.id=a9n2.next CROSS JOIN node AS a9n4 ON a9n4.file=a9n0.file AND a9n4.id=a9n0.prev WHERE a9n1.kind IN (215) AND a9n2.kind IN (1) AND node_regex(4,a9n2.file,a9n2.id) AND node_regex(5,a9n3.file,a9n3.id) AND node_regex(5,a9n4.file,a9n4.id)\nUNION\nSELECT a10n0.file,a10n0.id FROM r7 AS seed10 CROSS JOIN node AS a10n1 ON a10n1.file=seed10.file AND a10n1.id=seed10.node CROSS JOIN node AS a10n0 ON a10n0.file=a10n1.file AND a10n0.parent=a10n1.id WHERE a10n1.kind IN (226) AND EXISTS (SELECT 1 FROM needed7 k WHERE k.file=a10n0.file AND k.node=a10n0.id)\n),\n-- utility[10] within r2\nr8(file,node) AS MATERIALIZED (\nSELECT a11n0.file,a11n0.id FROM regions2 AS domain11 CROSS JOIN node AS a11n0 ON a11n0.file=domain11.file AND a11n0.id>domain11.node AND a11n0.id<=domain11.last CROSS JOIN node AS a11n1 ON a11n1.file=a11n0.file AND a11n1.id=a11n0.parent WHERE NOT EXISTS (SELECT 1 FROM (SELECT 1) AS unit12 CROSS JOIN node AS a12n1 ON a12n1.file=a11n0.file AND a12n1.id=a11n0.prev WHERE node_regex(0,a12n1.file,a12n1.id)) AND a11n1.kind IN (199,200)\nUNION\nSELECT a13n0.file,a13n0.id FROM regions2 AS domain13 CROSS JOIN node AS a13n0 ON a13n0.file=domain13.file AND a13n0.id>domain13.node AND a13n0.id<=domain13.last CROSS JOIN node AS a13n1 ON a13n1.file=a13n0.file AND a13n1.id=a13n0.parent CROSS JOIN node AS a13n2 ON a13n2.file=a13n0.file AND a13n2.id=a13n0.prev WHERE a13n1.kind IN (137,228) AND node_regex(1,a13n2.file,a13n2.id)\nUNION\nSELECT a14n0.file,a14n0.id FROM r8 AS seed14 CROSS JOIN node AS a14n1 ON a14n1.file=seed14.file AND a14n1.id=seed14.node CROSS JOIN node AS a14n0 ON a14n0.file=a14n1.file AND a14n0.parent=a14n1.id WHERE a14n1.kind IN (180,181,184,201,216,218,226)\n)\nSELECT 0,file,node,json_array() FROM r0 ORDER BY file,node",
+      "explain": [
+        {
+          "detail": "MATERIALIZE r8",
+          "id": 3,
+          "parent": 0
+        },
+        {
+          "detail": "SETUP",
+          "id": 8,
+          "parent": 3
+        },
+        {
+          "detail": "MERGE (UNION)",
+          "id": 10,
+          "parent": 8
+        },
+        {
+          "detail": "LEFT",
+          "id": 12,
+          "parent": 10
+        },
+        {
+          "detail": "MATERIALIZE regions2",
+          "id": 15,
+          "parent": 12
+        },
+        {
+          "detail": "MATERIALIZE bounds2",
+          "id": 18,
+          "parent": 15
+        },
+        {
+          "detail": "MATERIALIZE r2",
+          "id": 21,
+          "parent": 18
+        },
+        {
+          "detail": "MATERIALIZE r3",
+          "id": 24,
+          "parent": 21
+        },
+        {
+          "detail": "SCAN a1n0 VIRTUAL TABLE INDEX 0:k*",
+          "id": 28,
+          "parent": 24
+        },
+        {
+          "detail": "SCAN seed0",
+          "id": 71,
+          "parent": 21
+        },
+        {
+          "detail": "SCAN a0n0 VIRTUAL TABLE INDEX 0:f=i=",
+          "id": 73,
+          "parent": 21
+        },
+        {
+          "detail": "CORRELATED SCALAR SUBQUERY 7",
+          "id": 80,
+          "parent": 21
+        },
+        {
+          "detail": "MATERIALIZE r6",
+          "id": 84,
+          "parent": 80
+        },
+        {
+          "detail": "SETUP",
+          "id": 89,
+          "parent": 84
+        },
+        {
+          "detail": "MATERIALIZE r4",
+          "id": 92,
+          "parent": 89
+        },
+        {
+          "detail": "MERGE (UNION)",
+          "id": 95,
+          "parent": 92
+        },
+        {
+          "detail": "LEFT",
+          "id": 97,
+          "parent": 95
+        },
+        {
+          "detail": "SCAN a2n0 VIRTUAL TABLE INDEX 0:k=",
+          "id": 100,
+          "parent": 97
+        },
+        {
+          "detail": "RIGHT",
+          "id": 111,
+          "parent": 95
+        },
+        {
+          "detail": "SCAN a3n0 VIRTUAL TABLE INDEX 0:k=",
+          "id": 114,
+          "parent": 111
+        },
+        {
+          "detail": "CORRELATED SCALAR SUBQUERY 12",
+          "id": 120,
+          "parent": 111
+        },
+        {
+          "detail": "SCAN CONSTANT ROW",
+          "id": 123,
+          "parent": 120
+        },
+        {
+          "detail": "CORRELATED SCALAR SUBQUERY 11",
+          "id": 125,
+          "parent": 120
+        },
+        {
+          "detail": "MATERIALIZE r7",
+          "id": 129,
+          "parent": 125
+        },
+        {
+          "detail": "SETUP",
+          "id": 134,
+          "parent": 129
+        },
+        {
+          "detail": "MERGE (UNION)",
+          "id": 136,
+          "parent": 134
+        },
+        {
+          "detail": "LEFT",
+          "id": 138,
+          "parent": 136
+        },
+        {
+          "detail": "MERGE (UNION)",
+          "id": 140,
+          "parent": 138
+        },
+        {
+          "detail": "LEFT",
+          "id": 142,
+          "parent": 140
+        },
+        {
+          "detail": "MATERIALIZE needed7",
+          "id": 145,
+          "parent": 142
+        },
+        {
+          "detail": "SETUP",
+          "id": 150,
+          "parent": 145
+        },
+        {
+          "detail": "SCAN node VIRTUAL TABLE INDEX 0:k=",
+          "id": 152,
+          "parent": 150
+        },
+        {
+          "detail": "RECURSIVE STEP",
+          "id": 174,
+          "parent": 145
+        },
+        {
+          "detail": "SCAN k",
+          "id": 177,
+          "parent": 174
+        },
+        {
+          "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+          "id": 178,
+          "parent": 174
+        },
+        {
+          "detail": "SCAN p VIRTUAL TABLE INDEX 0:f=i=k=",
+          "id": 184,
+          "parent": 174
+        },
+        {
+          "detail": "SCAN keys5",
+          "id": 207,
+          "parent": 142
+        },
+        {
+          "detail": "SCAN a5n0 VIRTUAL TABLE INDEX 0:f=i=",
+          "id": 209,
+          "parent": 142
+        },
+        {
+          "detail": "SCAN a5n1 VIRTUAL TABLE INDEX 0:f=i=k=",
+          "id": 215,
+          "parent": 142
+        },
+        {
+          "detail": "USE TEMP B-TREE FOR ORDER BY",
+          "id": 229,
+          "parent": 142
+        },
+        {
+          "detail": "RIGHT",
+          "id": 239,
+          "parent": 140
+        },
+        {
+          "detail": "SCAN keys6",
+          "id": 246,
+          "parent": 239
+        },
+        {
+          "detail": "SCAN a6n0 VIRTUAL TABLE INDEX 0:f=i=",
+          "id": 248,
+          "parent": 239
+        },
+        {
+          "detail": "SCAN a6n1 VIRTUAL TABLE INDEX 0:f=i=k=",
+          "id": 254,
+          "parent": 239
+        },
+        {
+          "detail": "SCAN a6n2 VIRTUAL TABLE INDEX 0:f=i=k*",
+          "id": 261,
+          "parent": 239
+        },
+        {
+          "detail": "USE TEMP B-TREE FOR ORDER BY",
+          "id": 287,
+          "parent": 239
+        },
+        {
+          "detail": "RIGHT",
+          "id": 330,
+          "parent": 136
+        },
+        {
+          "detail": "MERGE (UNION)",
+          "id": 332,
+          "parent": 330
+        },
+        {
+          "detail": "LEFT",
+          "id": 334,
+          "parent": 332
+        },
+        {
+          "detail": "MERGE (UNION)",
+          "id": 336,
+          "parent": 334
+        },
+        {
+          "detail": "LEFT",
+          "id": 338,
+          "parent": 336
+        },
+        {
+          "detail": "SCAN keys7",
+          "id": 345,
+          "parent": 338
+        },
+        {
+          "detail": "SCAN a7n0 VIRTUAL TABLE INDEX 0:f=i=",
+          "id": 347,
+          "parent": 338
+        },
+        {
+          "detail": "SCAN a7n1 VIRTUAL TABLE INDEX 0:f=i=k=",
+          "id": 353,
+          "parent": 338
+        },
+        {
+          "detail": "SCAN a7n2 VIRTUAL TABLE INDEX 0:f=i=k=",
+          "id": 360,
+          "parent": 338
+        },
+        {
+          "detail": "USE TEMP B-TREE FOR ORDER BY",
+          "id": 379,
+          "parent": 338
+        },
+        {
+          "detail": "RIGHT",
+          "id": 389,
+          "parent": 336
+        },
+        {
+          "detail": "SCAN keys8",
+          "id": 396,
+          "parent": 389
+        },
+        {
+          "detail": "SCAN a8n0 VIRTUAL TABLE INDEX 0:f=i=",
+          "id": 398,
+          "parent": 389
+        },
+        {
+          "detail": "SCAN a8n1 VIRTUAL TABLE INDEX 0:f=i=k=",
+          "id": 404,
+          "parent": 389
+        },
+        {
+          "detail": "SCAN a8n2 VIRTUAL TABLE INDEX 0:f=i=k=",
+          "id": 411,
+          "parent": 389
+        },
+        {
+          "detail": "USE TEMP B-TREE FOR ORDER BY",
+          "id": 430,
+          "parent": 389
+        },
+        {
+          "detail": "RIGHT",
+          "id": 473,
+          "parent": 332
+        },
+        {
+          "detail": "SCAN keys9",
+          "id": 482,
+          "parent": 473
+        },
+        {
+          "detail": "SCAN a9n0 VIRTUAL TABLE INDEX 0:f=i=",
+          "id": 484,
+          "parent": 473
+        },
+        {
+          "detail": "SCAN a9n1 VIRTUAL TABLE INDEX 0:f=i=k=",
+          "id": 490,
+          "parent": 473
+        },
+        {
+          "detail": "SCAN a9n2 VIRTUAL TABLE INDEX 0:f=p=k=",
+          "id": 497,
+          "parent": 473
+        },
+        {
+          "detail": "SCAN a9n3 VIRTUAL TABLE INDEX 0:f=i=",
+          "id": 508,
+          "parent": 473
+        },
+        {
+          "detail": "SCAN a9n4 VIRTUAL TABLE INDEX 0:f=i=",
+          "id": 518,
+          "parent": 473
+        },
+        {
+          "detail": "USE TEMP B-TREE FOR ORDER BY",
+          "id": 538,
+          "parent": 473
+        },
+        {
+          "detail": "RECURSIVE STEP",
+          "id": 625,
+          "parent": 129
+        },
+        {
+          "detail": "SCAN seed10",
+          "id": 628,
+          "parent": 625
+        },
+        {
+          "detail": "SCAN a10n1 VIRTUAL TABLE INDEX 0:f=i=k=",
+          "id": 629,
+          "parent": 625
+        },
+        {
+          "detail": "SCAN a10n0 VIRTUAL TABLE INDEX 0:f=p=",
+          "id": 636,
+          "parent": 625
+        },
+        {
+          "detail": "CORRELATED SCALAR SUBQUERY 22",
+          "id": 643,
+          "parent": 625
+        },
+        {
+          "detail": "BLOOM FILTER ON k (file=? AND node=?)",
+          "id": 650,
+          "parent": 643
+        },
+        {
+          "detail": "SEARCH k USING AUTOMATIC COVERING INDEX (file=? AND node=?)",
+          "id": 660,
+          "parent": 643
+        },
+        {
+          "detail": "BLOOM FILTER ON k (file=? AND node=?)",
+          "id": 689,
+          "parent": 125
+        },
+        {
+          "detail": "SEARCH k USING AUTOMATIC COVERING INDEX (file=? AND node=?)",
+          "id": 699,
+          "parent": 125
+        },
+        {
+          "detail": "SCAN seed",
+          "id": 759,
+          "parent": 89
+        },
+        {
+          "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+          "id": 761,
+          "parent": 89
+        },
+        {
+          "detail": "RECURSIVE STEP",
+          "id": 787,
+          "parent": 84
+        },
+        {
+          "detail": "SCAN w",
+          "id": 789,
+          "parent": 787
+        },
+        {
+          "detail": "CORRELATED SCALAR SUBQUERY 15",
+          "id": 791,
+          "parent": 787
+        },
+        {
+          "detail": "BLOOM FILTER ON s (file=? AND node=?)",
+          "id": 798,
+          "parent": 791
+        },
+        {
+          "detail": "SEARCH s USING AUTOMATIC COVERING INDEX (file=? AND node=?)",
+          "id": 808,
+          "parent": 791
+        },
+        {
+          "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+          "id": 821,
+          "parent": 787
+        },
+        {
+          "detail": "BLOOM FILTER ON k (file=? AND node=?)",
+          "id": 844,
+          "parent": 80
+        },
+        {
+          "detail": "SEARCH k USING AUTOMATIC COVERING INDEX (file=? AND node=?)",
+          "id": 854,
+          "parent": 80
+        },
+        {
+          "detail": "USE TEMP B-TREE FOR DISTINCT",
+          "id": 877,
+          "parent": 21
+        },
+        {
+          "detail": "SCAN k",
+          "id": 883,
+          "parent": 18
+        },
+        {
+          "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+          "id": 885,
+          "parent": 18
+        },
+        {
+          "detail": "SCAN b",
+          "id": 903,
+          "parent": 15
+        },
+        {
+          "detail": "CORRELATED SCALAR SUBQUERY 4",
+          "id": 906,
+          "parent": 15
+        },
+        {
+          "detail": "BLOOM FILTER ON outer_region (file=?)",
+          "id": 913,
+          "parent": 906
+        },
+        {
+          "detail": "SEARCH outer_region USING AUTOMATIC COVERING INDEX (file=?)",
+          "id": 924,
+          "parent": 906
+        },
+        {
+          "detail": "SCAN domain11",
+          "id": 954,
+          "parent": 12
+        },
+        {
+          "detail": "SCAN a11n0 VIRTUAL TABLE INDEX 0:f=i>i{",
+          "id": 956,
+          "parent": 12
+        },
+        {
+          "detail": "CORRELATED SCALAR SUBQUERY 25",
+          "id": 964,
+          "parent": 12
+        },
+        {
+          "detail": "CO-ROUTINE unit12",
+          "id": 967,
+          "parent": 964
+        },
+        {
+          "detail": "SCAN CONSTANT ROW",
+          "id": 968,
+          "parent": 967
+        },
+        {
+          "detail": "SCAN unit12",
+          "id": 974,
+          "parent": 964
+        },
+        {
+          "detail": "SCAN a12n1 VIRTUAL TABLE INDEX 0:f=i=",
+          "id": 977,
+          "parent": 964
+        },
+        {
+          "detail": "SCAN a11n1 VIRTUAL TABLE INDEX 0:f=i=k*",
+          "id": 993,
+          "parent": 12
+        },
+        {
+          "detail": "USE TEMP B-TREE FOR ORDER BY",
+          "id": 1018,
+          "parent": 12
+        },
+        {
+          "detail": "RIGHT",
+          "id": 1028,
+          "parent": 10
+        },
+        {
+          "detail": "SCAN domain13",
+          "id": 1035,
+          "parent": 1028
+        },
+        {
+          "detail": "SCAN a13n0 VIRTUAL TABLE INDEX 0:f=i>i{",
+          "id": 1037,
+          "parent": 1028
+        },
+        {
+          "detail": "SCAN a13n1 VIRTUAL TABLE INDEX 0:f=i=k*",
+          "id": 1044,
+          "parent": 1028
+        },
+        {
+          "detail": "SCAN a13n2 VIRTUAL TABLE INDEX 0:f=i=",
+          "id": 1062,
+          "parent": 1028
+        },
+        {
+          "detail": "USE TEMP B-TREE FOR ORDER BY",
+          "id": 1080,
+          "parent": 1028
+        },
+        {
+          "detail": "RECURSIVE STEP",
+          "id": 1134,
+          "parent": 3
+        },
+        {
+          "detail": "SCAN seed14",
+          "id": 1137,
+          "parent": 1134
+        },
+        {
+          "detail": "SCAN a14n1 VIRTUAL TABLE INDEX 0:f=i=k*",
+          "id": 1138,
+          "parent": 1134
+        },
+        {
+          "detail": "SCAN a14n0 VIRTUAL TABLE INDEX 0:f=p=",
+          "id": 1171,
+          "parent": 1134
+        },
+        {
+          "detail": "SCAN r8",
+          "id": 1191,
+          "parent": 0
+        },
+        {
+          "detail": "USE TEMP B-TREE FOR ORDER BY",
+          "id": 1202,
+          "parent": 0
+        }
+      ],
+      "querySha256": "9be6554a0bb3d8e6c49d05c9b7136b50bd913444cea06d10644214f22ade5d33",
+      "nodeAdvances": 59453,
+      "nodeFilters": 52501,
+      "regexRequests": 10089,
+      "framePublications": 0
+    }
+  ],
+  "validation": {
+    "frozenInputsMatchReference": true,
+    "compilerSemanticTests": 7,
+    "regionFixtureMatches": [
+      58,
+      58,
+      10,
+      59
+    ],
+    "referenceRegressionTests": 3,
+    "scope": "Capture-free demand view supplied by the harness; automatic extraction and full-rule capture generation remain pending.",
+    "diagnosticCounterScope": "Matching counters exclude the subsequent EXPLAIN and relation-cardinality statements. diagnosticCpuNs includes both diagnostics. This is not a complete cold-job execution count."
+  }
+}

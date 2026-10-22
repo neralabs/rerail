@@ -1,0 +1,52 @@
+//! Capture-free pattern leaves only. SQL owns all relation and Boolean composition.
+use super::super::{exec::Batch, terminals::Terminal};
+use crate::code_rule_dsl::matcher::node_at;
+use ast_grep_core::matcher::MatcherExt;
+use rusqlite::{Connection, Error, Result, functions::FunctionFlags};
+use std::{
+    panic::AssertUnwindSafe,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
+
+struct Leaves(AssertUnwindSafe<Arc<Batch>>);
+impl Leaves {
+    fn pattern(&self, term: usize, file: usize, node: u32) -> Result<bool> {
+        let Some(Terminal::Pattern(term)) = self.0.program.terminals.get(term) else {
+            return Err(Error::ModuleError(
+                "relational pattern: invalid terminal".into(),
+            ));
+        };
+        if !term.vars.is_empty() {
+            return Err(Error::ModuleError(
+                "relational pattern: capture-bearing terminal".into(),
+            ));
+        }
+        let Some(file) = self.0.files.get(file) else {
+            return Ok(false);
+        };
+        Ok(node < file.facts.len() && term.pattern.match_node(node_at(&file.root, node)).is_some())
+    }
+}
+
+pub(super) fn register(db: &Connection, batch: &Arc<Batch>) -> Result<Arc<AtomicUsize>> {
+    let leaves = Leaves(AssertUnwindSafe(Arc::clone(batch)));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let count = Arc::clone(&calls);
+    db.create_scalar_function(
+        "relation_pattern",
+        3,
+        FunctionFlags::SQLITE_UTF8,
+        move |ctx| {
+            count.fetch_add(1, Ordering::Relaxed);
+            leaves.pattern(
+                ctx.get::<u32>(0)? as usize,
+                ctx.get::<u32>(1)? as usize,
+                ctx.get(2)?,
+            )
+        },
+    )?;
+    Ok(calls)
+}

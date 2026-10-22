@@ -2596,3 +2596,144 @@ The allocator override is specific to this development environment.
 The driver builds the optimized test executable unless the caller supplies a matching executable with `--binary`.
 All reported timings retain instrumentation, and their scopes differ between the two kernels.
 This slice makes no repeated-timing speedup claim.
+
+## Transition phase 1: structural region demand — 2026-10-22
+
+The user requested the next phase after direct target-slot compilation.
+This slice adds ancestor closure, capture-free pattern leaves, and subtree demand propagation to the same compiler.
+The test harness expresses a capture-free demand view with B023's unchanged loop, function, and target-slot utilities.
+The compiler derives the SQL regions from that ordinary DSL query.
+Automatic extraction of this view from the complete capture-bearing rule remains a later integration step.
+
+The inverse descendant closure starts with matching functions and climbs through parent links until the policy's inclusive stop condition.
+Its output selects loop roots, and interval normalization removes nested roots from the scan domain.
+The compiler specializes the target producer for that domain without changing other consumers.
+It removes unreachable unrestricted producers from the emitted query.
+
+Seed restriction requires a boundary proof.
+Every recursive dependency must use one parent hop with a kind guard that excludes region-root kinds.
+Without that proof, the compiler retains global utility evaluation and filters its output.
+This preserves utilities whose matching seed lies outside a requested subtree.
+Seed restriction applies to output keys, while parent and sibling metadata probes can cross the boundary.
+
+The implementation and corpus checks are complete for this demand view.
+Full B023 generation remains outside this slice.
+
+### First region profile and the remaining amplification
+
+The initial corpus run agrees with native and current SQL on all 457 demanded target slots.
+It derives 16 selected loop roots and ten disjoint regions.
+Its generated query still uses 13,419,168 VM instructions.
+The logical cardinality profile exposes 71,729 answers from the unrestricted safe-slot producer.
+Only lambda candidates consume those answers.
+The matching statement makes 54,258 pattern requests while constructing that global producer.
+
+The next rewrite specializes a negative utility probe to its consumer's candidate kinds.
+A separate key closure adds the recursive parent dependencies needed to answer those candidates.
+Seed and recursive outputs then stay inside that required key set.
+Other consumers retain independent producer variants.
+The compiler also removes a redundant region filter after a proved restricted producer.
+
+The first profile's node and regex counters include its subsequent diagnostic cardinality query.
+Its VM counter and pattern-request counter describe the matching statement alone.
+The harness now snapshots statement counters before diagnostic queries.
+Final evidence will keep logical diagnostic cardinalities separate from physical matching counters.
+Initial evidence remains in `/tmp/rerail-region-demand-20261022/initial.json`.
+
+### Final shape and measured work
+
+Consumer-key restriction reduces safe-slot evaluation from 71,729 answers to 24 answers over 143 required keys.
+The key closure includes parenthesized dependencies, so a safe lambda can still inherit its answer from an enclosing expression.
+It does not publish intermediate frames or invoke native rule composition.
+
+The final physical rewrite changes the target seed's join direction.
+Previously, each seed arm scanned every node in a region and inspected its parent.
+It now scans parents of the required kinds inside the inclusive region, then probes their children.
+Every such child is a strict descendant of that region.
+This proof permits removal of the repeated output-domain membership check.
+
+The generated graph has these stages:
+
+```text
+candidate lambda keys -> required parent keys -> safe-slot answers
+eligible functions -> stopped ancestor closure -> selected loops
+selected loops -> disjoint subtree regions
+regions -> kind-filtered target parents -> seed children -> recursive target slots
+```
+
+Every arrow stays inside one matching SQL statement across all 138 files.
+All inputs match the frozen reference by SHA-256.
+Each measured query agrees with both native evaluation and the current SQL engine on all 457 target slots.
+
+| Measurement | Region restriction only | Add recursive key demand | Add parent-first seeds |
+| --- | ---: | ---: | ---: |
+| VM instructions | 13,419,168 | 1,184,676 | 704,585 |
+| Pattern requests | 54,258 | 9 | 9 |
+| Automatic-index entries | 84,433 | 12,701 | 12,701 |
+| Node advances, matching only | Not comparable | 59,453 | 31,689 |
+| Regex requests, matching only | Not comparable | 10,089 | 1,148 |
+
+The final shape uses approximately 19 times fewer VM instructions than the first region implementation.
+This comparison covers the same demand view, rather than the previous unrestricted utility or the complete B023 query.
+The final query publishes zero frames; the current engine publishes 2,476,234 frames for this view.
+Both use one matching statement.
+The final instrumented prepare-and-execute sample costs 33.46 ms, including 1.35 ms for preparation.
+These single samples do not establish a CPU speedup ratio.
+
+The logical cardinality profile contains 8,489 eligible functions, 4,176 ancestor keys, 16 selected loops, and ten disjoint regions.
+The current capture-free existence query can merge identical ancestor keys from different functions.
+The complete rule must retain function identity where downstream capture matching observes it.
+
+EXPLAIN confirms kind-indexed candidate scans, point probes for required parents, and region-plus-kind scans for target seeds.
+It still shows materialized relations, automatic covering indexes, and temporary B-trees for set union and ordering.
+These structures are immutable SQLite intermediates; they are not frame publications.
+The query's 13,338 fullscan steps include intermediate scans and do not describe total AST work.
+
+### Scaling and semantic checks
+
+| Scaling case | Size | Matches | VM instructions |
+| --- | ---: | ---: | ---: |
+| Assignments outside regions | 32 / 128 / 512 | 2 | 1,044 at every size |
+| Calls outside regions | 32 / 128 / 512 | 2 | 1,044 at every size |
+| Assignments inside regions | 32 | 354 | 19,860 |
+| Assignments inside regions | 128 | 1,410 | 76,308 |
+| Assignments inside regions | 512 | 5,634 | 302,100 |
+
+Unrelated growth adds no SQL VM work in these cases.
+Sixteen times more demanded assignments costs about fifteen times more VM work.
+These measurements exclude parsing and index construction.
+
+Seven compiler semantic tests pass.
+They cover neighbor joins, positive recursion, shared consumers, boundary-crossing seeds, inclusive stops, recursive required keys, and unsupported constructs.
+The region fixtures return 58 matches; utility renaming preserves those matches.
+Changing the loop kind returns ten matches, and changing the pattern constant returns 59 matches.
+Every variant agrees with both oracles.
+The earlier target-slot fixture and scaling checks also pass.
+The three handwritten B023 reference regression tests pass.
+Its full-corpus test remains ignored in that regression run; the new region corpus test runs explicitly.
+Clippy passes with only the existing `regex_creation_in_loops` warning permitted.
+Rust formatting, Python syntax, evidence hashes, and whitespace checks pass.
+
+The durable evidence is `benchmark/sql-relational-region-demand-evidence.json`.
+It includes final SQL, EXPLAIN, counters, cardinalities, scaling results, source hashes, and both intermediate SQL shapes.
+The raw final artifacts are in `/tmp/rerail-region-demand-20261022/final`.
+The driver now runs the region corpus plus the earlier target-slot fixture and scaling checks:
+
+```sh
+JEMALLOC_OVERRIDE=/tmp/librerail_jemalloc_check_shim.dylib \
+  python3 benchmark/relational-compiler-spike.py \
+  /tmp/rerail-b023-relational-20261022/final/config.json /absolute/new/output
+```
+
+The profile's matching counters exclude the later EXPLAIN and relation-cardinality queries.
+Its `diagnosticCpuNs` includes both diagnostics and connection setup.
+The single matching statement is not a count of every execution in a complete cold job.
+
+### Remaining transition work
+
+This compiler still runs only in tests, through the same entry point as the previous slice.
+There is no additional production switch or native rule fallback.
+The harness supplies the capture-free demand view; the compiler does not yet derive that view from complete B023.
+The next step must preserve function identity, join target atoms to reads, and implement ordered capture selection.
+Native utility work and stack/depth budget semantics also remain outstanding.
+The full-rule performance gate and complete-job limit of 100 executions remain required before production cutover.

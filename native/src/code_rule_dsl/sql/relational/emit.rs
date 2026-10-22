@@ -1,6 +1,6 @@
 use super::{
     ir::{Edge, Program, Set},
-    physical::{self, Arm, Predicate},
+    physical::{self, Arm, Predicate, RelationPlan},
 };
 
 #[derive(Default)]
@@ -8,21 +8,94 @@ struct Emitter {
     aliases: usize,
 }
 
-pub(super) fn emit(program: &Program, plan: &[Vec<Arm>]) -> Result<String, String> {
+pub(super) fn emit(program: &Program, plan: &[RelationPlan]) -> Result<String, String> {
     let mut emitter = Emitter::default();
     let mut relations = Vec::new();
-    for (id, arms) in plan.iter().enumerate() {
+    let active = super::ir::reachable(program);
+    let mut regions = std::collections::BTreeSet::new();
+    fn domains(set: &Set, out: &mut std::collections::BTreeSet<usize>) {
+        match set {
+            Set::Within(id) => {
+                out.insert(*id);
+            }
+            Set::Intersect(sets) | Set::Union(sets) => {
+                for set in sets {
+                    domains(set, out);
+                }
+            }
+            Set::Complement(set) | Set::Preimage(_, set) => domains(set, out),
+            _ => {}
+        }
+    }
+    for &id in &active {
+        domains(&program.relations[id].expression, &mut regions);
+        regions.extend(program.relations[id].domain);
+        if let Some(keys) = &program.relations[id].keys {
+            let roots = keys
+                .root_kinds
+                .iter()
+                .map(u16::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            let recursive = if keys.parent_kinds.is_empty() {
+                String::new()
+            } else {
+                let parents = keys
+                    .parent_kinds
+                    .iter()
+                    .map(u16::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!(
+                    " UNION SELECT p.file,p.id FROM needed{id} k CROSS JOIN node n ON n.file=k.file AND n.id=k.node CROSS JOIN node p ON p.file=n.file AND p.id=n.parent WHERE p.kind IN ({parents})"
+                )
+            };
+            relations.push(format!("needed{id}(file,node) AS MATERIALIZED (SELECT file,id FROM node WHERE kind IN ({roots}){recursive})"));
+        }
+    }
+    for id in regions {
+        relations.push(format!("bounds{id}(file,node,last) AS MATERIALIZED (SELECT k.file,k.node,n.\"last\" FROM r{id} k CROSS JOIN node n ON n.file=k.file AND n.id=k.node),\nregions{id}(file,node,last) AS MATERIALIZED (SELECT b.file,b.node,b.last FROM bounds{id} b WHERE NOT EXISTS (SELECT 1 FROM bounds{id} outer_region WHERE outer_region.file=b.file AND outer_region.node<b.node AND outer_region.last>=b.node))"));
+    }
+    for (id, planned) in plan
+        .iter()
+        .enumerate()
+        .filter(|(id, _)| active.contains(id))
+    {
+        let RelationPlan::Joins(arms) = planned else {
+            let RelationPlan::Ancestors { seeds, stop } = planned else {
+                unreachable!()
+            };
+            let stopped=stop.map_or(String::new(),|stop|format!(" AND NOT EXISTS (SELECT 1 FROM r{stop} s WHERE s.file=w.file AND s.node=w.node)"));
+            relations.push(format!("-- {}\nr{id}(file,node) AS MATERIALIZED (SELECT n.file,n.parent FROM r{seeds} seed CROSS JOIN node n ON n.file=seed.file AND n.id=seed.node WHERE n.parent IS NOT NULL UNION SELECT n.file,n.parent FROM r{id} w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE n.parent IS NOT NULL{stopped})",program.relations[id].source));
+            continue;
+        };
         let selects = arms
             .iter()
-            .map(|arm| emitter.arm(arm, Some(id), None, arms.len() == 1))
+            .map(|arm| {
+                let mut arm = arm.clone();
+                if program.relations[id].keys.is_some() {
+                    arm.predicates.push(Predicate::Keys(0, id));
+                }
+                if !arm.references.iter().any(|(_, r)| *r == id)
+                    && let Some(domain) = program.relations[id].domain
+                {
+                    arm.predicates.push(Predicate::Region(0, domain));
+                }
+                emitter.arm(&arm, Some(id), None, arms.len() == 1)
+            })
             .collect::<Result<Vec<_>, _>>()?;
         let body = if selects.is_empty() {
             "SELECT file,id FROM node WHERE 0".into()
         } else {
             selects.join("\nUNION\n")
         };
+        let stored = if id != 0 && !matches!(program.relations[id].expression, Set::Reference(_)) {
+            "MATERIALIZED "
+        } else {
+            ""
+        };
         relations.push(format!(
-            "-- {}\nr{id}(file,node) AS (\n{body}\n)",
+            "-- {}\nr{id}(file,node) AS {stored}(\n{body}\n)",
             program.relations[id].source
         ));
     }
@@ -68,6 +141,12 @@ impl Emitter {
         let mut sources = Vec::new();
         let mut conditions = Vec::new();
         let mut consumed = None;
+        let mut consumed_region = None;
+        let mut consumed_keys = None;
+        let requested = arm
+            .predicates
+            .iter()
+            .any(|p| matches!(p, Predicate::Region(..) | Predicate::Keys(..)));
         if let Some(root) = bound {
             names[0] = root.to_owned();
             known[0] = true;
@@ -75,6 +154,7 @@ impl Emitter {
             .references
             .iter()
             .enumerate()
+            .filter(|(_, (_, r))| !requested || Some(*r) == owner)
             .min_by_key(|(_, (_, r))| if Some(*r) == owner { 0 } else { 1 })
         {
             let name = &names[node];
@@ -84,6 +164,42 @@ impl Emitter {
             ));
             known[node] = true;
             consumed = Some(index);
+        } else if let Some((node, producer)) = arm.predicates.iter().find_map(|p| match p {
+            Predicate::Keys(node, producer) => Some((*node, *producer)),
+            _ => None,
+        }) {
+            let name = &names[node];
+            sources.push(format!("needed{producer} AS keys{serial}"));
+            sources.push(format!(
+                "node AS {name} ON {name}.file=keys{serial}.file AND {name}.id=keys{serial}.node"
+            ));
+            known[node] = true;
+            consumed_keys = Some((node, producer));
+        } else if let Some((node, roots)) = arm.predicates.iter().find_map(|p| match p {
+            Predicate::Region(node, roots) => Some((*node, *roots)),
+            _ => None,
+        }) {
+            // For a strict descendant candidate, its parent lies inside the inclusive region.
+            // Start at a kind-filtered parent when possible, then probe its children.
+            let anchor = arm
+                .edges
+                .iter()
+                .find_map(|(from, edge, to)| {
+                    (*from == node
+                        && *edge == Edge::Parent
+                        && arm
+                            .predicates
+                            .iter()
+                            .any(|p| matches!(p,Predicate::Kinds(at,_) if at==to)))
+                    .then_some(*to)
+                })
+                .unwrap_or(node);
+            let lower = if anchor == node { ">" } else { ">=" };
+            let name = &names[anchor];
+            sources.push(format!("regions{roots} AS domain{serial}"));
+            sources.push(format!("node AS {name} ON {name}.file=domain{serial}.file AND {name}.id{lower}domain{serial}.node AND {name}.id<=domain{serial}.last"));
+            known[anchor] = true;
+            consumed_region = Some((node, roots));
         } else {
             // Begin at selective kind evidence rather than at the output root by default.
             let node = arm
@@ -128,6 +244,11 @@ impl Emitter {
             ));
         }
         for predicate in &arm.predicates {
+            if matches!(predicate,Predicate::Region(node,roots) if consumed_region==Some((*node,*roots)))
+                || matches!(predicate,Predicate::Keys(node,producer) if consumed_keys==Some((*node,*producer)))
+            {
+                continue;
+            }
             conditions.push(match predicate {
                 Predicate::Kinds(node, kinds) => format!(
                     "{}.kind IN ({})",
@@ -142,6 +263,9 @@ impl Emitter {
                     "node_regex({term},{}.file,{}.id)",
                     names[*node], names[*node]
                 ),
+                Predicate::Pattern(node,term)=>format!("relation_pattern({term},{}.file,{}.id)",names[*node],names[*node]),
+                Predicate::Region(node,roots)=>format!("EXISTS (SELECT 1 FROM regions{roots} domain WHERE domain.file={}.file AND {}.id>domain.node AND {}.id<=domain.last)",names[*node],names[*node],names[*node]),
+                Predicate::Keys(node,producer)=>format!("EXISTS (SELECT 1 FROM needed{producer} k WHERE k.file={}.file AND k.node={}.id)",names[*node],names[*node]),
                 Predicate::Absent(node, set) => self.absent(set, &names[*node])?,
             });
         }

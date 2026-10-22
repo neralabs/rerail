@@ -4,10 +4,17 @@ Status: proposed implementation plan, 2026-10-22.
 Baseline: `a0051ae8`, including the complete B023 reference query.
 This document changes no production behavior.
 
-Implementation progress: the first utility slice now compiles and passes its corpus and scaling checks.
+Implementation progress: target-slot compilation and structural demand now pass their corpus and scaling checks.
 The [target-slot evidence](../benchmark/sql-relational-target-slot-evidence.json) records compiler-generated SQL, EXPLAIN, source hashes, and native/current-engine parity.
+The [region-demand evidence](../benchmark/sql-relational-region-demand-evidence.json) adds ancestor closure, subtree restriction, and recursive consumer-key demand.
+Its harness supplies a capture-free demand view using B023's unchanged utilities.
+The compiler derives the regions and required keys from that view without recognizing the policy.
 The compiler remains test-only.
-Complete B023 generation, capture-bearing demand, and Milestone 1's full-query performance gates remain outstanding.
+Automatic view extraction, complete B023 generation, ordered captures, and Milestone 1's full-query performance gates remain outstanding.
+
+The next concrete step is to retain function identity through ancestor closure and derive target demand from the complete rule.
+That graph must then connect target atoms to reads, with capture unification and ordered witness selection at the original boundaries.
+The existing reference query supplies the exact two-result capture oracle on the frozen corpus.
 
 The next implementation milestone is a compiler-generated B023 query with the reference query's work bounds.
 It must start from `GrammarMatcher`, without a B023 recognizer or hand-written policy SQL.

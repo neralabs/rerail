@@ -8,6 +8,9 @@ const MAX_NODES: usize = 32;
 pub(super) enum Predicate {
     Kinds(usize, Vec<u16>),
     Regex(usize, usize),
+    Pattern(usize, usize),
+    Region(usize, usize),
+    Keys(usize, usize),
     Absent(usize, Set),
 }
 
@@ -48,6 +51,17 @@ fn extend(set: &Set, node: usize, mut arms: Vec<Arm>) -> Result<Vec<Arm>, String
                 arm.predicates.push(Predicate::Regex(node, *term));
             }
         }
+        Set::Pattern(term) => {
+            for arm in &mut arms {
+                arm.predicates.push(Predicate::Pattern(node, *term));
+            }
+        }
+        Set::Within(roots) => {
+            for arm in &mut arms {
+                arm.predicates.push(Predicate::Region(node, *roots));
+            }
+        }
+        Set::Ancestors { .. } => return Err("ancestor closure is a relation boundary".into()),
         Set::Reference(id) => {
             for arm in &mut arms {
                 arm.references.push((node, *id));
@@ -95,21 +109,66 @@ fn extend(set: &Set, node: usize, mut arms: Vec<Arm>) -> Result<Vec<Arm>, String
 
 fn refers(set: &Set, id: usize) -> bool {
     match set {
-        Set::Reference(r) => *r == id,
+        Set::Reference(r) | Set::Within(r) => *r == id,
+        Set::Ancestors { seeds, stop } => *seeds == id || *stop == Some(id),
         Set::Intersect(s) | Set::Union(s) => s.iter().any(|s| refers(s, id)),
         Set::Complement(s) | Set::Preimage(_, s) => refers(s, id),
         _ => false,
     }
 }
 
-pub(super) fn plan(program: &Program) -> Result<Vec<Vec<Arm>>, String> {
+pub(super) enum RelationPlan {
+    Joins(Vec<Arm>),
+    Ancestors { seeds: usize, stop: Option<usize> },
+}
+
+fn dependencies(program: &Program) -> Result<(), String> {
+    fn visit(id: usize, program: &Program, state: &mut [u8]) -> Result<(), String> {
+        if state[id] == 2 {
+            return Ok(());
+        }
+        if state[id] == 1 {
+            return Err("relational compiler: recursive traversal needs a component plan".into());
+        }
+        state[id] = 1;
+        let mut edges = Vec::new();
+        super::ir::references(&program.relations[id].expression, &mut edges);
+        edges.extend(program.relations[id].domain);
+        for next in edges {
+            if next != id {
+                visit(next, program, state)?;
+            }
+        }
+        state[id] = 2;
+        Ok(())
+    }
+    visit(0, program, &mut vec![0; program.relations.len()])
+}
+
+pub(super) fn plan(program: &Program) -> Result<Vec<RelationPlan>, String> {
+    dependencies(program)?;
     program
         .relations
         .iter()
         .enumerate()
         .map(|(id, relation)| {
+            if let Set::Ancestors { seeds, stop } = relation.expression {
+                if seeds == id || stop == Some(id) {
+                    return Err("recursive traversal needs a component plan".into());
+                }
+                return Ok(RelationPlan::Ancestors { seeds, stop });
+            }
             let mut arms = expand(&relation.expression)?;
             for arm in &arms {
+                if arm
+                    .predicates
+                    .iter()
+                    .any(|p| matches!(p,Predicate::Region(_,r) if *r==id))
+                {
+                    return Err(
+                        "relational compiler: recursive traversal needs a component plan".into(),
+                    );
+                }
                 if arm
                     .predicates
                     .iter()
@@ -159,7 +218,7 @@ pub(super) fn plan(program: &Program) -> Result<Vec<Vec<Arm>>, String> {
                     relation.source
                 ));
             }
-            Ok(arms)
+            Ok(RelationPlan::Joins(arms))
         })
         .collect()
 }

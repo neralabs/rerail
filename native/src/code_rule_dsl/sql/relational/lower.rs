@@ -1,7 +1,8 @@
 use super::ir::{Edge, Program, Relation, Set};
 use crate::code_rule_dsl::{
+    language::GrammarDialect,
     matcher::{AstMatcher, GrammarMatcher, StopBy},
-    sql::terminals::Terminal,
+    sql::terminals::{PatternTerm, Terminal},
 };
 use ast_grep_core::matcher::Matcher;
 use std::collections::HashMap;
@@ -12,13 +13,19 @@ struct Lowerer {
     utilities: HashMap<(usize, usize), usize>,
     active: Vec<usize>,
     regexes: HashMap<String, usize>,
+    dialect: Option<GrammarDialect>,
 }
 
 pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Program, String> {
-    let mut lower = Lowerer::default();
+    let mut lower = Lowerer {
+        dialect: Some(grammar.language),
+        ..Lowerer::default()
+    };
     lower.program.relations.push(Relation {
         source: "clause".into(),
         expression: Set::Empty,
+        domain: None,
+        keys: None,
     });
     lower.program.relations[0].expression = if grammar.applies {
         lower.set(&grammar.matcher)?
@@ -29,8 +36,33 @@ pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Program, String> {
 }
 
 impl Lowerer {
+    fn relation(&mut self, expression: Set, source: &str) -> usize {
+        if let Set::Reference(id) = expression {
+            return id;
+        }
+        let id = self.program.relations.len();
+        self.program.relations.push(Relation {
+            source: source.into(),
+            expression,
+            domain: None,
+            keys: None,
+        });
+        id
+    }
+
     fn set(&mut self, rule: &AstMatcher) -> Result<Set, String> {
         Ok(match rule {
+            AstMatcher::Pattern(pattern) => {
+                let term = PatternTerm::new(pattern.clone(), self.dialect.unwrap());
+                if !term.vars.is_empty() {
+                    return Err(
+                        "relational compiler: pattern captures require witness relations".into(),
+                    );
+                }
+                let id = self.program.terminals.len();
+                self.program.terminals.push(Terminal::Pattern(term));
+                Set::Pattern(id)
+            }
             AstMatcher::Kind(kind) => Set::Kinds(
                 kind.potential_kinds()
                     .ok_or("relational compiler: missing kind identity")?
@@ -99,6 +131,24 @@ impl Lowerer {
             AstMatcher::Precedes(rule, StopBy::Neighbor) => {
                 Set::Preimage(Edge::Next, Box::new(self.set(rule)?))
             }
+            AstMatcher::Inside(rule, StopBy::End) => {
+                let related = self.set(rule)?;
+                Set::Within(self.relation(related, "ancestor predicate"))
+            }
+            AstMatcher::Has(rule, by @ (StopBy::End | StopBy::Rule(_))) => {
+                let seed = self.set(rule)?;
+                let seeds = self.relation(seed, "descendant predicate");
+                let stop = match by {
+                    StopBy::Rule(rule) => {
+                        let predicate = self.set(rule)?;
+                        Some(self.relation(predicate, "traversal stop"))
+                    }
+                    _ => None,
+                };
+                Set::Reference(
+                    self.relation(Set::Ancestors { seeds, stop }, "inverse descendant closure"),
+                )
+            }
             AstMatcher::Util(util) => {
                 let key = (util.table.as_ptr() as usize, util.index);
                 if let Some(&id) = self.utilities.get(&key) {
@@ -115,6 +165,8 @@ impl Lowerer {
                     self.program.relations.push(Relation {
                         source: format!("utility[{}]", util.index),
                         expression: Set::Empty,
+                        domain: None,
+                        keys: None,
                     });
                     self.active.push(id);
                     let expression = util

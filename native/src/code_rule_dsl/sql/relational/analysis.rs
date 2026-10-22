@@ -18,7 +18,7 @@ pub(super) fn admit(grammar: &GrammarMatcher) -> Result<(), String> {
             "relational compiler: capture-bearing rules need ordered witness relations".into(),
         );
     }
-    // Lowering additionally restricts leaves to kind/regex and relations to immediate neighbors.
+    // Lowering restricts leaves to kinds, regexes, and capture-free patterns, with explicit walks.
     // That whitelist excludes semantic effects, query context, and fallible leaves.
     Ok(())
 }

@@ -83,6 +83,168 @@ fn target_slot_policy(mutation: usize) -> crate::code_rule_dsl::CompiledCodeRule
     CodeRuleDslRuntime::compile(source, "json".into(), CAPABILITIES.into()).unwrap()
 }
 
+/// A capture-free demand view using the real policy's utility definitions. The compiler lowers
+/// this ordinary DSL query; automatic extraction from the capture-bearing rule is a later step.
+fn region_policy(mutation: usize) -> crate::code_rule_dsl::CompiledCodeRuleDsl {
+    let mut document: Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            root().join("packs/python/rules/ruff-b023-function-uses-loop-variable.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let ast = &mut document["clauses"][0]["forbid"]["ast"];
+    ast["utils"]["region-demand"] = json!({"all":[{"matches":"loop"},{"has":{"stopBy":{"matches":"function"},"matches":"function"}}]});
+    ast["rule"] = json!({"all":[{"matches":"target-slot"},{"inside":{"stopBy":"end","matches":"region-demand"}}]});
+    document["clauses"][0]["violation"] =
+        json!({"code":"region-slot","message":"slot","anchor":"witness.span"});
+    let source = match mutation {
+        0 => document.to_string(),
+        1 => document
+            .to_string()
+            .replace("target-slot", "renamed-target")
+            .replace("region-demand", "renamed-region")
+            .replace("\"loop\"", "\"renamed-loop\"")
+            .replace("\"function\"", "\"renamed-function\""),
+        2 => document
+            .to_string()
+            .replace("\"for_statement\"", "\"while_statement\""),
+        3 => document
+            .to_string()
+            .replace("functools.reduce", "other.reduce"),
+        _ => unreachable!(),
+    };
+    CodeRuleDslRuntime::compile(source, "json".into(), CAPABILITIES.into()).unwrap()
+}
+
+#[test]
+fn b023_compiler_region_fixtures_and_mutations() {
+    let sources=["packs/python/upstream/ruff/fixtures/flake8_bugbear/B023.py","packs/python/upstream/ruff/fixtures/rerail/noqa/B023.py"]
+        .into_iter().map(|path|(path.into(),std::fs::read_to_string(root().join(path)).unwrap()))
+        .chain(std::iter::once(("regions.py".into(),"outside = 0\nfor x in xs:\n    a, (b, *c) = vals\n    for y in ys:\n        f = lambda: x\n    def g():\n        for z in zs:\n            q = lambda: z\nfor ignored in xs:\n    functools.reduce(lambda: ignored, xs)\n".into())))
+        .collect::<Vec<_>>();
+    let mut counts = Vec::new();
+    for mutation in 0..4 {
+        let p = region_policy(mutation);
+        let result = sql::relational::tests::measure(&grammar_matchers(&p)[0], &sources);
+        assert!(
+            !result["relations"]["regionRoots"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        counts.push(result["matches"].as_u64().unwrap());
+        eprintln!(
+            "region view mutation {mutation}: {} slots, {} VM",
+            result["matches"], result["vmSteps"]
+        );
+    }
+    assert_eq!(counts[0], counts[1]);
+    assert_ne!(counts[0], counts[2]);
+    assert_ne!(counts[0], counts[3]);
+}
+
+#[test]
+#[ignore = "set RERAIL_B023_CONFIG and RERAIL_RELATIONAL_OUTPUT"]
+fn b023_compiler_region_corpus() {
+    let config: Value = serde_json::from_str(
+        &std::fs::read_to_string(std::env::var("RERAIL_B023_CONFIG").unwrap()).unwrap(),
+    )
+    .unwrap();
+    let sources = config["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            let p = p.as_str().unwrap();
+            (
+                p.to_owned(),
+                std::fs::read_to_string(Path::new(config["corpus"].as_str().unwrap()).join(p))
+                    .unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let p = region_policy(0);
+    let mut result = sql::relational::tests::measure(&grammar_matchers(&p)[0], &sources);
+    result["inputs"]=json!(sources.iter().map(|(path,source)|json!({"path":path,"sha256":format!("{:x}",Sha256::digest(source.as_bytes()))})).collect::<Vec<_>>());
+    eprintln!(
+        "generated region view: {} files, {} slots, {} VM",
+        result["files"], result["matches"], result["vmSteps"]
+    );
+    std::fs::write(
+        std::env::var("RERAIL_RELATIONAL_OUTPUT").unwrap(),
+        serde_json::to_string_pretty(&result).unwrap(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn b023_compiler_region_scaling() {
+    let p = region_policy(0);
+    let grammar = &grammar_matchers(&p)[0];
+    let mut records = Vec::new();
+    for size in [32, 128, 512] {
+        for inside in [false, true] {
+            let assignments = (0..size)
+                .map(|i| format!("a{i}, (b{i}, *c{i}) = vals\n"))
+                .collect::<String>();
+            let source = if inside {
+                format!(
+                    "for x in xs:\n{}    f = lambda: x\n",
+                    assignments
+                        .lines()
+                        .map(|s| format!("    {s}\n"))
+                        .collect::<String>()
+                )
+            } else {
+                format!("{assignments}for x in xs:\n    f = lambda: x\n")
+            };
+            let mut result =
+                sql::relational::tests::measure(grammar, &[("scale.py".into(), source)]);
+            result["size"] = json!(size);
+            result["case"] = json!(if inside {
+                "inside-region"
+            } else {
+                "outside-region"
+            });
+            for key in ["sql", "relations", "explain", "diagnosticRelationRows"] {
+                result.as_object_mut().unwrap().remove(key);
+            }
+            records.push(result);
+        }
+    }
+    assert_eq!(records[0]["matches"], records[4]["matches"]);
+    assert_eq!(
+        records[0]["vmSteps"], records[4]["vmSteps"],
+        "unrelated assignments must not amplify SQL work"
+    );
+    assert!(
+        records[5]["vmSteps"].as_u64().unwrap() <= 17 * records[1]["vmSteps"].as_u64().unwrap()
+    );
+    let mut calls = Vec::new();
+    for size in [32, 128, 512] {
+        let source = format!(
+            "{}for x in xs:\n    f = lambda: x\n",
+            "print(value)\n".repeat(size)
+        );
+        let mut result = sql::relational::tests::measure(grammar, &[("calls.py".into(), source)]);
+        result["size"] = json!(size);
+        result["case"] = json!("outside-calls");
+        for key in ["sql", "relations", "explain", "diagnosticRelationRows"] {
+            result.as_object_mut().unwrap().remove(key);
+        }
+        calls.push(result);
+    }
+    assert_eq!(
+        calls[0]["vmSteps"], calls[2]["vmSteps"],
+        "unrequested safe-slot candidates must not amplify SQL work"
+    );
+    records.extend(calls);
+    if let Ok(path) = std::env::var("RERAIL_REGION_SCALE_OUTPUT") {
+        std::fs::write(path, serde_json::to_string_pretty(&records).unwrap()).unwrap();
+    }
+}
+
 #[test]
 fn b023_compiler_target_slot_fixtures_and_mutations() {
     let sources = [

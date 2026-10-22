@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Profile the compiler-generated target-slot utility over a frozen workload.
+"""Profile compiler-generated structural region demand over a frozen workload.
 
-This is transition phase 1's first slice, not the complete B023 rule or policy job.
+This is transition phase 1's demand slice, not the complete B023 rule or policy job.
 Timings include counters. This driver makes no repeated-timing speedup claim.
 """
 import argparse
@@ -59,10 +59,12 @@ def main():
     (out / "config.json").write_text(json.dumps(config, indent=2) + "\n")
     env.update(RERAIL_B023_CONFIG=str(out / "config.json"),
                RERAIL_RELATIONAL_OUTPUT=str(out / "results.json"),
-               RERAIL_RELATIONAL_SCALE_OUTPUT=str(out / "scaling.json"))
+               RERAIL_RELATIONAL_SCALE_OUTPUT=str(out / "target-scaling.json"),
+               RERAIL_REGION_SCALE_OUTPUT=str(out / "scaling.json"))
     for label, selection, extra in [("semantics", "sql::relational::tests::", []),
                                      ("fixtures", "b023_compiler_target_slot", []),
-                                     ("corpus", "b023_compiler_target_slot_corpus", ["--ignored"])]:
+                                     ("regions", "b023_compiler_region", []),
+                                     ("corpus", "b023_compiler_region_corpus", ["--ignored"])]:
         with (out / f"{label}.log").open("w") as log:
             subprocess.run([str(binary), selection, *extra, "--nocapture", "--test-threads=1"],
                            cwd=root, env=env, stdout=log, stderr=log, check=True, timeout=600)
