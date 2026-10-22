@@ -1,6 +1,6 @@
 # Phase 2: compiler
 
-Status: draft. Opens when Spike A3 reports; its number fills gate G2.3. Everything else here is fixed by Phase 1's results.
+Status: **open.** Phase 1 closed with a go (scratchpad, Decisions). Gates below are final.
 
 Objective: one rule IR from the two authoring surfaces, classified per-file or cross-file by construction, compiled to the two backends Phase 1 proved, with a from-scratch reference evaluator and a gate. Jeremy's 60 rules go through it; batch 6 is exact and within the speed gate; the repository clauses run incrementally on the dataflow.
 
@@ -11,7 +11,7 @@ Objective: one rule IR from the two authoring surfaces, classified per-file or c
 | Facts v0, syntactic (node table, children CSR, kind postings, line table) built from the native parser's tape; ids, kinds, spans identical to the engine's | Spike A `facts.rs` | extraction p50 0.53 ms, p99 10.5 ms per file; fact files 8.3× source |
 | AST query evaluation over facts (first-success binding, relations, three-valued `all`/`any`/`not`, `each`, `nthChild`, `count`, `compare`, `value`, `parse: pythonFString`) | Spike A `ast.rs` | exact on both corpora; 78 s for batch 6's 263 inputs vs native 122.8 s |
 | SQLite-subset parser and in-memory executor (FROM-order nested loops, lazy hash indexes, OR-branch probes, correlated subqueries, level-by-level recursive CTEs, `row_number()`, SQLite affinity) | Spike A `sql/` | exact on 404 stages; no SQLite, no planner |
-| Substitution of tree-rebuilding stages by fact views | Spike A3 | measuring |
+| Substitution of tree-rebuilding stages by fact views, relation memo, spill of repository rows | Spike A3 `subst.rs`, `spill.rs` | 212.9 → 152.6 s CPU (38.8% of native); per-file phase 52 MB at end; parity unchanged; `FACTS_A3_CHECK` differential passes on 9,010 files |
 | Exported facts v0 (`def`, `ref` distinct, `import`, `call_edge`, …) per content; fact-file format `RRFACTS\0` | Spike B extractor, both spikes' readers | 7,091 contents in 6.1 s; 0 cross-spike round-trip mismatches |
 | Tagged base + delta dataflow (tag 0 base, cluster tags, worktree tags), delta expansions for antijoin, count, recursion | Spike B § 5.2–5.3 | exact on 1,576 checks; p95 0.4 ms per edit; 195 MB with cluster bases |
 | Membership tooling (per-path base, clusters, divergence), edit replay generator, naive oracle | Spike B | reusable as the gate's edit-sequence harness |
@@ -35,9 +35,9 @@ Known gaps carried in: the `annotation` sub-grammar needs a `string_type_definit
 |---|---|---|
 | G2.1 | All 60 rules compile and classify; a seeded cross-file leak in a per-file rule is rejected at compile time | 60/60; the leak test fails to compile |
 | G2.2 | Batch-6 parity through the compiled per-file path | recordings and repository exact for the 9 rules; the 10th exact once `string_type_definition` lands, or its narrowed scope agreed with Jeremy |
-| G2.3 | Batch-6 repository CPU through the compiled path | set by Spike A3: its measured number with substitution, held or improved; stated in per-file terms (ms per file p50) as well |
+| G2.3 | Batch-6 repository CPU through the compiled path, parity unchanged | ≤ 90 s CPU (≤ 23% of native's 393 s; A3 measured 152.6 s), i.e. ≤ 10 ms per file p50 for the 10 heaviest rules; stretch ≤ 40 s. Levers with A3's sizes: Python-derived relations as per-file facts over all nodes filtered per clause (34.9 s of byte-identical stage text today), column views instead of materialised rows (15.1 s in views plus the `n.*` copies inside the 82.4 s of SQL), compiled selection predicates (28.5 s), per-process regex cache and no per-statement drops (~8% of samples) |
 | G2.4 | Repository plans on the dataflow | the 8 repository clauses and the `calls` rules: oracle parity on `2b1504adc`; incremental ≡ from-scratch on the 1,000-edit replay; 40 worktrees resident ≤ 250 MB with the real plans (B3's 195 MB plus their state) |
-| G2.5 | Per-file phase memory | RSS at the end of the per-file phase ≤ 300 MB for the 9,010-file run with 4 workers (nothing accumulated across files) |
+| G2.5 | Per-file phase memory | RSS at the end of the per-file phase ≤ 300 MB for the 9,010-file run with 4 workers (A3: 52 MB), and per-worker peak ≤ 256 MB on the largest corpus file (764 KB, 148,502 nodes; A3: ~640 MB per worker from `descendants` and `n.*` copies O(nodes × depth)). `descendants` is an id-range test on facts, never a materialised relation |
 | G2.6 | Gate strength | every seeded mutant caught; the gate runs in ≤ 10 min |
 
 Kill criteria:
@@ -48,9 +48,9 @@ Kill criteria:
 ## Slices (one executor each; parallel where no arrow)
 
 - **S1 IR + front ends + classifier + census.** From Spike A's parser. Delivers the IR types, the SQL and pattern front ends, the classifier with the leak test, and the 60-rule census. Interface: `compile(rule) -> Result<Program, Unsupported>` where `Program` separates per-file plans from repository plans and lists exported relations.
-- **S2 per-file backend.** From Spike A's executor and A3's views. Consumes S1's IR; until S1 lands, runs on Spike A's parsed form behind the same interface. Delivers memo keys, streaming, and the per-file half of the gate.
+- **S2 per-file backend.** From Spike A's executor and A3's views. Consumes S1's IR; until S1 lands, runs on Spike A's parsed form behind the same interface. Delivers, in this order: column views over facts so no stage materialises `n.*` rows and `descendants` is an id-range test (G2.5 per-worker); Python-derived relations from S4 bound as per-file facts with per-clause selection filters (G2.3's largest lever); compiled selection predicates; per-process regex cache; memo keys `(content hash, schema version, rule digest)` and completion words; streaming with nothing accumulated across files. Every step re-runs A3's differential check and the parity comparators.
 - **S3 cross-file backend.** From Spike B's dataflow. Consumes S1's repository plans; until then, hand-compiles the 8 repository clauses to size the construct set. Delivers generated delta rules, demand-driven recursion, membership model, resident-fact eviction by membership.
-- **S4 fact schema v1 + extractor + store format.** Serves S2 and S3. Delivers the schema table, versioned fact files, the anonymous-node and compression decisions with measurements, and the `string_type_definition` fact or the narrowing proposal.
+- **S4 fact schema v1 + extractor + store format.** Serves S2 and S3. Delivers the schema table; the Python-derived relations A3's residue names (`parameters`, `calls`, `assignments`, `import_identifiers`, `methods`, `decorators`, `return_kinds`, `contexts`, `special_attributes`, `attributes`, `functions`, `classes`) extracted once per content over all nodes, each defined to return exactly what the policies' shared stage text returns over the full node set; versioned fact files; the anonymous-node and compression decisions with measurements (fact files are 8.3× source today); and the `string_type_definition` fact or the narrowing proposal for `quality-contracts-1`.
 - **S5 gate harness.** Reference evaluator over the IR, mutants, the `--engine facts` switch in Jeremy's `replay.ts`/`suite.ts`, and the edit-sequence replay with real plans. Scaffolding starts immediately; its last step waits for S2 and S3.
 
 S1 → S2, S3 for the IR; S4 → S2, S3 for the schema; S5 → everyone for the gate. S2 and S3 start on day one against Spike A's and Spike B's existing forms.
