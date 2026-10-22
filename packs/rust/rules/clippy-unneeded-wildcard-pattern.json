@@ -1,0 +1,18 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "clippy-unneeded-wildcard-pattern",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Remove wildcard patterns next to a rest pattern in Rust; the rest pattern already ignores those elements.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {"id": "wildcards-before-rest", "forbid": {"ast": {"language": "rust", "rule": {"any": [{"kind": "tuple_pattern"}, {"kind": "tuple_struct_pattern"}], "regex": "(?s)^[^(]*\\((?:(?:[^()\\[\\]{}\"',]|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)'|[(\\[{](?:[^()\\[\\]{}\"']|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)'|[(\\[{](?:[^()\\[\\]{}\"']|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)')*[)\\]}])*[)\\]}])*,)*?\\s*(?P<W>(?:_\\s*,\\s*)+)\\.\\.\\s*[,)]"}}}, "violation": {"suppress": {"clippy": {"lints": ["clippy::unneeded_wildcard_pattern", "clippy::all", "clippy::complexity", "warnings"]}}, "anchor": "capture.W", "code": "unneeded_wildcard_pattern", "message": "Remove the _ wildcards before this ..; the rest pattern already skips them."}},
+    {"id": "wildcards-after-rest", "forbid": {"ast": {"language": "rust", "rule": {"any": [{"kind": "tuple_pattern"}, {"kind": "tuple_struct_pattern"}], "regex": "(?s)^[^(]*\\((?:(?:[^()\\[\\]{}\"',]|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)'|[(\\[{](?:[^()\\[\\]{}\"']|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)'|[(\\[{](?:[^()\\[\\]{}\"']|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)')*[)\\]}])*[)\\]}])*,)*?\\s*\\.\\.(?P<W>(?:\\s*,\\s*_)+)\\s*[,)]"}}}, "violation": {"suppress": {"clippy": {"lints": ["clippy::unneeded_wildcard_pattern", "clippy::all", "clippy::complexity", "warnings"]}}, "anchor": "capture.W", "code": "unneeded_wildcard_pattern", "message": "Remove the _ wildcards after this ..; the rest pattern already skips them."}},
+    {"id": "struct-wildcard-fields-before-rest", "forbid": {"ast": {"language": "rust", "rule": {"kind": "struct_pattern", "regex": "(?s)^[^{]*\\{(?:(?:[^()\\[\\]{}\"',]|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)'|[(\\[{](?:[^()\\[\\]{}\"']|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)'|[(\\[{](?:[^()\\[\\]{}\"']|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)')*[)\\]}])*[)\\]}])*,)*?\\s*(?P<W>(?:[\\w#]+\\s*:\\s*_\\s*,\\s*)+)\\.\\.\\s*\\}"}}}, "violation": {"suppress": {"clippy": {"lints": ["clippy::unneeded_wildcard_pattern", "clippy::all", "clippy::complexity", "warnings"]}}, "anchor": "capture.W", "code": "unneeded_wildcard_pattern", "message": "Remove the field: _ entries before this ..; the rest pattern already skips those fields."}}
+  ]
+}

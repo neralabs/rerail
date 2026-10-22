@@ -3,16 +3,28 @@ name: Release
 # Builds the @neralabs/rerail package: native rules engines for every supported target, the
 # TypeScript runtime, and the bundled UI, packed into one cross-platform tarball.
 #
-# `workflow_dispatch` builds and uploads the tarball as a run artifact without publishing, so a
-# build can be installed and checked by hand. Pushing a `v*` tag publishes that tarball to npmjs
-# under the dist-tag derived from the tag: `v1.2.3` -> latest, `v1.2.3-beta.N` -> beta,
-# `v1.2.3-next.N` -> next. The tag must equal package.json's version.
+# A `v*` tag publishes that tarball to npmjs under the dist-tag derived from the tag: `v1.2.3` -> latest,
+# `v1.2.3-beta.N` -> beta, `v1.2.3-next.N` -> next. The tag must equal package.json's version. Merging the Release
+# pull request makes the tag: release-pr.yml tags the version it set (docs/distribution-model.md, "Release
+# channels"). After publishing, the dist-tags job lists core's dist-tags in the run summary and fails if the channel's
+# dist-tag is not the version just published.
+#
+# `workflow_dispatch` with no inputs builds and uploads the tarball as a run artifact without publishing, so a build
+# can be installed and checked by hand. With `latest`, it builds nothing and points core's `latest` dist-tag at that
+# released version, to put core back, behind the same `release` environment approval and with trusted publishing,
+# so no npm login is needed.
 #
 # The cargo cache is restored, never saved: a tag's run can read caches saved on main but not those an earlier
 # tag's run saved, so saving here bought nothing and cost minutes. release-cache.yml builds and saves it on main.
 
 on:
   workflow_dispatch:
+    inputs:
+      latest:
+        description: A released core version (its v<version> tag exists) to point latest at, to put core back; empty to build without publishing
+        required: false
+        default: ""
+        type: string
   push:
     tags:
       - "v*"
@@ -29,10 +41,12 @@ jobs:
   # engine is built. A tag can name a commit PR CI never ran on.
   metadata:
     name: Release metadata
+    if: ${{ !inputs.latest }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       channel: ${{ steps.release-channel.outputs.channel }}
+      version: ${{ steps.release-channel.outputs.version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -63,7 +77,7 @@ jobs:
           if (version !== tag.slice(1)) throw new Error(`package.json version ${version} does not match ${tag}`);
           const channel = match[2] ?? "latest";
           console.log(`Publishing ${version} to the ${channel} channel.`);
-          appendFileSync(process.env.GITHUB_OUTPUT, `channel=${channel}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT, `channel=${channel}\nversion=${version}\n`);
           EOF
 
   native:
@@ -385,3 +399,101 @@ jobs:
           set -euo pipefail
           test -n "$RELEASE_CHANNEL" || { echo "::error::No release channel was derived for ${GITHUB_REF_NAME}" >&2; exit 1; }
           npm publish "./$PACKAGE_TARBALL" --registry https://registry.npmjs.org --access restricted --tag "$RELEASE_CHANNEL"
+
+  # Reads core's dist-tags back from npm, which for this restricted package needs a read token: the read-only
+  # NPM_PACKS_READ_TOKEN, which must cover @neralabs/rerail as well as the packs.
+  dist-tags:
+    name: Published dist-tags
+    needs: [metadata, publish]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # The file names the variable, not the token: npm reads NODE_AUTH_TOKEN from the step that runs it.
+      - name: Authenticate npm to read core
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::Reading the restricted @neralabs/rerail needs the repository secret NPM_PACKS_READ_TOKEN"
+            exit 1
+          fi
+          printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
+
+      - name: Check core's dist-tag
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
+          RELEASED: "@neralabs/rerail@${{ needs.metadata.outputs.version }}:${{ needs.metadata.outputs.channel }}"
+        run: node scripts/release/dist-tags-check.mjs
+
+  # Puts core back: points `latest` at a version this repository released (its tag exists) and npm has. Trusted
+  # publishing, as for publish: core's trusted publisher on npmjs must allow `npm dist-tag` as well as `npm publish`.
+  put-back:
+    name: Point latest at ${{ inputs.latest }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.latest && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      # Trusted publishing over dist-tags needs npm 11.21.0 or newer.
+      - name: Install npm with trusted publishing dist-tag support
+        run: |
+          npm install --global "npm@^11.21.0"
+          npm --version
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Require a released version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.latest }}
+        run: |
+          set -euo pipefail
+          if ! gh api "repos/{owner}/{repo}/git/ref/tags/v${VERSION}" --silent; then
+            echo "::error::${VERSION} was never released from this repository (no v${VERSION} tag)"
+            exit 1
+          fi
+
+      - name: Point latest at ${{ inputs.latest }}
+        env:
+          VERSION: ${{ inputs.latest }}
+        run: npm dist-tag add "@neralabs/rerail@${VERSION}" latest --registry https://registry.npmjs.org
+
+      - name: Authenticate npm to read core
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::Reading the restricted @neralabs/rerail needs the repository secret NPM_PACKS_READ_TOKEN"
+            exit 1
+          fi
+          printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
+
+      - name: Check core's dist-tag
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
+          RELEASED: "@neralabs/rerail@${{ inputs.latest }}:latest"
+        run: node scripts/release/dist-tags-check.mjs

@@ -8630,63 +8630,63 @@
             "GM": {
               "replace": {
                 "source": "$GJ",
-                "replace": "[345]",
+                "replace": "\\b[345]\\b",
                 "by": "function"
               }
             },
             "M0": {
               "replace": {
                 "source": "$GM",
-                "replace": "0",
+                "replace": "\\b0\\b",
                 "by": "string"
               }
             },
             "M1": {
               "replace": {
                 "source": "$M0",
-                "replace": "1",
+                "replace": "\\b1\\b",
                 "by": "number"
               }
             },
             "M2": {
               "replace": {
                 "source": "$M1",
-                "replace": "2",
+                "replace": "\\b2\\b",
                 "by": "boolean"
               }
             },
             "M3": {
               "replace": {
                 "source": "$M2",
-                "replace": "3",
+                "replace": "\\b3\\b",
                 "by": "function"
               }
             },
             "M4": {
               "replace": {
                 "source": "$M3",
-                "replace": "4",
+                "replace": "\\b4\\b",
                 "by": "object"
               }
             },
             "M5": {
               "replace": {
                 "source": "$M4",
-                "replace": "5",
+                "replace": "\\b5\\b",
                 "by": "array"
               }
             },
             "M6": {
               "replace": {
                 "source": "$M5",
-                "replace": "6",
+                "replace": "\\b6\\b",
                 "by": "symbol"
               }
             },
             "M7": {
               "replace": {
                 "source": "$M6",
-                "replace": "7",
+                "replace": "\\b7\\b",
                 "by": "bigint"
               }
             }
@@ -8909,56 +8909,56 @@
             "R0": {
               "replace": {
                 "source": "$GJ",
-                "replace": "0",
+                "replace": "\\b0\\b",
                 "by": "string"
               }
             },
             "R1": {
               "replace": {
                 "source": "$R0",
-                "replace": "1",
+                "replace": "\\b1\\b",
                 "by": "number"
               }
             },
             "R2": {
               "replace": {
                 "source": "$R1",
-                "replace": "2",
+                "replace": "\\b2\\b",
                 "by": "boolean"
               }
             },
             "R3": {
               "replace": {
                 "source": "$R2",
-                "replace": "3",
+                "replace": "\\b3\\b",
                 "by": "function"
               }
             },
             "R4": {
               "replace": {
                 "source": "$R3",
-                "replace": "4",
+                "replace": "\\b4\\b",
                 "by": "object"
               }
             },
             "R5": {
               "replace": {
                 "source": "$R4",
-                "replace": "5",
+                "replace": "\\b5\\b",
                 "by": "array"
               }
             },
             "R6": {
               "replace": {
                 "source": "$R5",
-                "replace": "6",
+                "replace": "\\b6\\b",
                 "by": "symbol"
               }
             },
             "R7": {
               "replace": {
                 "source": "$R6",
-                "replace": "7",
+                "replace": "\\b7\\b",
                 "by": "bigint"
               }
             }
@@ -10363,56 +10363,56 @@
             "R0": {
               "replace": {
                 "source": "$GJ",
-                "replace": "0",
+                "replace": "\\b0\\b",
                 "by": "string"
               }
             },
             "R1": {
               "replace": {
                 "source": "$R0",
-                "replace": "1",
+                "replace": "\\b1\\b",
                 "by": "number"
               }
             },
             "R2": {
               "replace": {
                 "source": "$R1",
-                "replace": "2",
+                "replace": "\\b2\\b",
                 "by": "boolean"
               }
             },
             "R3": {
               "replace": {
                 "source": "$R2",
-                "replace": "3",
+                "replace": "\\b3\\b",
                 "by": "function"
               }
             },
             "R4": {
               "replace": {
                 "source": "$R3",
-                "replace": "4",
+                "replace": "\\b4\\b",
                 "by": "object"
               }
             },
             "R5": {
               "replace": {
                 "source": "$R4",
-                "replace": "5",
+                "replace": "\\b5\\b",
                 "by": "array"
               }
             },
             "R6": {
               "replace": {
                 "source": "$R5",
-                "replace": "6",
+                "replace": "\\b6\\b",
                 "by": "symbol"
               }
             },
             "R7": {
               "replace": {
                 "source": "$R6",
-                "replace": "7",
+                "replace": "\\b7\\b",
                 "by": "bigint"
               }
             }

@@ -9,14 +9,14 @@ import type { Check, KnownGap, PackAdapter, ParserVerdict, RealCodeGap, Span, Sp
 /** How matches-upstream-tests judges, recorded in every report so a reader knows what "identical" and "excused" meant on that run. */
 export const MATCHES_UPSTREAM_TESTS_METHOD = {
   expected: "the upstream source linter's own output on each of its own test files, configured as upstream recommends (the rule on for the languages the document covers, with the options of the first approved configuration that turns it on)",
-  unreachable: "upstream findings in a file the document cannot apply to (outside its scope, or a file type the engine has no dialect for) are differences",
+  unreachable: "upstream findings in a file the document cannot apply to (outside its scope, or a file type the engine has no dialect for) are differences; a case of a file type outside the tool-pack's rerail.in_scope (gates.yaml's narrowing, which loads holds every port to) is not scored, and the report counts and lists it, since the port claims nothing there",
   identical: "the same findings in both directions (nothing missing, nothing extra), compared on every position upstream reports for the rule (start and end, in upstream's coordinates); messages are not compared",
   positions: "an end part upstream does not report on every finding of the rule is compared on neither side, for any of the rule's findings, and the report lists every rule compared without one; for an ESLint rule, one finding on its own tests without an end is enough to compare all of its findings on their starts alone",
   evaluation: "stateless CompiledCodeRuleDsl.evaluate in report mode, one file per snapshot, with no wall-clock budget; production evaluates through the workspace path with a 500 ms per-file budget",
   excused: "a differing file is excused only when a listed known gap that holds names it and the engine reported a parse failure on it; a gap holds when its probe occurs in every file it names, the engine still fails to parse the probe, and independent parsers read the probe as valid source; a listed gap that does not hold, or excuses nothing, fails the run; nothing else excuses a difference",
   fires: "at least one upstream finding reproduced in an upstream test file that agrees: the golden test that proves a shipped rule fires, so a rule without one does not ship",
   "stays silent": "at least one case where upstream reports nothing and the rule agrees, from an upstream test file or a golden: the golden test that proves a shipped rule stays silent, so a rule without one does not ship",
-  goldens: "the rule produces exactly what the pinned upstream reports on every golden of the tool-pack's goldens.tsv, compared as upstream's test files are; a golden is a real-code file read from the pinned corpus and checked against its sha256, and its expected answer is upstream's in corpus.json, which the recorder writes for the files goldens name and no other; goldens.tsv is a reviewed list the gates never write: the files NRV's real-code gate found a rule differing on (imported from NRV's goldens, for candidates too, so a candidate held back by a golden stays held until it agrees there), and for a shipped rule no upstream test file proves silent, a file where upstream reports nothing; a golden whose corpus file is gone from the pinned corpus, or that corpus.json does not answer, fails",
+  goldens: "the rule produces exactly what the pinned upstream reports on every golden of the tool-pack's goldens.tsv, compared as upstream's test files are; a golden is a real-code file read from the pinned corpus and checked against its sha256, and its expected answer is upstream's in corpus.json, which the recorder writes for the files goldens name and no other; goldens.tsv is a reviewed list the gates never write: the files a real-code run found a rule differing on, the run named on the file's source line (NRV's real-code gate, imported for candidates too, or rerail's own for the tool-packs NRV pins no tool of, so a candidate held back by a golden stays held until it agrees there), and for a shipped rule no upstream test file proves silent, a file where upstream reports nothing; a golden whose corpus file is gone from the pinned corpus, or that corpus.json does not answer, fails",
   "real-code gaps": `a candidate that differs from upstream on more than ${SYSTEMATIC_FILES} of its goldens differs throughout, not on cases: gates.yaml lists it under real_code_gaps in place of its goldens, and it fails no-real-code-gap until it agrees there and its goldens are imported; a shipped rule cannot be listed`,
   "engine gaps": "a golden that differs where the engine could not fully read the file (it reported source-partial, source-incomplete or budget-exceeded) is an engine gap: identical-on-goldens judges only the goldens the engine read fully, and engine-reads-goldens fails the rule on every engine gap, since the rule must not ship until the engine reads the file; the fix belongs in the engine (NER-1764), and once the engine reads the file the golden is judged like any other",
   "gap candidates": "every file the engine cannot fully parse is read by independent parsers, each reporting syntax errors and grammar errors (what the language forbids in a tree the parser built): invalid source when every parser reports one, valid source (the engine's parser is wrong) when none does, and parsers disagree otherwise",
@@ -125,6 +125,8 @@ const ROOT_KIND: Record<string, { language: string; kind: string }> = {
   php: { language: "php", kind: "program" },
   // Blade's tree is Rerail's port of Forte, whose root is the template's document.
   blade: { language: "blade", kind: "document" },
+  sql: { language: "sql", kind: "program" },
+  rust: { language: "rust", kind: "source_file" },
 };
 
 /** Whether the engine fails to fully parse a probe, using a policy that matches the root of every file. */
@@ -210,6 +212,14 @@ export async function provenGaps(
   return { proven, problems, kinds };
 }
 
+/** The reason a case of a file type outside gates.yaml's `rerail.in_scope` is not scored, followed by its type. */
+export const OUT_OF_SCOPE_REASON = "outside the tool-pack's rerail.in_scope";
+
+/** Whether a case went unscored because its file type is outside the tool-pack's `rerail.in_scope`. */
+export function outsideInScope(result: Pick<CaseResult, "status" | "reason">): boolean {
+  return result.status === "not-scored" && result.reason.startsWith(OUT_OF_SCOPE_REASON);
+}
+
 /**
  * matches-upstream-tests: run the rule on every upstream test file upstream lints under the shipped configuration, and
  * require the same findings as upstream's own output, span for span (start and end, in upstream's coordinates, less
@@ -246,6 +256,13 @@ export function matchesUpstreamTestsGate(
     if (testCase.markup !== null
       && (unmatched(testCase.expected, testCase.markup, spanKey).length > 0 || unmatched(testCase.markup, testCase.expected, spanKey).length > 0)) {
       markupDisagreements.push(`${testCase.fixture}: upstream's output differs from its own test markup`);
+    }
+    // A file type gates.yaml's rerail.in_scope leaves out is one the tool-pack's ports deliberately do not cover, as
+    // loads' in-scope check and matches-real-code's eligibility read it: the case measures nothing the port claims.
+    const type = extname(readPath(testCase)).toLowerCase();
+    if (adapter.inScopeTypes !== undefined && !adapter.inScopeTypes.includes(type)) {
+      results.push(notScored(`${OUT_OF_SCOPE_REASON} (${type || "no extension"})`));
+      continue;
     }
     const language = engine.rerail.dialectForPath(readPath(testCase));
     const unreachable = language === undefined
@@ -306,14 +323,16 @@ export function matchesUpstreamTestsGate(
   }
 
   const mismatches = results.filter((result) => result.status === "mismatch");
+  const outOfScope = results.filter(outsideInScope).length;
+  const outOfScopeNote = outOfScope === 0 ? "" : `; ${outOfScope} case(s) outside the tool-pack's rerail.in_scope not scored`;
   return {
     checks: [
       {
         id: "identical-results",
         ok: mismatches.length === 0,
         detail: mismatches.length === 0
-          ? `identical on ${totals.scoredCases - results.filter((result) => result.status === "excused").length} scored file(s)${gapNote(results)}${positionsNote}`
-          : `${mismatches.length} upstream test file(s) differ, e.g. ${mismatches[0]!.fixture}: ${mismatches[0]!.reason}${positionsNote}`,
+          ? `identical on ${totals.scoredCases - results.filter((result) => result.status === "excused").length} scored file(s)${gapNote(results)}${positionsNote}${outOfScopeNote}`
+          : `${mismatches.length} upstream test file(s) differ, e.g. ${mismatches[0]!.fixture}: ${mismatches[0]!.reason}${positionsNote}${outOfScopeNote}`,
       },
       {
         id: "fires",

@@ -1,9 +1,9 @@
 /**
  * The conformance gates (`loads`, `compact`, `passes-conformance`; types.ts CONFORMANCE_GATES) over every rule document
- * no gated tool-pack judges: the packs with no upstream recordings (complexity, and node, rust, sql and vue, whose tools
- * have no gates.yaml yet), a gated pack's documents of another tool, and the documents no conformance.json entry maps.
- * A gated tool-pack's rules meet the same gates in its own run (run.ts), so together the two cover every rule of every
- * pack, and the summary reports them as one conformance section, apart from the port gates.
+ * no gated tool-pack judges: the packs with no upstream recordings (complexity, and node, whose tool has no gates.yaml
+ * yet), a gated pack's documents of another tool, and the documents no conformance.json entry maps. A gated tool-pack's
+ * rules meet the same gates in its own run (run.ts), so together the two cover every rule of every pack; the summary
+ * gives each rule one verdict, its conformance gates before any port step.
  *
  * Nothing here reads a recording or upstream's code. `loads` has no upstream to name the files a rule must apply to, so
  * its `in-scope` check is not made. `passes-conformance` runs the pack's conformance check when conformance.json maps

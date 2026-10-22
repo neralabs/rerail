@@ -5,14 +5,24 @@ mod identity;
 #[path = "src/build_languages.rs"]
 mod languages;
 
-use identity::{grammar_build_id, hex};
+use identity::{grammar_build_id, hex, locked_version};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 fn main() {
     napi_build::setup();
+    let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
+    let lock_text = std::fs::read_to_string(
+        manifest
+            .parent()
+            .expect("workspace root")
+            .join("Cargo.lock"),
+    )
+    .expect("Cargo.lock is readable");
+    // A Windows checkout with `core.autocrlf` has a CRLF Cargo.lock; locked_version reads LF lines.
+    let generator = locked_version(&lock_text.replace("\r\n", "\n"), "tree-sitter-generate");
     for grammar in GRAMMARS {
-        build_grammar(grammar);
+        build_grammar(grammar, &generator);
     }
     let registry = generate_languages();
     configure_fixtures();
@@ -47,6 +57,8 @@ fn generate_languages() -> Vec<(String, Vec<u8>)> {
 /// A grammar vendored under `grammars/`. Its generated parser is not vendored (TypeScript's and
 /// TSX's are 8 MB each): it is generated here from `grammar.json`, at the ABI `tree-sitter`
 /// loads. Blade has none: Rerail's port of Forte parses it (`src/code_rule_dsl/blade/forte/`).
+/// The one exception is a grammar whose generation is too costly to repeat on every fresh build
+/// (`committed_parser`).
 struct VendoredGrammar {
     name: &'static str,
     /// The directory holding `grammar.json` and `scanner.c`.
@@ -57,6 +69,10 @@ struct VendoredGrammar {
     /// Every file the parser is built from: a change regenerates it and changes the grammar build
     /// identity.
     inputs: &'static [&'static str],
+    /// Whether the generated parser is committed beside `grammar.json` as `parser.generated.c.gz`
+    /// (COMMITTED_PARSER) instead of generated on every build. SQL's: tree-sitter-generate takes
+    /// 7 to 10 minutes optimised, and about 30 minutes as a build script compiles it.
+    committed_parser: bool,
 }
 
 const GRAMMARS: &[VendoredGrammar] = &[
@@ -75,6 +91,7 @@ const GRAMMARS: &[VendoredGrammar] = &[
             "grammars/tree-sitter-vue/src/tree_sitter/array.h",
             "grammars/tree-sitter-vue/src/tree_sitter/parser.h",
         ],
+        committed_parser: false,
     },
     // tree-sitter-python 0.25.0 with the patches in grammars/tree-sitter-python/PATCHES.md.
     VendoredGrammar {
@@ -89,6 +106,7 @@ const GRAMMARS: &[VendoredGrammar] = &[
             "grammars/tree-sitter-python/src/tree_sitter/array.h",
             "grammars/tree-sitter-python/src/tree_sitter/parser.h",
         ],
+        committed_parser: false,
     },
     // tree-sitter-sql (DerekStride) 0.3.11, commit 7b51ecda191d36b92f5a90a8d1bc3faef1c7b8b8, with
     // the patches in grammars/tree-sitter-sql/PATCHES.md.
@@ -104,6 +122,7 @@ const GRAMMARS: &[VendoredGrammar] = &[
             "grammars/tree-sitter-sql/src/tree_sitter/array.h",
             "grammars/tree-sitter-sql/src/tree_sitter/parser.h",
         ],
+        committed_parser: true,
     },
     // tree-sitter-typescript 0.23.2 with the patch in grammars/tree-sitter-typescript/PATCHES.md.
     VendoredGrammar {
@@ -119,6 +138,7 @@ const GRAMMARS: &[VendoredGrammar] = &[
             "grammars/tree-sitter-typescript/common/tree_sitter/array.h",
             "grammars/tree-sitter-typescript/common/tree_sitter/parser.h",
         ],
+        committed_parser: false,
     },
     VendoredGrammar {
         name: "tsx",
@@ -133,6 +153,7 @@ const GRAMMARS: &[VendoredGrammar] = &[
             "grammars/tree-sitter-typescript/common/tree_sitter/array.h",
             "grammars/tree-sitter-typescript/common/tree_sitter/parser.h",
         ],
+        committed_parser: false,
     },
     // tree-sitter-javascript 0.25.0 with the patches in grammars/tree-sitter-javascript/PATCHES.md.
     VendoredGrammar {
@@ -147,10 +168,87 @@ const GRAMMARS: &[VendoredGrammar] = &[
             "grammars/tree-sitter-javascript/src/tree_sitter/array.h",
             "grammars/tree-sitter-javascript/src/tree_sitter/parser.h",
         ],
+        committed_parser: false,
     },
 ];
 
-fn build_grammar(grammar: &VendoredGrammar) {
+/// The committed generated parser of a `committed_parser` grammar, in its source directory: gzip
+/// level 9, in Git LFS (`.gitattributes`). Its first line is `generated_from`'s, which the build
+/// checks against the grammar.json, grammar version and tree-sitter-generate it is built with.
+const COMMITTED_PARSER: &str = "parser.generated.c.gz";
+
+/// Set to `1` to regenerate every `committed_parser` grammar's COMMITTED_PARSER in the source tree,
+/// as GENERATOR does after a change to its grammar.json. Any other value, `0` included, is off.
+const GENERATE_PARSERS: &str = "RERAIL_GENERATE_PARSERS";
+
+/// The generator scripts/generate/README.md lists for a committed parser, which builds with GENERATE_PARSERS=1.
+const GENERATOR: &str = "scripts/generate/grammars/committed-parsers.mjs";
+
+/// The line a committed parser starts with: what it was generated from. The grammar.json hash is
+/// over LF lines, so a Windows checkout with `core.autocrlf` names the same grammar.
+fn generated_from(grammar: &VendoredGrammar, json: &str, generator: &str) -> String {
+    let (major, minor, patch) = grammar.version;
+    format!(
+        "/* Generated by {GENERATOR}; do not edit. tree-sitter-generate {generator}, version {major}.{minor}.{patch}, grammar.json sha256 {} */\n",
+        hex(&Sha256::digest(json.replace("\r\n", "\n").as_bytes()))
+    )
+}
+
+fn generate_parser(grammar: &VendoredGrammar, json: &str) -> String {
+    let name = grammar.name;
+    let (generated, parser) = tree_sitter_generate::generate_parser_for_grammar(
+        json,
+        Some(grammar.version),
+        tree_sitter_generate::OptLevel::default(),
+        &mut Vec::new(),
+    )
+    .unwrap_or_else(|error| panic!("{name} parser does not generate: {error}"));
+    assert_eq!(generated, name);
+    parser
+}
+
+/// A `committed_parser` grammar's parser: its COMMITTED_PARSER, when that was generated from this
+/// grammar.json at this version by this tree-sitter-generate. Anything else fails the build with
+/// the command that regenerates it, rather than spending half an hour generating it here; with
+/// GENERATE_PARSERS set, it is generated and written back.
+fn committed_parser(grammar: &VendoredGrammar, json: &str, generator: &str) -> String {
+    use std::io::{Read, Write};
+    let path = format!("{}/{COMMITTED_PARSER}", grammar.source);
+    println!("cargo:rerun-if-changed={path}");
+    println!("cargo:rerun-if-env-changed={GENERATE_PARSERS}");
+    let expected = generated_from(grammar, json, generator);
+    if std::env::var_os(GENERATE_PARSERS).is_some_and(|value| value == "1") {
+        let parser = format!("{expected}{}", generate_parser(grammar, json));
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+        encoder
+            .write_all(parser.as_bytes())
+            .expect("gzip in memory");
+        std::fs::write(&path, encoder.finish().expect("gzip in memory"))
+            .unwrap_or_else(|error| panic!("{path} is not writable: {error}"));
+        return parser;
+    }
+    let regenerate =
+        format!("regenerate it with `node {GENERATOR}` (about 15 minutes) and commit {path}");
+    let bytes = std::fs::read(&path)
+        .unwrap_or_else(|error| panic!("{path} is unreadable ({error}): {regenerate}"));
+    if bytes.starts_with(b"version https://git-lfs") {
+        panic!("{path} is a Git LFS pointer: run `git lfs pull` (CONTRIBUTING.md)");
+    }
+    let mut parser = String::new();
+    flate2::read::GzDecoder::new(bytes.as_slice())
+        .read_to_string(&mut parser)
+        .unwrap_or_else(|error| panic!("{path} is not a gzipped parser ({error}): {regenerate}"));
+    if !parser.starts_with(&expected) {
+        let found = parser.lines().next().unwrap_or("");
+        panic!(
+            "{path} was not generated from this grammar: it says\n  {found}\nnot\n  {}\n{regenerate}",
+            expected.trim_end()
+        );
+    }
+    parser
+}
+
+fn build_grammar(grammar: &VendoredGrammar, generator: &str) {
     for input in grammar.inputs {
         println!("cargo:rerun-if-changed={input}");
     }
@@ -158,14 +256,11 @@ fn build_grammar(grammar: &VendoredGrammar) {
     let source = grammar.source;
     let json = std::fs::read_to_string(format!("{source}/grammar.json"))
         .unwrap_or_else(|error| panic!("{name} grammar is unreadable: {error}"));
-    let (generated, parser) = tree_sitter_generate::generate_parser_for_grammar(
-        &json,
-        Some(grammar.version),
-        tree_sitter_generate::OptLevel::default(),
-        &mut Vec::new(),
-    )
-    .unwrap_or_else(|error| panic!("{name} parser does not generate: {error}"));
-    assert_eq!(generated, name);
+    let parser = if grammar.committed_parser {
+        committed_parser(grammar, &json, generator)
+    } else {
+        generate_parser(grammar, &json)
+    };
     let parser_path = PathBuf::from(std::env::var_os("OUT_DIR").expect("out dir"))
         .join(format!("{name}_parser.c"));
     std::fs::write(&parser_path, parser).expect("generated parser is writable");

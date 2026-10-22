@@ -1,0 +1,252 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "sqlfluff-al04-aliasing-unique-table",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Give every table in a SQL FROM clause a unique alias; a repeated alias makes column references ambiguous.",
+  "scope": {
+    "include": [
+      "**/*.sql"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "duplicate-explicit-alias",
+      "forbid": {
+        "ast": {
+          "language": "sql",
+          "utils": {
+            "value-table-function": {
+              "has": {
+                "kind": "invocation",
+                "stopBy": {
+                  "kind": "subquery"
+                },
+                "has": {
+                  "kind": "object_reference",
+                  "stopBy": "neighbor",
+                  "regex": "(?i)^(?:unnest|generate_series)$"
+                }
+              }
+            },
+            "named-b": {
+              "not": {
+                "matches": "value-table-function"
+              },
+              "any": [
+                {
+                  "has": {
+                    "field": "alias",
+                    "kind": "identifier",
+                    "pattern": "$B"
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "field": "alias",
+                      "regex": "."
+                    }
+                  },
+                  "has": {
+                    "kind": "object_reference",
+                    "stopBy": "neighbor",
+                    "has": {
+                      "field": "name",
+                      "kind": "identifier",
+                      "pattern": "$B"
+                    }
+                  }
+                }
+              ]
+            },
+            "from-item-b": {
+              "any": [
+                {
+                  "kind": "relation",
+                  "matches": "named-b"
+                },
+                {
+                  "kind": "join",
+                  "has": {
+                    "kind": "relation",
+                    "stopBy": "neighbor",
+                    "matches": "named-b"
+                  }
+                }
+              ]
+            },
+            "duplicated-entry": {
+              "inside": {
+                "kind": "from",
+                "stopBy": "neighbor",
+                "follows": {
+                  "kind": "select",
+                  "stopBy": "end"
+                }
+              },
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "end",
+                    "matches": "from-item-b",
+                    "compare": {
+                      "left": "AN",
+                      "op": "eq",
+                      "right": "BN",
+                      "text": "source"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "from",
+                    "stopBy": "neighbor",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "has": {
+                        "kind": "subquery",
+                        "stopBy": {
+                          "kind": "subquery"
+                        },
+                        "not": {
+                          "inside": {
+                            "kind": "relation",
+                            "stopBy": "neighbor",
+                            "pattern": "$R2",
+                            "compare": {
+                              "left": "R",
+                              "op": "eq",
+                              "right": "R2",
+                              "text": "node"
+                            }
+                          }
+                        },
+                        "has": {
+                          "kind": "from",
+                          "stopBy": "neighbor",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "from-item-b",
+                            "compare": {
+                              "left": "AN",
+                              "op": "eq",
+                              "right": "BN",
+                              "text": "source"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "relation",
+            "pattern": "$R",
+            "all": [
+              {
+                "any": [
+                  {
+                    "has": {
+                      "field": "alias",
+                      "kind": "identifier",
+                      "pattern": "$A"
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "field": "alias",
+                        "regex": "."
+                      }
+                    },
+                    "has": {
+                      "kind": "object_reference",
+                      "stopBy": "neighbor",
+                      "has": {
+                        "field": "name",
+                        "kind": "identifier",
+                        "pattern": "$A"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "matches": "value-table-function"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "matches": "duplicated-entry"
+                  },
+                  {
+                    "inside": {
+                      "kind": "join",
+                      "stopBy": "neighbor",
+                      "matches": "duplicated-entry"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "transform": {
+            "AQ": {
+              "replace": {
+                "source": "$A",
+                "replace": "^\"([\\s\\S]*)\"$",
+                "by": "$1"
+              }
+            },
+            "AN": {
+              "replace": {
+                "source": "$AQ",
+                "replace": "\"\"",
+                "by": "\""
+              }
+            },
+            "BQ": {
+              "replace": {
+                "source": "$B",
+                "replace": "^\"([\\s\\S]*)\"$",
+                "by": "$1"
+              }
+            },
+            "BN": {
+              "replace": {
+                "source": "$BQ",
+                "replace": "\"\"",
+                "by": "\""
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.A",
+        "code": "AL04",
+        "message": "Give this table a different alias; '$A' already names another table in this query.",
+        "suppress": {
+          "sqlfluff": {
+            "rules": [
+              "AL04",
+              "L020",
+              "aliasing",
+              "aliasing.unique",
+              "aliasing.unique.table",
+              "all",
+              "core"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

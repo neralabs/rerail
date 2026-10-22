@@ -18,9 +18,10 @@ concurrency:
 # pushes and same-repository pull requests only; there a missing secret or variable is a configuration error and
 # fails the job.
 #
-# The Version packs pull request (changeset-release/main, from version-packs.yml) changes only pack versions,
-# changelogs and package-lock.json, and is rewritten on every push to main. It runs the licence and lint jobs only:
-# release-packs.yml validates and packs every pack on it, and main runs everything once it is merged.
+# The Release pull request (changeset-release/main, from release-pr.yml) changes only versions (the packs', and
+# core's in package.json), changelogs and package-lock.json, and is rewritten on every push to main. It runs the
+# licence and lint jobs only: release-packs.yml validates and packs every pack on it, main runs everything once it is
+# merged, and release.yml builds and smokes core again on its tag.
 
 jobs:
   licenses:

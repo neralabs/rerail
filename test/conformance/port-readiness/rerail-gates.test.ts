@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,8 +13,10 @@ import { renderMarkdown } from "../../../conformance/port-readiness/report.js";
 import { blockingFailures, isCachedPack, isCachedRule, packDocuments, type CachedRule, type GatesReport, type RuleReport } from "../../../conformance/port-readiness/run.js";
 import { bySource, funnel, isRuleDocument, parsePlanned, renderSummary, stepTitle, summarize, verdictText } from "../../../conformance/port-readiness/summary.js";
 import { ungatedChecks } from "../../../conformance/port-readiness/ungated.js";
-import { CONFORMANCE_REPORT_FORMAT, type ConformanceReport, type ConformanceRuleReport } from "../../../conformance/port-readiness/conformance-gates.js";
+import { CONFORMANCE_REPORT_FORMAT, conformanceBlockingFailures, runConformanceGates, type ConformanceReport, type ConformanceRuleReport } from "../../../conformance/port-readiness/conformance-gates.js";
+import { loadEngine } from "../../../conformance/port-readiness/engine.js";
 import { BLOCKING_GATES, type BlockingGateId } from "../../../conformance/port-readiness/types.js";
+import { PACKAGE_ROOT } from "../../../src/engine/index.js";
 
 const temporary: string[] = [];
 afterEach(() => {
@@ -528,5 +530,54 @@ describe("upstream's test files", () => {
     assert.equal(sparseDirectoryPattern("test/unit/eslint-plugin-next/with-app-dir/app/@modal/default.tsx"), "/test/unit/eslint-plugin-next/with-app-dir/app/@modal/");
     assert.equal(sparseDirectoryPattern("a/*?/b.py"), "/a/\\*\\?/");
     assert.equal(sparseDirectoryPattern("setup.py"), "/");
+  });
+});
+
+/** A tree of two packs: `demo`, with no conformance.json, and `ported`, whose one tool has a gates.yaml. */
+function conformanceTree(): string {
+  const root = tempRoot();
+  const complexity = readFileSync(join(PACKAGE_ROOT, "packs/complexity/rules/complexity-cyclomatic-python.json"), "utf8");
+  write(root, "packs/demo/pack.json", { rules: [{ id: "complexity-cyclomatic-python", document: "rules/complexity-cyclomatic-python.json" }] });
+  write(root, "packs/demo/rules/complexity-cyclomatic-python.json", complexity);
+  write(root, "packs/demo/candidates/rules/broken.json", "{");
+  write(root, "packs/ported/pack.json", { rules: [] });
+  write(root, "packs/ported/conformance.json", { tools: [{ name: "lint" }], rules: [{ id: "x", policy: "rules/x.json", upstream: { tool: "lint", rule: "x" } }] });
+  write(root, "packs/ported/upstream/lint/gates.yaml", "");
+  write(root, "packs/ported/rules/x.json", complexity);
+  return root;
+}
+
+describe("the conformance gates", () => {
+  // Alone it takes under a second, but as the file's first case, with the whole suite sharing the machine, it has taken
+  // 14 s, past vitest's 5 s default.
+  it("judge the rules no gated tool-pack judges, and leave the gated tool-pack's to its own run", async () => {
+    const root = conformanceTree();
+    const report = await runConformanceGates(root, { engine: loadEngine(), cacheRoot: join(root, ".cache") });
+    assert.deepEqual(report.rules.map((rule) => [rule.file, rule.location, rule.pass, rule.stoppedAt]), [
+      ["packs/demo/candidates/rules/broken.json", "candidate", false, "loads"],
+      ["packs/demo/rules/complexity-cyclomatic-python.json", "shipped", true, null],
+    ]);
+    assert.deepEqual(report.packs.map((entry) => [entry.pack, entry.checks.pass, entry.judgedByToolPacks]), [["demo", true, 0], ["ported", true, 1]]);
+    assert.equal(conformanceBlockingFailures(report), 0);
+  }, 30_000);
+
+  it("make no in-scope check, and say passes-conformance does not apply to a pack with no conformance.json", async () => {
+    const root = conformanceTree();
+    const report = await runConformanceGates(root, { engine: loadEngine(), cacheRoot: join(root, ".cache") });
+    const shipped = report.rules.find((rule) => rule.location === "shipped")!;
+    assert.match(shipped.gates.loads.checks.find((check) => check.id === "in-scope")!.detail, /^not checked: /u);
+    assert.equal(shipped.gates["passes-conformance"].applies, false);
+    assert.match(shipped.gates["passes-conformance"].checks[0]!.detail, /packs\/demo has no conformance\.json/u);
+    assert.equal(shipped.gates.compact.pass, true);
+  });
+
+  it("block on a shipped rule that fails, and on a pack whose shipped rules do not load together", async () => {
+    const root = conformanceTree();
+    write(root, "packs/demo/rules/broken.json", "{");
+    write(root, "packs/demo/pack.json", { rules: [{ id: "complexity-cyclomatic-python", document: "rules/complexity-cyclomatic-python.json" }, { id: "broken", document: "rules/broken.json" }] });
+    const report = await runConformanceGates(root, { engine: loadEngine(), cacheRoot: join(root, ".cache") });
+    assert.equal(report.rules.find((rule) => rule.file === "packs/demo/rules/broken.json")?.pass, false);
+    assert.equal(report.packs.find((entry) => entry.pack === "demo")?.checks.pass, false);
+    assert.equal(conformanceBlockingFailures(report), 2);
   });
 });

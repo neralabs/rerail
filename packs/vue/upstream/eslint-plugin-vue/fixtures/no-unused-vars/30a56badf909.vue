@@ -1,0 +1,1 @@
+<template><div v-for="_ in foo" ></div></template>

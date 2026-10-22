@@ -1,0 +1,1 @@
+SELECT x AS date FROM tbl AS parameter

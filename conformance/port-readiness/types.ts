@@ -197,6 +197,12 @@ export interface PackAdapter {
   commentVocabulary: Set<string>;
   /** Paths a ported rule must be in scope for, one per file type upstream lints. */
   inScopeSamples: string[];
+  /**
+   * gates.yaml's `rerail.in_scope`: the file types the tool-pack's ports cover when the pack deliberately covers fewer
+   * than upstream lints. Absent, the ports cover every type upstream lints. matches-upstream-tests does not score an
+   * upstream case of another type: the port claims nothing there.
+   */
+  inScopeTypes?: readonly string[];
   /** Upstream's output on its own test files for the rule, configured as upstream recommends. */
   cases(name: string): UpstreamCase[];
   /** Convert an engine byte span to upstream's coordinates and to the precision upstream reports for the rule. */

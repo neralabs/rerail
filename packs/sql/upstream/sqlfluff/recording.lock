@@ -1,0 +1,35 @@
+{
+  "format": "rerail.port-readiness-recording-lock/v1",
+  "tool": "sqlfluff",
+  "release": "port-readiness-recordings",
+  "pins": {
+    "repository": "https://github.com/sqlfluff/sqlfluff",
+    "commit": "0348222a3bcdb0226563f7349c5a39beb0641955",
+    "version": "4.4.0",
+    "runtime": "sqlfluff-4.4.0"
+  },
+  "runtimes": {
+    "python": {
+      ".python-version": "5abd4dc1efa09469b88916c8e4e027a8c266a9b6d06f43ac9da3e30cd00b4ab5",
+      "pyproject.toml": "d1ccc38ce69e8173f9d9d7aff7a3f648e92492a3501c7457601a74affd8e2bf8"
+    },
+    "sqlfluff-4.4.0": {
+      ".python-version": "aa0d6581054e6e4ff3f91839deca7a854ad37221b8784d060b42d0f847ff1a3b",
+      "pyproject.toml": "b8eb380466fbbd74a9b3d03f4d454088d98bc8553e56ca9dea4735af4b4bd83e"
+    }
+  },
+  "files": {
+    "recording.json": {
+      "sha256": "74b06be6c118f23a998375425b147539ed17cb5c46d2b8b386721edac1f52640",
+      "size": 1161352,
+      "format": "rerail.port-readiness-recording/v2",
+      "asset": "sql-sqlfluff-recording-74b06be6c118f23a998375425b147539ed17cb5c46d2b8b386721edac1f52640.json.gz"
+    },
+    "corpus.json": {
+      "sha256": "50a00c5af8d6dc3ce3d2e3e088a11246984c14e493616572dfdb9b09ddc7ce97",
+      "size": 88404,
+      "format": "rerail.port-readiness-corpus/v2",
+      "asset": "sql-sqlfluff-corpus-50a00c5af8d6dc3ce3d2e3e088a11246984c14e493616572dfdb9b09ddc7ce97.json.gz"
+    }
+  }
+}

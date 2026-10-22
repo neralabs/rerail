@@ -1,0 +1,1 @@
+<template><div v-for="thisisignore in foo" ></div></template>

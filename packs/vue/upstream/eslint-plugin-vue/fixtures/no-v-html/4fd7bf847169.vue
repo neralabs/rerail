@@ -1,0 +1,1 @@
+<template><div v-html="$sanitize(test)"></div></template>

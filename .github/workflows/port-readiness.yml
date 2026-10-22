@@ -232,9 +232,10 @@ jobs:
 
       # Without an attested recording the leg runs the pinned upstream itself, with the recorder and runtimes of this
       # commit, so what records a pull request's rules is in its diff like the gate code that judges them. uv installs the
-      # Python runtimes, the php action the PHP and Composer the php and blade runtimes need. The runtimes are installed
-      # afresh, not restored from a cache: a Bladestan runtime restored from the previous run's cache recorded other
-      # answers than the same runtime installed fresh, which is what the lock was recorded with.
+      # Python runtimes, the php action the PHP and Composer the php and blade runtimes need, and rustup the toolchain
+      # Clippy's runtime pins. The runtimes are installed afresh, not restored from a cache: a Bladestan runtime restored
+      # from the previous run's cache recorded other answers than the same runtime installed fresh, which is what the lock
+      # was recorded with.
       - name: Set up uv to record this tool-pack
         if: steps.fetch.outputs.missing == 'true'
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
@@ -242,6 +243,28 @@ jobs:
       - name: Set up the pinned PHP and Composer to record this tool-pack
         if: steps.fetch.outputs.missing == 'true' && (matrix.pack == 'php' || matrix.pack == 'blade')
         uses: ./.github/actions/php
+
+      - id: clippy-toolchain
+        name: Read the Rust toolchain Clippy's runtime pins
+        if: steps.fetch.outputs.missing == 'true' && matrix.tool == 'clippy'
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+        run: |
+          set -euo pipefail
+          runtime="$(sed -n 's/^  runtime: *\([a-z0-9._-]*\) *$/\1/p' "packs/$PACK/upstream/$TOOL/gates.yaml")"
+          [ -n "$runtime" ] || { echo "::error::packs/$PACK/upstream/$TOOL/gates.yaml has no upstream.runtime line this step reads"; exit 1; }
+          toolchain="conformance/recorders/port-readiness/runtimes/$runtime/rust-toolchain.toml"
+          channel="$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' "$toolchain")"
+          [ -n "$channel" ] || { echo "::error::$toolchain has no channel line this step reads"; exit 1; }
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - name: Install the pinned Rust toolchain with clippy to record this tool-pack
+        if: steps.fetch.outputs.missing == 'true' && matrix.tool == 'clippy'
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.clippy-toolchain.outputs.channel }}
+          components: clippy
 
       # The recorder writes both recordings into the cache the gates read, and the lock and case sources into the tree:
       # those must be what the commit already has, or the commit's lock names a recording its own recorder does not make.

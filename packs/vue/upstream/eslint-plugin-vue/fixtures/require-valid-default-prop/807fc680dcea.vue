@@ -1,0 +1,38 @@
+<script lang="jsx">
+Vue.component('example', {
+        props: {
+          foo: null,
+          foo: Number,
+          foo: [String, Number],
+          foo: { },
+          foo: { type: String },
+          foo: { type: Number, default: VAR_BAR },
+          foo: { type: Number, default: 100 },
+          foo: { type: Number, default: Number.MAX_VALUE },
+          foo: { type: Number, default: Foo.BAR },
+          foo: { type: {}, default: '' },
+          foo: { type: [String, Number], default: '' },
+          foo: { type: [String, Number], default: 0 },
+          foo: { type: String, default: '' },
+          foo: { type: String, default: `` },
+          foo: { type: Boolean, default: false },
+          foo: { type: Object, default: () => { } },
+          foo: { type: Array, default () { } },
+          foo: { type: String, default () { } },
+          foo: { type: Number, default () { } },
+          foo: { type: Boolean, default () { } },
+          foo: { type: Symbol, default () { } },
+          foo: { type: Array, default () { } },
+          foo: { type: Symbol, default: Symbol('a') },
+          foo: { type: String, default: `Foo` },
+          foo: { type: Foo, default: Foo('a') },
+          foo: { type: String, default: `Foo` },
+          foo: { type: BigInt, default: 1n },
+          foo: { type: String, default: null },
+          foo: { type: String, default () { return Foo } },
+          foo: { type: Number, default () { return Foo } },
+          foo: { type: Object, default () { return Foo } },
+          foo: { type: Object, default: null },
+        }
+      })
+</script>
