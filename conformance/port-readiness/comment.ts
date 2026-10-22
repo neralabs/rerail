@@ -43,9 +43,13 @@ export interface CommentContext {
   runUrl?: string;
 }
 
-/** The rule and where it comes from: `` `ruff-b905` (python, port of ruff B905) `` or `` `complexity-x` (complexity) ``. */
+/**
+ * The rule and where it comes from: `` `ruff-b905` (python, port of ruff B905) ``, `` `complexity-x` (complexity,
+ * original) ``, or `` `x` (python) `` for a document that declares no origin.
+ */
 function ruleName(rule: RuleVerdict): string {
-  return `\`${rule.id}\` (${rule.pack}${rule.upstream === null ? "" : `, port of ${rule.upstream.tool} ${rule.upstream.rule}`})`;
+  const origin = rule.upstream !== null ? `, port of ${rule.upstream.tool} ${rule.upstream.rule}` : rule.origin === "original" ? ", original" : "";
+  return `\`${rule.id}\` (${rule.pack}${origin})`;
 }
 
 interface Limits {

@@ -105,6 +105,10 @@ scored and the rest are left unknown, so they never report a guessed number.
 
 ## Parity corpus
 
+The rules are Rerail's own, modelled on lizard rather than ported from a rule of it: `origins.json` declares each an
+original, so the rule gates check them on conformance only ([docs/port-readiness.md](../../docs/port-readiness.md)).
+This corpus is how they are checked against lizard instead.
+
 `upstream/lizard/fixtures/{python,typescript,javascript}/` holds small source files that cover every counted
 decision, a function at exactly 6 and one at 7 for several kinds, nested functions, Python lambdas and comprehensions,
 `match`/`case` and `switch`/`case`, TypeScript optional parameters and properties, every deviation above, files with

@@ -22,20 +22,32 @@ named for the gates, as they should be.
 ## The gates
 
 The gates come in two stages. **Conformance** (`loads`, `compact`, `passes-conformance`) checks every rule document of
-every pack. **Port readiness** checks ports, once they pass conformance. A port is a rule that comes from an upstream
-linter, such as Ruff or ESLint: every rule of a pack with a `conformance.json`, which maps each one to the upstream rule
-it comes from. Port readiness (`not-overfit`, `matches-upstream-tests`, and `upstream-status`, which decides only `on`)
-makes sure a port is true to that rule. A rule that is not a port (complexity's: the pack has no `conformance.json`)
-is done after conformance, and a candidate that passes it is ready to promote.
+every pack. **Port readiness** checks ports, once they pass conformance. Port readiness (`not-overfit`,
+`matches-upstream-tests`, and `upstream-status`, which decides only `on`) makes sure a port is true to the upstream
+rule it comes from.
+
+Every rule document declares its origin, one of two
+([pack format](pack-format.md#conformancejson-divergencesjson-originsjson-upstream)):
+
+- **A port** comes from an upstream linter's rule, such as Ruff's B905 or ESLint's `no-alert`. Its `conformance.json`
+  entry declares it, naming that rule. A port the conformance runner cannot score yet, since no recording covers its
+  upstream rule, is declared in the pack's `origins.json` instead, with its upstream rule and why no entry maps it.
+- **An original** is Rerail's own rule (complexity's three, modelled on lizard): `origins.json` declares it, saying
+  what it is. It is done after conformance, and a candidate that passes it is ready to promote.
+
+The declaration is per document, not per pack: an original can sit in a pack of ports. A document that declares
+neither fails conformance, at its first step, and the pack checks (check 1) fail it too.
 
 A gated tool-pack's run judges its own rules on both stages; the conformance job
 (`conformance/port-readiness/conformance-gates.ts`) judges every other rule on conformance. A rule's verdict is the first
 step it fails, conformance first, so a port that fails conformance stops there, whatever port readiness would say.
 Every gate still runs on every rule it applies to, so the report shows every failure, not only the first. The summary
 holds one verdict per rule document (`STEPS` in `conformance/port-readiness/summary.ts`), so each rule is counted once.
-Besides the gates, port readiness has these steps, in this order:
+Besides the gates, conformance starts with **Declares its origin: a port or an original**, and port readiness has these
+steps, in this order:
 
-1. **Mapped to an upstream rule:** no `conformance.json` entry maps the port, so no port readiness gate can run on it.
+1. **Mapped to an upstream rule:** the port is declared in `origins.json`, and no `conformance.json` entry maps it yet,
+   so no port readiness gate can run on it. The verdict gives the `unmapped` reason.
 2. **Set up for its upstream linter:** its upstream tool has no `gates.yaml` yet (node's `eslint-plugin-n`), so no port
    readiness gate can run on it. A shipped one fails: keep it in `candidates/` until the tool has a `gates.yaml`.
 3. **Upstream linter checks:** the tool-pack checks below.
@@ -136,9 +148,9 @@ A **tool-pack** is one upstream tool in one pack, such as `python/ruff`. It is g
   "Sharding" below).
 - **Not gated:** node's `eslint-plugin-n`, whose ports ship only as candidates. Conformance judges them; port readiness
   cannot run until the tool has a `gates.yaml`, so they stop at "Set up for its upstream linter", and a shipped one
-  fails. complexity has no `conformance.json`: its rules are not ports, and conformance is all they need.
+  fails. complexity's rules are originals (its `origins.json`): conformance is all they need.
 
-Each rule's upstream rule comes from the pack's `conformance.json`. A shipped rule missing from it fails.
+A port's upstream rule comes from its `conformance.json` entry, or from `origins.json` for a port no entry maps yet.
 
 ## Run them
 

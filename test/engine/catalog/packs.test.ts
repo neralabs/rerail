@@ -130,6 +130,27 @@ describe("validatePack", () => {
     writeJson(join(probes, "conformance.json"), { ...root, pack: "valid-probes", rules: root.rules.map(rule => ({ ...rule, ...port })) });
   };
 
+  /** origins.json, declaring `entries` besides what it already declares. */
+  const declare = (directory: string, ...entries: Record<string, unknown>[]): void => {
+    const path = join(directory, "origins.json");
+    const declared = existsSync(path) ? z.array(z.record(z.string(), z.unknown())).parse(JSON.parse(readFileSync(path, "utf8"))) : [];
+    writeJson(path, [...declared, ...entries]);
+  };
+
+  /** A candidate at `file` (pack-relative) holding `text`, declared an original so a case fails only on what it breaks. */
+  const writeCandidate = (directory: string, file: string, text: string | Buffer): void => {
+    mkdirSync(join(directory, file, ".."), { recursive: true });
+    writeFileSync(join(directory, file), text);
+    declare(directory, { document: file, original: "a candidate written to break one check of the pack contract" });
+  };
+
+  /** A candidate `candidates/rules/no-pass.json`, the pass-statement rule with id `no-pass`, declared nowhere. */
+  const writeNoPass = (directory: string): void => {
+    mkdirSync(join(directory, "candidates", "rules"), { recursive: true });
+    const document = z.record(z.string(), z.unknown()).parse(JSON.parse(readFileSync(join(directory, "rules", "pass-statement.json"), "utf8")));
+    writeJson(join(directory, "candidates", "rules", "no-pass.json"), { ...document, id: "no-pass" });
+  };
+
   const failing = (validation: PackValidation): Partial<Record<PackCheckName, string[]>> =>
     Object.fromEntries(Object.entries(validation.checks).filter(([, failures]) => failures.length > 0));
 
@@ -161,13 +182,16 @@ describe("validatePack", () => {
   const cases: [string, (directory: string) => void, Partial<Record<PackCheckName, string[]>>][] = [
     [
       "a rule file pack.json does not list",
-      directory => writeFileSync(join(directory, "rules", "extra.json"), readFileSync(join(directory, "rules", "pass-statement.json"))),
+      directory => {
+        writeFileSync(join(directory, "rules", "extra.json"), readFileSync(join(directory, "rules", "pass-statement.json")));
+        declare(directory, { document: "rules/extra.json", original: "a rule file written to break one check of the pack contract" });
+      },
       { rules: ["rules/extra.json is not listed in pack.json"] },
     ],
     [
-      "a missing document",
+      "a missing document, which origins.json still declares",
       directory => rmSync(join(directory, "rules", "pass-statement.json")),
-      { rules: ["pass-statement: rules/pass-statement.json does not exist"] },
+      { rules: ["pass-statement: rules/pass-statement.json does not exist", "origins.json: rules/pass-statement.json is not a rule document of the pack"] },
     ],
     [
       "a document whose id differs from the listing",
@@ -191,48 +215,75 @@ describe("validatePack", () => {
       directory => {
         renameSync(join(directory, "rules", "pass-statement.json"), join(directory, "rules", "pass.json"));
         editPassStatement(directory, rule => ({ ...rule, document: "rules/pass.json" }));
+        writeFileSync(join(directory, "origins.json"), readFileSync(join(directory, "origins.json"), "utf8").replace("rules/pass-statement.json", "rules/pass.json"));
       },
       { rules: ["pass-statement: its document is rules/pass.json; name it rules/pass-statement.json"] },
     ],
     [
       "a candidate not named for its id",
-      directory => {
-        mkdirSync(join(directory, "candidates", "rules"), { recursive: true });
-        writeFileSync(join(directory, "candidates", "rules", "pass.json"), readFileSync(join(directory, "rules", "pass-statement.json")));
-      },
+      directory => writeCandidate(directory, "candidates/rules/pass.json", readFileSync(join(directory, "rules", "pass-statement.json"))),
       { rules: ["candidates/rules/pass.json: has id pass-statement; name it candidates/rules/pass-statement.json"] },
     ],
     [
       "a candidate whose id is not lowercase letters, digits and dashes, though its file is named for it",
-      directory => {
-        mkdirSync(join(directory, "candidates", "rules"), { recursive: true });
-        writeJson(join(directory, "candidates", "rules", "eslint:no-alert.json"), { format: "rerail.policy/v1", id: "eslint:no-alert", description: "Avoid alert().", clauses: [] });
-      },
+      directory => writeCandidate(directory, "candidates/rules/eslint:no-alert.json", JSON.stringify({ format: "rerail.policy/v1", id: "eslint:no-alert", description: "Avoid alert().", clauses: [] })),
       { rules: ["candidates/rules/eslint:no-alert.json: id eslint:no-alert is not lowercase letters, digits and dashes"] },
     ],
     [
       "a candidate with no id",
-      directory => {
-        mkdirSync(join(directory, "candidates", "rules"), { recursive: true });
-        writeJson(join(directory, "candidates", "rules", "no-pass.json"), { format: "rerail.policy/v1", description: "Remove pass statements.", clauses: [] });
-      },
+      directory => writeCandidate(directory, "candidates/rules/no-pass.json", JSON.stringify({ format: "rerail.policy/v1", description: "Remove pass statements.", clauses: [] })),
       { rules: ["candidates/rules/no-pass.json: has no id"] },
     ],
     [
       "a candidate in an older document format",
-      directory => {
-        mkdirSync(join(directory, "candidates", "rules"), { recursive: true });
-        writeJson(join(directory, "candidates", "rules", "no-pass.json"), { format: "tempo.policy/v1", id: "no-pass", description: "Remove pass statements.", checks: [] });
-      },
+      directory => writeCandidate(directory, "candidates/rules/no-pass.json", JSON.stringify({ format: "tempo.policy/v1", id: "no-pass", description: "Remove pass statements.", checks: [] })),
       { rules: ["candidates/rules/no-pass.json: format is tempo.policy/v1; a rule document is rerail.policy/v1"] },
     ],
     [
       "a candidate outside a rules/ directory",
-      directory => {
-        mkdirSync(join(directory, "candidates"));
-        writeFileSync(join(directory, "candidates", "pass-statement.json"), readFileSync(join(directory, "rules", "pass-statement.json")));
-      },
+      directory => writeCandidate(directory, "candidates/pass-statement.json", readFileSync(join(directory, "rules", "pass-statement.json"))),
       { rules: ["candidates/pass-statement.json: a candidate is in a rules/ directory; move it to candidates/rules/pass-statement.json"] },
+    ],
+    [
+      "a shipped rule that declares no origin",
+      directory => rmSync(join(directory, "origins.json")),
+      { rules: ["rules/pass-statement.json: declares no origin: map it in conformance.json if the conformance runner can score it, or declare it in origins.json, as an original or as a port not mapped yet"] },
+    ],
+    [
+      "a candidate that declares no origin",
+      writeNoPass,
+      { rules: ["candidates/rules/no-pass.json: declares no origin: map it in conformance.json if the conformance runner can score it, or declare it in origins.json, as an original or as a port not mapped yet"] },
+    ],
+    [
+      "a rule declared both a port and an original",
+      directory => declare(directory, { document: "rules/assert-used.json", original: "declared an original although conformance.json maps it" }),
+      { rules: ["rules/assert-used.json: declared twice, by conformance.json and by origins.json; declare it once"] },
+    ],
+    [
+      "an origins.json entry for a document the pack does not have",
+      directory => declare(directory, { document: "rules/gone.json", original: "declared, though no such document exists" }),
+      { rules: ["origins.json: rules/gone.json is not a rule document of the pack"] },
+    ],
+    [
+      "a port origins.json declares of a tool no conformance.json of the pack lists",
+      directory => {
+        writeNoPass(directory);
+        declare(directory, { document: "candidates/rules/no-pass.json", upstream: { tool: "otherlint", rule: "OT1" }, unmapped: "otherlint has no recording here yet" });
+      },
+      { rules: ["origins.json: candidates/rules/no-pass.json ports otherlint's OT1, but no conformance.json of the pack lists otherlint in tools"] },
+    ],
+    [
+      "an origins.json port that does not say why conformance.json does not map it",
+      directory => {
+        writeNoPass(directory);
+        declare(directory, { document: "candidates/rules/no-pass.json", upstream: { tool: "examplelint", rule: "EX999" } });
+      },
+      {
+        rules: [
+          expect.stringMatching(/^origins\.json: ✖ /u),
+          "candidates/rules/no-pass.json: declares no origin: map it in conformance.json if the conformance runner can score it, or declare it in origins.json, as an original or as a port not mapped yet",
+        ],
+      },
     ],
     [
       "a probe port whose id is not its document's",
@@ -372,6 +423,17 @@ describe("validatePack", () => {
       { text: ["rules/pass-statement.json: has no description"] },
     ],
   ];
+
+  it("passes a candidate origins.json declares a port no conformance.json entry maps, with why", async () => {
+    const validation = await validatePack(
+      changed("valid", directory => {
+        writeNoPass(directory);
+        declare(directory, { document: "candidates/rules/no-pass.json", upstream: { tool: "examplelint", rule: "EX999" }, unmapped: "the examplelint recording does not cover EX999 yet" });
+      }),
+      { corpora: false },
+    );
+    expect(failing(validation)).toEqual({});
+  });
 
   it.each(cases)("fails %s", async (_name, change, expected) => {
     const validation = await validatePack(changed("valid", change), { corpora: false });
@@ -574,10 +636,11 @@ describe("packedFileFailures", () => {
   });
 
   it("fails validation material even when files publishes it", () => {
-    expect(packedFileFailures(["*", "upstream", "candidates"], ["conformance.json", "divergences.json", "upstream/tool/fixtures/a.py", "candidates/rules/x.json", "pack.json"])).toEqual([
+    expect(packedFileFailures(["*", "upstream", "candidates"], ["conformance.json", "divergences.json", "origins.json", "upstream/tool/fixtures/a.py", "candidates/rules/x.json", "pack.json"])).toEqual([
       "candidates/rules/x.json: validation material, never published",
       "conformance.json: validation material, never published",
       "divergences.json: validation material, never published",
+      "origins.json: validation material, never published",
       "upstream/tool/fixtures/a.py: validation material, never published",
     ]);
   });

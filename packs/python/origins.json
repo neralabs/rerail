@@ -1,0 +1,18 @@
+[
+  {
+    "document": "candidates/rules/ruff-a005-stdlib-module-shadowing.json",
+    "upstream": {
+      "tool": "ruff",
+      "rule": "A005"
+    },
+    "unmapped": "no recording covers A005: Ruff's only fixtures for it are GPL-derived, so Rerail does not record them"
+  },
+  {
+    "document": "candidates/rules/ruff-inp001-implicit-namespace-package.json",
+    "upstream": {
+      "tool": "ruff",
+      "rule": "INP001"
+    },
+    "unmapped": "no recording covers INP001: Ruff tests it only with a namespace-packages option set"
+  }
+]

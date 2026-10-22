@@ -10,10 +10,12 @@ gates and are only reported.
 
 Each gate has a stage (`section` in types.ts `GATES`). Conformance checks every rule document of every pack: a
 tool-pack's run judges its own rules on it, and `conformance-gates.ts` (`npm run port-readiness -- conformance`, its
-own CI job) judges every rule no gated tool-pack does, with no recording and no cache. Port readiness checks ports (the
-rules of a pack with a conformance.json, each mapped to the upstream rule it comes from), once they pass conformance:
-that each is true to that rule. A rule that is not a port (complexity's) is done after conformance. The gates run in
-`GATES` order, conformance first:
+own CI job) judges every rule no gated tool-pack does, with no recording and no cache. Port readiness checks ports, once
+they pass conformance: that each is true to the upstream rule it comes from. Each rule document declares its origin
+(conformance/origins.ts, docs/pack-format.md "origins.json"): a port, by its conformance.json entry or, while no entry
+maps it, in the pack's origins.json; or an original, Rerail's own rule (complexity's), in origins.json, which is done
+after conformance. The declaration is per document, so a pack of ports can hold an original. The gates run in `GATES`
+order, conformance first:
 
 | V1 gate | Gate id | Section | Blocking |
 | --- | --- | --- | --- |
@@ -27,8 +29,10 @@ that each is true to that rule. A rule that is not a port (complexity's) is done
 
 A rule's verdict is the first blocking gate it fails. The summary (summary.ts) holds one verdict per rule document, the
 first step of `STEPS` the rule fails, and every count it and the pull request comment (comment.ts) show comes from
-those verdicts, so each rule is counted once. The steps are the conformance gates, then, for a port: `mapping` (a
-conformance.json entry maps it), `set-up` (its tool has a gates.yaml; a shipped port of a tool without one fails), the
+those verdicts, so each rule is counted once. The steps are `origin` (the document declares its origin; one declared
+nowhere stops there, fail-closed, and a pack's origins.json that is wrong fails the conformance report's `origins` pack
+check), the conformance gates, then, for a port: `mapping` (a conformance.json entry maps it; a port origins.json
+declares stops here, with its `unmapped` reason), `set-up` (its tool has a gates.yaml; a shipped port of a tool without one fails), the
 tool-pack checks, `loads`'s `in-scope` check (it compares a rule with the files upstream lints, so it judges the port),
 `not-overfit` and `matches-upstream-tests`. `matches-upstream-tests` includes `engine-reads-goldens`: a golden
 that differs where the engine reported `source-partial`, `source-incomplete` or `budget-exceeded` fails the rule; the
@@ -128,5 +132,7 @@ complete. The report's method text says so.
 ## Ports that port readiness cannot run on yet
 
 A port of a tool with no gates.yaml (node's eslint-plugin-n) meets conformance only and stops at `set-up`: a candidate
-is reported, and a shipped one fails ("keep it in candidates/ until the tool has a gates.yaml"). There is no list of
-exempt rules: a rule ships when it passes every gate it must.
+is reported, and a shipped one fails ("keep it in candidates/ until the tool has a gates.yaml"). A port origins.json
+declares, which no conformance.json entry maps because no recording covers its upstream rule (Ruff's A005 and INP001,
+typescript-eslint's prefer-optional-chain and no-explicit-any, unicorn's no-array-for-each), stops at `mapping`. There
+is no list of exempt rules: a rule ships when it passes every gate it must.

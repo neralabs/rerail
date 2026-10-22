@@ -1,0 +1,18 @@
+[
+  {
+    "document": "candidates/rules/typescript-eslint-no-explicit-any.json",
+    "upstream": {
+      "tool": "typescript-eslint",
+      "rule": "@typescript-eslint/no-explicit-any"
+    },
+    "unmapped": "the fixtures recording does not cover @typescript-eslint/no-explicit-any yet"
+  },
+  {
+    "document": "candidates/rules/typescript-eslint-prefer-optional-chain.json",
+    "upstream": {
+      "tool": "typescript-eslint",
+      "rule": "@typescript-eslint/prefer-optional-chain"
+    },
+    "unmapped": "it requires type information, which the recordings do not have"
+  }
+]

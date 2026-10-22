@@ -4,11 +4,11 @@ import { test } from "vitest";
 import { COMMENT_LIMIT, COMMENT_MARKER, renderComment, renderJobSummary } from "../../../conformance/port-readiness/comment.js";
 import { SUMMARY_FORMAT, type OtherFailure, type RuleVerdict, type StepId, type Summary } from "../../../conformance/port-readiness/summary.js";
 
-/** A port of ruff unless `pack` is complexity, whose rules are not ports. */
+/** A port of ruff unless `pack` is complexity, whose rules are originals. */
 function verdict(id: string, location: RuleVerdict["location"], stoppedAt: StepId | null, pack = "python"): RuleVerdict {
   const port = pack !== "complexity";
   return {
-    id, file: `packs/${pack}/${location === "shipped" ? "rules" : "candidates/rules"}/${id}.json`, pack, location, port,
+    id, file: `packs/${pack}/${location === "shipped" ? "rules" : "candidates/rules"}/${id}.json`, pack, location, origin: port ? "port" : "original",
     upstream: port ? { tool: "ruff", rule: id.toUpperCase() } : null, stoppedAt,
     check: stoppedAt === null ? "" : "identical-results", why: stoppedAt === null ? "" : `1 upstream test file differs ${"x".repeat(400)}`,
     ...(port ? { onByDefault: true } : {}),
@@ -62,12 +62,12 @@ test("a blocking failure no rule owns is listed on its own, and counted in the h
   assert.match(text, /^### Other blocking failures \(1\)$\n\n^- python\/ruff: report: its port readiness run left no report$/mu);
 });
 
-test("ready to promote lists ports and rules that are not ports, then the shipped rules per pack, collapsed", () => {
+test("ready to promote lists ports and originals, then the shipped rules per pack, collapsed", () => {
   const text = renderComment(summary(10, 0, [verdict("complexity-a", "candidate", null, "complexity"), verdict("complexity-b", "shipped", null, "complexity")]));
   assert.match(text, /^## Rule gates: \[PASS\] 101\/101 shipped rules pass their required gates; 2 candidates ready to promote$/mu);
   const section = text.slice(text.indexOf("### Ready to promote (2)"), text.indexOf("<summary>Candidates that fail a gate"));
   assert.match(section, /^- `ruff-candidate-0-with-a-long-descriptive-name` \(python, port of ruff RUFF-CANDIDATE-0-WITH-A-LONG-DESCRIPTIVE-NAME\): on by default$/mu);
-  assert.match(section, /^- `complexity-a` \(complexity\)$/mu);
+  assert.match(section, /^- `complexity-a` \(complexity, original\)$/mu);
   assert.match(section, /<summary>Shipped rules per pack \(101\)<\/summary>\n\n\| Rule pack \| Shipped rules passing \|\n\| --- \| --- \|\n\| complexity \| 1\/1 \|\n\| python \| 100\/100 \|/u);
   assert.match(renderComment(summary(0, 0)), /^### Ready to promote \(0\)\n\nNo candidate is ready to promote yet\.$/mu);
 });

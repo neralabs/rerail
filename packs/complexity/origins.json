@@ -1,0 +1,14 @@
+[
+  {
+    "document": "rules/complexity-cyclomatic-javascript.json",
+    "original": "Rerail's own rule, modelled on lizard 1.24.0: cyclomatic complexity with lizard's decision points over a limit of 6, each switch counted once, without the lizard defects README.md lists; upstream/lizard/ is the parity corpus test/engine/code-rule/complexity-rules.test.ts checks it on"
+  },
+  {
+    "document": "rules/complexity-cyclomatic-python.json",
+    "original": "Rerail's own rule, modelled on lizard 1.24.0: cyclomatic complexity with lizard's decision points over a limit of 6, each match counted once, without the lizard defects README.md lists; upstream/lizard/ is the parity corpus test/engine/code-rule/complexity-rules.test.ts checks it on"
+  },
+  {
+    "document": "rules/complexity-cyclomatic-typescript.json",
+    "original": "Rerail's own rule, modelled on lizard 1.24.0: cyclomatic complexity with lizard's decision points over a limit of 6, each switch counted once, without the lizard defects README.md lists; upstream/lizard/ is the parity corpus test/engine/code-rule/complexity-rules.test.ts checks it on"
+  }
+]

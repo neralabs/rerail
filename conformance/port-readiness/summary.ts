@@ -1,31 +1,35 @@
 /**
  * The summary CI writes after the gates run: one verdict per rule document, the first step of STEPS it fails, or none.
- * Every rule meets the conformance stage. A port (a rule of a pack with a conformance.json, which maps it to the
- * upstream linter's rule it comes from) then meets the port readiness stage; a rule that is not a port (complexity's)
- * is done after conformance. comment.ts renders the summary as the pull request comment and the job summary.
+ * Every rule meets the conformance stage, which starts with its declared origin (conformance/origins.ts). A port, a rule
+ * its conformance.json entry or origins.json declares comes from an upstream linter's rule, then meets the port
+ * readiness stage; an original, Rerail's own rule (complexity's), is done after conformance. comment.ts renders the
+ * summary as the pull request comment and the job summary.
  */
 import { appendFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { UNDECLARED } from "../origins.js";
 import { renderComment, renderJobSummary } from "./comment.js";
 import { CONFORMANCE_REPORT_FILE, CONFORMANCE_REPORT_FORMAT, type ConformanceReport } from "./conformance-gates.js";
 import { gateTitle } from "./report.js";
 import { blockingFailures, gatedToolPacks, REPORT_FORMAT, unusedGapLine, type GateReport, type GatesReport, type RuleReport } from "./run.js";
 import type { Check } from "./types.js";
 
-export const SUMMARY_FORMAT = "rerail.port-readiness-summary/v3" as const;
+export const SUMMARY_FORMAT = "rerail.port-readiness-summary/v4" as const;
 
 const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 /**
- * The steps in the order a rule meets them. Besides the gates, the port readiness stage has three steps the summary
- * reports apart: `mapping` (no conformance.json entry maps the port to an upstream rule), `set-up` (its upstream linter
- * has no gates.yaml, so no port readiness gate can run) and `linter-checks` (a failing tool-pack check, such as a stale
- * recording, fails every port of that linter); and `in-scope`, `loads`'s check that compares a rule's scope with the
- * files upstream lints, which judges the port, not the document.
+ * The steps in the order a rule meets them. Besides the gates, the conformance stage starts with `origin` (the rule
+ * declares where it comes from: a port or an original), and the port readiness stage has three steps the summary
+ * reports apart: `mapping` (a port origins.json declares, which no conformance.json entry maps yet), `set-up` (its
+ * upstream linter has no gates.yaml, so no port readiness gate can run) and `linter-checks` (a failing tool-pack check,
+ * such as a stale recording, fails every port of that linter); and `in-scope`, `loads`'s check that compares a rule's
+ * scope with the files upstream lints, which judges the port, not the document.
  */
 export const STEPS = [
+  { id: "origin", title: "Declares its origin: a port or an original", stage: "conformance" },
   { id: "loads", title: gateTitle("loads"), stage: "conformance" },
   { id: "compact", title: gateTitle("compact"), stage: "conformance" },
   { id: "passes-conformance", title: gateTitle("passes-conformance"), stage: "conformance" },
@@ -54,15 +58,15 @@ export interface RuleVerdict {
   file: string;
   pack: string;
   location: "shipped" | "candidate";
-  /** It is a port: its pack has a conformance.json, so it must come from an upstream linter's rule. */
-  port: boolean;
-  /** The upstream rule conformance.json maps it to; null for a rule that is not a port, or a port no entry maps. */
+  /** What its pack declares it: a port of an upstream linter's rule, or an original, Rerail's own; null when nothing does. */
+  origin: "port" | "original" | null;
+  /** The upstream rule a port comes from, as its declaration names it; null for an original or an undeclared document. */
   upstream: { tool: string; rule: string } | null;
   /** The first step it fails, or null when it passes every step it must. */
   stoppedAt: StepId | null;
   check: string;
   why: string;
-  /** A port's upstream-status call for pack.json `on`: on when upstream recommends it; absent for a rule that is not a port. */
+  /** A port's upstream-status call for pack.json `on`: on when upstream recommends it; absent for any other rule. */
   onByDefault?: boolean;
 }
 
@@ -170,24 +174,27 @@ export function summarize(reports: GatesReport[], gated: { pack: string; tool: s
   const plannedNames = new Set(planned.map(({ pack, tool }) => `${pack}/${tool}`));
   const missingReports = gatedNames.filter((toolPack) => plannedNames.has(toolPack) && !have.has(toolPack));
   const notJudged = gatedNames.filter((toolPack) => !plannedNames.has(toolPack));
-  const portPacks = new Set((conformance?.packs ?? []).filter((entry) => entry.hasConformanceJson).map((entry) => entry.pack));
 
   const rules: RuleVerdict[] = [];
   for (const report of reports) {
     for (const rule of report.rules) {
-      rules.push(verdictOf({ id: rule.id, file: rule.file, pack: report.pack, location: rule.location, port: true, upstream: { tool: report.tool, rule: rule.upstreamRule }, onByDefault: rule.defaultOn }, gatedStep(rule)));
+      // A gated linter judges the documents its conformance.json entries map, which declares each a port.
+      rules.push(verdictOf({ id: rule.id, file: rule.file, pack: report.pack, location: rule.location, origin: "port", upstream: { tool: report.tool, rule: rule.upstreamRule }, onByDefault: rule.defaultOn }, gatedStep(rule)));
     }
   }
-  // The conformance report judges every rule no gated linter does: one that is not a port, a port no entry maps, and a
-  // port of a linter with no gates.yaml, which stops at set-up since no port readiness gate can run on it.
+  // The conformance report judges every rule no gated linter does: an original, a document that declares no origin, a
+  // port origins.json declares that no conformance.json entry maps, and a port of a linter with no gates.yaml, which
+  // stops at set-up since no port readiness gate can run on it.
   for (const rule of conformance?.rules ?? []) {
-    const port = portPacks.has(rule.pack);
+    const { origin } = rule;
     const portStep = (): Failure | null => {
-      if (!port) return null;
-      if (rule.upstream === null) return { stoppedAt: "mapping", check: "conformance-entry", why: "no conformance.json entry maps it to an upstream rule, so no port readiness gate can run: add its entry" };
-      return { stoppedAt: "set-up", check: "gates-yaml", why: `${rule.upstream.tool} has no packs/${rule.pack}/upstream/${rule.upstream.tool}/gates.yaml yet, so no port readiness gate can run on its ports` };
+      if (origin?.kind !== "port") return null;
+      const { tool, rule: name } = origin.upstream;
+      if (origin.unmapped !== undefined) return { stoppedAt: "mapping", check: "conformance-entry", why: `no conformance.json entry maps it to ${tool}'s ${name}, so no port readiness gate can run: ${origin.unmapped}` };
+      return { stoppedAt: "set-up", check: "gates-yaml", why: `${tool} has no packs/${rule.pack}/upstream/${tool}/gates.yaml yet, so no port readiness gate can run on its ports` };
     };
-    rules.push(verdictOf({ id: rule.id, file: rule.file, pack: rule.pack, location: rule.location, port, upstream: rule.upstream }, conformanceStep(rule.gates) ?? portStep()));
+    const originStep: Failure | null = origin === null ? { stoppedAt: "origin", check: "origin", why: UNDECLARED } : null;
+    rules.push(verdictOf({ id: rule.id, file: rule.file, pack: rule.pack, location: rule.location, origin: origin?.kind ?? null, upstream: origin?.kind === "port" ? origin.upstream : null }, originStep ?? conformanceStep(rule.gates) ?? portStep()));
   }
   rules.sort((a, b) => byText(a.file, b.file));
 

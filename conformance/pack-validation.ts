@@ -28,6 +28,7 @@ import { CONFORMANCE_FILE, defaultCorpusRoot, documentPath, loadPack, packSchema
 import { reportFailures, runPack } from "./languages/runner.js";
 import { capabilitiesJson } from "./engine.js";
 import { BIOME_SAME_SOURCES } from "./biome-same-sources.generated.js";
+import { ORIGINS_FILE, packOrigins, UNDECLARED } from "./origins.js";
 
 export const PACK_CHECKS = [
   { number: 1, name: "rules" },
@@ -79,7 +80,7 @@ export interface ValidatePackOptions {
 }
 
 /** Validation material: kept in the repository, never published. */
-const VALIDATION_MATERIAL = [CONFORMANCE_FILE, "divergences.json", "upstream", "candidates"] as const;
+const VALIDATION_MATERIAL = [CONFORMANCE_FILE, "divergences.json", ORIGINS_FILE, "upstream", "candidates"] as const;
 /** Rerail's own licence for its material in a pack. */
 const RERAIL_LICENSE = "Apache-2.0";
 const UPSTREAM_LICENSE = /\bLicense: ([A-Za-z0-9][A-Za-z0-9.+-]*)/u;
@@ -146,6 +147,11 @@ const inRulesDirectory = (file: string): boolean => posix.basename(posix.dirname
  */
 function candidateDocuments(directory: string, candidates: readonly string[]): string[] {
   return candidates.filter(file => file.endsWith(".json") && (inRulesDirectory(file) || POLICY_FORMAT.test(headerOf(readFileSync(join(directory, file), "utf8")).format ?? "")));
+}
+
+/** The pack's rule documents, pack-relative: every file in `rules/`, and the candidates outside `candidates/probes/`. */
+function ruleDocuments(directory: string): string[] {
+  return [...filesUnder(directory, join(directory, "rules")), ...candidateDocuments(directory, filesUnder(directory, join(directory, "candidates"))).filter(file => !file.startsWith("candidates/probes/"))];
 }
 
 /**
@@ -549,6 +555,11 @@ export async function validatePack(directory: string, options: ValidatePackOptio
 
   for (const failure of idFailures(directory)) fail("rules", failure);
 
+  // Every rule document, shipped or candidate, declares where it comes from: a port or an original (origins.ts).
+  const origins = packOrigins(directory, ruleDocuments(directory));
+  for (const failure of origins.failures) fail("rules", failure);
+  for (const document of origins.undeclared) fail("rules", `${document}: ${UNDECLARED}`);
+
   // The ported rules, by the document they port: the pack's conformance.json, the conformance runner's pack
   // (conformance/languages/pack.ts).
   const conformancePath = join(directory, CONFORMANCE_FILE);
@@ -729,8 +740,7 @@ export async function validatePack(directory: string, options: ValidatePackOptio
   // criteria a machine can check; violation messages are left to review. Probes are facts the ports are built on, read
   // by no one, so are left out.
   const listedBy = new Map((pack?.rules ?? []).map(rule => [rule.document, rule.id]));
-  const documents = [...filesUnder(directory, join(directory, "rules")), ...candidateDocuments(directory, filesUnder(directory, join(directory, "candidates"))).filter(file => !file.startsWith("candidates/probes/"))];
-  for (const file of documents) {
+  for (const file of ruleDocuments(directory)) {
     for (const failure of textFailures(file, readFileSync(join(directory, file), "utf8"))) fail("text", failure, listedBy.get(file));
   }
 

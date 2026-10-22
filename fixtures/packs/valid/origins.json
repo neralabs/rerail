@@ -1,0 +1,6 @@
+[
+  {
+    "document": "rules/pass-statement.json",
+    "original": "Rerail's own rule, written for the pack validator's tests: it ports no upstream rule, and its examples prove it"
+  }
+]
