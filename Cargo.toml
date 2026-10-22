@@ -1,5 +1,5 @@
 [workspace]
-members = ["native"]
+members = ["native", "spikes/facts-a"]
 exclude = ["scripts/profiling/reachability"]
 resolver = "2"
 
