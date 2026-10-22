@@ -2279,3 +2279,178 @@ It proposes hand-designed reference kernels before the next compiler implementat
 
 Documentation checks cover local source links, pinned source claims, measurement scope, and prose consistency.
 No engine tests or benchmarks ran because this change only adds the review and this journal entry.
+
+## Direct B023 relational spike — 2026-10-22
+
+The user authorized an executable B023 spike and requested ongoing journal entries.
+The starting engine revision is `e5783859`.
+The experiment replaces the complete matching query for B023 in a test harness.
+It does not add a production engine mode.
+
+The existing 138-file profile attributes 4.911 CPU seconds to B023 instruction steps.
+Those steps publish 6,883,089 rows and perform 14,965,449 frame advances.
+These attributed costs exclude shared stages and are not a standalone B023 baseline.
+The spike will measure a standalone baseline on the same inputs.
+
+The proposed query uses loop assignments, eligible functions, parameter/store exclusions, and identifier loads.
+All composition and recursive slot propagation remain in SQL.
+Native primitives supply AST access and leaf text/pattern operations only.
+The acceptance checks require exact roots and captures, one matching execution, and zero frame publications.
+The experimental target is at least tenfold fewer VM instructions for this rule.
+
+Initial source inspection identifies three semantic requirements beyond ordinary scope joins.
+Safe lambdas affect function boundaries.
+Loop assignment searches stop at functions and lambdas.
+The policy's function-store exclusion searches the complete function subtree, including nested scopes.
+The query must reproduce the policy, rather than replace it with a different interpretation of Ruff B023.
+
+### First query and capture correction
+
+The first direct query matches all identifier roots in the upstream fixtures.
+Its capture comparison fails: native matching replaces `$N` with the selected assignment identifier after unification.
+Returning the reported load as `$N` therefore changes capture identity, despite equal text and finding roots.
+The rejected query and failure log remain under `/tmp/rerail-b023-relational-20261022/v1`.
+
+The correction retains assignment witnesses through ancestor traversal.
+Each loop/name pair selects its first assignment.
+Each function/name pair selects its nearest successful loop.
+Each load selects its nearest successful function body, including the load itself for a lambda body.
+These reductions occur at their semantic boundaries, before final output.
+
+The test harness compares native matcher roots and captures, current-engine results, and direct-query results.
+The fixtures include the upstream B023 corpus and suppression fixture.
+Twenty-two additional cases cover shadowing, nested functions, safe lambdas, destructuring, comprehensions, stores, repeated names, and Unicode.
+An allocator build encountered the environment's deletion restriction.
+Subsequent builds use the existing diagnostic allocator override for both variants, as earlier measurements did.
+
+### First complete corpus measurement
+
+The capture-correct query passes both fixtures and all 22 adversarial cases.
+It also matches both oracles across all 138 frozen corpus files, with two raw B023 matches.
+Three fresh-process samples give median kernel CPU of 4.768 seconds for the current engine and 0.522 seconds for the direct query.
+The direct query executes once and publishes zero frames.
+VM instructions decrease from 369,851,302 to 43,235,816, an 8.55-fold reduction.
+This candidate misses the tenfold VM target despite a 9.14-fold CPU improvement.
+
+The profile explains the remaining work.
+SQLite scans all nodes for one named-expression child search and scans all identifiers for two small relation joins.
+The parameter relation contains only 166 walk rows, yet its final join starts from the complete identifier domain.
+The next candidate fixes these access directions with explicit driving relations.
+This is physical planning over the direct relation graph, not another frame-scheduler optimization.
+
+Artifacts and exact input hashes are in `/tmp/rerail-b023-relational-20261022/v2`.
+The comparison driver freezes the corpus and checks policy, query, and input hashes across samples.
+It keeps diagnostic relation counts and EXPLAIN outside timed matching execution.
+
+### Access direction and selective regions
+
+The third candidate fixes three reversed access paths with `CROSS JOIN`.
+It drives child lookup from named expressions and drives identifier lookup from parameter/store rows.
+It passes fixture and corpus parity and reduces VM instructions to 14,400,337.
+Its single trace-disabled sample improves kernel CPU by 15-fold.
+Artifacts remain in `/tmp/rerail-b023-relational-20261022/v3`.
+
+The fourth candidate restricts assignment and store discovery to loop regions that contain eligible functions.
+It combines overlapping regions before subtree scans.
+This restriction preserves all stores in candidate functions, including nested scopes.
+It reduces target-slot rows from 30,335 to 457 and assignment ancestor states from 142,371 to 2,785.
+The direct query now uses 2,324,796 VM instructions, 159-fold fewer than the standalone current-engine baseline.
+Its first trace-disabled sample improves kernel CPU by 91-fold.
+These are preliminary timings pending the final repeated measurements and scaling checks.
+Artifacts remain in `/tmp/rerail-b023-relational-20261022/v4`.
+
+### Scaling checks and measurement controls
+
+All 138 source hashes match the previous complete-workload evidence.
+The comparison driver freezes those sources before its first execution.
+It also checks the executable, query, harness, driver, and policy hashes after the run.
+
+The scaling tests pass at sizes 32, 128, and 512.
+Unrelated assignments outside relevant loops leave direct SQL work constant at 1,822 VM instructions.
+Combined repeated assignments and repeated loads use 24,909, 94,797, and 374,349 VM instructions.
+The final case has sixteen times more assignments and loads, but approximately fifteen times more SQL instructions.
+All scaling cases preserve native roots and captures.
+AST parsing and index construction still process input data and remain outside this VM-only growth claim.
+
+The preliminary timing samples disable SQL tracing but retain row counters.
+The final harness disables both tracing and frame counters during timing samples.
+It includes SQL generation and connection setup, and excludes artifact writes and diagnostic queries.
+The separate profile retains exact row counters, VM instructions, relation sizes, and EXPLAIN output.
+
+### Final result and compiler target
+
+The final query passes exact root and capture equality against the native matcher and the current SQL engine.
+The corpus contains 138 files, 7,336,001 source bytes, and two raw B023 matches.
+The two upstream fixtures contain 29 matches, and the 22 adversarial cases contain 24 matches.
+All six scaling cases also pass both oracles.
+
+| Measurement | Current SQL kernel | Direct query |
+|---|---:|---:|
+| Median kernel CPU, three fresh processes | 4,616.048 ms | 49.230 ms |
+| VM instructions, separate profiled execution | 369,851,302 | 2,324,796 |
+| Frame publications | 6,944,829 | 0 |
+| Frame advances | 15,597,627 | 0 |
+| Node advances | 3,745,416 | 81,315 |
+| Matching SQL executions | 1 | 1 |
+| Actual executions including kernel setup and transactions | 4 | 1 |
+| Generated matching SQL bytes | 278,847 | 8,196 |
+
+The kernel CPU improvement is 93.77-fold, and the VM reduction is 159.09-fold.
+These timings include SQL generation, preparation, connection setup, index construction, and execution over already parsed ASTs.
+They exclude artifact writes and diagnostic queries.
+Shared parsing costs a median 717.679 ms separately.
+The native oracle's direct identifier scan is a correctness reference, not a production native-engine benchmark.
+The current kernel precedes the direct query in each sample on a shared host with the diagnostic allocator override.
+
+Zero frame publications does not mean zero SQLite materialization.
+The direct statement creates 37,241 automatic-index entries.
+The diagnostic query reports logical relation cardinalities, rather than physical allocation or write counts.
+The largest named relation is the function ancestor traversal, with 23,208 rows.
+The useful function/loop relation contains 48 rows, which select 16 loops and ten disjoint subtree regions.
+Those regions constrain assignment and store discovery before capture-dependent joins.
+
+The result provides a concrete compiler target:
+
+1. Derive structural demand before utility evaluation: `function_loops` selects `relevant_loops`, which collapse into disjoint `regions`.
+2. Restrict utility seed scans to those regions before recursive slot propagation.
+3. Compute assignment answers at `(file, loop, name_atom)` identity and retain the first assignment witness.
+4. Join those answers to function demand, select the nearest successful loop, and apply parameter/store anti-joins.
+5. Probe identifier postings by name and body interval, then select the nearest successful body.
+
+The required operators are constrained structural closure, keyed joins, anti-joins, region restriction, and ordered witness reduction.
+The query contains no program counter, mutable frame publications, dirty-demand loop, or native rule-composition callback.
+Native callbacks only read source text and match the fixed `functools.reduce` leaf pattern.
+The production compiler must generate these relations from the DSL, including the capture-order proofs.
+Hard-coding B023 in production is not the proposed integration.
+
+This spike does not change the production engine or claim a whole-job speedup.
+The complete 135-policy, 100-execution acceptance gate must run after compiler integration.
+The existing 72-execution full-job result remains historical evidence for the unchanged engine.
+
+The checked-in artifacts are:
+
+- `native/src/code_rule_dsl/sql/spikes/whole_call/b023.sql`: the direct query template.
+- `native/src/code_rule_dsl/sql/spikes/whole_call/b023.rs`: both output oracles, fixtures, scaling checks, and corpus harness.
+- `benchmark/b023-relational-spike.py`: frozen-input profiling and repeated-timing driver.
+- `benchmark/sql-b023-relational-evidence.json`: compact results, iterations, hashes, scaling evidence, and expanded SQL.
+
+Raw profiles, EXPLAIN output, relation counts, and sample reports remain under `/tmp/rerail-b023-relational-20261022/final`.
+The driver accepts the existing SQL workload configuration format and creates a new output directory.
+The commands used for the final run were:
+
+```sh
+JEMALLOC_OVERRIDE=/tmp/librerail_jemalloc_check_shim.dylib \
+  python3 benchmark/b023-relational-spike.py \
+  /tmp/rerail-b023-relational-20261022/v2/config.json \
+  /tmp/rerail-b023-relational-20261022/final
+```
+
+The allocator path is specific to this development environment.
+Without that environment restriction, the driver accepts an ordinary Cargo build.
+It builds the optimized test executable, checks fixtures and scaling, freezes inputs, profiles one corpus execution, and takes three fresh-process timing samples.
+
+Strict Clippy reports an existing regex-construction warning at `native/src/code_rule_dsl/sql/tests/mod.rs:197`.
+That code predates this spike and remains unchanged.
+The follow-up Clippy check passes with only `clippy::regex_creation_in_loops` permitted and all other warnings as errors.
+The targeted Rust suite passes three tests, and the corpus test passes the profile and all three timing samples.
+Python syntax, Rust formatting, evidence hashes, and whitespace checks also pass.
