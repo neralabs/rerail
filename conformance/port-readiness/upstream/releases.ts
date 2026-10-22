@@ -11,24 +11,26 @@
  *
  * Exit 1 when a tool-pack is behind upstream, its pins disagree, or its registry could not be read (a check that cannot
  * see upstream's releases must not pass), 2 on an exception. With GITHUB_STEP_SUMMARY set, the table is appended to it
- * too; under GitHub Actions each failing tool-pack is also an `::error::` annotation.
+ * too; under GitHub Actions each failing tool-pack is also an `::error::` annotation. `--behind <file>` writes the
+ * tool-packs behind upstream there as JSON, for the nightly to open a bump pull request for each (upstream/bump.ts).
  */
-import { appendFileSync, readFileSync, realpathSync } from "node:fs";
+import { appendFileSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
 
-import { readGatesManifest, type GatesManifest } from "./manifest.js";
-import { RUNTIMES_DIRECTORY } from "./recorded-adapter.js";
-import { gatedToolPacks } from "./run.js";
+import { readGatesManifest, type GatesManifest } from "../manifest.js";
+import { RUNTIMES_DIRECTORY } from "../recorded-adapter.js";
+import { gatedToolPacks } from "../run.js";
 
 /** The registries a gated tool-pack's runtime installs its upstream from. */
 export type PackageEcosystem = "npm" | "pypi" | "packagist";
 export type Ecosystem = PackageEcosystem | "rust";
 
 /** How each ecosystem is named in the table. */
-const ECOSYSTEM_NAMES: Record<Ecosystem, string> = { npm: "npm", pypi: "PyPI", packagist: "Packagist", rust: "Rust" };
+export const ECOSYSTEM_NAMES: Record<Ecosystem, string> = { npm: "npm", pypi: "PyPI", packagist: "Packagist", rust: "Rust" };
 
 /** What one tool-pack pins of its upstream. */
 export interface UpstreamPin {
@@ -76,7 +78,12 @@ export function eslintPackage(installed: string): string {
 }
 
 /** A requirement `name==version` in a pyproject.toml's `project.dependencies`, extras allowed. */
-const PYTHON_PIN = /^([A-Za-z0-9._-]+)(?:\[[^\]]*\])?\s*==\s*(\S+)$/u;
+export const PYTHON_PIN = /^([A-Za-z0-9._-]+)(?:\[[^\]]*\])?\s*==\s*(\S+)$/u;
+
+/** PEP 503's normal form of a Python package name, which is how two spellings of one package compare. */
+export function normalPythonName(name: string): string {
+  return name.toLowerCase().replace(/[-_.]+/gu, "-");
+}
 
 /** The parts of a runtime's pin files this check reads; the recorder holds the rest to its own rules (runtimes.ts). */
 const npmManifestSchema = z.object({ dependencies: z.record(z.string(), z.string()).default({}) });
@@ -93,17 +100,15 @@ export function runtimePin(ecosystem: PackageEcosystem, file: string, text: stri
     const entry = Object.entries(composerManifestSchema.parse(JSON.parse(text)).require).find(([key]) => key.toLowerCase() === name);
     return entry === undefined ? { problem: `${file} does not require ${name}` } : { version: entry[1].replace(/^v/u, "") };
   }
-  // PEP 503's normal form of a name, which is how two spellings of one Python package compare.
-  const normal = (value: string): string => value.toLowerCase().replace(/[-_.]+/gu, "-");
   for (const dependency of pyprojectSchema.parse(parseToml(text)).project.dependencies) {
     const match = PYTHON_PIN.exec(dependency.trim());
-    if (match !== null && normal(match[1]!) === normal(name)) return { version: match[2]! };
+    if (match !== null && normalPythonName(match[1]!) === normalPythonName(name)) return { version: match[2]! };
   }
   return { problem: `${file} pins no ${name}==<version>` };
 }
 
 /** The pin file of each ecosystem's runtimes. */
-const PIN_FILES: Record<PackageEcosystem, string> = { npm: "package.json", pypi: "pyproject.toml", packagist: "composer.json" };
+export const PIN_FILES: Record<PackageEcosystem, string> = { npm: "package.json", pypi: "pyproject.toml", packagist: "composer.json" };
 
 /** A gated tool-pack's pins: gates.yaml's `upstream.version` and its runtime's pin of the same package. */
 export function gatedPin(root: string, pack: string, tool: string): UpstreamPin {
@@ -124,7 +129,7 @@ export function gatedPin(root: string, pack: string, tool: string): UpstreamPin 
     package: name,
     version,
     disagreements,
-    bump: `move gates.yaml's upstream (version, commit) and the runtime's pins to it, then npm run port-readiness:record -- --pack ${pack} --tool ${tool}`,
+    bump: `npm run port-readiness:bump -- --pack ${pack} --tool ${tool}, then record it again (the nightly opens this as a pull request)`,
   };
 }
 
@@ -149,7 +154,7 @@ export function clippyPin(root: string): UpstreamPin {
     package: "rust",
     version,
     disagreements: clippy === expected ? [] : [`${common} pins Rust ${version}, whose Clippy is ${expected}, but ${conformance} tools[clippy].version is ${clippy ?? "missing"}`],
-    bump: `move ${common}'s pins and ${conformance}'s tools[clippy].version to it, then run packs/rust/upstream/clippy/generate.py`,
+    bump: "npm run port-readiness:bump -- --pack rust --tool clippy (the nightly opens this as a pull request)",
   };
 }
 
@@ -307,13 +312,34 @@ export function renderMarkdown(checks: ReleaseCheck[]): string {
   return `${lines.join("\n")}\n`;
 }
 
-/** Run the check over this checkout and report it; the exit code. */
-export async function main(root: string, fetch: Fetch, env: NodeJS.ProcessEnv = process.env): Promise<number> {
+/** A tool-pack behind its upstream, as the nightly's bump job reads it: one pull request each. */
+export interface Behind {
+  pack: string;
+  tool: string;
+  toolPack: string;
+  pinned: string;
+  latest: string;
+}
+
+/** The tool-packs whose pin is behind upstream's latest stable release, in check order. */
+export function behindToolPacks(checks: ReleaseCheck[]): Behind[] {
+  return checks.filter((check) => check.statuses.includes("behind") && check.latest !== null).map((check) => {
+    const [pack, tool] = check.toolPack.split("/");
+    return { pack: pack!, tool: tool!, toolPack: check.toolPack, pinned: check.version, latest: check.latest! };
+  });
+}
+
+/**
+ * Run the check over this checkout and report it; the exit code. With `behind`, the tool-packs behind upstream are
+ * written there as JSON (behindToolPacks) before the exit code is returned, so the nightly can bump them.
+ */
+export async function main(root: string, fetch: Fetch, env: NodeJS.ProcessEnv = process.env, options: { behind?: string } = {}): Promise<number> {
   const checks = await checkUpstreamReleases(upstreamPins(root), fetch);
   const markdown = renderMarkdown(checks);
   process.stdout.write(markdown);
   const step = env.GITHUB_STEP_SUMMARY;
   if (step !== undefined && step !== "") appendFileSync(step, markdown);
+  if (options.behind !== undefined) writeFileSync(options.behind, `${JSON.stringify(behindToolPacks(checks))}\n`);
   const failing = checks.filter((check) => check.problems.length > 0);
   if (env.GITHUB_ACTIONS === "true") {
     // A workflow command's data escapes `%`, CR and LF.
@@ -331,14 +357,18 @@ const invoked = (() => {
   }
 })();
 if (invoked) {
-  if (process.argv.length > 2) {
-    process.stderr.write("usage: npm run port-readiness:upstream-releases\n");
+  let behind: string | undefined;
+  try {
+    behind = parseArgs({ options: { behind: { type: "string" } }, strict: true }).values.behind;
+  } catch {
+    process.stderr.write("usage: npm run port-readiness:upstream-releases [-- --behind <file>]\n");
     process.exitCode = 2;
-  } else {
-    main(resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."), globalThis.fetch).then((code) => {
+  }
+  if (process.exitCode !== 2) {
+    main(resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", ".."), globalThis.fetch, process.env, behind === undefined ? {} : { behind: resolve(behind) }).then((code) => {
       process.exitCode = code;
     }, (error: unknown) => {
-      process.stderr.write(`conformance/port-readiness/upstream-releases.ts: ${error instanceof Error ? error.message : String(error)}\n`);
+      process.stderr.write(`conformance/port-readiness/upstream/releases.ts: ${error instanceof Error ? error.message : String(error)}\n`);
       process.exitCode = 2;
     });
   }
