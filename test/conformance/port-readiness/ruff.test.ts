@@ -8,6 +8,7 @@ import {
   documentedOptions,
   enabledCodes,
   instability,
+  methodCalls,
   guardStrings,
   inSemanticErrorArm,
   parseShowSettings,
@@ -16,6 +17,7 @@ import {
   raiseSites,
   ruffVersionMatches,
   runtimeVersionCheck,
+  semanticFlagReaders,
   settingsKey,
   testModuleStrings,
   useTarget,
@@ -426,6 +428,22 @@ test("guardStrings reads the strings of the conditions around a call, out to its
   assert.deepEqual(guards("other"), ["skip", "split"]);
   const enabled = tokens.findIndex((token, index) => token.text === "StaticJoinToFString" && tokens[index - 2]?.text === "Rule");
   assert.deepEqual(guardStrings(tokens, enabled).sort(), ["join", "skip"]);
+});
+
+test("semanticFlagReaders maps each model method to the flags it reads, composites expanded; methodCalls finds `.name(`", () => {
+  const model = lexRust(`bitflags! { pub struct SemanticModelFlags: u32 {
+    const FUTURE_ANNOTATIONS = 1 << 14;
+    const STUB_FILE = 1 << 15;
+    const FUTURE_ANNOTATIONS_OR_STUB = Self::FUTURE_ANNOTATIONS.bits() | Self::STUB_FILE.bits();
+  } }
+  impl SemanticModel {
+    pub const fn future_annotations_or_stub(&self) -> bool { self.flags.intersects(SemanticModelFlags::FUTURE_ANNOTATIONS_OR_STUB) }
+    pub fn scope(&self) -> &Scope { &self.scopes[self.scope_id] }
+  }`);
+  const readers = semanticFlagReaders(model);
+  assert.deepEqual([...readers.get("future_annotations_or_stub")!].sort(), ["FUTURE_ANNOTATIONS", "FUTURE_ANNOTATIONS_OR_STUB", "STUB_FILE"]);
+  assert.equal(readers.has("scope"), false);
+  assert.deepEqual([...methodCalls(lexRust("if checker.semantic().future_annotations_or_stub() { f(x); }"))].sort(), ["future_annotations_or_stub", "semantic"]);
 });
 
 test("publicFunctions reads the functions a rule file exposes to the checker", () => {

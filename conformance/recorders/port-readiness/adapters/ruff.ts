@@ -41,6 +41,8 @@ const LINTER_TEST_MODULES = ["src/linter.rs"];
 const PARSER_SEMANTIC_ERRORS = "crates/ruff_python_parser/src/semantic_errors.rs";
 /** crates/ruff_linter/src modules outside rules/ whose code decides what rules match (todo tags, docstring sections, comments). */
 const DOMAIN_MODULES = ["directives.rs", "docstrings/", "comments/"];
+/** Ruff's semantic model: the methods rules ask about the file's state, which the checker sets as it visits. */
+const SEMANTIC_MODEL = "crates/ruff_python_semantic/src/model.rs";
 const FIXTURES = "resources/test/fixtures";
 
 interface RuffRule {
@@ -248,9 +250,14 @@ export function inSemanticErrorArm(tokens: readonly RustToken[], index: number):
  * only when they hold (`if attr == "join"` around FLY002's call), so the words they spell are names the rule checks.
  */
 export function guardStrings(tokens: readonly RustToken[], index: number): string[] {
+  return guardHeaders(tokens, index).flat().flatMap((token) => (token.kind === "string" && token.value !== undefined ? [token.value] : []));
+}
+
+/** The headers (`if <condition>`, `<pattern> if <guard> =>`, ...) of the blocks around the token at `index`, innermost first. */
+export function guardHeaders(tokens: readonly RustToken[], index: number): RustToken[][] {
   const opens = (token: RustToken) => token.kind === "punct" && "([{".includes(token.text);
   const closes = (token: RustToken) => token.kind === "punct" && ")]}".includes(token.text);
-  const strings: string[] = [];
+  const headers: RustToken[][] = [];
   let depth = 0;
   for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
     const token = tokens[cursor]!;
@@ -272,10 +279,10 @@ export function guardStrings(tokens: readonly RustToken[], index: number): strin
       }
       const header = tokens.slice(start + 1, cursor);
       if (header.some((part) => part.kind === "ident" && part.text === "fn")) break;
-      for (const part of header) if (part.kind === "string" && part.value !== undefined) strings.push(part.value);
+      headers.push(header);
     }
   }
-  return strings;
+  return headers;
 }
 
 /** Where Rust code calls one of `functions` by path (`flynt::rules::static_join_to_fstring(`), by token index. */
@@ -296,6 +303,47 @@ export function publicFunctions(tokens: readonly RustToken[]): Set<string> {
     if (before === "pub" || /^pub\((?:crate|super)\)$/u.test(before ?? "")) names.add(tokens[index + 1]!.text);
   });
   return names;
+}
+
+/**
+ * The state each method of Ruff's semantic model reads: its name → the `SemanticModelFlags` its body names, a composite
+ * flag (`FUTURE_ANNOTATIONS_OR_STUB = Self::FUTURE_ANNOTATIONS.bits() | Self::STUB_FILE.bits()`) with its parts.
+ */
+export function semanticFlagReaders(tokens: readonly RustToken[]): Map<string, Set<string>> {
+  const parts = new Map<string, string[]>();
+  tokens.forEach((token, index) => {
+    if (token.text !== "const" || tokens[index + 1]?.kind !== "ident" || tokens[index + 2]?.text !== "=") return;
+    const refs: string[] = [];
+    for (let at = index + 3; at < tokens.length && tokens[at]!.text !== ";"; at += 1) {
+      if (tokens[at]!.text === "Self" && tokens[at + 1]?.text === "::" && tokens[at + 2]?.kind === "ident") refs.push(tokens[at + 2]!.text);
+    }
+    parts.set(tokens[index + 1]!.text, refs);
+  });
+  const expand = (flag: string, into: Set<string>): Set<string> => {
+    if (!into.has(flag)) {
+      into.add(flag);
+      for (const part of parts.get(flag) ?? []) expand(part, into);
+    }
+    return into;
+  };
+  const readers = new Map<string, Set<string>>();
+  tokens.forEach((token, index) => {
+    if (token.text !== "fn" || tokens[index + 1]?.kind !== "ident") return;
+    let open = index + 2;
+    while (open < tokens.length && tokens[open]!.text !== "{" && tokens[open]!.text !== ";") open += 1;
+    if (tokens[open]?.text !== "{") return;
+    const flags = new Set<string>();
+    for (let at = open; at < closingIndex(tokens, open); at += 1) {
+      if (tokens[at]!.text === "SemanticModelFlags" && tokens[at + 1]?.text === "::" && tokens[at + 2]?.kind === "ident") expand(tokens[at + 2]!.text, flags);
+    }
+    if (flags.size > 0) readers.set(tokens[index + 1]!.text, flags);
+  });
+  return readers;
+}
+
+/** The methods Rust code calls (`.name(`), by name. */
+export function methodCalls(tokens: readonly RustToken[]): Set<string> {
+  return new Set(tokens.flatMap((token, index) => (token.kind === "ident" && tokens[index - 1]?.text === "." && tokens[index + 1]?.text === "(" ? [token.text] : [])));
 }
 
 /** The process environment without the variables Ruff reads its configuration from. */
@@ -492,20 +540,32 @@ export async function createRuffAdapter(pack: PackManifest, names: string[], cac
       }
       return files;
     };
+    const flagReaders = semanticFlagReaders(tokensOf(join(upstream.directory, SEMANTIC_MODEL)));
     /**
      * The words of the conditions the checker tests before it runs the rule's check (`if attr == "join"` around FLY002's
-     * call): the guards of every call to the rule's functions, and of every `Rule::<Struct>` enablement check.
+     * call): the guards of every call to the rule's functions and of every `Rule::<Struct>` enablement check, and the
+     * guards under which the checker sets or reads the semantic state the rule asks the model for (`"annotations"` for
+     * `future_annotations_or_stub()`, set where the checker visits `from __future__ import annotations`).
      */
     const guardWords = (code: string): string[] => {
       const file = implementationFile(code);
       if (file === undefined) return [];
       const struct = violationStruct(readFileSync(file, "utf8"), ruleByCode.get(code)!.source_location!.line);
-      const functions = new Set(implementationFiles(code).filter((path) => path.startsWith(`${rulesDirectory}/`)).flatMap((path) => [...publicFunctions(tokensOf(path))]));
-      return checkerFiles.flatMap((checker) => {
+      const own = implementationFiles(code).filter((path) => path.startsWith(`${rulesDirectory}/`));
+      const functions = new Set(own.flatMap((path) => [...publicFunctions(tokensOf(path))]));
+      const headers = checkerFiles.flatMap((checker) => {
         const tokens = checkerTokens.get(checker)!;
         const enabled = struct === undefined ? [] : tokens.flatMap((token, index) => (token.text === struct && tokens[index - 1]?.text === "::" && tokens[index - 2]?.text === "Rule" ? [index] : []));
-        return [...pathCallSites(tokens, functions), ...enabled].flatMap((index) => guardStrings(tokens, index)).flatMap(literalWords);
+        return [...pathCallSites(tokens, functions), ...enabled].flatMap((index) => guardHeaders(tokens, index));
       });
+      // The state is asked for in the rule's own code, the rule modules it imports, or the dispatcher's guards.
+      const asked = [...own, ...own.flatMap(importedRuleModules)].flatMap((path) => [...methodCalls(tokensOf(path))]).concat(headers.flatMap((header) => [...methodCalls(header)]));
+      const flags = new Set(asked.flatMap((method) => [...(flagReaders.get(method) ?? [])]));
+      const stateHeaders = checkerFiles.flatMap((checker) => {
+        const tokens = checkerTokens.get(checker)!;
+        return tokens.flatMap((token, index) => (flags.has(token.text) && tokens[index - 1]?.text === "::" && tokens[index - 2]?.text === "SemanticModelFlags" ? guardHeaders(tokens, index) : []));
+      });
+      return [...headers, ...stateHeaders].flat().flatMap((token) => (token.kind === "string" && token.value !== undefined ? literalWords(token.value) : []));
     };
     /**
      * The ruff_linter modules the implementation imports that decide what a rule matches: its linter's helpers and other
