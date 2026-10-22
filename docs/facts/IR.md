@@ -13,7 +13,7 @@ Phase 2 code lives in `facts/` (package `rerail-facts`), a workspace member next
 
 ## 2. Program
 
-`compile(document, config, leaves) -> Result<Program, Unsupported>`:
+`compile(document, config, leaves: &mut dyn LeafCheck) -> Result<Program, Unsupported>` (and `compile_report`, which keeps the clauses that compiled and lists every refusal):
 
 - `document` is a policy (`rerail.policy/v1`); `config` holds the option values (`define.config`, as `replay.ts` writes them).
 - `leaves` is the pattern leaf executor's compile check (today Spike A's `ast.rs`, via facts-a).
@@ -106,45 +106,69 @@ Reachability stages (`StageDef::Reach`) are reflexive transitive closures per `_
 
 - A pattern query (`forbid.ast`, `evidence.query.ast`) is a leaf relation, `InputKind::Pattern`.
 - Its JSON is resolved for the configuration, with `when` evaluated and removed: a clause whose `when` fails is not compiled.
-- The leaf executor (Spike A's `ast.rs` over facts, through facts-a) compiles it. Its refusal is the construct name in `Unsupported`.
-- A regex clause is `InputKind::Regex`. The front end checks its keys: `lines.state` and `lines.context`, the `content` gate and non-python terminators are refused by name.
+- The leaf executor (Spike A's `ast.rs` over facts, through facts-a's `leaf.rs`) compiles it. Its refusal is the construct name in `Unsupported`.
+- Rewrite R1 runs before that check: `file: { path: C }` becomes `all: [{ filePath: C }, rule]` when the query sets `syntax`.
+- A regex clause is `InputKind::Regex`.
+  - Native keys are accepted: `source`, `pattern`, `include`, `exclude`, `paths`, `content{include, exclude}`, `lines{include, exclude, first, terminators, state, indentation}`.
+  - The leaf executor (`LeafCheck::regex`) refuses what it does not implement, by name.
 - Rows: one per witness (with `each`, one per distinct binding), anchored as spec-rel § 1.4–1.6, fields in name order.
 - Identical evidence objects within a rule share one input.
 
-## 7. Classification
+## 7. Classification (`facts/src/classify.rs`)
 
-Declared:
+Classification is a type, inferred from the leaves (INVARIANTS I6). The declaration is checked against it, never trusted:
 
-- `relational.partitionBy` is `file` or `repository` (absent = `repository`, `$option` resolved).
-- `forbid` is per file.
-- A `budget` is per file iff its `group_by` contains a field projected from `file.path` and every closure stage's `partition_by` does too. Otherwise its groups or closures span files.
+- `relational.partitionBy`: `file` or `repository` (absent = `repository`, `$option` resolved).
+- `forbid`: implicitly per file. A cross-file leaf in one is a refusal.
+- `budget`: per file iff its `group_by` contains a field projected from `file.path` and every closure stage's `partition_by` does too. Otherwise it is a repository plan over an exported copy of its input rows.
 
-Verified, by construction: the classifier maps each unclassified relation (`Rel<AnySource>`) to `Rel<FileSource>` (`classify::file_source`) or `Rel<RepoSource>`.
+**Per-file plans are typed `Plan<FileSource>`.** Every source enters through one function, `classify::file_source` (mutant 7), whose `FileSource` has no variant that reaches another content: `Input`, `Syntax` and `Stage` of the same plan only, plus constants (`Lit`, `Unit`, `json_each` over constants).
 
-- `FileSource` has no variant that reaches another content: `Input`, `Syntax` and `Stage` of the same plan only, plus constants (`Lit`, `Unit`, `json_each` over constants).
-- A per-file plan that names any of the following is a compile error (`Refusal` "cross-file read in a per-file plan: …"):
-  - `reference_edges` (relational `references`);
-  - a pattern leaf with a `calls` atom (the reference graph);
-  - a name closure spanning files;
-  - a group spanning files.
-- The leak test is `cargo test -p rerail-facts leak`. A seeded `partitionBy: file` clause reading `reference_edges` must fail to compile. A `compile_fail` doctest on `ir.rs` shows that `Rel<FileSource>` cannot hold `RepoSource::Exported`.
+A per-file plan that names any of the following is a compile error, refusal "cross-file read in a per-file plan: …":
 
-Repository clauses are split:
+- `reference_edges` (relational `references`);
+- a pattern leaf with a `calls` atom (the reference graph);
+- a `file.module`/`file.package` projection (package markers of other contents).
 
-1. **File-locality.** A relation is file-local when it is the union over contents of the same relation computed from one content. Rules:
-   - Inputs are file-local, keyed by `__path`.
-   - Filter, project and `json_each` preserve file-locality.
-   - A join of file-local relations is file-local when its `ON`/`WHERE` equates their path columns. Joining with a constant relation also preserves it.
-   - `Exists`/`InRel`/`Scalar` subqueries keep it when correlated on the path column.
-   - Aggregate, window, `Distinct` and set `Union` keep it when the path column is a key, partition or output column.
-   - A fixpoint is file-local when init and step are and the step joins on the path.
-   - `Sort`/`LIMIT` keep it only inside a path-correlated scalar subquery.
-   - Stages are analysed in order.
-2. **Cut.** A file-local stage, and every file-local subtree of a later stage, moves to the per-file side. Each boundary relation the repository side reads becomes an `ExportedRelation`.
-   - Projection: only the columns the repository side reads.
-   - Distinct when every read is set-insensitive: `DISTINCT`, set `UNION`, `EXISTS`/`IN`, `min`/`max`, `GROUP BY` keys, reachability.
-   - `ordered` when a read reaches `row_number()`, `LIMIT` or `group_concat`.
-3. The repository plan scans only `RepoSource::Exported` and its own stages. `source_text` in a repository plan is a cross-file read of file text; it is pushed to the per-file side with its rows, or refused.
+The leak test is `cargo test -p rerail-facts leak`: a seeded `partitionBy: file` clause reading `reference_edges` must fail to compile. A `compile_fail` doctest on `ir.rs` shows that `Rel<FileSource>` cannot hold `RepoSource::Exported`.
+
+**Repository clauses are split by file-locality** (`classify::Loc`: `Const` | `Local(path columns)` | `Bound(path columns)` inside a correlated subquery | `Global`):
+
+1. **Leaves.**
+   - Inputs and syntax tables are `Local([0])`; cross-file inputs and `reference_edges` are `Global`.
+   - A Filter/Join/JsonEach block is `Local` when every per-content leaf is connected by path equalities (union-find over `ON`/`WHERE` equalities). It is `Bound` when connected to the enclosing row's path.
+   - Subqueries must be `Const` or `Bound`.
+   - `Project` keeps the path columns it passes through.
+   - `Aggregate` and `Window` stay `Local` only with a path key or partition; `Distinct` only with a path column in its prefix; a set `Union` only with a common path column.
+   - `Sort` stays `Local` only without `LIMIT`/`OFFSET`.
+   - A fixpoint is `Local` when init and step are.
+   - A reachability stage is `Local` when its roots and edges are.
+2. **Cut (rewrite R3).** Every maximal `Local` subtree with no free outer reference, whose `Local` bindings are all bound inside it, becomes an `ExportedRelation`, defined per content by that subtree (`Rel<FileSource>`, produced by a per-file plan with `Sink::Export`).
+   - Projection (R4): only the columns the repository side reads. The repository side re-widens it with `NULL` literals, so its column indices do not change.
+   - Distinct (R5): when every reader above is set-insensitive.
+   - `ordered`: when a reader observes row order.
+   - Per-file stages no export reads are pruned.
+3. **Repository side.** It scans only `RepoSource::Exported` and its own stages. A per-file leaf left inside a correlation is refused, and so is `source_text`.
+4. **Order audit.** Repository plans have no input order, so these are refused unless candidate keys prove a total order:
+   - `row_number()` whose `PARTITION BY` + `ORDER BY` columns contain no key;
+   - `LIMIT`/`OFFSET` under an `ORDER BY` that is not a key, or without one;
+   - `group_concat`/`json_group_array` not fed by a total sort;
+   - aggregate bare columns;
+   - bag (`UNION ALL`) recursion.
+
+   Candidate keys come from exports read as sets, `DISTINCT`, set `UNION`, `GROUP BY` keys, `row_number` partitions with the row number, reachability, and inner joins (key ∪ key). Per-file plans keep input-order tie-breaking: PHASE-2 accepts it, and it is deterministic per § 4.
+
+## 7a. Invariant notes (for `docs/facts/INVARIANTS.md`)
+
+| Invariant | How the IR and compiler hold it | Where it is checked |
+|---|---|---|
+| I1 SQLite semantics | One algebra with SQLite's values, affinities and NULL rules. Row order is defined only where SQL observes it (§ 4), and observed order without a total order is refused in repository plans (§ 7.4) | S5's reference evaluator over this IR; `Expr::Cmp` carries resolved affinities |
+| I2 declared structure | Planned: relation metadata from SCHEMA.md § 1.2.1 (keys, FDs, the preorder interval, cardinalities) attached to sources. Key inference already runs over the algebra (`classify::KeyEnv`) | `docs/facts/reports/phase-2-s1-ir.md` § 7 |
+| I3 only algebra after the parser | `front::sql` is the only consumer of SQL text. `Plan`, `Rel` and `Expr` hold no SQL, stage names or rule ids except in diagnostics (`Stage::name`, `Plan::clause`). Pattern leaves are resolved DSL queries until the pattern front end lowers them | types |
+| I4 rewrites registered | `docs/facts/REWRITES.md`: each row has side conditions checked in code, a test and a mutant | `cargo test -p rerail-facts`; `FACTS_MUTANT=<n>` |
+| I5 planned once, `EXPLAIN` | `compile` runs once per rule and configuration. `explain::explain(&Program)` prints stable text; `phys::{explain, audit}` print and audit S2's physical nodes, refusing inner scans | `facts-a explain`; `cargo test -p rerail-facts audit` |
+| I6 classification is a type | `Rel<FileSource>` vs `Rel<RepoSource>`, the declaration checked | leak tests, mutant 7 |
+| I9 exact or refuse | Every unsupported construct is a `Refusal { clause, at, construct }`. `compile` returns all of them; `compile_report` keeps the clauses that compiled | census |
 
 ## 8. Known order and identity caveats (carried from Phase 1)
 
@@ -159,8 +183,9 @@ Refused at compile time with the construct named:
 - SQL outside § 4: `BETWEEN`, blob literals outside `CAST(X'..' AS TEXT)`, window functions other than `row_number()`, functions outside § `Func`, table functions other than `json_each`, `NATURAL`/`USING` joins, `EXCEPT`/`INTERSECT`, compound `ORDER BY` expressions;
 - recursive CTEs mixing `UNION`/`UNION ALL` or holding `ORDER BY`/`LIMIT`/`WITH`;
 - pattern rule keys the leaf executor does not implement (named by the executor);
-- regex `lines.state`, `lines.context`, `content`;
-- relational `references`;
-- a `calls` atom in a pattern rule.
+- regex leaf features the executor lacks (`content`, `lines.include`/`exclude`/`state`/`indentation`, `lines.terminators: lf`);
+- relational `references` in a per-file plan, or in any plan until `reference_edges` has a definition over exported facts;
+- a `calls` atom in a pattern rule;
+- order-dependent constructs and bag recursion in repository plans (§ 7.4).
 
 The census (`docs/facts/reports/phase-2-s1-ir.md`) lists every refusal with counts.
