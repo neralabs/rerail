@@ -48,7 +48,7 @@ fn compile_batch6(policies: &str) -> Vec<eval::Rule> {
 
 /// Relative paths of every `.py` file under `root`, sorted; directories are entered, symlinked
 /// directories are not (`os.walk` defaults).
-fn walk(root: &Path) -> Vec<String> {
+pub fn walk(root: &Path) -> Vec<String> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -121,11 +121,19 @@ fn pct(sorted: &[u64], q: f64) -> u64 {
     sorted[rank - 1]
 }
 
-fn summary(mut v: Vec<u64>) -> Json {
+pub fn summary(mut v: Vec<u64>) -> Json {
     v.sort_unstable();
     let sum: u64 = v.iter().sum();
     let n = v.len().max(1) as f64;
     json!({"n": v.len(), "sum": sum, "mean": sum as f64 / n, "p50": pct(&v, 0.50), "p95": pct(&v, 0.95), "p99": pct(&v, 0.99), "max": v.last().copied().unwrap_or(0)})
+}
+
+/// The process's peak resident set so far, in bytes (macOS reports `ru_maxrss` in bytes).
+fn max_rss() -> u64 {
+    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+    // SAFETY: `usage` is a valid, writable `rusage`.
+    unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
+    usage.ru_maxrss as u64
 }
 
 pub fn repo(args: &[String]) {
@@ -145,6 +153,7 @@ pub fn repo(args: &[String]) {
         handles.into_iter().map(|h| h.join().unwrap()).collect()
     });
     let workers_wall_ns = t_workers.elapsed().as_nanos() as u64;
+    let rss_after_workers = max_rss();
     // Merge on this thread, then the repository partitions and budgets once.
     let t_merge = Instant::now();
     let rules = compile_batch6(&policies);
@@ -160,10 +169,12 @@ pub fn repo(args: &[String]) {
     }
     let (acc, budget) = eval::attach(parts);
     let merge_ns = t_merge.elapsed().as_nanos() as u64;
+    let rss_after_merge = max_rss();
     let t_finish = Instant::now();
     let per_file_ns: BTreeMap<(usize, usize), u64> = out.clause_ns.iter().map(|(k, v)| (*k, v.1)).collect();
     eval::finish(&rules, acc, budget, &mut out);
     let finish_ns = t_finish.elapsed().as_nanos() as u64;
+    let rss_after_finish = max_rss();
     let wall_ns = t_all.elapsed().as_nanos() as u64;
 
     files.sort_by_key(|f| f.index);
@@ -210,6 +221,12 @@ pub fn repo(args: &[String]) {
             "merge_and_compile": merge_ns,
             "finish": finish_ns,
         },
+        "max_rss_bytes": {
+            "after_workers": rss_after_workers,
+            "after_merge": rss_after_merge,
+            "after_finish": rss_after_finish,
+        },
+        "sql_stage_ns": out.stage_ns.iter().map(|(k, (n, ns))| (k.clone(), json!([n, ns]))).collect::<serde_json::Map<String, Json>>(),
         "thread_ns": {
             "read": sum(|f| f.read_ns),
             "parse": sum(|f| f.parse_ns),
@@ -238,6 +255,7 @@ pub fn repo(args: &[String]) {
     o.remove("findings");
     o.remove("failures");
     o.remove("rules");
+    o.remove("sql_stage_ns");
     println!("{}", serde_json::to_string_pretty(&brief).unwrap());
 }
 

@@ -679,6 +679,7 @@ dependencies = [
  "blake3",
  "fancy-regex 0.17.0",
  "globset",
+ "libc",
  "memchr",
  "parking_lot",
  "regex",

@@ -182,7 +182,14 @@ pub fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>, source: Arc<String>) -> F
         f.flags.push(doc.transducer_flags(id));
         f.field.push(doc.transducer_field(id));
     }
-    // Children CSR: preorder means a parent's children appear in order.
+    index(&mut f);
+    f
+}
+
+/// The derived columns: the children CSR (preorder lists a parent's children in order) and the
+/// kind postings. Rebuilt from `parent` and `kind` when facts are read from a fact file.
+pub fn index(f: &mut Facts) {
+    let n = f.len();
     let mut counts = vec![0u32; n + 1];
     for &p in &f.parent {
         if p != NONE {
@@ -202,7 +209,9 @@ pub fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>, source: Arc<String>) -> F
     }
     f.child_offsets = counts;
     f.children = children;
-    // Kind postings.
+    f.kind_keys.clear();
+    f.kind_offsets.clear();
+    f.kind_nodes.clear();
     let mut pairs: Vec<(u32, u32)> = f.kind.iter().enumerate().map(|(i, &k)| (k, i as u32)).collect();
     pairs.sort_unstable();
     for (k, id) in pairs {
@@ -213,7 +222,6 @@ pub fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>, source: Arc<String>) -> F
         f.kind_nodes.push(id);
     }
     f.kind_offsets.push(f.kind_nodes.len() as u32);
-    f
 }
 
 impl Facts {

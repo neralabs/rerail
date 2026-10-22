@@ -827,11 +827,13 @@ pub struct Eval<'a> {
 
 impl<'a> Eval<'a> {
     pub fn new(f: &'a Facts, path: &'a str, q: &'a Query) -> Self {
+        // Verdicts of capture-free utilities are memoised per node, as natively (a node's value
+        // is a pure function of the node: `follow` is off in batch 6). Unknown verdicts are not.
         let util_capture_free = (0..q.utils.len())
             .map(|i| {
                 let mut out = BTreeSet::new();
                 mentions(&q.utils[i], &q.utils, &mut BTreeSet::new(), &mut out);
-                out.is_empty() && !reads_values(&q.utils[i], &q.utils, &mut BTreeSet::new())
+                out.is_empty()
             })
             .collect();
         Self {
@@ -1225,11 +1227,17 @@ impl<'a> Eval<'a> {
                 return v;
             }
         }
+        // Whether this evaluation itself was unknown decides memoization, not an unknown the
+        // caller had already accumulated; the caller's flag is restored on top.
+        let saved = self.three && self.unknown.replace(false);
         let r = self.m(&self.q.utils[i], node, env);
         if let Some(k) = memo_key {
             if !(self.three && self.unknown.get()) {
                 self.util_memo.borrow_mut().insert(k, r);
             }
+        }
+        if saved {
+            self.unknown.set(true);
         }
         r
     }

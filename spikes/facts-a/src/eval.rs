@@ -539,9 +539,18 @@ pub struct Output {
     /// One sample per (clause, file) evaluation: ((rule index, clause index), nanoseconds).
     pub clause_samples: Vec<((u16, u16), u64)>,
     pub input_ns: u64,
+    /// SQL stage name -> (executions, nanoseconds), over every relational clause.
+    pub stage_ns: BTreeMap<String, (u64, u64)>,
 }
 
 impl Output {
+    fn add_stages(&mut self, stages: Vec<(String, u64)>) {
+        for (name, ns) in stages {
+            let e = self.stage_ns.entry(name).or_default();
+            e.0 += 1;
+            e.1 += ns;
+        }
+    }
     /// Folds another worker's output in (findings and failures are multisets; order is free).
     pub fn merge(&mut self, other: Output) {
         self.findings.extend(other.findings);
@@ -553,6 +562,11 @@ impl Output {
         }
         self.clause_samples.extend(other.clause_samples);
         self.input_ns += other.input_ns;
+        for (k, (n, ns)) in other.stage_ns {
+            let e = self.stage_ns.entry(k).or_default();
+            e.0 += n;
+            e.1 += ns;
+        }
     }
 }
 
@@ -760,6 +774,7 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                         fail(out, format!("unsupported: {u}"));
                     } else if plan.per_file {
                         let r = rel::run(plan, rel::Partition { inputs: tables, anchors, facts: Some((ctx.f, ctx.path)), source: ctx.source, path: ctx.path });
+                        out.add_stages(r.stage_ns);
                         if let Some(m) = r.failure {
                             fail(out, m);
                         }
@@ -833,6 +848,7 @@ pub fn finish(rules: &[Rule], repo: RepoAcc, budget: BTreeMap<(usize, usize), Ve
             });
         }
         let r = rel::run(plan, rel::Partition { inputs, anchors, facts: None, source: "", path: "" });
+        out.add_stages(r.stage_ns);
         if let Some(m) = r.failure {
             out.failures.push(Failure { check: rule.check.clone(), clause: clause.id.clone(), path: String::new(), message: m });
         }

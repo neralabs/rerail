@@ -21,7 +21,7 @@ pub(crate) struct Span {
 
 /// The line terminators of a linter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum Terminators {
+pub enum Terminators {
     /// ESLint's `\r\n|[\r\n  ]` (`astUtils.createGlobalLinebreakMatcher`).
     Eslint,
     /// Ruff's `\r\n`, `\r` and `\n` (`ruff_source_file`) and PHP's tokenizer.
@@ -52,7 +52,7 @@ pub struct LineTable {
 }
 
 impl LineTable {
-    pub(crate) fn new(source: &str, terminators: Terminators) -> Self {
+    pub fn new(source: &str, terminators: Terminators) -> Self {
         let bytes = source.as_bytes();
         let mut starts = vec![0];
         let mut ends = Vec::new();
@@ -132,12 +132,12 @@ impl LineTable {
     }
 
     /// The first byte of `line`.
-    pub(crate) fn start(&self, line: usize) -> usize {
+    pub fn start(&self, line: usize) -> usize {
         self.starts[line]
     }
 
     /// Where `line`'s text ends: its terminator's first byte, or the file's end.
-    pub(crate) fn end(&self, line: usize) -> usize {
+    pub fn end(&self, line: usize) -> usize {
         self.ends[line]
     }
 

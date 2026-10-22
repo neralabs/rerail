@@ -1,6 +1,7 @@
 mod ast;
 mod eval;
 mod facts;
+mod factfile;
 mod fstring;
 mod policy;
 mod pyvalue;
@@ -45,6 +46,7 @@ fn main() {
         Some("replay") => replay(&args),
         Some("repo") => repo::repo(&args),
         Some("repo-compare") => repo::compare(&args),
+        Some("store") => factfile::store(&args),
         Some("parse") => {
             let path = &args[2];
             let source = Arc::new(std::fs::read_to_string(path).unwrap());
@@ -53,7 +55,7 @@ fn main() {
                 facts::Built::Unparsed => println!("unparsed"),
             }
         }
-        _ => eprintln!("usage: facts-a replay|repo|repo-compare ..."),
+        _ => eprintln!("usage: facts-a replay|repo|repo-compare|store ..."),
     }
 }
 
