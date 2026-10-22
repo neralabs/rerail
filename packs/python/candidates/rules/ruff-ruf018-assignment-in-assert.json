@@ -1,0 +1,66 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf018-assignment-in-assert",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid assignment expressions in assert statements when the name is used outside asserts; the assignment is lost when assertions are disabled.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "assignment-in-assert",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "module",
+            "regex": "(?s)\\bassert\\b.*:=",
+            "has": {
+              "stopBy": "end",
+              "kind": "identifier",
+              "not": {
+                "inside": {
+                  "kind": "assert_statement",
+                  "stopBy": "end"
+                }
+              },
+              "resolves": {
+                "binding": {
+                  "site": {
+                    "kind": "named_expression",
+                    "pattern": "$W",
+                    "inside": {
+                      "kind": "assert_statement",
+                      "stopBy": "end"
+                    },
+                    "has": {
+                      "field": "name",
+                      "pattern": "$NAME"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.W",
+        "code": "RUF018",
+        "each": "W",
+        "message": "Assign `$NAME` in a separate statement before the `assert`; with `python -O` the assert is skipped, so later uses of `$NAME` would see no assignment.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF018"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

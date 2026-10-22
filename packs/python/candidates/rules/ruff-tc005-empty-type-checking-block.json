@@ -1,0 +1,57 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-tc005-empty-type-checking-block",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove type-checking blocks that contain only a pass statement; an empty block does nothing and confuses readers.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "empty-type-checking-block",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "type-checking-test": {
+              "any": [
+                { "kind": "identifier", "regex": "^TYPE_CHECKING$" },
+                {
+                  "kind": "identifier",
+                  "resolves": { "import": ["typing.TYPE_CHECKING", "typing_extensions.TYPE_CHECKING", "_typeshed.TYPE_CHECKING"] }
+                },
+                { "kind": "attribute", "has": { "stopBy": "neighbor", "field": "attribute", "regex": "^TYPE_CHECKING$" } },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "type-checking-test" } }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "pass_statement",
+            "not": {
+              "any": [
+                { "follows": { "stopBy": "end", "not": { "any": [{ "kind": "comment" }, { "regex": "^;$" }] } } },
+                { "precedes": { "stopBy": "end", "not": { "any": [{ "kind": "comment" }, { "regex": "^;$" }] } } }
+              ]
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "block",
+              "inside": {
+                "stopBy": "neighbor",
+                "field": "consequence",
+                "kind": "if_statement",
+                "has": { "stopBy": "neighbor", "field": "condition", "matches": "type-checking-test" },
+                "not": { "has": { "stopBy": "neighbor", "any": [{ "kind": "elif_clause" }, { "kind": "else_clause" }] } }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "TC005",
+        "message": "Delete this `if TYPE_CHECKING:` block; its body is only `pass`, so it does nothing.",
+        "suppress": { "noqa": { "codes": ["TC005"] } }
+      }
+    }
+  ]
+}

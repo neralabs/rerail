@@ -1,0 +1,273 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf016-invalid-index-type",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Index list, tuple, string and bytes literals only with integers or slices; any other index type fails at runtime.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "template-string": {
+            "kind": "string",
+            "regex": "^[A-Za-z]*[tT]"
+          },
+          "checkable-value": {
+            "any": [
+              {
+                "kind": "list"
+              },
+              {
+                "kind": "list_comprehension"
+              },
+              {
+                "kind": "tuple"
+              },
+              {
+                "kind": "string",
+                "not": {
+                  "matches": "template-string"
+                }
+              },
+              {
+                "kind": "concatenated_string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "template-string"
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "checkable-value"
+                }
+              }
+            ]
+          },
+          "bad-bound": {
+            "any": [
+              {
+                "pattern": "$B",
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "concatenated_string"
+                  },
+                  {
+                    "kind": "float"
+                  },
+                  {
+                    "kind": "ellipsis"
+                  },
+                  {
+                    "kind": "list"
+                  },
+                  {
+                    "kind": "list_comprehension"
+                  },
+                  {
+                    "kind": "set"
+                  },
+                  {
+                    "kind": "set_comprehension"
+                  },
+                  {
+                    "kind": "dictionary"
+                  },
+                  {
+                    "kind": "dictionary_comprehension"
+                  },
+                  {
+                    "kind": "tuple"
+                  },
+                  {
+                    "kind": "generator_expression"
+                  },
+                  {
+                    "kind": "lambda"
+                  },
+                  {
+                    "kind": "integer",
+                    "regex": "[jJ]$"
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "bad-bound"
+                }
+              }
+            ]
+          },
+          "bad-index": {
+            "any": [
+              {
+                "matches": "bad-bound"
+              },
+              {
+                "kind": "none",
+                "pattern": "$B"
+              },
+              {
+                "kind": "list_splat",
+                "pattern": "$B"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "bad-index"
+                }
+              }
+            ]
+          },
+          "no-comma": {
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "regex": "^,$"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-index",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "subscript",
+            "all": [
+              {
+                "has": {
+                  "field": "value",
+                  "matches": "checkable-value"
+                }
+              },
+              {
+                "matches": "no-comma"
+              },
+              {
+                "has": {
+                  "field": "subscript",
+                  "stopBy": "neighbor",
+                  "matches": "bad-index"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.B",
+        "code": "RUF016",
+        "message": "Index this list, tuple, string or bytes literal with an integer or a slice; any other index type raises a TypeError.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF016"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-slice-bound",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "slice",
+            "all": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "subscript",
+                  "matches": "no-comma",
+                  "has": {
+                    "field": "value",
+                    "matches": "checkable-value"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "bad-bound"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.B",
+        "code": "RUF016",
+        "message": "Use an integer (or None) for each bound and step of this slice; any other type raises a TypeError.",
+        "each": "B",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF016"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-tuple-index",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "subscript",
+            "pattern": "$V[$$$I]",
+            "all": [
+              {
+                "has": {
+                  "field": "value",
+                  "matches": "checkable-value"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^,$"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.I",
+        "code": "RUF016",
+        "message": "Index this literal with a single integer or a slice, not a tuple; a tuple index raises a TypeError.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF016"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -3,7 +3,7 @@
   "id": "ruff-up003-type-of-primitive",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's UP003 (type-of-primitive): a call `type(x)` whose callee (parentheses transparent) resolves to the builtin `type` (Ruff's `match_builtin_expr`: the unshadowed name, or `type` of the `builtins` module through the file's imports) and whose positional arguments are exactly one literal (parentheses transparent; keyword arguments allowed, as Ruff reads only the positional ones): a str literal (not an f- or t-string; implicit concatenations included), a bytes literal, an int, float or complex number literal, or `True`/`False` (not `None`, `...` or a negated number). One clause per primitive, so the message names the builtin as Ruff's does. Reported on the call.",
+  "description": "Use the builtin type name directly instead of calling type() on a literal; the type of a literal is known in advance.",
   "scope": {
     "include": [
       "**/*"
@@ -165,7 +165,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "UP003",
-        "message": "Use `str` instead of `type(...)`",
+        "message": "Replace this `type(...)` call with `str`; the type of a literal is known in advance.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -200,7 +200,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "UP003",
-        "message": "Use `bytes` instead of `type(...)`",
+        "message": "Replace this `type(...)` call with `bytes`; the type of a literal is known in advance.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -235,7 +235,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "UP003",
-        "message": "Use `int` instead of `type(...)`",
+        "message": "Replace this `type(...)` call with `int`; the type of a literal is known in advance.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -270,7 +270,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "UP003",
-        "message": "Use `float` instead of `type(...)`",
+        "message": "Replace this `type(...)` call with `float`; the type of a literal is known in advance.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -305,7 +305,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "UP003",
-        "message": "Use `complex` instead of `type(...)`",
+        "message": "Replace this `type(...)` call with `complex`; the type of a literal is known in advance.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -340,7 +340,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "UP003",
-        "message": "Use `bool` instead of `type(...)`",
+        "message": "Replace this `type(...)` call with `bool`; the type of a literal is known in advance.",
         "suppress": {
           "noqa": {
             "codes": [

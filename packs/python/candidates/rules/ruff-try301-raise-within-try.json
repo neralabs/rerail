@@ -1,0 +1,228 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-try301-raise-within-try",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid raising an exception inside a try block that catches it; move the raise into a helper function or restructure so it needs no handler.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "raise-within-try",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "top": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "except_clause",
+                    "field": "value"
+                  }
+                },
+                {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "except_clause"
+                  }
+                },
+                {
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "as_pattern",
+                    "matches": "top"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "top"
+                  }
+                }
+              ]
+            },
+            "pos": {
+              "any": [
+                {
+                  "matches": "top"
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "tuple",
+                    "matches": "top"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "pos"
+                  }
+                }
+              ]
+            },
+            "handled": {
+              "all": [
+                {
+                  "matches": "pos"
+                },
+                {
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "parenthesized_expression"
+                      },
+                      {
+                        "kind": "as_pattern"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "raised": {
+              "any": [
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "pattern": "$X"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "raised"
+                  }
+                },
+                {
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "call"
+                      },
+                      {
+                        "kind": "parenthesized_expression"
+                      },
+                      {
+                        "kind": "comment"
+                      },
+                      {
+                        "kind": "line_continuation"
+                      }
+                    ]
+                  },
+                  "pattern": "$X"
+                }
+              ]
+            },
+            "catches-raised": {
+              "kind": "try_statement",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "except_clause",
+                "has": {
+                  "stopBy": {
+                    "kind": "block"
+                  },
+                  "pattern": "$E",
+                  "matches": "handled",
+                  "any": [
+                    {
+                      "compare": {
+                        "left": "X",
+                        "op": "eq",
+                        "right": "E",
+                        "text": "structure"
+                      }
+                    },
+                    {
+                      "any": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "kind": "attribute"
+                        }
+                      ],
+                      "resolves": {
+                        "global": [
+                          "Exception",
+                          "BaseException"
+                        ],
+                        "import": [
+                          "builtins.Exception",
+                          "builtins.BaseException"
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "kind": "raise_statement",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "raised",
+              "not": {
+                "follows": {
+                  "stopBy": "end",
+                  "regex": "^from$"
+                }
+              }
+            },
+            "inside": {
+              "stopBy": {
+                "kind": "try_statement"
+              },
+              "kind": "block",
+              "inside": {
+                "stopBy": "neighbor",
+                "field": "body",
+                "kind": "try_statement",
+                "matches": "catches-raised"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "TRY301",
+        "message": "Move this `raise` into a helper function, or handle the condition directly, so the same `try` does not raise and catch it. Leave it if the handler is meant to catch this exception.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "TRY301"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

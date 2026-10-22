@@ -1,0 +1,127 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pt017-pytest-assert-in-except",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Assert on an exception with pytest.raises instead of inside an except block; the test silently passes when nothing is raised.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "pytest-assert-in-except",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "name-expr": {
+              "kind": "identifier",
+              "not": {
+                "any": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "field": "attribute",
+                      "kind": "attribute"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "field": "name",
+                      "kind": "keyword_argument"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "lambda_parameters"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "field": "name",
+                      "kind": "default_parameter"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "list_splat_pattern"
+                        },
+                        {
+                          "kind": "dictionary_splat_pattern"
+                        }
+                      ],
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "lambda_parameters"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "rule": {
+            "kind": "except_clause",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "as_pattern",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "as_pattern_target",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "pattern": "$N"
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "end",
+                  "kind": "assert_statement",
+                  "pattern": "$A",
+                  "has": {
+                    "stopBy": "end",
+                    "matches": "name-expr",
+                    "pattern": "$M",
+                    "compare": {
+                      "left": "M",
+                      "op": "eq",
+                      "right": "N",
+                      "text": "structure"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.A",
+        "each": "A",
+        "code": "PT017",
+        "message": "Wrap the call in `with pytest.raises(...) as exc_info:` and assert on `exc_info.value`, not on `$N` in an `except`, or the test passes silently when nothing is raised; leave non-test code alone.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT017"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

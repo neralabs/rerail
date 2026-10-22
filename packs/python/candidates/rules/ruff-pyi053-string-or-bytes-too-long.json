@@ -1,0 +1,283 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi053-string-or-bytes-too-long",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Replace string and bytes literals longer than 50 characters in stub files with an ellipsis; type checkers ignore default values, so a literal that long is an implementation detail.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "string-or-bytes-too-long",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "plain-str": {
+              "any": [
+                {
+                  "kind": "string",
+                  "regex": "^[rRuU]{0,2}['\\\"]",
+                  "not": {
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "interpolation"
+                    }
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "not": {
+                        "regex": "^[rRuU]{0,2}['\\\"]"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "long-part": {
+              "kind": "string",
+              "any": [
+                {
+                  "regex": "^(?:[bB]\"(?:[^\\\\\"]|\\\\(?:x[0-9a-fA-F]{2}|[0-7]{1,3}|[abfnrtv'\\\"\\\\]|\\r?\\n|[^xabfnrtv'\\\"\\\\0-7\\r\\n])){51,}\"|[bB]\"\"\"(?:[^\\\\\"]|\\\\(?:x[0-9a-fA-F]{2}|[0-7]{1,3}|[abfnrtv'\\\"\\\\]|\\r?\\n|[^xabfnrtv'\\\"\\\\0-7\\r\\n])){51,}\"\"\"|[bB]'(?:[^\\\\']|\\\\(?:x[0-9a-fA-F]{2}|[0-7]{1,3}|[abfnrtv'\\\"\\\\]|\\r?\\n|[^xabfnrtv'\\\"\\\\0-7\\r\\n])){51,}'|[bB]'''(?:[^\\\\']|\\\\(?:x[0-9a-fA-F]{2}|[0-7]{1,3}|[abfnrtv'\\\"\\\\]|\\r?\\n|[^xabfnrtv'\\\"\\\\0-7\\r\\n])){51,}'''|(?:[bB][rR]|[rR][bB])\"(?:[^\\\\\"]|\\\\\"?){51,}\"|(?:[bB][rR]|[rR][bB])\"\"\"(?:[^\\\\\"]|\\\\\"?){51,}\"\"\"|(?:[bB][rR]|[rR][bB])'(?:[^\\\\']|\\\\'?){51,}'|(?:[bB][rR]|[rR][bB])'''(?:[^\\\\']|\\\\'?){51,}''')$"
+                },
+                {
+                  "regex": "^(?:[fF]\"(?:[^\\\\\"]|\\\\(?:x[0-9a-fA-F]{2}|[0-7]{1,3}|[abfnrtv'\\\"\\\\]|\\r?\\n|[^xabfnrtv'\\\"\\\\0-7\\r\\n])){51,}\"|[fF]\"\"\"(?:[^\\\\\"]|\\\\(?:x[0-9a-fA-F]{2}|[0-7]{1,3}|[abfnrtv'\\\"\\\\]|\\r?\\n|[^xabfnrtv'\\\"\\\\0-7\\r\\n])){51,}\"\"\"|[fF]'(?:[^\\\\']|\\\\(?:x[0-9a-fA-F]{2}|[0-7]{1,3}|[abfnrtv'\\\"\\\\]|\\r?\\n|[^xabfnrtv'\\\"\\\\0-7\\r\\n])){51,}'|[fF]'''(?:[^\\\\']|\\\\(?:x[0-9a-fA-F]{2}|[0-7]{1,3}|[abfnrtv'\\\"\\\\]|\\r?\\n|[^xabfnrtv'\\\"\\\\0-7\\r\\n])){51,}'''|(?:[fF][rR]|[rR][fF])\"(?:[^\\\\\"]|\\\\\"?){51,}\"|(?:[fF][rR]|[rR][fF])\"\"\"(?:[^\\\\\"]|\\\\\"?){51,}\"\"\"|(?:[fF][rR]|[rR][fF])'(?:[^\\\\']|\\\\'?){51,}'|(?:[fF][rR]|[rR][fF])'''(?:[^\\\\']|\\\\'?){51,}''')$",
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "interpolation"
+                  }
+                },
+                {
+                  "value": {
+                    "regex": "^[\\s\\S]{51}"
+                  },
+                  "not": {
+                    "regex": "^[a-zA-Z]*[tT][a-zA-Z]*['\"]"
+                  }
+                }
+              ]
+            },
+            "long-literal": {
+              "any": [
+                {
+                  "matches": "long-part",
+                  "not": {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "concatenated_string"
+                    }
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "any": [
+                    {
+                      "value": {
+                        "regex": "^[\\s\\S]{51}"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "long-part"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "deprecated-ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "warnings.deprecated",
+                  "typing_extensions.deprecated"
+                ]
+              }
+            },
+            "alias-ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "typing",
+                  "typing_extensions",
+                  "_typeshed"
+                ],
+                "prefix": true
+              },
+              "not": {
+                "resolves": {
+                  "import": [
+                    "typing.Final",
+                    "typing_extensions.Final",
+                    "_typeshed.Final"
+                  ]
+                }
+              }
+            },
+            "stub-skip": {
+              "any": [
+                {
+                  "matches": "plain-str",
+                  "inside": {
+                    "stopBy": {
+                      "not": {
+                        "kind": "parenthesized_expression"
+                      }
+                    },
+                    "kind": "expression_statement"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "type"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "assignment",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "type",
+                      "kind": "type",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "alias-ref"
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "parenthesized_expression"
+                          },
+                          {
+                            "kind": "keyword_argument"
+                          }
+                        ]
+                      }
+                    },
+                    "kind": "argument_list",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "call",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "function",
+                        "any": [
+                          {
+                            "matches": "deprecated-ref"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "all": [
+                    {
+                      "not": {
+                        "inside": {
+                          "stopBy": "end",
+                          "any": [
+                            {
+                              "kind": "class_definition"
+                            },
+                            {
+                              "kind": "function_definition"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "expression_statement",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "assignment"
+                            },
+                            {
+                              "kind": "augmented_assignment"
+                            }
+                          ],
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "left",
+                            "kind": "identifier",
+                            "regex": "^__all__$"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "matches": "long-literal"
+              },
+              {
+                "not": {
+                  "matches": "stub-skip"
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI053",
+        "message": "Replace this literal with `...`: it is longer than 50 characters, and type checkers ignore stub defaults, so the full value is an implementation detail.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI053"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

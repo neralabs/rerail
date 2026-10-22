@@ -1,0 +1,344 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pt030-pytest-warns-too-broad",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Pass a match pattern to pytest.warns for Warning, UserWarning or DeprecationWarning, or expect a more specific warning; a generic warning also catches unrelated ones.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "warns-ref": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "pytest.warns"
+              ]
+            }
+          },
+          "warns-callee": {
+            "any": [
+              {
+                "matches": "warns-ref"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "warns-callee"
+                }
+              }
+            ]
+          },
+          "broad-warning": {
+            "any": [
+              {
+                "kind": "identifier",
+                "pattern": "$W",
+                "resolves": {
+                  "global": [
+                    "Warning",
+                    "UserWarning",
+                    "DeprecationWarning"
+                  ]
+                }
+              },
+              {
+                "kind": "identifier",
+                "pattern": "$W",
+                "resolves": {
+                  "import": [
+                    "Warning",
+                    "UserWarning",
+                    "DeprecationWarning"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "broad-warning"
+                }
+              }
+            ]
+          },
+          "part-has-text": {
+            "any": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "string_content",
+                  "not": {
+                    "regex": "^(\\\\\\r?\\n)+$"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "string_start",
+                  "regex": "[rR]"
+                },
+                "any": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string_content"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string_end",
+                      "regex": "^\\\\"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "part-empty": {
+            "kind": "string",
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "string_start",
+                "regex": "[tTbB]"
+              }
+            },
+            "any": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "string_start",
+                  "regex": "[fF]"
+                },
+                "not": {
+                  "any": [
+                    {
+                      "matches": "part-has-text"
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "interpolation",
+                        "not": {
+                          "has": {
+                            "field": "expression",
+                            "matches": "empty-or-null"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string_start",
+                    "regex": "[fF]"
+                  }
+                },
+                "value": {
+                  "eq": ""
+                }
+              }
+            ]
+          },
+          "empty-or-null": {
+            "any": [
+              {
+                "kind": "none"
+              },
+              {
+                "matches": "part-empty"
+              },
+              {
+                "kind": "concatenated_string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "not": {
+                      "matches": "part-empty"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "empty-or-null"
+                }
+              }
+            ]
+          },
+          "positional": {
+            "not": {
+              "any": [
+                {
+                  "kind": "keyword_argument"
+                },
+                {
+                  "kind": "dictionary_splat"
+                },
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                },
+                {
+                  "regex": "^[(),]$"
+                }
+              ]
+            }
+          },
+          "pos0": {
+            "matches": "positional",
+            "not": {
+              "any": [
+                {
+                  "kind": "list_splat"
+                },
+                {
+                  "follows": {
+                    "stopBy": "end",
+                    "matches": "positional"
+                  }
+                }
+              ]
+            }
+          },
+          "keyword-named": {
+            "kind": "keyword_argument",
+            "has": {
+              "field": "name",
+              "regex": "^expected_warning$"
+            },
+            "not": {
+              "follows": {
+                "stopBy": "end",
+                "kind": "keyword_argument",
+                "has": {
+                  "field": "name",
+                  "regex": "^expected_warning$"
+                }
+              }
+            }
+          },
+          "unmatched-warns-args": {
+            "kind": "argument_list",
+            "inside": {
+              "stopBy": "neighbor",
+              "field": "arguments",
+              "kind": "call",
+              "has": {
+                "field": "function",
+                "matches": "warns-callee"
+              }
+            },
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "keyword_argument",
+                "has": {
+                  "field": "name",
+                  "regex": "^match$"
+                },
+                "not": {
+                  "any": [
+                    {
+                      "has": {
+                        "field": "value",
+                        "matches": "empty-or-null"
+                      }
+                    },
+                    {
+                      "follows": {
+                        "stopBy": "end",
+                        "kind": "keyword_argument",
+                        "has": {
+                          "field": "name",
+                          "regex": "^match$"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "warns-too-broad",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "broad-warning",
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "matches": "keyword-named",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "unmatched-warns-args"
+                  }
+                }
+              },
+              {
+                "matches": "pos0",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "unmatched-warns-args",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "keyword-named"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.W",
+        "code": "PT030",
+        "message": "Give `pytest.warns($W)` a non-empty `match=` regex, or expect a more specific warning, so an unrelated warning cannot satisfy it.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT030"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

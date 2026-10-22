@@ -1,0 +1,114 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pth110-os-path-exists",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use Path.exists() instead of os.path.exists(); path objects read better than string-based os.path calls.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "os-path-exists",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "target": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "os.path.exists"
+                ]
+              }
+            },
+            "callee": {
+              "any": [
+                {
+                  "matches": "target",
+                  "pattern": "$F"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "has": {
+              "field": "function",
+              "matches": "callee"
+            },
+            "arguments": {
+              "signature": [
+                "path"
+              ],
+              "bind": {
+                "S": "path"
+              },
+              "mode": "syntactic"
+            },
+            "any": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "regex": "^[(),\\[\\]{}]$"
+                          },
+                          {
+                            "kind": "comment"
+                          }
+                        ]
+                      }
+                    },
+                    "min": 1,
+                    "max": 1
+                  }
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "kind": "generator_expression"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.F",
+        "code": "PTH110",
+        "message": "Use `Path($S).exists()` from pathlib instead of `os.path.exists($S)`; leave it for bytes paths, file descriptors, or a value that can be an empty string (`Path('')` is `.`).",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PTH110"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

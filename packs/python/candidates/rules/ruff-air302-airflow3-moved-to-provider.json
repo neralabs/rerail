@@ -1,0 +1,3093 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-air302-airflow3-moved-to-provider",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Import Airflow hooks, operators and other names that moved into provider packages in Airflow 3.0 from their provider modules; the old core import paths are gone.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "import-error": {
+            "any": [
+              {
+                "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                "resolves": {
+                  "global": ["ImportError", "ModuleNotFoundError"],
+                  "import": ["builtins.ImportError", "builtins.ModuleNotFoundError"]
+                }
+              },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "import-error" } }
+            ]
+          },
+          "import-error-type": {
+            "any": [
+              { "matches": "import-error" },
+              {
+                "any": [{ "kind": "tuple" }, { "kind": "parenthesized_expression" }, { "kind": "as_pattern" }],
+                "has": { "stopBy": "neighbor", "matches": "import-error-type" }
+              }
+            ]
+          },
+          "attribute-error": {
+            "any": [
+              {
+                "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                "resolves": { "global": ["AttributeError"], "import": ["builtins.AttributeError"] }
+              },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "attribute-error" } }
+            ]
+          },
+          "attribute-error-type": {
+            "any": [
+              { "matches": "attribute-error" },
+              {
+                "any": [{ "kind": "tuple" }, { "kind": "parenthesized_expression" }, { "kind": "as_pattern" }],
+                "has": { "stopBy": "neighbor", "matches": "attribute-error-type" }
+              }
+            ]
+          },
+          "import-fallback": {
+            "all": [
+              { "inside": { "stopBy": "end", "kind": "except_clause" } },
+              {
+                "inside": {
+                  "stopBy": { "kind": "try_statement" },
+                  "kind": "try_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "except_clause",
+                    "has": { "stopBy": "neighbor", "field": "value", "matches": "import-error-type" }
+                  }
+                }
+              }
+            ]
+          },
+          "attribute-fallback": {
+            "all": [
+              { "inside": { "stopBy": "end", "kind": "except_clause" } },
+              {
+                "inside": {
+                  "stopBy": { "kind": "try_statement" },
+                  "kind": "try_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "except_clause",
+                    "has": { "stopBy": "neighbor", "field": "value", "matches": "attribute-error-type" }
+                  }
+                }
+              }
+            ]
+          },
+          "member-import": {
+            "kind": "dotted_name",
+            "resolves": {
+              "imported": [
+                "airflow.providers.amazon.aws.hooks.s3",
+                "airflow.providers.amazon.aws.operators.s3",
+                "airflow.providers.amazon.aws.sensors.s3",
+                "airflow.providers.amazon.aws.transfers.gcs_to_s3",
+                "airflow.providers.amazon.aws.transfers.google_api_to_s3",
+                "airflow.providers.amazon.aws.transfers.redshift_to_s3",
+                "airflow.providers.amazon.aws.transfers.s3_to_redshift",
+                "airflow.providers.apache.druid.hooks.druid",
+                "airflow.providers.apache.druid.transfers.hive_to_druid",
+                "airflow.providers.apache.hdfs.hooks.webhdfs",
+                "airflow.providers.apache.hdfs.sensors.web_hdfs",
+                "airflow.providers.apache.hive.hooks.hive",
+                "airflow.providers.apache.hive.macros.hive",
+                "airflow.providers.apache.hive.operators.hive",
+                "airflow.providers.apache.hive.operators.hive_stats",
+                "airflow.providers.apache.hive.sensors.hive_partition",
+                "airflow.providers.apache.hive.sensors.metastore_partition",
+                "airflow.providers.apache.hive.sensors.named_hive_partition",
+                "airflow.providers.apache.hive.transfers.hive_to_mysql",
+                "airflow.providers.apache.hive.transfers.hive_to_samba",
+                "airflow.providers.apache.hive.transfers.mssql_to_hive",
+                "airflow.providers.apache.hive.transfers.mysql_to_hive",
+                "airflow.providers.apache.hive.transfers.s3_to_hive",
+                "airflow.providers.apache.pig.hooks.pig",
+                "airflow.providers.apache.pig.operators.pig",
+                "airflow.providers.celery.executors.celery_executor",
+                "airflow.providers.celery.executors.celery_executor_utils",
+                "airflow.providers.celery.executors.celery_kubernetes_executor",
+                "airflow.providers.celery.executors.default_celery",
+                "airflow.providers.cncf.kubernetes.executors.kubernetes_executor_types",
+                "airflow.providers.cncf.kubernetes.k8s_model",
+                "airflow.providers.cncf.kubernetes.kube_client",
+                "airflow.providers.cncf.kubernetes.kubernetes_helper_functions",
+                "airflow.providers.cncf.kubernetes.pod_generator",
+                "airflow.providers.cncf.kubernetes.secret",
+                "airflow.providers.cncf.kubernetes.utils.pod_manager",
+                "airflow.providers.cncf.kubernetes.utils.xcom_sidecar",
+                "airflow.providers.common.sql.hooks.sql",
+                "airflow.providers.common.sql.operators.sql",
+                "airflow.providers.common.sql.sensors.sql",
+                "airflow.providers.daskexecutor.executors.dask_executor",
+                "airflow.providers.docker.hooks.docker",
+                "airflow.providers.docker.operators.docker",
+                "airflow.providers.fab.auth_manager.api.auth.backend.basic_auth",
+                "airflow.providers.fab.auth_manager.api.auth.backend.kerberos_auth",
+                "airflow.providers.fab.auth_manager.fab_auth_manager",
+                "airflow.providers.fab.auth_manager.security_manager.override",
+                "airflow.providers.http.hooks.http",
+                "airflow.providers.http.operators.http",
+                "airflow.providers.http.sensors.http",
+                "airflow.providers.jdbc.hooks.jdbc",
+                "airflow.providers.microsoft.mssql.hooks.mssql",
+                "airflow.providers.mysql.hooks.mysql",
+                "airflow.providers.mysql.transfers.presto_to_mysql",
+                "airflow.providers.oracle.hooks.oracle",
+                "airflow.providers.papermill.operators.papermill",
+                "airflow.providers.postgres.hooks.postgres",
+                "airflow.providers.presto.hooks.presto",
+                "airflow.providers.samba.hooks.samba",
+                "airflow.providers.slack.hooks.slack",
+                "airflow.providers.slack.operators.slack",
+                "airflow.providers.smtp.operators.smtp",
+                "airflow.providers.sqlite.hooks.sqlite",
+                "airflow.providers.standard.hooks.subprocess",
+                "airflow.providers.standard.operators.bash",
+                "airflow.providers.standard.operators.datetime",
+                "airflow.providers.standard.operators.empty",
+                "airflow.providers.standard.operators.latest_only",
+                "airflow.providers.standard.operators.python",
+                "airflow.providers.standard.operators.trigger_dagrun",
+                "airflow.providers.standard.sensors.external_task",
+                "airflow.providers.standard.sensors.time_delta",
+                "airflow.providers.zendesk.hooks.zendesk",
+                "kubernetes.client.models"
+              ],
+              "prefix": true,
+              "relative": "text"
+            },
+            "any": [
+              { "inside": { "stopBy": "neighbor", "kind": "aliased_import" } },
+              { "follows": { "stopBy": "end", "regex": "^import$" } }
+            ]
+          },
+          "new-attribute": {
+            "kind": "attribute",
+            "resolves": {
+              "import": [
+                "airflow.providers.amazon.aws.hooks.s3",
+                "airflow.providers.amazon.aws.operators.s3",
+                "airflow.providers.amazon.aws.sensors.s3",
+                "airflow.providers.amazon.aws.transfers.gcs_to_s3",
+                "airflow.providers.amazon.aws.transfers.google_api_to_s3",
+                "airflow.providers.amazon.aws.transfers.redshift_to_s3",
+                "airflow.providers.amazon.aws.transfers.s3_to_redshift",
+                "airflow.providers.apache.druid.hooks.druid",
+                "airflow.providers.apache.druid.transfers.hive_to_druid",
+                "airflow.providers.apache.hdfs.hooks.webhdfs",
+                "airflow.providers.apache.hdfs.sensors.web_hdfs",
+                "airflow.providers.apache.hive.hooks.hive",
+                "airflow.providers.apache.hive.macros.hive",
+                "airflow.providers.apache.hive.operators.hive",
+                "airflow.providers.apache.hive.operators.hive_stats",
+                "airflow.providers.apache.hive.sensors.hive_partition",
+                "airflow.providers.apache.hive.sensors.metastore_partition",
+                "airflow.providers.apache.hive.sensors.named_hive_partition",
+                "airflow.providers.apache.hive.transfers.hive_to_mysql",
+                "airflow.providers.apache.hive.transfers.hive_to_samba",
+                "airflow.providers.apache.hive.transfers.mssql_to_hive",
+                "airflow.providers.apache.hive.transfers.mysql_to_hive",
+                "airflow.providers.apache.hive.transfers.s3_to_hive",
+                "airflow.providers.apache.pig.hooks.pig",
+                "airflow.providers.apache.pig.operators.pig",
+                "airflow.providers.celery.executors.celery_executor",
+                "airflow.providers.celery.executors.celery_executor_utils",
+                "airflow.providers.celery.executors.celery_kubernetes_executor",
+                "airflow.providers.celery.executors.default_celery",
+                "airflow.providers.cncf.kubernetes.executors.kubernetes_executor_types",
+                "airflow.providers.cncf.kubernetes.k8s_model",
+                "airflow.providers.cncf.kubernetes.kube_client",
+                "airflow.providers.cncf.kubernetes.kubernetes_helper_functions",
+                "airflow.providers.cncf.kubernetes.pod_generator",
+                "airflow.providers.cncf.kubernetes.secret",
+                "airflow.providers.cncf.kubernetes.utils.pod_manager",
+                "airflow.providers.cncf.kubernetes.utils.xcom_sidecar",
+                "airflow.providers.common.sql.hooks.sql",
+                "airflow.providers.common.sql.operators.sql",
+                "airflow.providers.common.sql.sensors.sql",
+                "airflow.providers.daskexecutor.executors.dask_executor",
+                "airflow.providers.docker.hooks.docker",
+                "airflow.providers.docker.operators.docker",
+                "airflow.providers.fab.auth_manager.api.auth.backend.basic_auth",
+                "airflow.providers.fab.auth_manager.api.auth.backend.kerberos_auth",
+                "airflow.providers.fab.auth_manager.fab_auth_manager",
+                "airflow.providers.fab.auth_manager.security_manager.override",
+                "airflow.providers.http.hooks.http",
+                "airflow.providers.http.operators.http",
+                "airflow.providers.http.sensors.http",
+                "airflow.providers.jdbc.hooks.jdbc",
+                "airflow.providers.microsoft.mssql.hooks.mssql",
+                "airflow.providers.mysql.hooks.mysql",
+                "airflow.providers.mysql.transfers.presto_to_mysql",
+                "airflow.providers.oracle.hooks.oracle",
+                "airflow.providers.papermill.operators.papermill",
+                "airflow.providers.postgres.hooks.postgres",
+                "airflow.providers.presto.hooks.presto",
+                "airflow.providers.samba.hooks.samba",
+                "airflow.providers.slack.hooks.slack",
+                "airflow.providers.slack.operators.slack",
+                "airflow.providers.smtp.operators.smtp",
+                "airflow.providers.sqlite.hooks.sqlite",
+                "airflow.providers.standard.hooks.subprocess",
+                "airflow.providers.standard.operators.bash",
+                "airflow.providers.standard.operators.datetime",
+                "airflow.providers.standard.operators.empty",
+                "airflow.providers.standard.operators.latest_only",
+                "airflow.providers.standard.operators.python",
+                "airflow.providers.standard.operators.trigger_dagrun",
+                "airflow.providers.standard.sensors.external_task",
+                "airflow.providers.standard.sensors.time_delta",
+                "airflow.providers.zendesk.hooks.zendesk",
+                "kubernetes.client.models"
+              ],
+              "prefix": true
+            }
+          },
+          "attribute-guarded": {
+            "all": [
+              { "matches": "attribute-fallback" },
+              {
+                "inside": {
+                  "stopBy": { "kind": "try_statement" },
+                  "kind": "try_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "body",
+                    "has": { "stopBy": "end", "matches": "new-attribute" }
+                  }
+                }
+              }
+            ]
+          },
+          "moved-bare": {
+            "any": [
+              {
+                "kind": "identifier",
+                "pattern": "$N",
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "resolves": {
+                          "binding": {
+                            "site": {
+                              "kind": "aliased_import",
+                              "has": { "stopBy": "neighbor", "field": "name", "pattern": "$ORIG" }
+                            }
+                          }
+                        }
+                      },
+                      { "pattern": "$ORIG" }
+                    ]
+                  }
+                ],
+                "not": { "inside": { "stopBy": "neighbor", "kind": "augmented_assignment", "field": "left" } }
+              },
+              {
+                "kind": "attribute",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "attribute",
+                  "all": [{ "pattern": "$N" }, { "pattern": "$ORIG" }]
+                }
+              }
+            ]
+          },
+          "moved": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": { "stopBy": "neighbor", "kind": "identifier", "pattern": "$ORIG" }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          },
+          "moved-to-EmptyOperator": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^EmptyOperator$" }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          },
+          "moved-to-ExternalDagLink": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^ExternalDagLink$" }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          },
+          "moved-to-GoogleApiToS3Operator": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "identifier",
+                                    "regex": "^GoogleApiToS3Operator$"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          },
+          "moved-to-HiveToDruidOperator": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "identifier",
+                                    "regex": "^HiveToDruidOperator$"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          },
+          "moved-to-HiveToMySqlOperator": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "identifier",
+                                    "regex": "^HiveToMySqlOperator$"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          },
+          "moved-to-HttpOperator": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^HttpOperator$" }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          },
+          "moved-to-MsSqlToHiveOperator": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "identifier",
+                                    "regex": "^MsSqlToHiveOperator$"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          },
+          "moved-to-MySqlToHiveOperator": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "identifier",
+                                    "regex": "^MySqlToHiveOperator$"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          },
+          "moved-to-PodGenerator": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^PodGenerator$" }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          },
+          "moved-to-PodManager": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^PodManager$" }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          },
+          "moved-to-PodPhase": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^PodPhase$" }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          },
+          "moved-to-PrestoToMySqlOperator": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "identifier",
+                                    "regex": "^PrestoToMySqlOperator$"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          },
+          "moved-to-RedshiftToS3Operator": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "identifier",
+                                    "regex": "^RedshiftToS3Operator$"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          },
+          "moved-to-S3ToHiveOperator": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^S3ToHiveOperator$" }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          },
+          "moved-to-S3ToRedshiftOperator": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "identifier",
+                                    "regex": "^S3ToRedshiftOperator$"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          },
+          "moved-to-SQLCheckOperator": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^SQLCheckOperator$" }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          },
+          "moved-to-SQLExecuteQueryOperator": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "identifier",
+                                    "regex": "^SQLExecuteQueryOperator$"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          },
+          "moved-to-SQLIntervalCheckOperator": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "identifier",
+                                    "regex": "^SQLIntervalCheckOperator$"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          },
+          "moved-to-SQLThresholdCheckOperator": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "identifier",
+                                    "regex": "^SQLThresholdCheckOperator$"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          },
+          "moved-to-SQLValueCheckOperator": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "identifier",
+                                    "regex": "^SQLValueCheckOperator$"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          },
+          "moved-to-V1ContainerPort": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^V1ContainerPort$" }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          },
+          "moved-to-V1EnvVar": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^V1EnvVar$" }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          },
+          "moved-to-V1ResourceRequirements": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "identifier",
+                                    "regex": "^V1ResourceRequirements$"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          },
+          "moved-to-V1Volume": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^V1Volume$" }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          },
+          "moved-to-V1VolumeMount": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^V1VolumeMount$" }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          },
+          "moved-to-add_unique_suffix": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^add_unique_suffix$" }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          },
+          "moved-to-create_unique_id": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "member-import",
+                                  "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^create_unique_id$" }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                { "kind": "attribute", "matches": "attribute-guarded" }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "amazon-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": { "import": ["airflow.hooks.S3_hook.S3Hook", "airflow.hooks.S3_hook.provide_bucket_name"] },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-amazon>=1.0.0` and import `$ORIG` from `airflow.providers.amazon.aws.hooks.s3` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "amazon-2",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.operators.gcs_to_s3.GCSToS3Operator"] }, "matches": "moved" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-amazon>=1.0.0` and import `GCSToS3Operator` from `airflow.providers.amazon.aws.transfers.gcs_to_s3` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "amazon-3",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.operators.google_api_to_s3_transfer.GoogleApiToS3Transfer",
+                "airflow.operators.google_api_to_s3_transfer.GoogleApiToS3Operator"
+              ]
+            },
+            "matches": "moved-to-GoogleApiToS3Operator"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-amazon>=1.0.0` and import `GoogleApiToS3Operator` from `airflow.providers.amazon.aws.transfers.google_api_to_s3` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "amazon-4",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.operators.redshift_to_s3_operator.RedshiftToS3Transfer",
+                "airflow.operators.redshift_to_s3_operator.RedshiftToS3Operator"
+              ]
+            },
+            "matches": "moved-to-RedshiftToS3Operator"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-amazon>=1.0.0` and import `RedshiftToS3Operator` from `airflow.providers.amazon.aws.transfers.redshift_to_s3` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "amazon-5",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": { "import": ["airflow.operators.s3_file_transform_operator.S3FileTransformOperator"] },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-amazon>=3.0.0` and import `S3FileTransformOperator` from `airflow.providers.amazon.aws.operators.s3` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "amazon-6",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.operators.s3_to_redshift_operator.S3ToRedshiftTransfer",
+                "airflow.operators.s3_to_redshift_operator.S3ToRedshiftOperator"
+              ]
+            },
+            "matches": "moved-to-S3ToRedshiftOperator"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-amazon>=1.0.0` and import `S3ToRedshiftOperator` from `airflow.providers.amazon.aws.transfers.s3_to_redshift` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "amazon-7",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.sensors.s3_key_sensor.S3KeySensor"] }, "matches": "moved" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-amazon>=1.0.0` and import `S3KeySensor` from `airflow.providers.amazon.aws.sensors.s3` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "celery-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": { "import": ["airflow.config_templates.default_celery.DEFAULT_CELERY_CONFIG"] },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-celery>=3.3.0` and import `DEFAULT_CELERY_CONFIG` from `airflow.providers.celery.executors.default_celery` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "celery-2",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.executors.celery_executor.app"] }, "matches": "moved" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-celery>=3.3.0` and import `app` from `airflow.providers.celery.executors.celery_executor_utils` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "celery-3",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.executors.celery_executor.CeleryExecutor"] }, "matches": "moved" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-celery>=3.3.0` and import `CeleryExecutor` from `airflow.providers.celery.executors.celery_executor` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "celery-4",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": { "import": ["airflow.executors.celery_kubernetes_executor.CeleryKubernetesExecutor"] },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-celery>=3.3.0` and import `CeleryKubernetesExecutor` from `airflow.providers.celery.executors.celery_kubernetes_executor` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "common-sql-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.hooks.dbapi.ConnectorProtocol",
+                "airflow.hooks.dbapi.DbApiHook",
+                "airflow.hooks.dbapi_hook.DbApiHook"
+              ]
+            },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-common-sql>=1.0.0` and import `$ORIG` from `airflow.providers.common.sql.hooks.sql` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "common-sql-2",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.operators.sql.BaseSQLOperator",
+                "airflow.operators.sql.BranchSQLOperator",
+                "airflow.operators.sql.SQLTableCheckOperator"
+              ]
+            },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-common-sql>=1.1.0` and import `$ORIG` from `airflow.providers.common.sql.operators.sql` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "common-sql-3",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.operators.check_operator.CheckOperator",
+                "airflow.operators.druid_check_operator.CheckOperator",
+                "airflow.operators.presto_check_operator.CheckOperator",
+                "airflow.operators.druid_check_operator.DruidCheckOperator",
+                "airflow.operators.presto_check_operator.PrestoCheckOperator",
+                "airflow.operators.check_operator.SQLCheckOperator",
+                "airflow.operators.sql.SQLCheckOperator"
+              ]
+            },
+            "matches": "moved-to-SQLCheckOperator"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-common-sql>=1.1.0` and import `SQLCheckOperator` from `airflow.providers.common.sql.operators.sql` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "common-sql-4",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.operators.check_operator.IntervalCheckOperator",
+                "airflow.operators.presto_check_operator.IntervalCheckOperator",
+                "airflow.operators.presto_check_operator.PrestoIntervalCheckOperator",
+                "airflow.operators.check_operator.SQLIntervalCheckOperator",
+                "airflow.operators.sql.SQLIntervalCheckOperator"
+              ]
+            },
+            "matches": "moved-to-SQLIntervalCheckOperator"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-common-sql>=1.1.0` and import `SQLIntervalCheckOperator` from `airflow.providers.common.sql.operators.sql` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "common-sql-5",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.operators.check_operator.ThresholdCheckOperator",
+                "airflow.operators.check_operator.SQLThresholdCheckOperator",
+                "airflow.operators.sql.SQLThresholdCheckOperator"
+              ]
+            },
+            "matches": "moved-to-SQLThresholdCheckOperator"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-common-sql>=1.1.0` and import `SQLThresholdCheckOperator` from `airflow.providers.common.sql.operators.sql` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "common-sql-6",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.operators.check_operator.ValueCheckOperator",
+                "airflow.operators.presto_check_operator.ValueCheckOperator",
+                "airflow.operators.presto_check_operator.PrestoValueCheckOperator",
+                "airflow.operators.check_operator.SQLValueCheckOperator",
+                "airflow.operators.sql.SQLValueCheckOperator"
+              ]
+            },
+            "matches": "moved-to-SQLValueCheckOperator"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-common-sql>=1.1.0` and import `SQLValueCheckOperator` from `airflow.providers.common.sql.operators.sql` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "common-sql-7",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.operators.sql.SQLColumnCheckOperator",
+                "airflow.operators.sql._convert_to_float_if_possible",
+                "airflow.operators.sql.parse_boolean"
+              ]
+            },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-common-sql>=1.0.0` and import `$ORIG` from `airflow.providers.common.sql.operators.sql` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "common-sql-8",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": { "import": ["airflow.sensors.sql.SqlSensor", "airflow.sensors.sql_sensor.SqlSensor"] },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-common-sql>=1.0.0` and import `SqlSensor` from `airflow.providers.common.sql.sensors.sql` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "common-sql-9",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.operators.jdbc_operator.JdbcOperator",
+                "airflow.operators.mssql_operator.MsSqlOperator",
+                "airflow.operators.mysql_operator.MySqlOperator",
+                "airflow.operators.oracle_operator.OracleOperator",
+                "airflow.operators.postgres_operator.PostgresOperator",
+                "airflow.operators.sqlite_operator.SqliteOperator"
+              ]
+            },
+            "matches": "moved-to-SQLExecuteQueryOperator"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-common-sql>=1.3.0` and import `SQLExecuteQueryOperator` from `airflow.providers.common.sql.operators.sql` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "daskexecutor-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.executors.dask_executor.DaskExecutor"] }, "matches": "moved" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-daskexecutor>=1.0.0` and import `DaskExecutor` from `airflow.providers.daskexecutor.executors.dask_executor` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "docker-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.hooks.docker_hook.DockerHook"] }, "matches": "moved" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-docker>=1.0.0` and import `DockerHook` from `airflow.providers.docker.hooks.docker` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "docker-2",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.operators.docker_operator.DockerOperator"] }, "matches": "moved" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-docker>=1.0.0` and import `DockerOperator` from `airflow.providers.docker.operators.docker` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "apache-druid-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": { "import": ["airflow.hooks.druid_hook.DruidDbApiHook", "airflow.hooks.druid_hook.DruidHook"] },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-apache-druid>=1.0.0` and import `$ORIG` from `airflow.providers.apache.druid.hooks.druid` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "apache-druid-2",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.operators.hive_to_druid.HiveToDruidTransfer",
+                "airflow.operators.hive_to_druid.HiveToDruidOperator"
+              ]
+            },
+            "matches": "moved-to-HiveToDruidOperator"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-apache-druid>=1.0.0` and import `HiveToDruidOperator` from `airflow.providers.apache.druid.transfers.hive_to_druid` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "fab-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.api.auth.backend.basic_auth.CLIENT_AUTH",
+                "airflow.api.auth.backend.basic_auth.init_app",
+                "airflow.api.auth.backend.basic_auth.auth_current_user",
+                "airflow.api.auth.backend.basic_auth.requires_authentication"
+              ]
+            },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-fab>=1.0.0` and import `$ORIG` from `airflow.providers.fab.auth_manager.api.auth.backend.basic_auth` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "fab-2",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.api.auth.backend.kerberos_auth.log",
+                "airflow.api.auth.backend.kerberos_auth.CLIENT_AUTH",
+                "airflow.api.auth.backend.kerberos_auth.find_user",
+                "airflow.api.auth.backend.kerberos_auth.init_app",
+                "airflow.api.auth.backend.kerberos_auth.requires_authentication",
+                "airflow.auth.managers.fab.api.auth.backend.kerberos_auth.log",
+                "airflow.auth.managers.fab.api.auth.backend.kerberos_auth.CLIENT_AUTH",
+                "airflow.auth.managers.fab.api.auth.backend.kerberos_auth.find_user",
+                "airflow.auth.managers.fab.api.auth.backend.kerberos_auth.init_app",
+                "airflow.auth.managers.fab.api.auth.backend.kerberos_auth.requires_authentication"
+              ]
+            },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-fab>=1.0.0` and import `$ORIG` from `airflow.providers.fab.auth_manager.api.auth.backend.kerberos_auth` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "fab-3",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": { "import": ["airflow.auth.managers.fab.fab_auth_manager.FabAuthManager"] },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-fab>=1.0.0` and import `FabAuthManager` from `airflow.providers.fab.auth_manager.fab_auth_manager` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "fab-4",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.auth.managers.fab.security_manager.override.MAX_NUM_DATABASE_USER_SESSIONS",
+                "airflow.auth.managers.fab.security_manager.override.FabAirflowSecurityManagerOverride",
+                "airflow.www.security.FabAirflowSecurityManagerOverride"
+              ]
+            },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-fab>=1.0.0` and import `$ORIG` from `airflow.providers.fab.auth_manager.security_manager.override` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "apache-hdfs-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.hooks.webhdfs_hook.WebHDFSHook"] }, "matches": "moved" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-apache-hdfs>=1.0.0` and import `WebHDFSHook` from `airflow.providers.apache.hdfs.hooks.webhdfs` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "apache-hdfs-2",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.sensors.web_hdfs_sensor.WebHdfsSensor"] }, "matches": "moved" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-apache-hdfs>=1.0.0` and import `WebHdfsSensor` from `airflow.providers.apache.hdfs.sensors.web_hdfs` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "apache-hive-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.hooks.hive_hooks.HiveCliHook",
+                "airflow.hooks.hive_hooks.HiveMetastoreHook",
+                "airflow.hooks.hive_hooks.HiveServer2Hook",
+                "airflow.hooks.hive_hooks.HIVE_QUEUE_PRIORITIES"
+              ]
+            },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-apache-hive>=1.0.0` and import `$ORIG` from `airflow.providers.apache.hive.hooks.hive` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "apache-hive-2",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": { "import": ["airflow.macros.hive.closest_ds_partition", "airflow.macros.hive.max_partition"] },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-apache-hive>=5.1.0` and import `$ORIG` from `airflow.providers.apache.hive.macros.hive` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "apache-hive-3",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.operators.hive_operator.HiveOperator"] }, "matches": "moved" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-apache-hive>=1.0.0` and import `HiveOperator` from `airflow.providers.apache.hive.operators.hive` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "apache-hive-4",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": { "import": ["airflow.operators.hive_stats_operator.HiveStatsCollectionOperator"] },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-apache-hive>=1.0.0` and import `HiveStatsCollectionOperator` from `airflow.providers.apache.hive.operators.hive_stats` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "apache-hive-5",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.operators.hive_to_mysql.HiveToMySqlTransfer",
+                "airflow.operators.hive_to_mysql.HiveToMySqlOperator"
+              ]
+            },
+            "matches": "moved-to-HiveToMySqlOperator"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-apache-hive>=1.0.0` and import `HiveToMySqlOperator` from `airflow.providers.apache.hive.transfers.hive_to_mysql` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "apache-hive-6",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": { "import": ["airflow.operators.hive_to_samba_operator.HiveToSambaOperator"] },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-apache-hive>=1.0.0` and import `HiveToSambaOperator` from `airflow.providers.apache.hive.transfers.hive_to_samba` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "apache-hive-7",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.operators.mssql_to_hive.MsSqlToHiveTransfer",
+                "airflow.operators.mssql_to_hive.MsSqlToHiveOperator"
+              ]
+            },
+            "matches": "moved-to-MsSqlToHiveOperator"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-apache-hive>=1.0.0` and import `MsSqlToHiveOperator` from `airflow.providers.apache.hive.transfers.mssql_to_hive` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "apache-hive-8",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.operators.mysql_to_hive.MySqlToHiveTransfer",
+                "airflow.operators.mysql_to_hive.MySqlToHiveOperator"
+              ]
+            },
+            "matches": "moved-to-MySqlToHiveOperator"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-apache-hive>=1.0.0` and import `MySqlToHiveOperator` from `airflow.providers.apache.hive.transfers.mysql_to_hive` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "apache-hive-9",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.operators.s3_to_hive_operator.S3ToHiveTransfer",
+                "airflow.operators.s3_to_hive_operator.S3ToHiveOperator"
+              ]
+            },
+            "matches": "moved-to-S3ToHiveOperator"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-apache-hive>=1.0.0` and import `S3ToHiveOperator` from `airflow.providers.apache.hive.transfers.s3_to_hive` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "apache-hive-10",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": { "import": ["airflow.sensors.hive_partition_sensor.HivePartitionSensor"] },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-apache-hive>=1.0.0` and import `HivePartitionSensor` from `airflow.providers.apache.hive.sensors.hive_partition` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "apache-hive-11",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": { "import": ["airflow.sensors.metastore_partition_sensor.MetastorePartitionSensor"] },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-apache-hive>=1.0.0` and import `MetastorePartitionSensor` from `airflow.providers.apache.hive.sensors.metastore_partition` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "apache-hive-12",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": { "import": ["airflow.sensors.named_hive_partition_sensor.NamedHivePartitionSensor"] },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-apache-hive>=1.0.0` and import `NamedHivePartitionSensor` from `airflow.providers.apache.hive.sensors.named_hive_partition` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "http-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.hooks.http_hook.HttpHook"] }, "matches": "moved" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-http>=1.0.0` and import `HttpHook` from `airflow.providers.http.hooks.http` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "http-2",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": { "import": ["airflow.operators.http_operator.SimpleHttpOperator"] },
+            "matches": "moved-to-HttpOperator"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-http>=5.0.0` and import `HttpOperator` from `airflow.providers.http.operators.http` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "http-3",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.sensors.http_sensor.HttpSensor"] }, "matches": "moved" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-http>=1.0.0` and import `HttpSensor` from `airflow.providers.http.sensors.http` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "jdbc-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": { "import": ["airflow.hooks.jdbc_hook.JdbcHook", "airflow.hooks.jdbc_hook.jaydebeapi"] },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-jdbc>=1.0.0` and import `$ORIG` from `airflow.providers.jdbc.hooks.jdbc` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "cncf-kubernetes-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.executors.kubernetes_executor_types.ALL_NAMESPACES",
+                "airflow.executors.kubernetes_executor_types.POD_EXECUTOR_DONE_KEY"
+              ]
+            },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `$ORIG` from `airflow.providers.cncf.kubernetes.executors.kubernetes_executor_types` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "cncf-kubernetes-2",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.kubernetes.k8s_model.K8SModel",
+                "airflow.kubernetes.k8s_model.append_to_pod",
+                "airflow.kubernetes.secret.K8SModel"
+              ]
+            },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `$ORIG` from `airflow.providers.cncf.kubernetes.k8s_model` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "cncf-kubernetes-3",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.kubernetes.kube_client._disable_verify_ssl",
+                "airflow.kubernetes.kube_client._enable_tcp_keepalive",
+                "airflow.kubernetes.kube_client.get_kube_client",
+                "airflow.kubernetes.pod_launcher_deprecated.get_kube_client"
+              ]
+            },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `$ORIG` from `airflow.providers.cncf.kubernetes.kube_client` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "cncf-kubernetes-4",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.kubernetes.kubernetes_helper_functions.add_pod_suffix",
+                "airflow.kubernetes.pod_generator.add_pod_suffix"
+              ]
+            },
+            "matches": "moved-to-add_unique_suffix"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-cncf-kubernetes>=10.0.0` and import `add_unique_suffix` from `airflow.providers.cncf.kubernetes.kubernetes_helper_functions` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "cncf-kubernetes-5",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": { "import": ["airflow.kubernetes.kubernetes_helper_functions.create_pod_id"] },
+            "matches": "moved-to-create_unique_id"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-cncf-kubernetes>=10.0.0` and import `create_unique_id` from `airflow.providers.cncf.kubernetes.kubernetes_helper_functions` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "cncf-kubernetes-6",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.kubernetes.kubernetes_helper_functions.annotations_for_logging_task_metadata",
+                "airflow.kubernetes.kubernetes_helper_functions.annotations_to_key",
+                "airflow.kubernetes.kubernetes_helper_functions.get_logs_task_metadata",
+                "airflow.kubernetes.kubernetes_helper_functions.rand_str",
+                "airflow.kubernetes.pod_generator.rand_str"
+              ]
+            },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `$ORIG` from `airflow.providers.cncf.kubernetes.kubernetes_helper_functions` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "cncf-kubernetes-7",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.kubernetes.pod.Port"] }, "matches": "moved-to-V1ContainerPort" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `V1ContainerPort` from `kubernetes.client.models` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "cncf-kubernetes-8",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": { "import": ["airflow.kubernetes.pod.Resources"] },
+            "matches": "moved-to-V1ResourceRequirements"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `V1ResourceRequirements` from `kubernetes.client.models` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "cncf-kubernetes-9",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": { "import": ["airflow.kubernetes.pod_runtime_info_env.PodRuntimeInfoEnv"] },
+            "matches": "moved-to-V1EnvVar"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `V1EnvVar` from `kubernetes.client.models` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "cncf-kubernetes-10",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.kubernetes.volume.Volume"] }, "matches": "moved-to-V1Volume" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `V1Volume` from `kubernetes.client.models` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "cncf-kubernetes-11",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": { "import": ["airflow.kubernetes.volume_mount.VolumeMount"] },
+            "matches": "moved-to-V1VolumeMount"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `V1VolumeMount` from `kubernetes.client.models` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "cncf-kubernetes-12",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.kubernetes.pod_generator.datetime_to_label_safe_datestring",
+                "airflow.kubernetes.pod_generator.extend_object_field",
+                "airflow.kubernetes.pod_generator.label_safe_datestring_to_datetime",
+                "airflow.kubernetes.pod_generator.make_safe_label_value",
+                "airflow.kubernetes.pod_generator.merge_objects",
+                "airflow.kubernetes.pod_generator_deprecated.make_safe_label_value"
+              ]
+            },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `$ORIG` from `airflow.providers.cncf.kubernetes.pod_generator` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "cncf-kubernetes-13",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.kubernetes.pod_generator.PodGeneratorDeprecated",
+                "airflow.kubernetes.pod_generator.PodGenerator",
+                "airflow.kubernetes.pod_generator_deprecated.PodGenerator"
+              ]
+            },
+            "matches": "moved-to-PodGenerator"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `PodGenerator` from `airflow.providers.cncf.kubernetes.pod_generator` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "cncf-kubernetes-14",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.kubernetes.pod_generator.PodDefaults",
+                "airflow.kubernetes.pod_generator_deprecated.PodDefaults",
+                "airflow.kubernetes.pod_launcher_deprecated.PodDefaults"
+              ]
+            },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `PodDefaults` from `airflow.providers.cncf.kubernetes.utils.xcom_sidecar` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "cncf-kubernetes-15",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.kubernetes.pod_launcher.PodLauncher",
+                "airflow.kubernetes.pod_launcher_deprecated.PodLauncher"
+              ]
+            },
+            "matches": "moved-to-PodManager"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-cncf-kubernetes>=3.0.0` and import `PodManager` from `airflow.providers.cncf.kubernetes.utils.pod_manager` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "cncf-kubernetes-16",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.kubernetes.pod_launcher.PodStatus",
+                "airflow.kubernetes.pod_launcher_deprecated.PodStatus"
+              ]
+            },
+            "matches": "moved-bare"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-cncf-kubernetes>=3.0.0` and import `PodPhase` from `airflow.providers.cncf.kubernetes.utils.pod_manager` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "cncf-kubernetes-17",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.kubernetes.secret.Secret"] }, "matches": "moved" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `Secret` from `airflow.providers.cncf.kubernetes.secret` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "microsoft-mssql-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.hooks.mssql_hook.MsSqlHook"] }, "matches": "moved" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-microsoft-mssql>=1.0.0` and import `MsSqlHook` from `airflow.providers.microsoft.mssql.hooks.mssql` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "mysql-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.hooks.mysql_hook.MySqlHook"] }, "matches": "moved" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-mysql>=1.0.0` and import `MySqlHook` from `airflow.providers.mysql.hooks.mysql` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "mysql-2",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.operators.presto_to_mysql.PrestoToMySqlTransfer",
+                "airflow.operators.presto_to_mysql.PrestoToMySqlOperator"
+              ]
+            },
+            "matches": "moved-to-PrestoToMySqlOperator"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-mysql>=1.0.0` and import `PrestoToMySqlOperator` from `airflow.providers.mysql.transfers.presto_to_mysql` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "oracle-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.hooks.oracle_hook.OracleHook"] }, "matches": "moved" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-oracle>=1.0.0` and import `OracleHook` from `airflow.providers.oracle.hooks.oracle` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "papermill-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": { "import": ["airflow.operators.papermill_operator.PapermillOperator"] },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-papermill>=1.0.0` and import `PapermillOperator` from `airflow.providers.papermill.operators.papermill` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "apache-pig-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.hooks.pig_hook.PigCliHook"] }, "matches": "moved" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-apache-pig>=1.0.0` and import `PigCliHook` from `airflow.providers.apache.pig.hooks.pig` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "apache-pig-2",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.operators.pig_operator.PigOperator"] }, "matches": "moved" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-apache-pig>=1.0.0` and import `PigOperator` from `airflow.providers.apache.pig.operators.pig` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "postgres-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.hooks.postgres_hook.PostgresHook"] }, "matches": "moved" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-postgres>=1.0.0` and import `PostgresHook` from `airflow.providers.postgres.hooks.postgres` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "presto-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.hooks.presto_hook.PrestoHook"] }, "matches": "moved" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-presto>=1.0.0` and import `PrestoHook` from `airflow.providers.presto.hooks.presto` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "samba-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.hooks.samba_hook.SambaHook"] }, "matches": "moved" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-samba>=1.0.0` and import `SambaHook` from `airflow.providers.samba.hooks.samba` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "slack-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.hooks.slack_hook.SlackHook"] }, "matches": "moved" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-slack>=1.0.0` and import `SlackHook` from `airflow.providers.slack.hooks.slack` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "slack-2",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.operators.slack_operator.SlackAPIOperator",
+                "airflow.operators.slack_operator.SlackAPIPostOperator"
+              ]
+            },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-slack>=1.0.0` and import `$ORIG` from `airflow.providers.slack.operators.slack` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "smtp-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": ["airflow.operators.email_operator.EmailOperator", "airflow.operators.email.EmailOperator"]
+            },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-smtp>=1.0.0` and import `EmailOperator` from `airflow.providers.smtp.operators.smtp` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "sqlite-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.hooks.sqlite_hook.SqliteHook"] }, "matches": "moved" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-sqlite>=1.0.0` and import `SqliteHook` from `airflow.providers.sqlite.hooks.sqlite` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "zendesk-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.hooks.zendesk_hook.ZendeskHook"] }, "matches": "moved" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-zendesk>=1.0.0` and import `ZendeskHook` from `airflow.providers.zendesk.hooks.zendesk` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "standard-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": ["airflow.hooks.subprocess.SubprocessResult", "airflow.hooks.subprocess.working_directory"]
+            },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-standard>=0.0.3` and import `$ORIG` from `airflow.providers.standard.hooks.subprocess` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "standard-2",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.operators.bash_operator.BashOperator"] }, "matches": "moved" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-standard>=0.0.1` and import `BashOperator` from `airflow.providers.standard.operators.bash` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "standard-3",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.operators.dagrun_operator.TriggerDagRunLink",
+                "airflow.operators.dagrun_operator.TriggerDagRunOperator",
+                "airflow.operators.trigger_dagrun.TriggerDagRunLink"
+              ]
+            },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-standard>=0.0.2` and import `$ORIG` from `airflow.providers.standard.operators.trigger_dagrun` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "standard-4",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.operators.datetime.target_times_as_dates"] }, "matches": "moved" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-standard>=0.0.1` and import `target_times_as_dates` from `airflow.providers.standard.operators.datetime` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "standard-5",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.operators.dummy.DummyOperator",
+                "airflow.operators.dummy_operator.DummyOperator",
+                "airflow.operators.dummy.EmptyOperator",
+                "airflow.operators.dummy_operator.EmptyOperator"
+              ]
+            },
+            "matches": "moved-to-EmptyOperator"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-standard>=0.0.2` and import `EmptyOperator` from `airflow.providers.standard.operators.empty` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "standard-6",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": { "import": ["airflow.operators.latest_only_operator.LatestOnlyOperator"] },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-standard>=0.0.3` and import `LatestOnlyOperator` from `airflow.providers.standard.operators.latest_only` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "standard-7",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.operators.python_operator.BranchPythonOperator",
+                "airflow.operators.python_operator.PythonOperator",
+                "airflow.operators.python_operator.PythonVirtualenvOperator",
+                "airflow.operators.python_operator.ShortCircuitOperator"
+              ]
+            },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-standard>=0.0.1` and import `$ORIG` from `airflow.providers.standard.operators.python` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "standard-8",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.sensors.external_task.ExternalTaskSensorLink",
+                "airflow.sensors.external_task_sensor.ExternalTaskSensorLink"
+              ]
+            },
+            "matches": "moved-to-ExternalDagLink"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-standard>=0.0.3` and import `ExternalDagLink` from `airflow.providers.standard.sensors.external_task` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "standard-9",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.sensors.external_task_sensor.ExternalTaskMarker",
+                "airflow.sensors.external_task_sensor.ExternalTaskSensor"
+              ]
+            },
+            "matches": "moved"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-standard>=0.0.3` and import `$ORIG` from `airflow.providers.standard.sensors.external_task` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    },
+    {
+      "id": "standard-10",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.sensors.time_delta.WaitSensor"] }, "matches": "moved" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR302",
+        "message": "Install `apache-airflow-providers-standard>=0.0.1` and import `WaitSensor` from `airflow.providers.standard.sensors.time_delta` instead.",
+        "suppress": { "noqa": { "codes": ["AIR302"] } }
+      }
+    }
+  ]
+}

@@ -3,7 +3,7 @@
  "id": "ruff-dtz001-call-datetime-without-tzinfo",
  "revision": 1,
  "mode": "steer",
- "description": "Port of Ruff's DTZ001 (call-datetime-without-tzinfo): a call whose callee (parentheses transparent) resolves to `datetime.datetime` through the file's imports (Ruff's `resolve_qualified_name`), unless the call (parentheses transparent) is followed by zero or more `.replace(...)` calls and then an `.astimezone` attribute (Ruff's `followed_by_astimezone`; the attribute need not be called), and whose `tzinfo` argument (Ruff's `find_argument_value(\"tzinfo\", 7)`: the `tzinfo=` keyword, else positional argument 7 among those before the first starred one; `**kwargs` passes nothing) is missing or is the literal `None` (parentheses transparent). Reported on the call, with Ruff's message for each case.",
+ "description": "Pass a real timezone when constructing a datetime; a naive datetime carries no zone information and causes subtle bugs.",
  "scope": {
   "include": [
    "**/*"
@@ -131,7 +131,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "DTZ001",
-    "message": "`datetime.datetime()` called without a `tzinfo` argument",
+    "message": "Add `tzinfo=` with a timezone, such as `tzinfo=datetime.timezone.utc`, so this datetime is aware. Leave it naive only if the code receiving it requires a naive value.",
     "suppress": {
      "noqa": {
       "codes": [
@@ -183,7 +183,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "DTZ001",
-    "message": "`tzinfo=None` passed to `datetime.datetime()`",
+    "message": "Replace `tzinfo=None` with a real timezone, such as `datetime.timezone.utc`, so this datetime is aware. Keep `None` only if the code receiving it requires a naive value.",
     "suppress": {
      "noqa": {
       "codes": [

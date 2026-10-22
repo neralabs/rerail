@@ -3,7 +3,7 @@
   "id": "ruff-pt018-pytest-composite-assertion",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's PT018 (pytest-composite-assertion), `composite_condition` in flake8_pytest_style/rules/assertion.rs: an `assert` statement whose test (the expression after `assert`, comments, line continuations and parentheses transparent) is an `and` operation (`a and b`, whatever its operands), or a `not` whose operand (parentheses transparent) is an `or` operation (`not (a or b)`, mixed `and` operands included). An `assert` with a message is reported too. Reported on the `assert` statement.",
+  "description": "Split an assert that joins conditions with and, or negates conditions joined with or, into one assert per condition; a failure then names the one that failed.",
   "scope": {
     "include": [
       "**/*"
@@ -111,7 +111,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PT018",
-        "message": "Assertion should be broken down into multiple parts",
+        "message": "Break this assertion into one `assert` per condition so a failure shows which one failed; for `not (a or b)`, write `assert not a` and `assert not b`.",
         "suppress": {
           "noqa": {
             "codes": [

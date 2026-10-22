@@ -1,0 +1,45 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up020-open-alias",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use the builtin open instead of io.open; in Python 3 they are the same function.",
+  "scope": {
+    "include": ["**/*"],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "io-open",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "io-open": {
+              "any": [
+                {
+                  "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                  "resolves": { "import": ["io.open"] }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": { "stopBy": "neighbor", "matches": "io-open" }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "has": { "stopBy": "neighbor", "field": "function", "matches": "io-open" }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP020",
+        "message": "Call the builtin `open` instead of `io.open`; they are the same function in Python 3. Skip it if the file rebinds `open` to something else.",
+        "suppress": { "noqa": { "codes": ["UP020"] } }
+      }
+    }
+  ]
+}

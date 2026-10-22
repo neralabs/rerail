@@ -1,0 +1,355 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-pth118-os-path-join",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Use Path objects with the slash operator or joinpath instead of os.path.join; pathlib reads better than string-based os.path functions.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "os-path-join",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "any": [
+       {
+        "matches": "target"
+       },
+       {
+        "matches": "in-string"
+       }
+      ]
+     },
+     "utils": {
+      "callee": {
+       "any": [
+        {
+         "any": [
+          {
+           "kind": "identifier"
+          },
+          {
+           "kind": "attribute"
+          }
+         ],
+         "resolves": {
+          "import": [
+           "os.path.join"
+          ]
+         },
+         "pattern": "$F"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee"
+         }
+        }
+       ]
+      },
+      "target": {
+       "kind": "call",
+       "all": [
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee",
+          "precedes": {
+           "stopBy": "end",
+           "any": [
+            {
+             "kind": "argument_list"
+            },
+            {
+             "kind": "generator_expression"
+            }
+           ]
+          }
+         }
+        },
+        {
+         "not": {
+          "has": {
+           "stopBy": "neighbor",
+           "kind": "argument_list",
+           "has": {
+            "stopBy": "neighbor",
+            "kind": "list_splat"
+           }
+          }
+         }
+        }
+       ]
+      },
+      "in-string": {
+       "any": [
+        {
+         "kind": "string"
+        },
+        {
+         "kind": "concatenated_string"
+        }
+       ],
+       "parse": {
+        "grammar": "annotation",
+        "has": {
+         "stopBy": "end",
+         "any": [
+          {
+           "matches": "target"
+          },
+          {
+           "matches": "in-string"
+          }
+         ]
+        }
+       }
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.F",
+    "code": "PTH118",
+    "message": "Build the path with `Path(first) / second` instead of `os.path.join(first, second)`; wrap it in `str()` where a string is needed. Leave it for bytes paths, which `Path` rejects.",
+    "each": "F",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "PTH118"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "os-path-join-unpacked",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "any": [
+       {
+        "matches": "target"
+       },
+       {
+        "matches": "in-string"
+       }
+      ]
+     },
+     "utils": {
+      "callee": {
+       "any": [
+        {
+         "any": [
+          {
+           "kind": "identifier"
+          },
+          {
+           "kind": "attribute"
+          }
+         ],
+         "resolves": {
+          "import": [
+           "os.path.join"
+          ]
+         },
+         "pattern": "$F"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee"
+         }
+        }
+       ]
+      },
+      "target": {
+       "kind": "call",
+       "all": [
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee",
+          "precedes": {
+           "stopBy": "end",
+           "any": [
+            {
+             "kind": "argument_list"
+            },
+            {
+             "kind": "generator_expression"
+            }
+           ]
+          }
+         }
+        },
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "kind": "argument_list",
+          "has": {
+           "stopBy": "neighbor",
+           "kind": "list_splat"
+          }
+         }
+        }
+       ]
+      },
+      "in-string": {
+       "any": [
+        {
+         "kind": "string"
+        },
+        {
+         "kind": "concatenated_string"
+        }
+       ],
+       "parse": {
+        "grammar": "annotation",
+        "has": {
+         "stopBy": "end",
+         "any": [
+          {
+           "matches": "target"
+          },
+          {
+           "matches": "in-string"
+          }
+         ]
+        }
+       }
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.F",
+    "code": "PTH118",
+    "message": "Use `Path(first).joinpath(*parts)` instead of `os.path.join(first, *parts)`; wrap it in `str()` where a string is needed. Leave it for bytes paths, which `Path` rejects.",
+    "each": "F",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "PTH118"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "os-sep-join",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "any": [
+       {
+        "matches": "target"
+       },
+       {
+        "matches": "in-string"
+       }
+      ]
+     },
+     "utils": {
+      "callee": {
+       "any": [
+        {
+         "any": [
+          {
+           "kind": "identifier"
+          },
+          {
+           "kind": "attribute"
+          }
+         ],
+         "resolves": {
+          "import": [
+           "os.sep.join"
+          ]
+         },
+         "pattern": "$F"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee"
+         }
+        }
+       ]
+      },
+      "target": {
+       "kind": "call",
+       "all": [
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee",
+          "precedes": {
+           "stopBy": "end",
+           "any": [
+            {
+             "kind": "argument_list"
+            },
+            {
+             "kind": "generator_expression"
+            }
+           ]
+          }
+         }
+        }
+       ]
+      },
+      "in-string": {
+       "any": [
+        {
+         "kind": "string"
+        },
+        {
+         "kind": "concatenated_string"
+        }
+       ],
+       "parse": {
+        "grammar": "annotation",
+        "has": {
+         "stopBy": "end",
+         "any": [
+          {
+           "matches": "target"
+          },
+          {
+           "matches": "in-string"
+          }
+         ]
+        }
+       }
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.F",
+    "code": "PTH118",
+    "message": "Use `Path(*parts)` instead of `os.sep.join(parts)`; a `Path` is not a `str`, so wrap it in `str()` where a string is needed.",
+    "each": "F",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "PTH118"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

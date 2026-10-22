@@ -1,0 +1,329 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf061-legacy-form-pytest-raises",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use the context-manager form of pytest raises, warns and deprecated_call instead of passing the callable as an argument; it reads better and accepts extra arguments.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "callee-raises": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "pytest.raises"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "callee-raises"
+                }
+              }
+            ]
+          },
+          "callee-warns": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "pytest.warns"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "callee-warns"
+                }
+              }
+            ]
+          },
+          "callee-deprecated-call": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "pytest.deprecated_call"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "callee-deprecated-call"
+                }
+              }
+            ]
+          },
+          "trivia": {
+            "any": [
+              {
+                "kind": "comment"
+              },
+              {
+                "kind": "line_continuation"
+              }
+            ]
+          },
+          "plain-arg": {
+            "not": {
+              "any": [
+                {
+                  "matches": "trivia"
+                },
+                {
+                  "regex": "^[(),]$"
+                },
+                {
+                  "kind": "keyword_argument"
+                },
+                {
+                  "kind": "list_splat"
+                },
+                {
+                  "kind": "dictionary_splat"
+                }
+              ]
+            }
+          },
+          "func-keyword": {
+            "has": {
+              "field": "arguments",
+              "kind": "argument_list",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "keyword_argument",
+                "has": {
+                  "field": "name",
+                  "regex": "^func$"
+                }
+              }
+            }
+          },
+          "first-arg": {
+            "matches": "plain-arg",
+            "follows": {
+              "stopBy": {
+                "not": {
+                  "matches": "trivia"
+                }
+              },
+              "regex": "^\\($"
+            }
+          },
+          "second-arg": {
+            "matches": "plain-arg",
+            "follows": {
+              "stopBy": {
+                "not": {
+                  "matches": "trivia"
+                }
+              },
+              "regex": "^,$",
+              "follows": {
+                "stopBy": {
+                  "not": {
+                    "matches": "trivia"
+                  }
+                },
+                "matches": "first-arg"
+              }
+            }
+          },
+          "func-second": {
+            "has": {
+              "field": "arguments",
+              "kind": "argument_list",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "second-arg"
+              }
+            }
+          },
+          "func-first": {
+            "any": [
+              {
+                "has": {
+                  "field": "arguments",
+                  "kind": "argument_list",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "first-arg"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "kind": "generator_expression"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "legacy-raises",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "callee-raises"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "matches": "func-keyword"
+                  },
+                  {
+                    "matches": "func-second"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RUF061",
+        "message": "Use `with pytest.raises(Exc) as excinfo:` and call the code under test inside the block, instead of passing the callable to `pytest.raises`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF061"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "legacy-warns",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "callee-warns"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "matches": "func-keyword"
+                  },
+                  {
+                    "matches": "func-second"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RUF061",
+        "message": "Use `with pytest.warns(Warn):` and call the code under test inside the block, instead of passing the callable to `pytest.warns`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF061"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "legacy-deprecated-call",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "callee-deprecated-call"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "matches": "func-keyword"
+                  },
+                  {
+                    "matches": "func-first"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RUF061",
+        "message": "Use `with pytest.deprecated_call():` and call the code under test inside the block, instead of passing the callable to `pytest.deprecated_call`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF061"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

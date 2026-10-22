@@ -1,0 +1,949 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-arg002-unused-method-argument",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove method parameters the body never reads, or prefix them with an underscore when the signature is fixed.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "options",
+      "define": {
+        "options": {
+          "dummy-variable-rgx": {
+            "type": "string",
+            "default": "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$",
+            "description": "Names of arguments that may be unused."
+          },
+          "flake8-unused-arguments.ignore-variadic-names": {
+            "type": "boolean",
+            "default": false,
+            "description": "Don't report unused *args and **kwargs."
+          }
+        }
+      }
+    },
+    {
+      "id": "unused-method-argument",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "path": {
+              "notRegex": "\\.pyi$"
+            }
+          },
+          "utils": {
+            "not-implemented": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "global": [
+                  "NotImplementedError",
+                  "NotImplemented"
+                ],
+                "import": [
+                  "builtins.NotImplementedError",
+                  "builtins.NotImplemented"
+                ]
+              }
+            },
+            "not-implemented-error": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "global": [
+                  "NotImplementedError"
+                ],
+                "import": [
+                  "builtins.NotImplementedError"
+                ]
+              }
+            },
+            "overload": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "typing.overload",
+                  "typing_extensions.overload",
+                  "_typeshed.overload"
+                ]
+              }
+            },
+            "docstring": {
+              "kind": "expression_statement",
+              "count": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "(?s)."
+                },
+                "max": 1
+              },
+              "has": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "any": [
+                      {
+                        "kind": "string",
+                        "regex": "^[rRuU]{0,2}['\"]"
+                      },
+                      {
+                        "kind": "concatenated_string",
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "string",
+                            "not": {
+                              "regex": "^[rRuU]{0,2}['\"]"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "parenthesized_expression",
+                    "has": {
+                      "stopBy": {
+                        "not": {
+                          "kind": "parenthesized_expression"
+                        }
+                      },
+                      "any": [
+                        {
+                          "kind": "string",
+                          "regex": "^[rRuU]{0,2}['\"]"
+                        },
+                        {
+                          "kind": "concatenated_string",
+                          "not": {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "string",
+                              "not": {
+                                "regex": "^[rRuU]{0,2}['\"]"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "positional": {
+              "not": {
+                "any": [
+                  {
+                    "regex": "^[(),]$"
+                  },
+                  {
+                    "kind": "comment"
+                  },
+                  {
+                    "kind": "keyword_argument"
+                  },
+                  {
+                    "kind": "dictionary_splat"
+                  }
+                ]
+              }
+            },
+            "stub-body": {
+              "kind": "block",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "regex": "^;$"
+                          }
+                        ]
+                      },
+                      {
+                        "kind": "pass_statement"
+                      },
+                      {
+                        "matches": "docstring"
+                      },
+                      {
+                        "kind": "expression_statement",
+                        "count": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "regex": "(?s)."
+                          },
+                          "max": 1
+                        },
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "ellipsis"
+                            },
+                            {
+                              "kind": "parenthesized_expression",
+                              "has": {
+                                "stopBy": {
+                                  "not": {
+                                    "kind": "parenthesized_expression"
+                                  }
+                                },
+                                "kind": "ellipsis"
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "kind": "raise_statement",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "follows": {
+                            "stopBy": "neighbor",
+                            "regex": "^raise$"
+                          },
+                          "any": [
+                            {
+                              "any": [
+                                {
+                                  "matches": "not-implemented"
+                                },
+                                {
+                                  "kind": "call",
+                                  "has": {
+                                    "stopBy": {
+                                      "not": {
+                                        "kind": "parenthesized_expression"
+                                      }
+                                    },
+                                    "matches": "not-implemented"
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "kind": "parenthesized_expression",
+                              "has": {
+                                "stopBy": {
+                                  "not": {
+                                    "kind": "parenthesized_expression"
+                                  }
+                                },
+                                "any": [
+                                  {
+                                    "matches": "not-implemented"
+                                  },
+                                  {
+                                    "kind": "call",
+                                    "has": {
+                                      "stopBy": {
+                                        "not": {
+                                          "kind": "parenthesized_expression"
+                                        }
+                                      },
+                                      "matches": "not-implemented"
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "variable-stub-body": {
+              "kind": "block",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "raise_statement",
+                "not": {
+                  "precedes": {
+                    "stopBy": "end",
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "regex": "^;$"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "call",
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^raise$"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": {
+                          "not": {
+                            "kind": "parenthesized_expression"
+                          }
+                        },
+                        "matches": "not-implemented-error"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "argument_list",
+                        "count": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "positional"
+                          },
+                          "min": 1,
+                          "max": 1
+                        }
+                      }
+                    }
+                  ]
+                },
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "follows": {
+                          "stopBy": {
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "comment"
+                                },
+                                {
+                                  "regex": "^;$"
+                                }
+                              ]
+                            }
+                          },
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "assignment",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "field": "left",
+                              "kind": "identifier",
+                              "pattern": "$VAR"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "call",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "argument_list",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "positional",
+                              "any": [
+                                {
+                                  "kind": "identifier",
+                                  "pattern": "$VAR"
+                                },
+                                {
+                                  "kind": "parenthesized_expression",
+                                  "has": {
+                                    "stopBy": {
+                                      "not": {
+                                        "kind": "parenthesized_expression"
+                                      }
+                                    },
+                                    "kind": "identifier",
+                                    "pattern": "$VAR"
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "follows": {
+                          "stopBy": {
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "comment"
+                                },
+                                {
+                                  "regex": "^;$"
+                                }
+                              ]
+                            }
+                          },
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "assignment",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "field": "left",
+                              "not": {
+                                "kind": "identifier"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "call",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "argument_list",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "positional",
+                              "not": {
+                                "any": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "kind": "parenthesized_expression",
+                                    "has": {
+                                      "stopBy": {
+                                        "not": {
+                                          "kind": "parenthesized_expression"
+                                        }
+                                      },
+                                      "kind": "identifier"
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "follows": {
+                  "stopBy": {
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "regex": "^;$"
+                        }
+                      ]
+                    }
+                  },
+                  "kind": "expression_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "assignment",
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "type",
+                        "kind": "type"
+                      }
+                    },
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "right",
+                      "any": [
+                        {
+                          "any": [
+                            {
+                              "kind": "string",
+                              "regex": "^[rRuUfF]{0,2}['\"]"
+                            },
+                            {
+                              "kind": "concatenated_string",
+                              "not": {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "string",
+                                  "not": {
+                                    "regex": "^[rRuUfF]{0,2}['\"]"
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "kind": "parenthesized_expression",
+                          "has": {
+                            "stopBy": {
+                              "not": {
+                                "kind": "parenthesized_expression"
+                              }
+                            },
+                            "any": [
+                              {
+                                "kind": "string",
+                                "regex": "^[rRuUfF]{0,2}['\"]"
+                              },
+                              {
+                                "kind": "concatenated_string",
+                                "not": {
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "string",
+                                    "not": {
+                                      "regex": "^[rRuUfF]{0,2}['\"]"
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "not": {
+                        "any": [
+                          {
+                            "any": [
+                              {
+                                "kind": "comment"
+                              },
+                              {
+                                "regex": "^;$"
+                              }
+                            ]
+                          },
+                          {
+                            "matches": "docstring",
+                            "not": {
+                              "follows": {
+                                "stopBy": "end",
+                                "not": {
+                                  "any": [
+                                    {
+                                      "kind": "comment"
+                                    },
+                                    {
+                                      "regex": "^;$"
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "exempt": {
+              "any": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "body",
+                    "any": [
+                      {
+                        "matches": "stub-body"
+                      },
+                      {
+                        "matches": "variable-stub-body"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "decorated_definition",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "decorator",
+                      "has": {
+                        "stopBy": {
+                          "not": {
+                            "kind": "parenthesized_expression"
+                          }
+                        },
+                        "matches": "overload"
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "decorated_definition",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "decorator",
+                      "has": {
+                        "stopBy": {
+                          "not": {
+                            "kind": "parenthesized_expression"
+                          }
+                        },
+                        "matches": "abstract-or-override"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "static": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "global": [
+                  "staticmethod"
+                ],
+                "import": [
+                  "builtins.staticmethod",
+                  "abc.abstractstaticmethod"
+                ]
+              }
+            },
+            "class": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "global": [
+                  "classmethod"
+                ],
+                "import": [
+                  "builtins.classmethod",
+                  "abc.abstractclassmethod"
+                ]
+              }
+            },
+            "abstract-or-override": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "abc.abstractmethod",
+                  "abc.abstractclassmethod",
+                  "abc.abstractstaticmethod",
+                  "abc.abstractproperty",
+                  "typing.override",
+                  "typing_extensions.override",
+                  "_typeshed.override"
+                ]
+              }
+            },
+            "plain-parameter": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "default_parameter"
+                },
+                {
+                  "kind": "typed_default_parameter"
+                },
+                {
+                  "kind": "typed_parameter",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "list_splat_pattern"
+                        },
+                        {
+                          "kind": "dictionary_splat_pattern"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "method": {
+              "all": [
+                {
+                  "inside": {
+                    "stopBy": {
+                      "any": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "kind": "class_definition"
+                        }
+                      ]
+                    },
+                    "kind": "class_definition"
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "name",
+                      "regex": "^__(?:_?|.*__)$",
+                      "not": {
+                        "regex": "^__(?:init|call)__$"
+                      }
+                    }
+                  }
+                }
+              ],
+              "not": {
+                "any": [
+                  {
+                    "matches": "exempt"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "decorated_definition",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "decorator",
+                        "has": {
+                          "stopBy": {
+                            "not": {
+                              "kind": "parenthesized_expression"
+                            }
+                          },
+                          "any": [
+                            {
+                              "matches": "static"
+                            },
+                            {
+                              "kind": "call",
+                              "has": {
+                                "stopBy": {
+                                  "not": {
+                                    "kind": "parenthesized_expression"
+                                  }
+                                },
+                                "matches": "static"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "decorated_definition",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "decorator",
+                        "has": {
+                          "stopBy": {
+                            "not": {
+                              "kind": "parenthesized_expression"
+                            }
+                          },
+                          "any": [
+                            {
+                              "matches": "class"
+                            },
+                            {
+                              "kind": "call",
+                              "has": {
+                                "stopBy": {
+                                  "not": {
+                                    "kind": "parenthesized_expression"
+                                  }
+                                },
+                                "matches": "class"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$N",
+            "binds": {
+              "form": "parameter",
+              "scope": "function",
+              "latest": true,
+              "used": false
+            },
+            "inside": {
+              "stopBy": "end",
+              "kind": "parameters",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "function_definition",
+                "matches": "method"
+              }
+            },
+            "not": {
+              "any": [
+                {
+                  "regex": {
+                    "$option": "dummy-variable-rgx"
+                  }
+                },
+                {
+                  "$option": "flake8-unused-arguments.ignore-variadic-names",
+                  "cases": {
+                    "true": [
+                      {
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "list_splat_pattern"
+                            },
+                            {
+                              "kind": "dictionary_splat_pattern"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  "default": [],
+                  "spread": true
+                }
+              ]
+            },
+            "all": [
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "list_splat_pattern"
+                        },
+                        {
+                          "kind": "dictionary_splat_pattern"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "follows": {
+                      "stopBy": "end",
+                      "matches": "plain-parameter"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "default_parameter"
+                        },
+                        {
+                          "kind": "typed_default_parameter"
+                        },
+                        {
+                          "kind": "typed_parameter"
+                        }
+                      ],
+                      "follows": {
+                        "stopBy": "end",
+                        "matches": "plain-parameter"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "ARG002",
+        "message": "Remove `$N` if no caller passes it, or prefix it with an underscore if the signature must stay, such as to match a base class.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "ARG002"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,597 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-up007-non-pep604-annotation-union",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Write union types as X | Y instead of Union[X, Y]; the union operator is shorter and needs no typing import.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "shared",
+   "define": {
+    "language": "python",
+    "utils": {
+     "future-seen": {
+      "inside": {
+       "stopBy": "end",
+       "follows": {
+        "stopBy": "end",
+        "kind": "future_import_statement"
+       }
+      }
+     },
+     "annotation-root": {
+      "kind": "type",
+      "any": [
+       {
+        "inside": {
+         "stopBy": "neighbor",
+         "field": "type",
+         "any": [
+          {
+           "kind": "typed_parameter"
+          },
+          {
+           "kind": "typed_default_parameter"
+          },
+          {
+           "kind": "assignment"
+          }
+         ]
+        }
+       },
+       {
+        "inside": {
+         "stopBy": "neighbor",
+         "field": "return_type",
+         "kind": "function_definition"
+        }
+       }
+      ]
+     },
+     "named-tuple-ref": {
+      "any": [
+       {
+        "kind": "identifier"
+       },
+       {
+        "kind": "attribute"
+       }
+      ],
+      "resolves": {
+       "import": [
+        "typing.NamedTuple",
+        "typing_extensions.NamedTuple",
+        "_typeshed.NamedTuple"
+       ]
+      }
+     },
+     "named-tuple": {
+      "any": [
+       {
+        "matches": "named-tuple-ref"
+       },
+       {
+        "any": [
+         {
+          "kind": "type"
+         },
+         {
+          "kind": "parenthesized_expression"
+         }
+        ],
+        "has": {
+         "stopBy": "neighbor",
+         "matches": "named-tuple"
+        }
+       }
+      ]
+     },
+     "plain-string": {
+      "any": [
+       {
+        "kind": "string",
+        "not": {
+         "regex": "^[a-zA-Z]*[bBfFtT]"
+        }
+       },
+       {
+        "kind": "concatenated_string",
+        "not": {
+         "has": {
+          "stopBy": "neighbor",
+          "kind": "string",
+          "regex": "^[a-zA-Z]*[bBfFtT]"
+         }
+        }
+       }
+      ]
+     },
+     "quoted-element": {
+      "any": [
+       {
+        "matches": "plain-string"
+       },
+       {
+        "any": [
+         {
+          "kind": "type"
+         },
+         {
+          "kind": "tuple"
+         },
+         {
+          "kind": "parenthesized_expression"
+         }
+        ],
+        "has": {
+         "stopBy": "neighbor",
+         "matches": "quoted-element"
+        }
+       }
+      ]
+     },
+     "starred-element": {
+      "any": [
+       {
+        "kind": "list_splat"
+       },
+       {
+        "kind": "splat_type"
+       },
+       {
+        "any": [
+         {
+          "kind": "type"
+         },
+         {
+          "kind": "tuple"
+         }
+        ],
+        "has": {
+         "stopBy": "neighbor",
+         "matches": "starred-element"
+        }
+       }
+      ]
+     },
+     "plain-slice": {
+      "not": {
+       "any": [
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "starred-element"
+         }
+        },
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "named-tuple"
+         }
+        },
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "named-tuple-tuple"
+         },
+         "not": {
+          "has": {
+           "stopBy": "neighbor",
+           "regex": "^,$"
+          }
+         }
+        }
+       ]
+      }
+     },
+     "quoted-slice": {
+      "has": {
+       "stopBy": "neighbor",
+       "matches": "quoted-element"
+      }
+     },
+     "union-subscript": {
+      "kind": "subscript",
+      "matches": "plain-slice",
+      "has": {
+       "field": "value",
+       "matches": "union-head"
+      }
+     },
+     "union-generic": {
+      "kind": "generic_type",
+      "all": [
+       {
+        "has": {
+         "stopBy": "neighbor",
+         "kind": "identifier",
+         "matches": "union-head"
+        }
+       },
+       {
+        "has": {
+         "stopBy": "neighbor",
+         "kind": "type_parameter",
+         "matches": "plain-slice"
+        }
+       }
+      ]
+     },
+     "union-node": {
+      "any": [
+       {
+        "matches": "union-subscript"
+       },
+       {
+        "matches": "union-generic"
+       }
+      ]
+     },
+     "quoted-union": {
+      "any": [
+       {
+        "kind": "subscript",
+        "matches": "quoted-slice"
+       },
+       {
+        "kind": "generic_type",
+        "has": {
+         "stopBy": "neighbor",
+         "kind": "type_parameter",
+         "matches": "quoted-slice"
+        }
+       }
+      ]
+     },
+     "type-checking-test": {
+      "any": [
+       {
+        "kind": "identifier",
+        "regex": "^TYPE_CHECKING$"
+       },
+       {
+        "kind": "identifier",
+        "resolves": {
+         "import": [
+          "typing.TYPE_CHECKING",
+          "typing_extensions.TYPE_CHECKING",
+          "_typeshed.TYPE_CHECKING"
+         ]
+        }
+       },
+       {
+        "kind": "attribute",
+        "has": {
+         "field": "attribute",
+         "regex": "^TYPE_CHECKING$"
+        }
+       }
+      ]
+     },
+     "in-type-checking": {
+      "inside": {
+       "stopBy": "end",
+       "kind": "block",
+       "inside": {
+        "stopBy": "neighbor",
+        "field": "consequence",
+        "kind": "if_statement",
+        "has": {
+         "field": "condition",
+         "matches": "type-checking-test"
+        }
+       }
+      }
+     },
+     "in-annotation": {
+      "inside": {
+       "stopBy": "end",
+       "matches": "annotation-root"
+      }
+     },
+     "typing-ref": {
+      "any": [
+       {
+        "kind": "identifier"
+       },
+       {
+        "kind": "attribute"
+       }
+      ],
+      "resolves": {
+       "import": [
+        "typing",
+        "typing_extensions",
+        "_typeshed"
+       ],
+       "prefix": true
+      }
+     },
+     "string-site": {
+      "any": [
+       {
+        "matches": "in-annotation"
+       },
+       {
+        "follows": {
+         "stopBy": "neighbor",
+         "regex": "^\\($"
+        },
+        "inside": {
+         "stopBy": "neighbor",
+         "kind": "argument_list",
+         "follows": {
+          "stopBy": "neighbor",
+          "matches": "typing-ref"
+         }
+        }
+       },
+       {
+        "inside": {
+         "stopBy": "neighbor",
+         "field": "right",
+         "kind": "assignment",
+         "has": {
+          "field": "type",
+          "has": {
+           "stopBy": "neighbor",
+           "matches": "typing-ref"
+          }
+         }
+        }
+       }
+      ]
+     },
+     "in-local-annotation": {
+      "inside": {
+       "stopBy": "end",
+       "matches": "annotation-root",
+       "inside": {
+        "stopBy": "neighbor",
+        "kind": "assignment",
+        "inside": {
+         "stopBy": {
+          "any": [
+           {
+            "kind": "function_definition"
+           },
+           {
+            "kind": "class_definition"
+           }
+          ]
+         },
+         "kind": "function_definition"
+        }
+       }
+      }
+     },
+     "union-in-string": {
+      "matches": "string-annotation",
+      "parse": {
+       "grammar": "annotation",
+       "has": {
+        "stopBy": "end",
+        "any": [
+         {
+          "matches": "union-node",
+          "pattern": "$NAME"
+         },
+         {
+          "matches": "union-in-string"
+         }
+        ]
+       }
+      }
+     },
+     "string-annotation": {
+      "kind": "string",
+      "any": [
+       {
+        "not": {
+         "regex": "\\\\"
+        }
+       },
+       {
+        "regex": "^[a-zA-Z]*[rR]"
+       }
+      ]
+     },
+     "union-head": {
+      "any": [
+       {
+        "any": [
+         {
+          "kind": "identifier"
+         },
+         {
+          "kind": "attribute"
+         }
+        ],
+        "resolves": {
+         "import": [
+          "typing.Union",
+          "typing_extensions.Union",
+          "_typeshed.Union"
+         ]
+        }
+       },
+       {
+        "kind": "parenthesized_expression",
+        "has": {
+         "stopBy": "neighbor",
+         "matches": "union-head"
+        }
+       }
+      ]
+     },
+     "named-tuple-tuple": {
+      "any": [
+       {
+        "kind": "tuple",
+        "has": {
+         "stopBy": "neighbor",
+         "matches": "named-tuple"
+        }
+       },
+       {
+        "any": [
+         {
+          "kind": "type"
+         },
+         {
+          "kind": "parenthesized_expression"
+         }
+        ],
+        "has": {
+         "stopBy": "neighbor",
+         "matches": "named-tuple-tuple"
+        }
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "union-annotation",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "file": {
+      "path": {
+       "notRegex": "\\.pyi$"
+      }
+     },
+     "when": {
+      "pythonVersion": {
+       "min": "3.10"
+      }
+     },
+     "rule": {
+      "any": [
+       {
+        "matches": "union-node",
+        "pattern": "$NAME",
+        "any": [
+         {
+          "not": {
+           "matches": "quoted-union"
+          }
+         },
+         {
+          "any": [
+           {
+            "matches": "in-type-checking"
+           },
+           {
+            "matches": "in-local-annotation"
+           },
+           {
+            "matches": "future-seen",
+            "inside": {
+             "stopBy": "end",
+             "matches": "annotation-root"
+            }
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "matches": "union-in-string",
+        "all": [
+         {
+          "matches": "string-site"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.NAME",
+    "each": "NAME",
+    "code": "UP007",
+    "message": "Write `Union[X, Y]` as `X | Y`, and drop the `Union` import if nothing else uses it. Leave it where a library reads annotations at runtime on Python below 3.10.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP007"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "union-annotation-stub",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "file": {
+      "path": {
+       "regex": "\\.pyi$"
+      }
+     },
+     "when": {
+      "pythonVersion": {
+       "min": "3.10"
+      }
+     },
+     "rule": {
+      "any": [
+       {
+        "matches": "union-node",
+        "pattern": "$NAME",
+        "any": [
+         {
+          "not": {
+           "matches": "quoted-union"
+          }
+         },
+         {
+          "any": [
+           {
+            "matches": "in-type-checking"
+           },
+           {
+            "matches": "in-annotation"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "matches": "union-in-string",
+        "all": [
+         {
+          "matches": "string-site"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.NAME",
+    "each": "NAME",
+    "code": "UP007",
+    "message": "Write `Union[X, Y]` as `X | Y`, and drop the `Union` import if nothing else uses it. Leave it where a library reads annotations at runtime on Python below 3.10.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP007"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

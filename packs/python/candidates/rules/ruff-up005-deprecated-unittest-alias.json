@@ -3,7 +3,7 @@
   "id": "ruff-up005-deprecated-unittest-alias",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's UP005 (deprecated-unittest-alias): the callee of a call (parentheses transparent) that is an attribute `self.<alias>` whose object is the name `self` (parentheses transparent; compared, not resolved) and whose attribute is one of the fifteen deprecated `unittest` aliases Ruff lists (`assertEquals`, `failUnless`, `assert_`, ...). Reported on the attribute; the message names the replacement, as Ruff's does.",
+  "description": "Use the current unittest assertion methods instead of their deprecated aliases; the aliases were removed in Python 3.12.",
   "scope": {
     "include": [
       "**/*"
@@ -150,7 +150,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "UP005",
-        "message": "`$ALIAS` is deprecated, use `$TARGET`",
+        "message": "Replace `self.$ALIAS` with `self.$TARGET`; the alias is deprecated and was removed in Python 3.12. Leave it if this class defines its own `$ALIAS`.",
         "suppress": {
           "noqa": {
             "codes": [

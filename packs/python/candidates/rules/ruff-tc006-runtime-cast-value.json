@@ -1,0 +1,93 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-tc006-runtime-cast-value",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Quote the type expression passed to typing.cast; a quoted type is not evaluated at runtime and every cast call reads the same.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "unquoted-cast-type",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": { "path": { "notRegex": "\\.pyi$" } },
+          "utils": {
+            "cast-callee": {
+              "any": [
+                {
+                  "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                  "resolves": { "import": ["typing.cast", "typing_extensions.cast", "_typeshed.cast"] }
+                },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "cast-callee" } }
+              ]
+            },
+            "cast-call": {
+              "kind": "call",
+              "has": { "stopBy": "neighbor", "field": "function", "matches": "cast-callee" }
+            },
+            "plain-string": {
+              "any": [
+                { "kind": "string", "not": { "has": { "stopBy": "neighbor", "kind": "string_start", "regex": "[bBfFtT]" } } },
+                {
+                  "kind": "concatenated_string",
+                  "not": { "has": { "stopBy": "neighbor", "kind": "string", "has": { "stopBy": "neighbor", "kind": "string_start", "regex": "[bBfFtT]" } } }
+                },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "plain-string" } }
+              ]
+            },
+            "type-slot": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "argument_list",
+                    "inside": { "stopBy": "neighbor", "field": "arguments", "matches": "cast-call" }
+                  },
+                  "not": {
+                    "any": [
+                      { "kind": "keyword_argument" },
+                      { "kind": "dictionary_splat" },
+                      { "follows": { "stopBy": "end", "not": { "any": [{ "kind": "comment" }, { "regex": "^\\($" }] } } }
+                    ]
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "kind": "keyword_argument",
+                    "has": { "stopBy": "neighbor", "field": "name", "regex": "^typ$" },
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "argument_list",
+                      "inside": { "stopBy": "neighbor", "field": "arguments", "matches": "cast-call" }
+                    }
+                  }
+                },
+                { "inside": { "stopBy": "neighbor", "kind": "parenthesized_expression", "matches": "type-slot" } }
+              ]
+            }
+          },
+          "rule": {
+            "matches": "type-slot",
+            "not": {
+              "any": [
+                { "kind": "comment" },
+                { "kind": "parenthesized_expression" },
+                { "regex": "^[()]$" },
+                { "matches": "plain-string" }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "TC006",
+        "message": "Quote the type expression passed to this `cast()` call, as in `cast(\"list[int]\", value)`.",
+        "suppress": { "noqa": { "codes": ["TC006"] } }
+      }
+    }
+  ]
+}

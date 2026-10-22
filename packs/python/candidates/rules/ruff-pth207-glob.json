@@ -1,0 +1,217 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pth207-glob",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use Path.glob() or Path.rglob() instead of glob.glob() and glob.iglob(); path objects read better than string-based glob calls.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "glob-glob",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "glob.glob"
+                    ]
+                  },
+                  "pattern": "$F"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            },
+            "none-literal": {
+              "any": [
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "none-literal"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "has": {
+              "field": "function",
+              "matches": "callee"
+            },
+            "any": [
+              {
+                "arguments": {
+                  "signature": [
+                    "*",
+                    "dir_fd"
+                  ],
+                  "mode": "syntactic",
+                  "absent": [
+                    "dir_fd"
+                  ]
+                }
+              },
+              {
+                "arguments": {
+                  "signature": [
+                    "*",
+                    "dir_fd"
+                  ],
+                  "mode": "syntactic",
+                  "bind": {
+                    "D": "dir_fd"
+                  }
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "D": {
+              "matches": "none-literal"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.F",
+        "code": "PTH207",
+        "message": "Use `Path(root).glob(pattern)` (or `rglob`) instead of `glob.glob(...)`; it lazily yields `Path` objects and includes hidden files, so wrap it in `list(...)` where a list is needed.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PTH207"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "glob-iglob",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "glob.iglob"
+                    ]
+                  },
+                  "pattern": "$F"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            },
+            "none-literal": {
+              "any": [
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "none-literal"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "has": {
+              "field": "function",
+              "matches": "callee"
+            },
+            "any": [
+              {
+                "arguments": {
+                  "signature": [
+                    "*",
+                    "dir_fd"
+                  ],
+                  "mode": "syntactic",
+                  "absent": [
+                    "dir_fd"
+                  ]
+                }
+              },
+              {
+                "arguments": {
+                  "signature": [
+                    "*",
+                    "dir_fd"
+                  ],
+                  "mode": "syntactic",
+                  "bind": {
+                    "D": "dir_fd"
+                  }
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "D": {
+              "matches": "none-literal"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.F",
+        "code": "PTH207",
+        "message": "Use `Path(root).glob(pattern)` (or `rglob`) instead of `glob.iglob(...)`; it yields `Path` objects, includes hidden files, and `**` always recurses.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PTH207"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

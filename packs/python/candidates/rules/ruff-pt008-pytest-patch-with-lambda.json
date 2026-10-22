@@ -3,7 +3,7 @@
   "id": "ruff-pt008-pytest-patch-with-lambda",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's PT008 (pytest-patch-with-lambda): a call whose callee is, syntactically as Ruff's UnqualifiedName reads it (no name resolution; parentheses transparent), `mocker.patch`, `class_mocker.patch`, `module_mocker.patch`, `package_mocker.patch`, `session_mocker.patch`, `mock.patch` or `unittest.mock.patch` (its `new` argument the keyword `new=`, else the second positional argument when neither it nor an earlier one is `*args`), or one of those followed by `.object` (`new` the keyword, else the third positional argument); with no `return_value=` keyword; whose `new` argument is a `lambda` (parentheses transparent) that has no parameters, or whose body never reads one of its parameters by name (any name expression in the body, nested lambdas' bodies and defaults and comprehensions included). Arguments are read as Ruff's find_argument does, skipping comments and line continuations. Reported on the callee expression.",
+  "description": "Patch with a fixed return value rather than a lambda that ignores its arguments; it states the intent and keeps call assertions available.",
   "scope": {
     "include": [
       "**/*"
@@ -463,7 +463,7 @@
       "violation": {
         "anchor": "capture.F",
         "code": "PT008",
-        "message": "Use `return_value=` instead of patching with `lambda`",
+        "message": "Pass the lambda's result to `$F` as `return_value=` instead of a `lambda` that ignores its arguments; keep the lambda if its body must run on every call.",
         "suppress": {
           "noqa": {
             "codes": [

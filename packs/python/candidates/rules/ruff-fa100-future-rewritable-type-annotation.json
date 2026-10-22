@@ -1,0 +1,496 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-fa100-future-rewritable-type-annotation",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Add the future annotations import to modules whose annotations use typing aliases such as List or Optional, so they can use the shorter built-in generic and union forms.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "shared",
+   "define": {
+    "language": "python",
+    "utils": {
+     "future-annotations": {
+      "kind": "future_import_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "any": [
+        {
+         "kind": "dotted_name",
+         "regex": "^annotations$"
+        },
+        {
+         "kind": "aliased_import",
+         "has": {
+          "stopBy": "neighbor",
+          "kind": "dotted_name",
+          "regex": "^annotations$"
+         }
+        }
+       ]
+      }
+     },
+     "future-seen": {
+      "inside": {
+       "stopBy": "end",
+       "follows": {
+        "stopBy": "end",
+        "matches": "future-annotations"
+       }
+      }
+     },
+     "annotation-root": {
+      "kind": "type",
+      "any": [
+       {
+        "inside": {
+         "stopBy": "neighbor",
+         "field": "type",
+         "any": [
+          {
+           "kind": "typed_parameter"
+          },
+          {
+           "kind": "typed_default_parameter"
+          },
+          {
+           "kind": "assignment"
+          }
+         ]
+        }
+       },
+       {
+        "inside": {
+         "stopBy": "neighbor",
+         "field": "return_type",
+         "kind": "function_definition"
+        }
+       }
+      ]
+     },
+     "in-annotation": {
+      "inside": {
+       "stopBy": "end",
+       "matches": "annotation-root"
+      }
+     },
+     "pep585-alias": {
+      "any": [
+       {
+        "kind": "identifier"
+       },
+       {
+        "kind": "attribute"
+       }
+      ],
+      "resolves": {
+       "import": [
+        "typing.Dict",
+        "typing.FrozenSet",
+        "typing.List",
+        "typing.Set",
+        "typing.Tuple",
+        "typing.Type",
+        "typing.Deque",
+        "typing.DefaultDict",
+        "typing_extensions.Type",
+        "typing_extensions.Deque",
+        "typing_extensions.DefaultDict"
+       ]
+      }
+     },
+     "pep604-head": {
+      "any": [
+       {
+        "kind": "identifier"
+       },
+       {
+        "kind": "attribute"
+       }
+      ],
+      "resolves": {
+       "import": [
+        "typing.Optional",
+        "typing.Union",
+        "typing_extensions.Optional",
+        "typing_extensions.Union",
+        "_typeshed.Optional",
+        "_typeshed.Union"
+       ]
+      }
+     },
+     "plain-string": {
+      "any": [
+       {
+        "kind": "string",
+        "not": {
+         "regex": "^[a-zA-Z]*[bBfFtT]"
+        }
+       },
+       {
+        "kind": "concatenated_string",
+        "not": {
+         "has": {
+          "stopBy": "neighbor",
+          "kind": "string",
+          "regex": "^[a-zA-Z]*[bBfFtT]"
+         }
+        }
+       }
+      ]
+     },
+     "quoted-element": {
+      "any": [
+       {
+        "matches": "plain-string"
+       },
+       {
+        "any": [
+         {
+          "kind": "type"
+         },
+         {
+          "kind": "tuple"
+         },
+         {
+          "kind": "parenthesized_expression"
+         }
+        ],
+        "has": {
+         "stopBy": "neighbor",
+         "matches": "quoted-element"
+        }
+       }
+      ]
+     },
+     "starred-element": {
+      "any": [
+       {
+        "kind": "list_splat"
+       },
+       {
+        "kind": "splat_type"
+       },
+       {
+        "any": [
+         {
+          "kind": "type"
+         },
+         {
+          "kind": "tuple"
+         }
+        ],
+        "has": {
+         "stopBy": "neighbor",
+         "matches": "starred-element"
+        }
+       }
+      ]
+     },
+     "type-checking-test": {
+      "any": [
+       {
+        "kind": "identifier",
+        "regex": "^TYPE_CHECKING$"
+       },
+       {
+        "kind": "identifier",
+        "resolves": {
+         "import": [
+          "typing.TYPE_CHECKING",
+          "typing_extensions.TYPE_CHECKING",
+          "_typeshed.TYPE_CHECKING"
+         ]
+        }
+       },
+       {
+        "kind": "attribute",
+        "has": {
+         "field": "attribute",
+         "regex": "^TYPE_CHECKING$"
+        }
+       }
+      ]
+     },
+     "typing-context": {
+      "any": [
+       {
+        "inside": {
+         "stopBy": "end",
+         "kind": "block",
+         "inside": {
+          "stopBy": "neighbor",
+          "field": "consequence",
+          "kind": "if_statement",
+          "has": {
+           "field": "condition",
+           "matches": "type-checking-test"
+          }
+         }
+        }
+       },
+       {
+        "inside": {
+         "stopBy": "end",
+         "matches": "annotation-root",
+         "inside": {
+          "stopBy": "neighbor",
+          "kind": "assignment",
+          "inside": {
+           "stopBy": {
+            "any": [
+             {
+              "kind": "function_definition"
+             },
+             {
+              "kind": "class_definition"
+             }
+            ]
+           },
+           "kind": "function_definition"
+          }
+         }
+        }
+       }
+      ]
+     },
+     "rewritable-slice": {
+      "not": {
+       "has": {
+        "stopBy": "neighbor",
+        "matches": "starred-element"
+       }
+      },
+      "any": [
+       {
+        "not": {
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "quoted-element"
+         }
+        }
+       },
+       {
+        "matches": "typing-context"
+       }
+      ]
+     },
+     "string-annotation": {
+      "any": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "concatenated_string"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "future-rewritable-pep585-alias",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "file": {
+      "path": {
+       "notRegex": "\\.pyi$"
+      }
+     },
+     "when": {
+      "pythonVersion": {
+       "min": "3.7",
+       "max": "3.8"
+      }
+     },
+     "utils": {
+      "alias-in-string": {
+       "matches": "string-annotation",
+       "parse": {
+        "grammar": "annotation",
+        "has": {
+         "stopBy": "end",
+         "any": [
+          {
+           "matches": "pep585-alias",
+           "pattern": "$NAME"
+          },
+          {
+           "matches": "alias-in-string"
+          }
+         ]
+        }
+       }
+      }
+     },
+     "rule": {
+      "not": {
+       "matches": "future-seen"
+      },
+      "any": [
+       {
+        "matches": "pep585-alias",
+        "pattern": "$NAME"
+       },
+       {
+        "matches": "alias-in-string"
+       }
+      ],
+      "all": [
+       {
+        "matches": "in-annotation"
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.NAME",
+    "each": "NAME",
+    "code": "FA100",
+    "message": "Add `from __future__ import annotations` so `$NAME` can be written as its built-in generic (`list[...]`, `dict[...]`); skip if annotations are read at runtime.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "FA100"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "future-rewritable-pep604-union",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "file": {
+      "path": {
+       "notRegex": "\\.pyi$"
+      }
+     },
+     "when": {
+      "pythonVersion": {
+       "min": "3.7",
+       "max": "3.9"
+      }
+     },
+     "utils": {
+      "string-head": {
+       "matches": "pep604-head",
+       "precedes": {
+        "stopBy": "neighbor",
+        "regex": "^\\[$"
+       },
+       "inside": {
+        "stopBy": "neighbor",
+        "kind": "subscript",
+        "not": {
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "starred-element"
+         }
+        }
+       }
+      },
+      "head-in-string": {
+       "matches": "string-annotation",
+       "parse": {
+        "grammar": "annotation",
+        "has": {
+         "stopBy": "end",
+         "any": [
+          {
+           "matches": "string-head",
+           "pattern": "$NAME"
+          },
+          {
+           "matches": "head-in-string"
+          }
+         ]
+        }
+       }
+      },
+      "complex-string": {
+       "any": [
+        {
+         "kind": "concatenated_string"
+        },
+        {
+         "kind": "string",
+         "regex": "\\\\",
+         "not": {
+          "regex": "^[a-zA-Z]*[rR]"
+         }
+        }
+       ]
+      }
+     },
+     "rule": {
+      "not": {
+       "matches": "future-seen"
+      },
+      "any": [
+       {
+        "matches": "pep604-head",
+        "pattern": "$NAME",
+        "any": [
+         {
+          "inside": {
+           "stopBy": "neighbor",
+           "kind": "generic_type"
+          },
+          "precedes": {
+           "stopBy": "neighbor",
+           "kind": "type_parameter",
+           "matches": "rewritable-slice"
+          }
+         },
+         {
+          "inside": {
+           "stopBy": {
+            "not": {
+             "kind": "parenthesized_expression"
+            }
+           },
+           "field": "value",
+           "kind": "subscript",
+           "matches": "rewritable-slice"
+          }
+         }
+        ]
+       },
+       {
+        "matches": "head-in-string"
+       }
+      ],
+      "all": [
+       {
+        "matches": "in-annotation"
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.NAME",
+    "each": "NAME",
+    "code": "FA100",
+    "message": "Add `from __future__ import annotations` so `$NAME[...]` can be written with `|` (`X | None`); skip if annotations are read at runtime.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "FA100"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

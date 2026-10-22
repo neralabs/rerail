@@ -3,7 +3,7 @@
   "id": "ruff-pt013-pytest-incorrect-pytest-import",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's PT013 (pytest-incorrect-pytest-import): an `import` statement binding `pytest` or a `pytest.` submodule under an alias other than its own name (`import pytest as pt`, `import pytest.mark as m`; `import pytest as pytest` is fine), once per such alias, and a `from pytest import ...` or `from pytest.<sub> import ...` statement (absolute only: `from .pytest import x` is not one), in any scope. Reported on the whole statement.",
+  "description": "Import pytest as a plain module, without an alias or from-imports, and access its members through it; this keeps usage consistent across tests.",
   "scope": {
     "include": [
       "**/*"
@@ -58,7 +58,7 @@
       "violation": {
         "anchor": "capture.S",
         "code": "PT013",
-        "message": "Incorrect import of `pytest`; use `import pytest` instead",
+        "message": "Drop the alias: write `import pytest` and use `pytest.xxx` (for example `pytest.mark`); keep the alias only if another name `pytest` in this file would clash.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -86,7 +86,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PT013",
-        "message": "Incorrect import of `pytest`; use `import pytest` instead",
+        "message": "Replace this with `import pytest` and refer to each member as `pytest.<name>`, such as `pytest.fixture`; leave it if this repo imports pytest names directly on purpose.",
         "suppress": {
           "noqa": {
             "codes": [

@@ -1,0 +1,289 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up030-format-literals",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use automatic field numbering in str.format() strings instead of explicit positional indices.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "format-literals",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "plain-string": {
+              "any": [
+                { "kind": "string", "not": {"regex": "^[A-Za-z]*[fFbBtT][A-Za-z]*['\"]"} },
+                {
+                  "kind": "concatenated_string",
+                  "not": { "has": {"kind": "string", "regex": "^[A-Za-z]*[fFbBtT][A-Za-z]*['\"]"} }
+                }
+              ]
+            },
+            "permuted": {
+              "any": [
+                {
+                  "matches": "plain-string",
+                  "parse": {
+                    "grammar": "braceFormat",
+                    "all": [
+                      { "has": {"kind": "field"} },
+                      { "not": {"has": {"kind": "error"}} },
+                      {
+                        "not": {
+                          "has": { "stopBy": "end", "any": [{"kind": "auto"}, {"kind": "name"}] }
+                        }
+                      },
+                      {
+                        "not": {
+                          "has": { "stopBy": "end", "kind": "format_spec", "has": {"kind": "field"} }
+                        }
+                      },
+                      {
+                        "not": { "has": {"stopBy": "end", "kind": "index", "value": {"gt": 15}} }
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "index",
+                            "not": {
+                              "any": [
+                                { "value": {"eq": 0} },
+                                {
+                                  "value": { "eq": 1 },
+                                  "inside": {
+                                    "stopBy": "end",
+                                    "kind": "format",
+                                    "has": { "stopBy": "end", "kind": "index", "value": {"eq": 0} }
+                                  }
+                                },
+                                {
+                                  "value": { "eq": 2 },
+                                  "inside": {
+                                    "stopBy": "end",
+                                    "kind": "format",
+                                    "has": { "stopBy": "end", "kind": "index", "value": {"eq": 1} }
+                                  }
+                                },
+                                {
+                                  "value": { "eq": 3 },
+                                  "inside": {
+                                    "stopBy": "end",
+                                    "kind": "format",
+                                    "has": { "stopBy": "end", "kind": "index", "value": {"eq": 2} }
+                                  }
+                                },
+                                {
+                                  "value": { "eq": 4 },
+                                  "inside": {
+                                    "stopBy": "end",
+                                    "kind": "format",
+                                    "has": { "stopBy": "end", "kind": "index", "value": {"eq": 3} }
+                                  }
+                                },
+                                {
+                                  "value": { "eq": 5 },
+                                  "inside": {
+                                    "stopBy": "end",
+                                    "kind": "format",
+                                    "has": { "stopBy": "end", "kind": "index", "value": {"eq": 4} }
+                                  }
+                                },
+                                {
+                                  "value": { "eq": 6 },
+                                  "inside": {
+                                    "stopBy": "end",
+                                    "kind": "format",
+                                    "has": { "stopBy": "end", "kind": "index", "value": {"eq": 5} }
+                                  }
+                                },
+                                {
+                                  "value": { "eq": 7 },
+                                  "inside": {
+                                    "stopBy": "end",
+                                    "kind": "format",
+                                    "has": { "stopBy": "end", "kind": "index", "value": {"eq": 6} }
+                                  }
+                                },
+                                {
+                                  "value": { "eq": 8 },
+                                  "inside": {
+                                    "stopBy": "end",
+                                    "kind": "format",
+                                    "has": { "stopBy": "end", "kind": "index", "value": {"eq": 7} }
+                                  }
+                                },
+                                {
+                                  "value": { "eq": 9 },
+                                  "inside": {
+                                    "stopBy": "end",
+                                    "kind": "format",
+                                    "has": { "stopBy": "end", "kind": "index", "value": {"eq": 8} }
+                                  }
+                                },
+                                {
+                                  "value": { "eq": 10 },
+                                  "inside": {
+                                    "stopBy": "end",
+                                    "kind": "format",
+                                    "has": { "stopBy": "end", "kind": "index", "value": {"eq": 9} }
+                                  }
+                                },
+                                {
+                                  "value": { "eq": 11 },
+                                  "inside": {
+                                    "stopBy": "end",
+                                    "kind": "format",
+                                    "has": { "stopBy": "end", "kind": "index", "value": {"eq": 10} }
+                                  }
+                                },
+                                {
+                                  "value": { "eq": 12 },
+                                  "inside": {
+                                    "stopBy": "end",
+                                    "kind": "format",
+                                    "has": { "stopBy": "end", "kind": "index", "value": {"eq": 11} }
+                                  }
+                                },
+                                {
+                                  "value": { "eq": 13 },
+                                  "inside": {
+                                    "stopBy": "end",
+                                    "kind": "format",
+                                    "has": { "stopBy": "end", "kind": "index", "value": {"eq": 12} }
+                                  }
+                                },
+                                {
+                                  "value": { "eq": 14 },
+                                  "inside": {
+                                    "stopBy": "end",
+                                    "kind": "format",
+                                    "has": { "stopBy": "end", "kind": "index", "value": {"eq": 13} }
+                                  }
+                                },
+                                {
+                                  "value": { "eq": 15 },
+                                  "inside": {
+                                    "stopBy": "end",
+                                    "kind": "format",
+                                    "has": { "stopBy": "end", "kind": "index", "value": {"eq": 14} }
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "kind": "field",
+                            "capture": "I1",
+                            "precedes": {
+                              "stopBy": "end",
+                              "kind": "field",
+                              "capture": "I2",
+                              "compare": { "left": "I1", "op": "eq", "right": "I2", "text": "value" }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                { "kind": "parenthesized_expression", "has": {"matches": "permuted"} }
+              ]
+            },
+            "in-order": {
+              "any": [
+                {
+                  "matches": "plain-string",
+                  "parse": {
+                    "grammar": "braceFormat",
+                    "not": {
+                      "has": {
+                        "kind": "field",
+                        "capture": "J1",
+                        "precedes": {
+                          "stopBy": "end",
+                          "kind": "field",
+                          "capture": "J2",
+                          "compare": { "left": "J1", "op": "gt", "right": "J2", "text": "value" }
+                        }
+                      }
+                    }
+                  }
+                },
+                { "kind": "parenthesized_expression", "has": {"matches": "in-order"} }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "has": { "field": "function", "has": {"field": "object", "matches": "permuted"} }
+              },
+              {
+                "any": [
+                  {
+                    "pattern": "$S.format($$$A)",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "function",
+                          "has": { "field": "object", "matches": "in-order" }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "pattern": "$S.format($$$A)",
+                            "not": { "has": {"field": "arguments", "has": {"kind": "list_splat"}} }
+                          },
+                          { "pattern": "$S.format($$$A, *$R)" },
+                          { "pattern": "$S.format($$$A, *$R, $$$B)" }
+                        ]
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "field": "arguments",
+                            "has": {
+                              "any": [{"kind": "keyword_argument"}, {"kind": "dictionary_splat"}]
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "not": {
+                          "formatArgs": {
+                            "style": "brace",
+                            "string": "S",
+                            "args": "A",
+                            "missing": { "kind": "field" }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP030",
+        "message": "Replace the explicit indices (`{0}`, `{1}`) with automatic fields (`{}`); if they are out of order, reorder the call's arguments instead, unless side effects must keep their order.",
+        "suppress": { "noqa": {"codes": ["UP030"]} }
+      }
+    }
+  ]
+}

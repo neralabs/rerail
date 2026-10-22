@@ -1,0 +1,210 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-n816-mixed-case-variable-in-global-scope",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Name module-level variables in lowercase snake_case, not mixedCase, as PEP 8 recommends for variable names.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "mixed-case-variable-in-global-scope",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "nt-callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "collections.namedtuple",
+                      "typing.NamedTuple",
+                      "typing_extensions.NamedTuple",
+                      "_typeshed.NamedTuple"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "nt-callee"
+                  }
+                }
+              ]
+            },
+            "nt-value": {
+              "any": [
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "matches": "nt-callee"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "nt-value"
+                  }
+                }
+              ]
+            },
+            "nt-assign": {
+              "kind": "assignment",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "type",
+                  "kind": "type"
+                }
+              },
+              "has": {
+                "stopBy": "neighbor",
+                "field": "right",
+                "any": [
+                  {
+                    "matches": "nt-value"
+                  },
+                  {
+                    "kind": "assignment",
+                    "matches": "nt-assign"
+                  }
+                ]
+              }
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$NAME",
+            "all": [
+              {
+                "regex": "^[_\\x{FE33}\\x{FE34}\\x{FE4D}-\\x{FE4F}\\x{FF3F}]?[\\p{Lowercase}--[\\x{149}\\x{2E4}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}\\x{107B6}-\\x{107B9}]]"
+              },
+              {
+                "regex": "[\\p{Uppercase}\\x{1C5}\\x{1C8}\\x{1CB}\\x{1F2}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}]"
+              }
+            ],
+            "binds": {
+              "form": [
+                "assignment",
+                "annotated",
+                "annotation",
+                "augmented",
+                "named",
+                "for",
+                "with",
+                "match",
+                "typeAlias"
+              ],
+              "scope": "module",
+              "outer": false
+            },
+            "not": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "matches": "nt-assign"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "field": "superclasses",
+                    "kind": "class_definition"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "field": "type",
+                    "any": [
+                      {
+                        "kind": "typed_parameter"
+                      },
+                      {
+                        "kind": "typed_default_parameter"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "field": "return_type",
+                    "kind": "function_definition"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "field": "right",
+                    "kind": "type_alias_statement"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": {
+                      "kind": "for_in_clause",
+                      "nthChild": {
+                        "position": 1,
+                        "ofRule": {
+                          "kind": "for_in_clause"
+                        }
+                      }
+                    },
+                    "any": [
+                      {
+                        "kind": "list_comprehension"
+                      },
+                      {
+                        "kind": "set_comprehension"
+                      },
+                      {
+                        "kind": "dictionary_comprehension"
+                      },
+                      {
+                        "kind": "generator_expression"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "regex": "^(?:tearDownClass|setUpModule|asyncSetUp|asyncTearDown|setUpTestData|failureException|longMessage|maxDiff)$"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "N816",
+        "message": "Rename `$NAME` to lowercase snake_case, such as `my_variable`, and update its uses; keep the name if other modules import it or it mirrors an external API.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "N816"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

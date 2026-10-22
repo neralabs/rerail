@@ -1,0 +1,74 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-pth103-os-makedirs",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Use Path.mkdir(parents=True) instead of os.makedirs(); path objects read better than string-based os calls.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "os-makedirs",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "utils": {
+      "target": {
+       "any": [
+        {
+         "kind": "identifier"
+        },
+        {
+         "kind": "attribute"
+        }
+       ],
+       "resolves": {
+        "import": [
+         "os.makedirs"
+        ]
+       }
+      },
+      "callee": {
+       "any": [
+        {
+         "matches": "target",
+         "pattern": "$F"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee"
+         }
+        }
+       ]
+      }
+     },
+     "rule": {
+      "kind": "call",
+      "has": {
+       "field": "function",
+       "matches": "callee"
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.F",
+    "code": "PTH103",
+    "message": "Use `Path(name).mkdir(parents=True)` instead of `os.makedirs(name)`, passing `mode` and `exist_ok` on to `mkdir`; leave it where the path is bytes.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "PTH103"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

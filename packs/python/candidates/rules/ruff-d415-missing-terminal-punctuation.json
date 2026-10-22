@@ -1,0 +1,129 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-d415-missing-terminal-punctuation",
+  "revision": 1,
+  "mode": "steer",
+  "description": "End the summary line of every Python docstring with a period, question mark or exclamation point.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "missing-terminal-punctuation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "doc-stmt": {
+              "kind": "expression_statement",
+              "not": {
+                "any": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  },
+                  {
+                    "follows": {
+                      "stopBy": "end",
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                ]
+              },
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "module"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "block",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "kind": "class_definition"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "doc-holder": {
+              "any": [
+                {
+                  "matches": "doc-stmt"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "doc-holder"
+                  }
+                }
+              ]
+            },
+            "docstring": {
+              "kind": "string",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "string_start",
+                  "regex": "[bBfFtT]"
+                }
+              },
+              "inside": {
+                "stopBy": "neighbor",
+                "matches": "doc-holder"
+              }
+            }
+          },
+          "rule": {
+            "matches": "docstring",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "string_content",
+              "regex": "\\A(?:[^\\S\\n]*(?:[-~=#]+[^\\S\\n]*)?\\n)*(?:[^\\S\\n]*(?:[^\\s\\-~=#]|[-~=#]+(?:[^\\S\\n]+\\S|[^\\s\\-~=#]))[^\\n]*\\n)*(?:[^\\n]*[^\\s.!?\\\\\\-~=#]|[^\\n]*[^\\s\\-~=#][^\\n]*[-~=#]|[^\\S\\n]*[-~=#]+(?:[^\\S\\n]+[-~=#]+)+)[^\\S\\n]*(?:\\n[^\\S\\n]*(?:[-~=#]+[^\\S\\n]*)?(?:\\n[\\s\\S]*)?)?\\z",
+              "not": {
+                "any": [
+                  {
+                    "regex": "\\A\\s*:(?:param|type|raises|return|rtype)"
+                  },
+                  {
+                    "regex": "\\A\\s*:?(?:Arg(?:ument)?s|Attention|Attributes|Caution|Danger|Error|Examples?|Extended Summary|Hint|Important|Keyword Arg(?:ument)?s|Methods|Notes?|Other (?:Arg(?:ument)?s|Param(?:eter)?s)|Parameters|Raises|Receives|References|Returns?|See Also|Short Summary|Tip|Todo|Warnings?|Warns|Yields?)[^\\S\\n]*(?:\\n|\\z)"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "D415",
+        "anchor": "witness.span",
+        "message": "End the docstring's first paragraph (its summary) with a period, question mark or exclamation point.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "D415"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,474 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-fast001-fast-api-redundant-response-model",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove a FastAPI route's response_model argument when it repeats the return annotation; FastAPI already infers the response model from it.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "redundant-response-model",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "route-ctor": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "fastapi.FastAPI",
+                      "fastapi.APIRouter"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "route-ctor"
+                  }
+                }
+              ]
+            },
+            "route-ann": {
+              "any": [
+                {
+                  "matches": "route-ctor"
+                },
+                {
+                  "kind": "type",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "route-ann"
+                  }
+                }
+              ]
+            },
+            "route-init": {
+              "any": [
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "matches": "route-ctor"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "route-init"
+                  }
+                }
+              ]
+            },
+            "plain-target": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "plain-target"
+                  }
+                }
+              ]
+            },
+            "route-name": {
+              "kind": "identifier",
+              "any": [
+                {
+                  "resolves": {
+                    "binding": {
+                      "value": {
+                        "matches": "route-init"
+                      },
+                      "site": {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "type"
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "as_pattern",
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "with_item"
+                        },
+                        "all": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "route-init",
+                              "precedes": {
+                                "stopBy": "end",
+                                "regex": "^as$"
+                              }
+                            }
+                          },
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "as_pattern_target",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "matches": "plain-target"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "annotation": {
+                        "matches": "route-ann"
+                      },
+                      "site": {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "any": [
+                              {
+                                "kind": "list_splat_pattern"
+                              },
+                              {
+                                "kind": "dictionary_splat_pattern"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "function_definition",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "return_type",
+                          "matches": "route-ann"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "route-receiver": {
+              "any": [
+                {
+                  "matches": "route-name"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "route-receiver"
+                  }
+                }
+              ]
+            },
+            "route-attr": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "object",
+                    "matches": "route-receiver"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "attribute",
+                        "regex": "^(get|post|put|delete|patch|options|head|trace)$"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "route-attr"
+                  }
+                }
+              ]
+            },
+            "route-call": {
+              "kind": "call",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "function",
+                "matches": "route-attr"
+              }
+            },
+            "route-decorator": {
+              "kind": "decorator",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "route-call-expr"
+              }
+            },
+            "route-call-expr": {
+              "any": [
+                {
+                  "matches": "route-call"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "route-call-expr"
+                  }
+                }
+              ]
+            },
+            "type-shape": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "not": {
+                    "any": [
+                      {
+                        "resolves": {
+                          "unresolved": true
+                        }
+                      },
+                      {
+                        "resolves": {
+                          "unresolved": "star"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "subscript"
+                    },
+                    {
+                      "kind": "tuple"
+                    }
+                  ],
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "regex": "^[\\[\\](),]$"
+                          },
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "matches": "type-shape"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "type-shape"
+                  }
+                }
+              ]
+            },
+            "decorator-host": {
+              "any": [
+                {
+                  "matches": "route-decorator",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "decorated_definition",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "function_definition",
+                      "pattern": "$FN",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "return_type",
+                        "kind": "type",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "pattern": "$RET"
+                        }
+                      },
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "return_type",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "identifier",
+                            "resolves": {
+                              "binding": {
+                                "form": "typeParameter",
+                                "site": {
+                                  "inside": {
+                                    "stopBy": "end",
+                                    "kind": "function_definition",
+                                    "pattern": "$SF"
+                                  }
+                                }
+                              }
+                            },
+                            "compare": {
+                              "left": "SF",
+                              "op": "eq",
+                              "right": "FN",
+                              "text": "node"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "decorator-host"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "keyword_argument",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "name",
+              "regex": "^response_model$"
+            },
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "pattern": "$RM",
+                  "matches": "type-shape"
+                }
+              },
+              {
+                "not": {
+                  "follows": {
+                    "stopBy": "end",
+                    "kind": "keyword_argument",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "name",
+                      "regex": "^response_model$"
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "call",
+                    "matches": "route-call",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "decorator-host"
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "module",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "future_import_statement"
+                    }
+                  }
+                }
+              }
+            ],
+            "any": [
+              {
+                "compare": {
+                  "left": "RM",
+                  "op": "eq",
+                  "right": "RET",
+                  "text": "structure"
+                }
+              },
+              {
+                "compare": {
+                  "left": "RM",
+                  "op": "eq",
+                  "right": "RET",
+                  "text": "tokens"
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "notRegex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "FAST001",
+        "anchor": "witness.span",
+        "message": "Remove `response_model=$RM`: FastAPI 0.89 and newer already use the route's return annotation, which names the same type. Keep it on older versions.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "FAST001"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

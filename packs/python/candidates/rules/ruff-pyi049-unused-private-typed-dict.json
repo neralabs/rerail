@@ -1,0 +1,232 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi049-unused-private-typed-dict",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use, make public or remove a private TypedDict that nothing in its file references; an unused private TypedDict is likely a mistake.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "typeddict-ref": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "typing.TypedDict",
+                    "typing_extensions.TypedDict",
+                    "_typeshed.TypedDict"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "typeddict-ref"
+                }
+              }
+            ]
+          },
+          "typeddict-site": {
+            "any": [
+              {
+                "kind": "class_definition",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "superclasses",
+                  "kind": "argument_list",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "typeddict-ref"
+                  }
+                }
+              },
+              {
+                "kind": "assignment",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "right",
+                  "matches": "typeddict-call"
+                },
+                "not": {
+                  "any": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "regex": "^:$"
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "assignment"
+                      }
+                    }
+                  ]
+                },
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "left",
+                      "matches": "simple-target"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "typeddict-call": {
+            "any": [
+              {
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "typeddict-ref"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "typeddict-call"
+                }
+              }
+            ]
+          },
+          "simple-target": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "tuple_pattern",
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "regex": "^,$"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "parenthesized_expression"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "simple-target"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "unused-private-typed-dict",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$NAME",
+            "regex": "^_",
+            "binds": {
+              "form": [
+                "definition",
+                "assignment"
+              ],
+              "site": {
+                "matches": "typeddict-site"
+              },
+              "latest": true,
+              "used": false,
+              "scope": [
+                "module",
+                "function"
+              ]
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "\\.py$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI049",
+        "message": "Nothing in this file uses the private TypedDict `$NAME`. Use it, rename it without the underscore if other modules import it, or remove it once nothing does.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI049"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "unused-private-typed-dict-stub",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$NAME",
+            "regex": "^_",
+            "binds": {
+              "form": [
+                "definition",
+                "assignment"
+              ],
+              "site": {
+                "matches": "typeddict-site"
+              },
+              "latest": true,
+              "used": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI049",
+        "message": "Nothing in this file uses the private TypedDict `$NAME`. Use it, rename it without the underscore if other modules import it, or remove it once nothing does.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI049"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,282 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi010-non-empty-stub-body",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use an ellipsis as the whole body of a function in stub files instead of real statements; stubs are never executed, so bodies are redundant.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "filler": {
+            "any": [
+              {
+                "kind": "comment"
+              },
+              {
+                "kind": "line_continuation"
+              },
+              {
+                "regex": "^;$"
+              }
+            ]
+          },
+          "plain-prefix": {
+            "regex": "^[ruRU]{0,2}[\"']"
+          },
+          "docstring-value": {
+            "any": [
+              {
+                "kind": "string",
+                "matches": "plain-prefix"
+              },
+              {
+                "kind": "concatenated_string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "not": {
+                      "matches": "plain-prefix"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "docstring-value"
+                }
+              }
+            ]
+          },
+          "ellipsis-value": {
+            "any": [
+              {
+                "kind": "ellipsis"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "ellipsis-value"
+                }
+              }
+            ]
+          },
+          "allowed-body": {
+            "any": [
+              {
+                "kind": "pass_statement"
+              },
+              {
+                "kind": "expression_statement",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  }
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "matches": "docstring-value"
+                    },
+                    {
+                      "matches": "ellipsis-value"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "sole-statement": {
+            "not": {
+              "any": [
+                {
+                  "matches": "filler"
+                },
+                {
+                  "matches": "allowed-body"
+                },
+                {
+                  "any": [
+                    {
+                      "follows": {
+                        "stopBy": "end",
+                        "not": {
+                          "matches": "filler"
+                        }
+                      }
+                    },
+                    {
+                      "precedes": {
+                        "stopBy": "end",
+                        "not": {
+                          "matches": "filler"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "block",
+              "inside": {
+                "stopBy": "neighbor",
+                "field": "body",
+                "kind": "function_definition"
+              }
+            }
+          },
+          "block-like": {
+            "any": [
+              {
+                "kind": "block"
+              },
+              {
+                "kind": "if_statement"
+              },
+              {
+                "kind": "elif_clause"
+              },
+              {
+                "kind": "else_clause"
+              },
+              {
+                "kind": "for_statement"
+              },
+              {
+                "kind": "while_statement"
+              },
+              {
+                "kind": "try_statement"
+              },
+              {
+                "kind": "except_clause"
+              },
+              {
+                "kind": "finally_clause"
+              },
+              {
+                "kind": "with_statement"
+              },
+              {
+                "kind": "match_statement"
+              },
+              {
+                "kind": "case_clause"
+              },
+              {
+                "kind": "function_definition"
+              },
+              {
+                "kind": "class_definition"
+              },
+              {
+                "kind": "decorated_definition"
+              }
+            ]
+          },
+          "ends-in-comment": {
+            "matches": "block-like",
+            "has": {
+              "stopBy": "neighbor",
+              "nthChild": {
+                "position": 1,
+                "reverse": true
+              },
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "matches": "ends-in-comment"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "non-empty-stub-body",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "sole-statement",
+            "not": {
+              "matches": "ends-in-comment"
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI010",
+        "message": "Replace this function body with `...`; stubs are never executed, so a real body is redundant.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI010"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "non-empty-stub-body-before-comment",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "matches": "sole-statement"
+              },
+              {
+                "matches": "ends-in-comment"
+              }
+            ],
+            "regex": "^(?P<BODY>(?s:.*?))(?:\\s*#[^\\n]*)+$"
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.BODY",
+        "code": "PYI010",
+        "message": "Replace this function body with `...`; stubs are never executed, so a real body is redundant.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI010"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

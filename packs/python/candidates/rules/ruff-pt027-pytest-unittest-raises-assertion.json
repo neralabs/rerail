@@ -3,7 +3,7 @@
   "id": "ruff-pt027-pytest-unittest-raises-assertion",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's PT027 (pytest-unittest-raises-assertion), `unittest_raises_assertion_call` and `unittest_raises_assertion_binding` in flake8_pytest_style/rules/assertion.rs: a call whose callee (parentheses transparent) is an attribute access `<x>.assertRaises`, `<x>.failUnlessRaises`, `<x>.assertRaisesRegex` or `<x>.assertRaisesRegexp`, whatever `<x>` is. The call path skips a call that is itself (parentheses transparent) the context expression of a `with` item with an `as` target, and the binding path reports it again only when that target is a plain name, so such a call with a tuple, list, attribute, subscript or starred target is not reported. Reported on the callee (the attribute, inside any parentheses), with the attribute name in the message.",
+  "description": "Use pytest.raises instead of assertRaises-style methods such as assertRaises and assertRaisesRegex; it is the exception-testing style pytest recommends.",
   "scope": {
     "include": [
       "**/*"
@@ -106,7 +106,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PT027",
-        "message": "Use `pytest.raises` instead of unittest-style `$ASSERTION`",
+        "message": "Use `pytest.raises` instead of `$ASSERTION`: a regex goes in `match=` and an `as` target's `.exception` becomes `.value`. Leave it in tests that don't run under pytest.",
         "suppress": {
           "noqa": {
             "codes": [

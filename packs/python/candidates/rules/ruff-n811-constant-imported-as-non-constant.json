@@ -1,0 +1,151 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-n811-constant-imported-as-non-constant",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Keep the alias of an imported constant in UPPER_CASE; a lowercase or CamelCase alias makes readers mistake the constant for a variable or class.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "constant-imported-as-non-constant",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "has-lower": {
+              "regex": "[\\x{1C5}\\x{1C8}\\x{1CB}\\x{1F2}[\\p{Lowercase}--[\\x{2E4}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}\\x{107B6}-\\x{107B9}]]]"
+            },
+            "has-upper": {
+              "regex": "[\\p{Uppercase}\\x{1C5}\\x{1C8}\\x{1CB}\\x{1F2}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}]"
+            },
+            "cased-upper": {
+              "all": [
+                {
+                  "matches": "has-upper"
+                },
+                {
+                  "not": {
+                    "matches": "has-lower"
+                  }
+                }
+              ]
+            },
+            "cased-lower": {
+              "all": [
+                {
+                  "matches": "has-lower"
+                },
+                {
+                  "not": {
+                    "matches": "has-upper"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "aliased_import",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "kind": "dotted_name",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "nthChild": {
+                      "position": 1,
+                      "reverse": true,
+                      "ofRule": {
+                        "kind": "identifier"
+                      }
+                    },
+                    "pattern": "$NAME",
+                    "matches": "cased-upper"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "alias",
+                  "kind": "identifier",
+                  "pattern": "$ASNAME",
+                  "not": {
+                    "any": [
+                      {
+                        "matches": "cased-upper"
+                      },
+                      {
+                        "regex": "^(?:setUp|tearDown|setUpClass|tearDownClass|setUpModule|tearDownModule|asyncSetUp|asyncTearDown|setUpTestData|failureException|longMessage|maxDiff)$"
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "not": {
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "name",
+                    "kind": "dotted_name",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "nthChild": {
+                        "position": 1,
+                        "reverse": true,
+                        "ofRule": {
+                          "kind": "identifier"
+                        }
+                      },
+                      "regex": "^.$"
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "alias",
+                    "kind": "identifier",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "_"
+                        },
+                        {
+                          "matches": "cased-lower"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "N811",
+        "message": "Drop `as $ASNAME` or use an UPPER_CASE alias for the constant `$NAME`, and update its uses; keep the alias if `$NAME` is really a class.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "N811"
+            ],
+            "parent": "statement"
+          }
+        }
+      }
+    }
+  ]
+}

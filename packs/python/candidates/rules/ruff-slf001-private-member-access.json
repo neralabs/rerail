@@ -1,0 +1,654 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-slf001-private-member-access",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid accessing underscore-prefixed members of other objects; use the class's public interface, since private members can change without notice.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "options",
+      "define": {
+        "options": {
+          "flake8-self.ignore-names": {
+            "type": "array",
+            "items": "string",
+            "default": [
+              "_make",
+              "_asdict",
+              "_replace",
+              "_fields",
+              "_field_defaults",
+              "_name_",
+              "_value_"
+            ],
+            "description": "Attribute names that may be accessed even though they start with an underscore."
+          }
+        }
+      }
+    },
+    {
+      "id": "private-member-access",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "private-name": {
+              "kind": "identifier",
+              "regex": "^_",
+              "all": [
+                {
+                  "not": {
+                    "regex": "^__(?:_|.*__)?$"
+                  }
+                },
+                {
+                  "not": {
+                    "regex": "^(?:_|_[^_](?:.*[^_])?_)$"
+                  }
+                },
+                {
+                  "$option": "flake8-self.ignore-names",
+                  "cases": {
+                    "[]": {
+                      "kind": "identifier"
+                    }
+                  },
+                  "default": {
+                    "not": {
+                      "regex": {
+                        "$option": "flake8-self.ignore-names",
+                        "escape": "regex",
+                        "join": "|",
+                        "template": "^(?:{})$"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "annotation-type": {
+              "kind": "type",
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "typed_parameter"
+                  },
+                  {
+                    "kind": "typed_default_parameter"
+                  },
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "kind": "assignment"
+                  }
+                ]
+              }
+            },
+            "in-annotation": {
+              "inside": {
+                "stopBy": "end",
+                "matches": "annotation-type"
+              }
+            },
+            "dunder-operator-function": {
+              "kind": "function_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "name",
+                "regex": "^(?:__lt__|__le__|__eq__|__ne__|__gt__|__ge__|__add__|__sub__|__mul__|__matmul__|__truediv__|__floordiv__|__mod__|__divmod__|__pow__|__lshift__|__rshift__|__and__|__xor__|__or__|__radd__|__rsub__|__rmul__|__rmatmul__|__rtruediv__|__rfloordiv__|__rmod__|__rdivmod__|__rpow__|__rlshift__|__rrshift__|__rand__|__rxor__|__ror__|__iadd__|__isub__|__imul__|__imatmul__|__itruediv__|__ifloordiv__|__imod__|__ipow__|__ilshift__|__irshift__|__iand__|__ixor__|__ior__)$"
+              }
+            },
+            "in-dunder-operator": {
+              "inside": {
+                "stopBy": {
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "lambda"
+                    },
+                    {
+                      "kind": "class_definition"
+                    },
+                    {
+                      "kind": "list_comprehension"
+                    },
+                    {
+                      "kind": "set_comprehension"
+                    },
+                    {
+                      "kind": "dictionary_comprehension"
+                    },
+                    {
+                      "kind": "generator_expression"
+                    }
+                  ]
+                },
+                "matches": "dunder-operator-function"
+              }
+            },
+            "receiver-name": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^(?:self|cls|mcs)$"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "receiver-name"
+                  }
+                }
+              ]
+            },
+            "super-call": {
+              "any": [
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "kind": "identifier",
+                    "regex": "^super$"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "super-call"
+                  }
+                }
+              ]
+            },
+            "static-decorator": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "builtins.staticmethod",
+                      "abc.abstractstaticmethod"
+                    ],
+                    "global": [
+                      "staticmethod"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "static-decorator"
+                  }
+                }
+              ]
+            },
+            "decorated-static": {
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "decorated_definition",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "decorator",
+                  "has": {
+                    "stopBy": {
+                      "not": {
+                        "kind": "parenthesized_expression"
+                      }
+                    },
+                    "any": [
+                      {
+                        "matches": "static-decorator"
+                      },
+                      {
+                        "kind": "call",
+                        "has": {
+                          "stopBy": {
+                            "not": {
+                              "kind": "parenthesized_expression"
+                            }
+                          },
+                          "field": "function",
+                          "matches": "static-decorator"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "instance-or-class-method": {
+              "kind": "function_definition",
+              "inside": {
+                "stopBy": {
+                  "any": [
+                    {
+                      "kind": "class_definition"
+                    },
+                    {
+                      "kind": "function_definition"
+                    }
+                  ]
+                },
+                "kind": "class_definition"
+              },
+              "not": {
+                "matches": "decorated-static"
+              }
+            },
+            "receiver-parameter": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "default_parameter"
+                },
+                {
+                  "kind": "typed_parameter",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier"
+                  }
+                },
+                {
+                  "kind": "typed_default_parameter"
+                }
+              ],
+              "nthChild": {
+                "position": 1,
+                "ofRule": {
+                  "not": {
+                    "kind": "comment"
+                  }
+                }
+              },
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "parameters",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "parameters",
+                  "matches": "instance-or-class-method"
+                }
+              }
+            },
+            "enclosing-class-name": {
+              "kind": "identifier",
+              "pattern": "$CLS",
+              "inside": {
+                "stopBy": "end",
+                "kind": "block",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "class_definition",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "name",
+                    "pattern": "$CLS"
+                  }
+                }
+              }
+            },
+            "self-type": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "typing.Self",
+                  "typing_extensions.Self",
+                  "_typeshed.Self"
+                ]
+              }
+            },
+            "annotated-head": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "typing.Annotated",
+                  "typing_extensions.Annotated",
+                  "_typeshed.Annotated"
+                ]
+              }
+            },
+            "same-class-type": {
+              "any": [
+                {
+                  "matches": "enclosing-class-name"
+                },
+                {
+                  "matches": "self-type"
+                },
+                {
+                  "kind": "generic_type",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "nthChild": {
+                      "position": 1
+                    },
+                    "any": [
+                      {
+                        "matches": "enclosing-class-name"
+                      },
+                      {
+                        "matches": "self-type"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "generic_type",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "annotated-head"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "type_parameter",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "type",
+                          "nthChild": {
+                            "position": 1
+                          },
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "same-class-type"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "same-class-annotation": {
+              "kind": "type",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "same-class-type"
+              }
+            },
+            "same-class-callee": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^(?:cls|mcs)$"
+                },
+                {
+                  "matches": "enclosing-class-name"
+                },
+                {
+                  "kind": "subscript",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "any": [
+                      {
+                        "matches": "enclosing-class-name"
+                      },
+                      {
+                        "matches": "self-type"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "object",
+                    "kind": "call",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "function",
+                      "kind": "identifier",
+                      "regex": "^super$"
+                    }
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "attribute",
+                        "regex": "^__new__$"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "same-class-callee"
+                  }
+                }
+              ]
+            },
+            "same-class-value": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^self$",
+                  "resolves": {
+                    "binding": {
+                      "form": "parameter"
+                    }
+                  }
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "matches": "same-class-callee"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "same-class-value"
+                  }
+                }
+              ]
+            },
+            "class-itself": {
+              "kind": "identifier",
+              "pattern": "$CLS",
+              "resolves": {
+                "binding": {
+                  "form": "definition",
+                  "site": {
+                    "kind": "class_definition"
+                  }
+                }
+              },
+              "inside": {
+                "stopBy": "end",
+                "kind": "block",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "class_definition",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "name",
+                    "pattern": "$CLS"
+                  }
+                }
+              }
+            },
+            "same-class-instance": {
+              "kind": "identifier",
+              "any": [
+                {
+                  "resolves": {
+                    "binding": {
+                      "form": "parameter",
+                      "site": {
+                        "matches": "receiver-parameter"
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "value": {
+                        "matches": "same-class-value"
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "annotation": {
+                        "matches": "same-class-annotation"
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "form": "parameter",
+                      "site": {
+                        "any": [
+                          {
+                            "kind": "typed_parameter"
+                          },
+                          {
+                            "kind": "typed_default_parameter"
+                          }
+                        ],
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "type",
+                          "matches": "same-class-annotation"
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "form": "definition",
+                      "site": {
+                        "kind": "function_definition",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "return_type",
+                          "matches": "same-class-annotation"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "attribute",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "attribute",
+                  "matches": "private-name"
+                }
+              },
+              {
+                "not": {
+                  "matches": "in-annotation"
+                }
+              },
+              {
+                "not": {
+                  "matches": "in-dunder-operator"
+                }
+              },
+              {
+                "not": {
+                  "resolves": {
+                    "import": [
+                      "os._exit"
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "object",
+                    "any": [
+                      {
+                        "matches": "receiver-name"
+                      },
+                      {
+                        "matches": "super-call"
+                      },
+                      {
+                        "matches": "class-itself"
+                      },
+                      {
+                        "matches": "same-class-instance"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "SLF001",
+        "message": "Use the class's public interface instead of this private member; keep it only where the class is yours to change or the access is deliberate.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SLF001"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

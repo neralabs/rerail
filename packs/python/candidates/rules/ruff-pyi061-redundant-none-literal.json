@@ -1,0 +1,346 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi061-redundant-none-literal",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Write None as plain None or in a union with None, not inside a Literal type; the meaning is the same and the union reads more clearly.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "literal-name": {
+            "any": [
+              {
+                "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+                "resolves": { "import": ["typing.Literal", "typing_extensions.Literal", "_typeshed.Literal"] }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": { "stopBy": "neighbor", "matches": "literal-name" }
+              }
+            ]
+          },
+          "literal-sub": {
+            "kind": "subscript",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "literal-name",
+              "not": { "follows": {"stopBy": "neighbor", "regex": "(?s)."} }
+            }
+          },
+          "literal-gen": {
+            "kind": "generic_type",
+            "has": { "stopBy": "neighbor", "kind": "identifier", "matches": "literal-name" }
+          },
+          "literal": { "any": [{"matches": "literal-sub"}, {"matches": "literal-gen"}] },
+          "direct-slot": {
+            "any": [
+              {
+                "inside": { "stopBy": "neighbor", "matches": "literal-sub" },
+                "pattern": "$_",
+                "not": { "kind": "comment" },
+                "follows": { "stopBy": "end", "regex": "^\\[$" }
+              },
+              {
+                "kind": "type",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "type_parameter",
+                  "inside": { "stopBy": "neighbor", "matches": "literal-gen" }
+                }
+              }
+            ]
+          },
+          "tuple-slot": {
+            "matches": "direct-slot",
+            "any": [{"kind": "tuple"}, {"kind": "type", "has": {"stopBy": "neighbor", "kind": "tuple"}}],
+            "not": {
+              "any": [
+                { "follows": {"stopBy": "end", "matches": "direct-slot"} },
+                { "precedes": {"stopBy": "end", "matches": "direct-slot"} }
+              ]
+            }
+          },
+          "slot": {
+            "any": [
+              { "matches": "direct-slot" },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "tuple",
+                  "any": [
+                    { "matches": "tuple-slot" },
+                    { "inside": {"stopBy": "neighbor", "kind": "type", "matches": "tuple-slot"} }
+                  ]
+                },
+                "pattern": "$_",
+                "not": { "kind": "comment" }
+              }
+            ]
+          },
+          "wraps-literal": {
+            "any": [
+              { "matches": "literal" },
+              {
+                "any": [{"kind": "type"}, {"kind": "parenthesized_expression"}],
+                "has": { "stopBy": "neighbor", "matches": "wraps-literal" }
+              }
+            ]
+          },
+          "wraps-container": {
+            "any": [
+              { "kind": "subscript" },
+              { "kind": "generic_type" },
+              {
+                "any": [{"kind": "type"}, {"kind": "parenthesized_expression"}],
+                "has": { "stopBy": "neighbor", "matches": "wraps-container" }
+              }
+            ]
+          },
+          "nested-slot": { "matches": "slot", "all": [{"matches": "wraps-literal"}] },
+          "container-slot": { "matches": "slot", "any": [{"matches": "wraps-container"}, {"matches": "tuple-slot"}] },
+          "leaf-slot": { "matches": "slot", "not": {"matches": "container-slot"} },
+          "in-literal-chain": {
+            "any": [
+              { "matches": "literal" },
+              {
+                "kind": "type_parameter",
+                "inside": { "stopBy": "neighbor", "matches": "literal-gen" }
+              },
+              { "matches": "slot" },
+              {
+                "kind": "tuple",
+                "inside": { "stopBy": "neighbor", "kind": "type", "matches": "tuple-slot" }
+              },
+              { "kind": "parenthesized_expression" }
+            ]
+          },
+          "none-expr": {
+            "any": [
+              { "kind": "none", "pattern": "$NONE" },
+              {
+                "any": [{"kind": "type"}, {"kind": "parenthesized_expression"}],
+                "has": { "stopBy": "neighbor", "matches": "none-expr" }
+              }
+            ]
+          },
+          "deep-slots-have-other": {
+            "any": [
+              { "matches": "slots-have-other" },
+              {
+                "any": [{"kind": "type"}, {"kind": "parenthesized_expression"}],
+                "has": { "stopBy": "neighbor", "matches": "deep-slots-have-other" }
+              }
+            ]
+          },
+          "slots-have-other": {
+            "any": [
+              {
+                "matches": "literal",
+                "any": [
+                  {
+                    "kind": "subscript",
+                    "has": { "stopBy": "neighbor", "matches": "contains-other" }
+                  },
+                  {
+                    "kind": "generic_type",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "type_parameter",
+                      "has": { "stopBy": "neighbor", "matches": "contains-other" }
+                    }
+                  }
+                ]
+              },
+              {
+                "matches": "tuple-slot",
+                "kind": "tuple",
+                "has": { "stopBy": "neighbor", "matches": "contains-other" }
+              },
+              {
+                "matches": "tuple-slot",
+                "kind": "type",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "tuple",
+                  "has": { "stopBy": "neighbor", "matches": "contains-other" }
+                }
+              }
+            ]
+          },
+          "contains-other": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "pattern": "$_",
+                    "not": { "kind": "comment" },
+                    "any": [{"kind": "type"}, {"follows": {"stopBy": "end", "regex": "^[\\[(]$"}}]
+                  },
+                  { "not": {"matches": "none-expr"} },
+                  { "not": {"matches": "wraps-container"} },
+                  { "not": {"matches": "tuple-slot"} }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "pattern": "$_",
+                    "not": { "kind": "comment" },
+                    "any": [{"kind": "type"}, {"follows": {"stopBy": "end", "regex": "^[\\[(]$"}}]
+                  },
+                  {
+                    "any": [
+                      { "kind": "subscript" },
+                      { "kind": "generic_type" },
+                      { "kind": "tuple" },
+                      {
+                        "any": [{"kind": "type"}, {"kind": "parenthesized_expression"}],
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            { "kind": "subscript" },
+                            { "kind": "generic_type" },
+                            { "kind": "tuple" },
+                            { "kind": "type" },
+                            { "kind": "parenthesized_expression" }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  { "matches": "deep-slots-have-other" }
+                ]
+              }
+            ]
+          },
+          "other-sibling": {
+            "any": [
+              { "precedes": {"stopBy": "end", "matches": "contains-other"} },
+              { "follows": {"stopBy": "end", "matches": "contains-other"} }
+            ]
+          },
+          "has-other": {
+            "any": [
+              { "matches": "other-sibling" },
+              {
+                "inside": {
+                  "stopBy": { "not": {"matches": "in-literal-chain"} },
+                  "all": [{"matches": "nested-slot"}, {"matches": "other-sibling"}]
+                }
+              }
+            ]
+          },
+          "none-only": {
+            "matches": "leaf-slot",
+            "all": [{"matches": "none-expr"}, {"not": {"matches": "has-other"}}]
+          },
+          "none-with-other": { "matches": "leaf-slot", "all": [{"matches": "none-expr"}, {"matches": "has-other"}] }
+        }
+      }
+    },
+    {
+      "id": "none-only-literal",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "inside": { "stopBy": "neighbor", "any": [{"kind": "subscript"}, {"kind": "tuple"}] },
+                    "pattern": "$_"
+                  },
+                  { "kind": "type", "inside": {"stopBy": "neighbor", "kind": "type_parameter"} }
+                ]
+              },
+              { "matches": "none-only" }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.NONE",
+        "code": "PYI061",
+        "message": "This Literal holds only `None`; write plain `None` instead. Leave it if runtime code reads this annotation's arguments.",
+        "suppress": { "noqa": {"codes": ["PYI061"]} }
+      }
+    },
+    {
+      "id": "none-with-other-members",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "inside": { "stopBy": "neighbor", "any": [{"kind": "subscript"}, {"kind": "tuple"}] },
+                    "pattern": "$_"
+                  },
+                  { "kind": "type", "inside": {"stopBy": "neighbor", "kind": "type_parameter"} }
+                ]
+              },
+              { "matches": "none-with-other" }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.NONE",
+        "code": "PYI061",
+        "message": "Move `None` out of this Literal and write `Literal[...] | None` (`Optional[Literal[...]]` before Python 3.10). Leave it if runtime code reads this annotation's arguments.",
+        "suppress": { "noqa": {"codes": ["PYI061"]} }
+      }
+    },
+    {
+      "id": "none-only-literal-in-string",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [{"kind": "string"}, {"kind": "concatenated_string"}],
+            "parse": {
+              "grammar": "annotation",
+              "has": { "stopBy": "end", "matches": "none-only", "capture": "N" }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "each": "N",
+        "code": "PYI061",
+        "message": "This Literal holds only `None`; write plain `None` instead. Leave it if runtime code reads this annotation's arguments.",
+        "suppress": { "noqa": {"codes": ["PYI061"]} }
+      }
+    },
+    {
+      "id": "none-with-other-members-in-string",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [{"kind": "string"}, {"kind": "concatenated_string"}],
+            "parse": {
+              "grammar": "annotation",
+              "has": { "stopBy": "end", "matches": "none-with-other", "capture": "N" }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "each": "N",
+        "code": "PYI061",
+        "message": "Move `None` out of this Literal and write `Literal[...] | None` (`Optional[Literal[...]]` before Python 3.10). Leave it if runtime code reads this annotation's arguments.",
+        "suppress": { "noqa": {"codes": ["PYI061"]} }
+      }
+    }
+  ]
+}

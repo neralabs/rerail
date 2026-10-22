@@ -1,0 +1,775 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-pth123-builtin-open",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Use the open method of a Path object instead of the open builtin; pathlib reads better than passing path strings around.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "builtin-open",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "call",
+      "all": [
+       {
+        "has": {
+         "stopBy": "neighbor",
+         "field": "function",
+         "matches": "callee"
+        }
+       },
+       {
+        "not": {
+         "matches": "skip"
+        }
+       }
+      ]
+     },
+     "utils": {
+      "callee": {
+       "any": [
+        {
+         "any": [
+          {
+           "kind": "identifier"
+          },
+          {
+           "kind": "attribute"
+          }
+         ],
+         "resolves": {
+          "global": [
+           "open"
+          ],
+          "import": [
+           "builtins.open"
+          ]
+         },
+         "pattern": "$F"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee"
+         }
+        }
+       ]
+      },
+      "true-literal": {
+       "any": [
+        {
+         "kind": "true"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "true-literal"
+         }
+        }
+       ]
+      },
+      "none-literal": {
+       "any": [
+        {
+         "kind": "none"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "none-literal"
+         }
+        }
+       ]
+      },
+      "bool-literal": {
+       "any": [
+        {
+         "kind": "true"
+        },
+        {
+         "kind": "false"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "bool-literal"
+         }
+        }
+       ]
+      },
+      "int-expr": {
+       "any": [
+        {
+         "kind": "integer",
+         "not": {
+          "regex": "[jJ]$"
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "int-expr"
+         }
+        },
+        {
+         "kind": "unary_operator",
+         "all": [
+          {
+           "has": {
+            "stopBy": "neighbor",
+            "field": "operator",
+            "regex": "^(\\+|-|~)$"
+           }
+          },
+          {
+           "has": {
+            "stopBy": "neighbor",
+            "field": "argument",
+            "any": [
+             {
+              "matches": "int-expr"
+             },
+             {
+              "matches": "bool-literal"
+             }
+            ]
+           }
+          }
+         ]
+        },
+        {
+         "kind": "binary_operator",
+         "all": [
+          {
+           "has": {
+            "stopBy": "neighbor",
+            "field": "operator",
+            "regex": "^(\\+|-|\\*|%|//|\\*\\*|&|\\||\\^|<<|>>)$"
+           }
+          },
+          {
+           "has": {
+            "stopBy": "neighbor",
+            "field": "left",
+            "any": [
+             {
+              "matches": "int-expr"
+             },
+             {
+              "matches": "bool-literal"
+             }
+            ]
+           }
+          },
+          {
+           "has": {
+            "stopBy": "neighbor",
+            "field": "right",
+            "any": [
+             {
+              "matches": "int-expr"
+             },
+             {
+              "matches": "bool-literal"
+             }
+            ]
+           }
+          }
+         ]
+        },
+        {
+         "kind": "named_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "field": "value",
+          "matches": "int-expr"
+         }
+        },
+        {
+         "kind": "conditional_expression",
+         "all": [
+          {
+           "has": {
+            "stopBy": "neighbor",
+            "nthChild": {
+             "position": 1,
+             "ofRule": {
+              "not": {
+               "any": [
+                {
+                 "kind": "comment"
+                },
+                {
+                 "kind": "line_continuation"
+                }
+               ]
+              }
+             }
+            },
+            "matches": "int-expr"
+           }
+          },
+          {
+           "has": {
+            "stopBy": "neighbor",
+            "nthChild": {
+             "position": 3,
+             "ofRule": {
+              "not": {
+               "any": [
+                {
+                 "kind": "comment"
+                },
+                {
+                 "kind": "line_continuation"
+                }
+               ]
+              }
+             }
+            },
+            "matches": "int-expr"
+           }
+          }
+         ]
+        }
+       ]
+      },
+      "int-init": {
+       "any": [
+        {
+         "matches": "int-expr"
+        },
+        {
+         "kind": "call",
+         "has": {
+          "stopBy": "neighbor",
+          "field": "function",
+          "any": [
+           {
+            "kind": "identifier"
+           },
+           {
+            "kind": "attribute"
+           }
+          ],
+          "resolves": {
+           "global": [
+            "int"
+           ],
+           "import": [
+            "builtins.int"
+           ]
+          }
+         }
+        }
+       ]
+      },
+      "int-annotation": {
+       "has": {
+        "stopBy": "neighbor",
+        "any": [
+         {
+          "kind": "identifier"
+         },
+         {
+          "kind": "attribute"
+         }
+        ],
+        "resolves": {
+         "global": [
+          "int"
+         ],
+         "import": [
+          "builtins.int"
+         ]
+        }
+       }
+      },
+      "int-name": {
+       "kind": "identifier",
+       "any": [
+        {
+         "resolves": {
+          "binding": {
+           "only": true,
+           "site": {
+            "not": {
+             "has": {
+              "stopBy": "neighbor",
+              "field": "type",
+              "kind": "type"
+             }
+            }
+           },
+           "value": {
+            "matches": "int-init"
+           }
+          }
+         }
+        },
+        {
+         "resolves": {
+          "binding": {
+           "only": true,
+           "site": {
+            "any": [
+             {
+              "kind": "assignment"
+             },
+             {
+              "kind": "typed_default_parameter"
+             },
+             {
+              "kind": "typed_parameter",
+              "has": {
+               "stopBy": "neighbor",
+               "kind": "identifier"
+              }
+             }
+            ],
+            "has": {
+             "stopBy": "neighbor",
+             "field": "type",
+             "matches": "int-annotation"
+            }
+           }
+          }
+         }
+        },
+        {
+         "resolves": {
+          "binding": {
+           "only": true,
+           "site": {
+            "kind": "function_definition",
+            "has": {
+             "stopBy": "neighbor",
+             "field": "return_type",
+             "matches": "int-annotation"
+            }
+           }
+          }
+         }
+        }
+       ]
+      },
+      "int-class-attr": {
+       "kind": "attribute",
+       "all": [
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "field": "attribute",
+          "kind": "identifier",
+          "pattern": "$AT"
+         }
+        },
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "field": "object",
+          "kind": "identifier",
+          "resolves": {
+           "binding": {
+            "site": {
+             "kind": "class_definition",
+             "has": {
+              "stopBy": "neighbor",
+              "field": "body",
+              "has": {
+               "stopBy": "neighbor",
+               "kind": "expression_statement",
+               "has": {
+                "stopBy": "neighbor",
+                "kind": "assignment",
+                "all": [
+                 {
+                  "has": {
+                   "stopBy": "neighbor",
+                   "field": "left",
+                   "kind": "identifier",
+                   "pattern": "$CA"
+                  }
+                 },
+                 {
+                  "compare": {
+                   "left": "CA",
+                   "op": "eq",
+                   "right": "AT",
+                   "text": "tokens"
+                  }
+                 },
+                 {
+                  "any": [
+                   {
+                    "has": {
+                     "stopBy": "neighbor",
+                     "field": "type",
+                     "matches": "int-annotation"
+                    }
+                   },
+                   {
+                    "not": {
+                     "has": {
+                      "stopBy": "neighbor",
+                      "field": "type",
+                      "kind": "type"
+                     }
+                    },
+                    "has": {
+                     "stopBy": "neighbor",
+                     "field": "right",
+                     "matches": "int-init"
+                    }
+                   }
+                  ]
+                 }
+                ]
+               }
+              }
+             }
+            }
+           }
+          }
+         }
+        }
+       ]
+      },
+      "int-callee": {
+       "any": [
+        {
+         "matches": "int-name"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "int-callee"
+         }
+        },
+        {
+         "kind": "call",
+         "has": {
+          "stopBy": "neighbor",
+          "field": "function",
+          "matches": "int-callee"
+         }
+        }
+       ]
+      },
+      "fd-expr": {
+       "any": [
+        {
+         "kind": "integer",
+         "not": {
+          "regex": "[jJ]$"
+         }
+        },
+        {
+         "matches": "int-name"
+        },
+        {
+         "matches": "int-class-attr"
+        },
+        {
+         "kind": "call",
+         "has": {
+          "stopBy": "neighbor",
+          "field": "function",
+          "matches": "int-callee"
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "fd-expr"
+         }
+        }
+       ]
+      },
+      "skip": {
+       "any": [
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "field": "arguments",
+          "kind": "argument_list",
+          "has": {
+           "stopBy": "neighbor",
+           "kind": "keyword_argument",
+           "all": [
+            {
+             "has": {
+              "stopBy": "neighbor",
+              "field": "name",
+              "regex": "^closefd$"
+             }
+            },
+            {
+             "has": {
+              "stopBy": "neighbor",
+              "field": "value",
+              "not": {
+               "matches": "true-literal"
+              }
+             }
+            }
+           ]
+          }
+         }
+        },
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "field": "arguments",
+          "kind": "argument_list",
+          "has": {
+           "stopBy": "neighbor",
+           "kind": "keyword_argument",
+           "all": [
+            {
+             "has": {
+              "stopBy": "neighbor",
+              "field": "name",
+              "regex": "^opener$"
+             }
+            },
+            {
+             "has": {
+              "stopBy": "neighbor",
+              "field": "value",
+              "not": {
+               "matches": "none-literal"
+              }
+             }
+            }
+           ]
+          }
+         }
+        },
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "field": "arguments",
+          "kind": "argument_list",
+          "has": {
+           "stopBy": "neighbor",
+           "all": [
+            {
+             "nthChild": {
+              "position": 7,
+              "ofRule": {
+               "not": {
+                "any": [
+                 {
+                  "kind": "comment"
+                 },
+                 {
+                  "kind": "line_continuation"
+                 }
+                ]
+               }
+              }
+             }
+            },
+            {
+             "not": {
+              "any": [
+               {
+                "kind": "keyword_argument"
+               },
+               {
+                "kind": "list_splat"
+               },
+               {
+                "kind": "dictionary_splat"
+               }
+              ]
+             }
+            },
+            {
+             "not": {
+              "follows": {
+               "stopBy": "end",
+               "kind": "list_splat"
+              }
+             }
+            },
+            {
+             "not": {
+              "matches": "true-literal"
+             }
+            }
+           ]
+          }
+         }
+        },
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "field": "arguments",
+          "kind": "argument_list",
+          "has": {
+           "stopBy": "neighbor",
+           "all": [
+            {
+             "nthChild": {
+              "position": 8,
+              "ofRule": {
+               "not": {
+                "any": [
+                 {
+                  "kind": "comment"
+                 },
+                 {
+                  "kind": "line_continuation"
+                 }
+                ]
+               }
+              }
+             }
+            },
+            {
+             "not": {
+              "any": [
+               {
+                "kind": "keyword_argument"
+               },
+               {
+                "kind": "list_splat"
+               },
+               {
+                "kind": "dictionary_splat"
+               }
+              ]
+             }
+            },
+            {
+             "not": {
+              "follows": {
+               "stopBy": "end",
+               "kind": "list_splat"
+              }
+             }
+            },
+            {
+             "not": {
+              "matches": "none-literal"
+             }
+            }
+           ]
+          }
+         }
+        },
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "field": "arguments",
+          "kind": "argument_list",
+          "has": {
+           "stopBy": "neighbor",
+           "any": [
+            {
+             "kind": "keyword_argument",
+             "all": [
+              {
+               "has": {
+                "stopBy": "neighbor",
+                "field": "name",
+                "regex": "^file$"
+               }
+              },
+              {
+               "has": {
+                "stopBy": "neighbor",
+                "field": "value",
+                "matches": "fd-expr"
+               }
+              }
+             ]
+            },
+            {
+             "all": [
+              {
+               "nthChild": {
+                "position": 1,
+                "ofRule": {
+                 "not": {
+                  "any": [
+                   {
+                    "kind": "comment"
+                   },
+                   {
+                    "kind": "line_continuation"
+                   }
+                  ]
+                 }
+                }
+               }
+              },
+              {
+               "not": {
+                "any": [
+                 {
+                  "kind": "keyword_argument"
+                 },
+                 {
+                  "kind": "list_splat"
+                 },
+                 {
+                  "kind": "dictionary_splat"
+                 }
+                ]
+               }
+              },
+              {
+               "not": {
+                "follows": {
+                 "stopBy": "end",
+                 "kind": "list_splat"
+                }
+               }
+              },
+              {
+               "matches": "fd-expr"
+              }
+             ]
+            }
+           ]
+          }
+         }
+        }
+       ]
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.F",
+    "code": "PTH123",
+    "message": "Use `Path(file).open(...)` instead of `open(file, ...)`; the other arguments carry over. Leave `open()` when the argument is a file descriptor, or when it needs `closefd=False` or an `opener`.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "PTH123"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

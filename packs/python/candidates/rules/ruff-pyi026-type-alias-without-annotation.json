@@ -1,0 +1,301 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi026-type-alias-without-annotation",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Annotate type alias assignments in stub files with TypeAlias; it marks the line as an alias declaration instead of an ordinary variable.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "type-alias-without-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "enum-base": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "enum.Enum",
+                  "enum.Flag",
+                  "enum.IntEnum",
+                  "enum.IntFlag",
+                  "enum.StrEnum",
+                  "enum.ReprEnum",
+                  "enum.CheckEnum"
+                ]
+              }
+            },
+            "enum-class": {
+              "kind": "class_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "argument_list",
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "matches": "enum-ref"
+                    },
+                    {
+                      "kind": "subscript",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "value",
+                        "matches": "enum-ref"
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "typing-any": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "typing.Any",
+                  "typing_extensions.Any",
+                  "_typeshed.Any"
+                ]
+              }
+            },
+            "none-value": {
+              "any": [
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "none-value"
+                  }
+                }
+              ]
+            },
+            "union-member": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                },
+                {
+                  "kind": "subscript"
+                },
+                {
+                  "kind": "none"
+                },
+                {
+                  "matches": "union"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "union-member"
+                  }
+                }
+              ]
+            },
+            "union": {
+              "kind": "binary_operator",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "operator",
+                "regex": "^\\|$"
+              },
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "left",
+                    "matches": "union-member"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "right",
+                    "matches": "union-member"
+                  }
+                }
+              ]
+            },
+            "alias-value": {
+              "any": [
+                {
+                  "kind": "subscript"
+                },
+                {
+                  "matches": "union"
+                },
+                {
+                  "matches": "typing-any"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "alias-value"
+                  }
+                }
+              ]
+            },
+            "plain-assignment": {
+              "kind": "assignment",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "type"
+                }
+              },
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "expression_statement"
+              }
+            },
+            "enum-ref": {
+              "any": [
+                {
+                  "matches": "enum-base"
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "matches": "enum-class"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "alias-target": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "left",
+                    "matches": "plain-assignment",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "right",
+                      "matches": "alias-value"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "tuple_pattern",
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "regex": "^,$"
+                      }
+                    },
+                    "matches": "alias-target"
+                  }
+                }
+              ]
+            },
+            "none-target": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "left",
+                    "matches": "plain-assignment",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "right",
+                      "matches": "none-value"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "tuple_pattern",
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "regex": "^,$"
+                      }
+                    },
+                    "matches": "none-target"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$NAME",
+            "not": {
+              "inside": {
+                "stopBy": "end",
+                "kind": "function_definition"
+              }
+            },
+            "any": [
+              {
+                "matches": "alias-target"
+              },
+              {
+                "matches": "none-target",
+                "not": {
+                  "inside": {
+                    "stopBy": {
+                      "kind": "class_definition"
+                    },
+                    "matches": "enum-class"
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI026",
+        "message": "Annotate `$NAME` as `$NAME: TypeAlias = ...`, importing `TypeAlias` from `typing` (`typing_extensions` before 3.10). Leave it unannotated only if it is a variable, not a type alias.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI026"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

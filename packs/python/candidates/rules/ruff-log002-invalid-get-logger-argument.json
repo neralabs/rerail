@@ -3,7 +3,7 @@
  "id": "ruff-log002-invalid-get-logger-argument",
  "revision": 1,
  "mode": "steer",
- "description": "Port of Ruff's LOG002 (invalid-get-logger-argument): in a call whose callee (parentheses transparent) resolves to `logging.getLogger` through the file's imports, the `name` argument (Ruff's `find_argument_value(\"name\", 0)`: the `name=` keyword, else the first positional argument) when it is (parentheses transparent) the name `__file__` or `__cached__` referring to the module global (no file-local binding shadows it: Ruff's `has_builtin_binding`). Reported on the name.",
+ "description": "Pass __name__ to logging.getLogger() instead of __file__ or __cached__; logger names should be dotted module names, not file paths.",
  "scope": {
   "include": [
    "**/*"
@@ -171,7 +171,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "LOG002",
-    "message": "Use `__name__` with `logging.getLogger()`",
+    "message": "Pass `__name__` to `logging.getLogger()` instead of `__file__` or `__cached__`; logger names should be dotted module names, not paths. Keep it only if existing config targets the path-named logger.",
     "suppress": {
      "noqa": {
       "codes": [

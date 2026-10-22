@@ -1,0 +1,635 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-n806-non-lowercase-variable-in-function",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Name local variables inside functions in lowercase snake_case, as PEP 8 recommends, so they read differently from classes and constants.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "options",
+      "define": {
+        "options": {
+          "pep8-naming.ignore-names": {
+            "type": "array",
+            "items": "string",
+            "default": [
+              "tearDownClass",
+              "setUpModule",
+              "asyncSetUp",
+              "asyncTearDown",
+              "setUpTestData",
+              "failureException",
+              "longMessage",
+              "maxDiff"
+            ],
+            "description": "Names exempt from the check, each a regex over the whole name (a Ruff glob: `*` is `.*`, `?` is `.`)."
+          }
+        }
+      }
+    },
+    {
+      "id": "non-lowercase-variable-in-function",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "typed-callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "collections.namedtuple",
+                      "typing.NamedTuple",
+                      "typing_extensions.NamedTuple",
+                      "_typeshed.NamedTuple",
+                      "typing.TypedDict",
+                      "typing_extensions.TypedDict",
+                      "_typeshed.TypedDict",
+                      "typing.TypeVar",
+                      "typing_extensions.TypeVar",
+                      "_typeshed.TypeVar",
+                      "typing.NewType",
+                      "typing_extensions.NewType",
+                      "_typeshed.NewType"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "typed-callee"
+                  }
+                }
+              ]
+            },
+            "typed-call": {
+              "any": [
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "matches": "typed-callee"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "typed-call"
+                  }
+                }
+              ]
+            },
+            "typed-assign": {
+              "kind": "assignment",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "type",
+                  "kind": "type"
+                }
+              },
+              "has": {
+                "stopBy": "neighbor",
+                "field": "right",
+                "any": [
+                  {
+                    "matches": "typed-call"
+                  },
+                  {
+                    "kind": "assignment",
+                    "matches": "typed-assign"
+                  }
+                ]
+              }
+            },
+            "alias-annotation": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.TypeAlias",
+                      "typing_extensions.TypeAlias",
+                      "_typeshed.TypeAlias"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "alias-annotation"
+                  }
+                }
+              ]
+            },
+            "alias-assign": {
+              "kind": "assignment",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "type",
+                "kind": "type",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "alias-annotation"
+                }
+              }
+            },
+            "in-comprehension": {
+              "inside": {
+                "stopBy": {
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "class_definition"
+                    },
+                    {
+                      "kind": "lambda"
+                    }
+                  ]
+                },
+                "any": [
+                  {
+                    "kind": "list_comprehension"
+                  },
+                  {
+                    "kind": "set_comprehension"
+                  },
+                  {
+                    "kind": "dictionary_comprehension"
+                  },
+                  {
+                    "kind": "generator_expression"
+                  }
+                ]
+              }
+            },
+            "global-declared": {
+              "inside": {
+                "stopBy": {
+                  "kind": "function_definition"
+                },
+                "kind": "function_definition",
+                "has": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "class_definition"
+                      }
+                    ]
+                  },
+                  "kind": "global_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "pattern": "$NAME"
+                  }
+                }
+              }
+            },
+            "dotted-name": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "object",
+                    "matches": "dotted-name"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "dotted-name"
+                  }
+                }
+              ]
+            },
+            "get-model-callee": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^get_model$"
+                },
+                {
+                  "kind": "attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "attribute",
+                        "kind": "identifier",
+                        "regex": "^get_model$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "object",
+                        "matches": "dotted-name"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "get-model-callee"
+                  }
+                }
+              ]
+            },
+            "plain-string": {
+              "kind": "string",
+              "regex": "^[rRuU]{0,2}['\"]"
+            },
+            "positional": {
+              "not": {
+                "any": [
+                  {
+                    "regex": "^[(),]$"
+                  },
+                  {
+                    "kind": "comment"
+                  },
+                  {
+                    "kind": "keyword_argument"
+                  },
+                  {
+                    "kind": "dictionary_splat"
+                  },
+                  {
+                    "kind": "list_splat"
+                  }
+                ]
+              }
+            },
+            "model-call": {
+              "kind": "call",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "matches": "get-model-callee"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "arguments",
+                    "kind": "argument_list",
+                    "any": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "keyword_argument",
+                          "all": [
+                            {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "name",
+                                "regex": "^model_name$"
+                              }
+                            },
+                            {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "value",
+                                "all": [
+                                  {
+                                    "pattern": "$MODEL",
+                                    "any": [
+                                      {
+                                        "not": {
+                                          "matches": "plain-string"
+                                        }
+                                      },
+                                      {
+                                        "compare": {
+                                          "left": "MODELTEXT",
+                                          "op": "eq",
+                                          "right": "NAME"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "keyword_argument",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "field": "name",
+                              "regex": "^model_name$"
+                            }
+                          }
+                        },
+                        "has": {
+                          "stopBy": "neighbor",
+                          "all": [
+                            {
+                              "matches": "positional"
+                            },
+                            {
+                              "not": {
+                                "precedes": {
+                                  "stopBy": "end",
+                                  "matches": "positional"
+                                }
+                              }
+                            },
+                            {
+                              "pattern": "$MODEL",
+                              "any": [
+                                {
+                                  "not": {
+                                    "matches": "plain-string"
+                                  }
+                                },
+                                {
+                                  "compare": {
+                                    "left": "MODELTEXT",
+                                    "op": "eq",
+                                    "right": "NAME"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "import-string-call": {
+              "kind": "call",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "any": [
+                      {
+                        "kind": "identifier"
+                      },
+                      {
+                        "kind": "attribute"
+                      }
+                    ],
+                    "resolves": {
+                      "import": [
+                        "django.utils.module_loading.import_string"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "arguments",
+                    "kind": "argument_list",
+                    "any": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "keyword_argument",
+                          "all": [
+                            {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "name",
+                                "regex": "^dotted_path$"
+                              }
+                            },
+                            {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "value",
+                                "all": [
+                                  {
+                                    "pattern": "$PATH",
+                                    "matches": "plain-string",
+                                    "compare": {
+                                      "left": "LAST",
+                                      "op": "eq",
+                                      "right": "NAME"
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "keyword_argument",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "field": "name",
+                              "regex": "^dotted_path$"
+                            }
+                          }
+                        },
+                        "has": {
+                          "stopBy": "neighbor",
+                          "all": [
+                            {
+                              "matches": "positional"
+                            },
+                            {
+                              "not": {
+                                "follows": {
+                                  "stopBy": "end",
+                                  "matches": "positional"
+                                }
+                              }
+                            },
+                            {
+                              "pattern": "$PATH",
+                              "matches": "plain-string",
+                              "compare": {
+                                "left": "LAST",
+                                "op": "eq",
+                                "right": "NAME"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "model-value": {
+              "any": [
+                {
+                  "matches": "model-call"
+                },
+                {
+                  "matches": "import-string-call"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "model-value"
+                  }
+                }
+              ]
+            },
+            "model-assign": {
+              "kind": "assignment",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "right",
+                "any": [
+                  {
+                    "matches": "model-value"
+                  },
+                  {
+                    "kind": "assignment",
+                    "matches": "model-assign"
+                  }
+                ]
+              }
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$NAME",
+            "regex": "[\\x{149}\\x{2E4}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{1E9A}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}\\x{107B6}-\\x{107B9}[\\p{Alphabetic}--\\p{Lowercase}--\\x{FF9E}--\\x{FF9F}]]",
+            "binds": {
+              "form": [
+                "assignment",
+                "annotated",
+                "annotation",
+                "augmented",
+                "named",
+                "for",
+                "with",
+                "match"
+              ],
+              "scope": "function"
+            },
+            "not": {
+              "any": [
+                {
+                  "regex": {
+                    "$option": "pep8-naming.ignore-names",
+                    "cases": {
+                      "[]": "[^\\s\\S]"
+                    },
+                    "default": {
+                      "$option": "pep8-naming.ignore-names",
+                      "join": "|",
+                      "template": "^(?:{})$"
+                    }
+                  }
+                },
+                {
+                  "matches": "in-comprehension"
+                },
+                {
+                  "matches": "global-declared"
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "assignment",
+                    "any": [
+                      {
+                        "matches": "typed-assign"
+                      },
+                      {
+                        "matches": "alias-assign"
+                      },
+                      {
+                        "matches": "model-assign"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          "transform": {
+            "MODELTEXT": {
+              "replace": {
+                "source": "$MODEL",
+                "replace": "^[rRuU]{0,2}(?:\"\"\"|'''|\"|')(.*?)(?:\"\"\"|'''|\"|')$",
+                "by": "${1}"
+              }
+            },
+            "LAST": {
+              "replace": {
+                "source": "$PATH",
+                "replace": "^[rRuU]{0,2}['\"][^'\"]*\\.([^'\".]*)['\"]$",
+                "by": "${1}"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "N806",
+        "message": "Rename `$NAME` to lowercase snake_case and update its uses; keep the name if it holds a class.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "N806"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,492 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pth208-os-listdir",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use Path.iterdir() instead of os.listdir(); path objects read better than string-based os calls.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "os-listdir",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "os.listdir"
+                    ]
+                  },
+                  "pattern": "$F"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            },
+            "int-annotation": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "int"
+                    ],
+                    "import": [
+                      "builtins.int"
+                    ]
+                  }
+                },
+                {
+                  "kind": "type",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "int-annotation"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "subscript"
+                    },
+                    {
+                      "kind": "generic_type"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "(?s)."
+                      }
+                    },
+                    "matches": "int-annotation"
+                  }
+                }
+              ]
+            },
+            "int-call": {
+              "kind": "call",
+              "has": {
+                "field": "function",
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "int"
+                  ],
+                  "import": [
+                    "builtins.int"
+                  ]
+                }
+              }
+            },
+            "int-value": {
+              "any": [
+                {
+                  "matches": "int-call"
+                },
+                {
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "kind": "integer"
+                        },
+                        {
+                          "kind": "unary_operator"
+                        },
+                        {
+                          "kind": "binary_operator"
+                        },
+                        {
+                          "kind": "parenthesized_expression"
+                        },
+                        {
+                          "kind": "conditional_expression"
+                        },
+                        {
+                          "kind": "boolean_operator"
+                        },
+                        {
+                          "kind": "named_expression"
+                        }
+                      ]
+                    },
+                    {
+                      "value": {
+                        "constant": true
+                      }
+                    },
+                    {
+                      "value": {
+                        "type": "int"
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "call"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "int-value"
+                  }
+                },
+                {
+                  "kind": "named_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "int-value"
+                  }
+                },
+                {
+                  "kind": "conditional_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "precedes": {
+                          "stopBy": "neighbor",
+                          "regex": "^if$"
+                        },
+                        "matches": "int-value"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "follows": {
+                          "stopBy": "neighbor",
+                          "regex": "^else$"
+                        },
+                        "matches": "int-value"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "int-name": {
+              "kind": "identifier",
+              "any": [
+                {
+                  "resolves": {
+                    "binding": {
+                      "only": true,
+                      "site": {
+                        "not": {
+                          "kind": "assignment",
+                          "has": {
+                            "field": "type",
+                            "kind": "type"
+                          }
+                        }
+                      },
+                      "value": {
+                        "matches": "int-value"
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "only": true,
+                      "site": {
+                        "kind": "as_pattern",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "int-call"
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "only": true,
+                      "site": {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "any": [
+                              {
+                                "kind": "list_splat_pattern"
+                              },
+                              {
+                                "kind": "dictionary_splat_pattern"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      "annotation": {
+                        "matches": "int-annotation"
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "only": true,
+                      "site": {
+                        "kind": "function_definition",
+                        "has": {
+                          "field": "return_type",
+                          "matches": "int-annotation"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "name-root": {
+              "any": [
+                {
+                  "matches": "int-name"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "name-root"
+                  }
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "matches": "name-root"
+                  }
+                }
+              ]
+            },
+            "int-attribute": {
+              "kind": "attribute",
+              "all": [
+                {
+                  "has": {
+                    "field": "attribute",
+                    "kind": "identifier",
+                    "pattern": "$A"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "object",
+                    "kind": "identifier",
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "class_definition",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "assignment",
+                            "has": {
+                              "field": "left",
+                              "kind": "identifier",
+                              "pattern": "$A"
+                            },
+                            "any": [
+                              {
+                                "has": {
+                                  "field": "type",
+                                  "matches": "int-annotation"
+                                }
+                              },
+                              {
+                                "not": {
+                                  "has": {
+                                    "field": "type",
+                                    "kind": "type"
+                                  }
+                                },
+                                "has": {
+                                  "field": "right",
+                                  "matches": "int-value"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "file-descriptor": {
+              "any": [
+                {
+                  "kind": "integer",
+                  "value": {
+                    "type": "int"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "file-descriptor"
+                  }
+                },
+                {
+                  "matches": "name-root"
+                },
+                {
+                  "matches": "int-attribute"
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "has": {
+              "field": "function",
+              "matches": "callee"
+            },
+            "arguments": {
+              "signature": [
+                "path"
+              ],
+              "mode": "syntactic",
+              "bind": {
+                "S": "path"
+              }
+            }
+          },
+          "constraints": {
+            "S": {
+              "not": {
+                "matches": "file-descriptor"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.F",
+        "code": "PTH208",
+        "message": "Use `Path($S).iterdir()` instead of `os.listdir($S)`; it lazily yields `Path` objects, so take `.name` for plain names. Leave it for bytes paths and file descriptors.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PTH208"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "os-listdir-cwd",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "os.listdir"
+                    ]
+                  },
+                  "pattern": "$F"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "has": {
+              "field": "function",
+              "matches": "callee"
+            },
+            "arguments": {
+              "signature": [
+                "path"
+              ],
+              "mode": "syntactic",
+              "absent": [
+                "path"
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.F",
+        "code": "PTH208",
+        "message": "Use `Path().iterdir()` instead of `os.listdir()`; it lazily yields `Path` objects, so take `.name` for plain names.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PTH208"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

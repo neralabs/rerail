@@ -1,0 +1,726 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi051-redundant-literal-union",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't list a literal value in a union that already includes its builtin type; the broader type already covers every value of the literal.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "redundant-literal-union",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "lit-ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "typing.Literal",
+                  "typing_extensions.Literal",
+                  "_typeshed.Literal"
+                ]
+              }
+            },
+            "union-ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "typing.Union",
+                  "typing_extensions.Union",
+                  "_typeshed.Union"
+                ]
+              }
+            },
+            "union-wrap": {
+              "any": [
+                {
+                  "kind": "type"
+                },
+                {
+                  "kind": "type_parameter"
+                },
+                {
+                  "kind": "parenthesized_expression"
+                },
+                {
+                  "kind": "tuple",
+                  "inside": {
+                    "stopBy": {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "type"
+                          },
+                          {
+                            "kind": "type_parameter"
+                          }
+                        ]
+                      }
+                    },
+                    "any": [
+                      {
+                        "kind": "subscript"
+                      },
+                      {
+                        "kind": "generic_type"
+                      }
+                    ],
+                    "matches": "union"
+                  }
+                }
+              ]
+            },
+            "lit-wrap": {
+              "any": [
+                {
+                  "matches": "union-wrap"
+                },
+                {
+                  "kind": "tuple"
+                }
+              ]
+            },
+            "lit-form": {
+              "any": [
+                {
+                  "kind": "subscript",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "lit-ref"
+                  }
+                },
+                {
+                  "kind": "generic_type",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "lit-ref"
+                  }
+                }
+              ]
+            },
+            "union": {
+              "any": [
+                {
+                  "kind": "union_type"
+                },
+                {
+                  "kind": "binary_operator",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "operator",
+                    "regex": "^\\|$"
+                  }
+                },
+                {
+                  "kind": "subscript",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "union-ref"
+                  }
+                },
+                {
+                  "kind": "generic_type",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "union-ref"
+                  }
+                }
+              ]
+            },
+            "annotation-string": {
+              "any": [
+                {
+                  "kind": "string",
+                  "regex": "^[rRuU]{0,2}['\\\"]",
+                  "not": {
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "interpolation"
+                    }
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "not": {
+                        "regex": "^[rRuU]{0,2}['\\\"]"
+                      }
+                    }
+                  }
+                }
+              ],
+              "inside": {
+                "stopBy": "end",
+                "kind": "type"
+              }
+            },
+            "top-union": {
+              "matches": "union",
+              "not": {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "matches": "union-wrap"
+                    }
+                  },
+                  "matches": "union"
+                }
+              }
+            },
+            "has-str": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "pattern": "$B",
+                  "resolves": {
+                    "global": [
+                      "str"
+                    ],
+                    "import": [
+                      "builtins.str"
+                    ]
+                  }
+                },
+                {
+                  "matches": "union",
+                  "has": {
+                    "stopBy": {
+                      "not": {
+                        "matches": "union-wrap"
+                      }
+                    },
+                    "matches": "has-str"
+                  }
+                }
+              ]
+            },
+            "elem-str": {
+              "any": [
+                {
+                  "kind": "string",
+                  "regex": "^[rRuU]{0,2}['\\\"]",
+                  "not": {
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "interpolation"
+                    }
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "not": {
+                        "regex": "^[rRuU]{0,2}['\\\"]"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "has-bytes": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "pattern": "$B",
+                  "resolves": {
+                    "global": [
+                      "bytes"
+                    ],
+                    "import": [
+                      "builtins.bytes"
+                    ]
+                  }
+                },
+                {
+                  "matches": "union",
+                  "has": {
+                    "stopBy": {
+                      "not": {
+                        "matches": "union-wrap"
+                      }
+                    },
+                    "matches": "has-bytes"
+                  }
+                }
+              ]
+            },
+            "elem-bytes": {
+              "any": [
+                {
+                  "kind": "string",
+                  "regex": "^(?:[bB][rR]?|[rR][bB])['\\\"]",
+                  "not": {
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "interpolation"
+                    }
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "not": {
+                        "regex": "^(?:[bB][rR]?|[rR][bB])['\\\"]"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "has-int": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "pattern": "$B",
+                  "resolves": {
+                    "global": [
+                      "int"
+                    ],
+                    "import": [
+                      "builtins.int"
+                    ]
+                  }
+                },
+                {
+                  "matches": "union",
+                  "has": {
+                    "stopBy": {
+                      "not": {
+                        "matches": "union-wrap"
+                      }
+                    },
+                    "matches": "has-int"
+                  }
+                }
+              ]
+            },
+            "elem-int": {
+              "kind": "integer",
+              "not": {
+                "regex": "[jJ]$"
+              }
+            },
+            "has-float": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "pattern": "$B",
+                  "resolves": {
+                    "global": [
+                      "float"
+                    ],
+                    "import": [
+                      "builtins.float"
+                    ]
+                  }
+                },
+                {
+                  "matches": "union",
+                  "has": {
+                    "stopBy": {
+                      "not": {
+                        "matches": "union-wrap"
+                      }
+                    },
+                    "matches": "has-float"
+                  }
+                }
+              ]
+            },
+            "elem-float": {
+              "kind": "float",
+              "not": {
+                "regex": "[jJ]$"
+              }
+            },
+            "has-complex": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "pattern": "$B",
+                  "resolves": {
+                    "global": [
+                      "complex"
+                    ],
+                    "import": [
+                      "builtins.complex"
+                    ]
+                  }
+                },
+                {
+                  "matches": "union",
+                  "has": {
+                    "stopBy": {
+                      "not": {
+                        "matches": "union-wrap"
+                      }
+                    },
+                    "matches": "has-complex"
+                  }
+                }
+              ]
+            },
+            "elem-complex": {
+              "any": [
+                {
+                  "kind": "integer"
+                },
+                {
+                  "kind": "float"
+                }
+              ],
+              "regex": "[jJ]$"
+            },
+            "has-bool": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "pattern": "$B",
+                  "resolves": {
+                    "global": [
+                      "bool"
+                    ],
+                    "import": [
+                      "builtins.bool"
+                    ]
+                  }
+                },
+                {
+                  "matches": "union",
+                  "has": {
+                    "stopBy": {
+                      "not": {
+                        "matches": "union-wrap"
+                      }
+                    },
+                    "matches": "has-bool"
+                  }
+                }
+              ]
+            },
+            "elem-bool": {
+              "any": [
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "false"
+                }
+              ]
+            },
+            "redundant": {
+              "any": [
+                {
+                  "matches": "elem-str",
+                  "pattern": "$E",
+                  "inside": {
+                    "stopBy": {
+                      "not": {
+                        "matches": "lit-wrap"
+                      }
+                    },
+                    "matches": "lit-form",
+                    "inside": {
+                      "stopBy": {
+                        "not": {
+                          "any": [
+                            {
+                              "matches": "union-wrap"
+                            },
+                            {
+                              "matches": "union"
+                            }
+                          ]
+                        }
+                      },
+                      "all": [
+                        {
+                          "matches": "top-union"
+                        },
+                        {
+                          "matches": "has-str"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "matches": "elem-bytes",
+                  "pattern": "$E",
+                  "inside": {
+                    "stopBy": {
+                      "not": {
+                        "matches": "lit-wrap"
+                      }
+                    },
+                    "matches": "lit-form",
+                    "inside": {
+                      "stopBy": {
+                        "not": {
+                          "any": [
+                            {
+                              "matches": "union-wrap"
+                            },
+                            {
+                              "matches": "union"
+                            }
+                          ]
+                        }
+                      },
+                      "all": [
+                        {
+                          "matches": "top-union"
+                        },
+                        {
+                          "matches": "has-bytes"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "matches": "elem-int",
+                  "pattern": "$E",
+                  "inside": {
+                    "stopBy": {
+                      "not": {
+                        "matches": "lit-wrap"
+                      }
+                    },
+                    "matches": "lit-form",
+                    "inside": {
+                      "stopBy": {
+                        "not": {
+                          "any": [
+                            {
+                              "matches": "union-wrap"
+                            },
+                            {
+                              "matches": "union"
+                            }
+                          ]
+                        }
+                      },
+                      "all": [
+                        {
+                          "matches": "top-union"
+                        },
+                        {
+                          "matches": "has-int"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "matches": "elem-float",
+                  "pattern": "$E",
+                  "inside": {
+                    "stopBy": {
+                      "not": {
+                        "matches": "lit-wrap"
+                      }
+                    },
+                    "matches": "lit-form",
+                    "inside": {
+                      "stopBy": {
+                        "not": {
+                          "any": [
+                            {
+                              "matches": "union-wrap"
+                            },
+                            {
+                              "matches": "union"
+                            }
+                          ]
+                        }
+                      },
+                      "all": [
+                        {
+                          "matches": "top-union"
+                        },
+                        {
+                          "matches": "has-float"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "matches": "elem-complex",
+                  "pattern": "$E",
+                  "inside": {
+                    "stopBy": {
+                      "not": {
+                        "matches": "lit-wrap"
+                      }
+                    },
+                    "matches": "lit-form",
+                    "inside": {
+                      "stopBy": {
+                        "not": {
+                          "any": [
+                            {
+                              "matches": "union-wrap"
+                            },
+                            {
+                              "matches": "union"
+                            }
+                          ]
+                        }
+                      },
+                      "all": [
+                        {
+                          "matches": "top-union"
+                        },
+                        {
+                          "matches": "has-complex"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "matches": "elem-bool",
+                  "pattern": "$E",
+                  "inside": {
+                    "stopBy": {
+                      "not": {
+                        "matches": "lit-wrap"
+                      }
+                    },
+                    "matches": "lit-form",
+                    "inside": {
+                      "stopBy": {
+                        "not": {
+                          "any": [
+                            {
+                              "matches": "union-wrap"
+                            },
+                            {
+                              "matches": "union"
+                            }
+                          ]
+                        }
+                      },
+                      "all": [
+                        {
+                          "matches": "top-union"
+                        },
+                        {
+                          "matches": "has-bool"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "redundant"
+              },
+              {
+                "matches": "annotation-string",
+                "parse": {
+                  "grammar": "annotation",
+                  "has": {
+                    "stopBy": "end",
+                    "matches": "redundant"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.E",
+        "code": "PYI051",
+        "message": "Drop `$E` from this `Literal`: the union already has `$B`, which covers it. Remove the `Literal` if nothing is left; keep it only if the values are listed for editor suggestions.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI051"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

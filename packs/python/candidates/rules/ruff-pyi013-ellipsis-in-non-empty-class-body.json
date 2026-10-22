@@ -1,0 +1,98 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi013-ellipsis-in-non-empty-class-body",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove an ellipsis statement from a class body that has other statements; it is only needed when the body would otherwise be empty.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "ellipsis-in-non-empty-class-body",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "filler": {
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                },
+                {
+                  "regex": "^;$"
+                }
+              ]
+            },
+            "ellipsis-expr": {
+              "any": [
+                {
+                  "kind": "ellipsis"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "ellipsis-expr"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "expression_statement",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "ellipsis-expr"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "block",
+              "inside": {
+                "stopBy": "neighbor",
+                "field": "body",
+                "kind": "class_definition"
+              }
+            },
+            "any": [
+              {
+                "follows": {
+                  "stopBy": "end",
+                  "not": {
+                    "matches": "filler"
+                  }
+                }
+              },
+              {
+                "precedes": {
+                  "stopBy": "end",
+                  "not": {
+                    "matches": "filler"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI013",
+        "message": "Remove this `...` from the class body; it is redundant because the body has other statements.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI013"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

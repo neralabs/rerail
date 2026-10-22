@@ -1,0 +1,227 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-slot002-no-slots-in-namedtuple-subclass",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Define __slots__ in classes that subclass a namedtuple or a call-style NamedTuple; without it every instance carries its own attribute dict and uses more memory.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "no-slots-in-namedtuple-subclass",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "path": {
+              "notRegex": "\\.pyi$"
+            }
+          },
+          "utils": {
+            "slots-target": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^__slots__$"
+                },
+                {
+                  "kind": "tuple_pattern",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "slots-target"
+                  },
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  }
+                }
+              ]
+            },
+            "slots-assignment": {
+              "kind": "assignment",
+              "any": [
+                {
+                  "has": {
+                    "field": "left",
+                    "matches": "slots-target"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "right",
+                    "kind": "assignment",
+                    "matches": "slots-assignment"
+                  }
+                }
+              ]
+            },
+            "slots-statement": {
+              "kind": "expression_statement",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "assignment",
+                "matches": "slots-assignment"
+              }
+            },
+            "nt-func": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "collections.namedtuple",
+                      "typing.NamedTuple"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "nt-func"
+                  }
+                }
+              ]
+            },
+            "nt-call": {
+              "any": [
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "matches": "nt-func"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "nt-call"
+                  }
+                }
+              ]
+            },
+            "object-base": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "object"
+                    ],
+                    "import": [
+                      "builtins.object"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "object-base"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "class_definition",
+              "field": "name",
+              "all": [
+                {
+                  "has": {
+                    "field": "superclasses",
+                    "kind": "argument_list",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "nt-call"
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "field": "superclasses",
+                    "kind": "argument_list",
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "not": {
+                          "any": [
+                            {
+                              "matches": "nt-call"
+                            },
+                            {
+                              "matches": "object-base"
+                            },
+                            {
+                              "kind": "keyword_argument"
+                            },
+                            {
+                              "kind": "dictionary_splat"
+                            },
+                            {
+                              "kind": "comment"
+                            },
+                            {
+                              "regex": "^[(),]$"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "field": "body",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "slots-statement"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "SLOT002",
+        "message": "Add `__slots__ = ()` to this named-tuple subclass so instances skip the per-instance `__dict__`; leave it if the class assigns instance attributes, which an empty `__slots__` forbids.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SLOT002"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

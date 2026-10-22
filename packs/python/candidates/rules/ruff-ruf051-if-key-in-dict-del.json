@@ -1,0 +1,658 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf051-if-key-in-dict-del",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use dict pop with a None default instead of testing a key with in and then deleting it; it removes the key in one step.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "if-key-in-dict-del",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "dict-expr": {
+              "any": [
+                {
+                  "kind": "dictionary"
+                },
+                {
+                  "kind": "dictionary_comprehension"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "dict-expr"
+                  }
+                },
+                {
+                  "kind": "named_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "^:=$"
+                    },
+                    "matches": "dict-expr"
+                  }
+                },
+                {
+                  "kind": "conditional_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "precedes": {
+                          "stopBy": "neighbor",
+                          "regex": "^if$"
+                        },
+                        "matches": "dict-expr"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "follows": {
+                          "stopBy": "neighbor",
+                          "regex": "^else$"
+                        },
+                        "matches": "dict-expr"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "boolean_operator",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "regex": "^(and|or)$"
+                          },
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "matches": "dict-expr"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "dict-callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "dict"
+                    ],
+                    "import": [
+                      "builtins.dict"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "dict-callee"
+                  }
+                }
+              ]
+            },
+            "dict-init": {
+              "any": [
+                {
+                  "matches": "dict-expr"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "dict-callee",
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "argument_list"
+                        },
+                        {
+                          "kind": "generator_expression"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "dict-ann": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "dict"
+                    ],
+                    "import": [
+                      "builtins.dict"
+                    ]
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.Dict",
+                      "_typeshed.Dict",
+                      "typing_extensions.Dict"
+                    ]
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "subscript"
+                    },
+                    {
+                      "kind": "generic_type"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "(?s)."
+                      }
+                    },
+                    "matches": "dict-ann"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "dict-ann"
+                  }
+                }
+              ]
+            },
+            "plain-target": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "plain-target"
+                  }
+                }
+              ]
+            },
+            "dict-bound": {
+              "kind": "identifier",
+              "any": [
+                {
+                  "resolves": {
+                    "binding": {
+                      "only": true,
+                      "site": {
+                        "any": [
+                          {
+                            "kind": "dictionary_splat_pattern",
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "kind": "parameters"
+                            }
+                          },
+                          {
+                            "kind": "typed_parameter",
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "kind": "parameters"
+                            },
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "dictionary_splat_pattern"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "only": true,
+                      "value": {
+                        "matches": "dict-init"
+                      },
+                      "site": {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "type"
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "only": true,
+                      "site": {
+                        "kind": "as_pattern",
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "with_item"
+                        },
+                        "all": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "dict-init",
+                              "precedes": {
+                                "stopBy": "end",
+                                "regex": "^as$"
+                              }
+                            }
+                          },
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "as_pattern_target",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "matches": "plain-target"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "only": true,
+                      "annotation": {
+                        "matches": "dict-ann"
+                      },
+                      "site": {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "any": [
+                              {
+                                "kind": "list_splat_pattern"
+                              },
+                              {
+                                "kind": "dictionary_splat_pattern"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "only": true,
+                      "site": {
+                        "kind": "function_definition",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "type",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "dict-ann"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "dict-name": {
+              "any": [
+                {
+                  "matches": "dict-bound"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "dict-name"
+                  }
+                }
+              ]
+            },
+            "key-expr": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "ellipsis"
+                },
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "false"
+                },
+                {
+                  "kind": "integer"
+                },
+                {
+                  "kind": "float"
+                },
+                {
+                  "kind": "string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string_start",
+                      "regex": "[fFtT]"
+                    }
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "string_start",
+                        "regex": "[fFtT]"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "key-expr"
+                  }
+                }
+              ]
+            },
+            "key-in-dict": {
+              "any": [
+                {
+                  "kind": "comparison_operator",
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "line_continuation"
+                          }
+                        ]
+                      }
+                    },
+                    "min": 3,
+                    "max": 3
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "key-expr",
+                        "pattern": "$K",
+                        "precedes": {
+                          "stopBy": {
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "comment"
+                                },
+                                {
+                                  "kind": "line_continuation"
+                                }
+                              ]
+                            }
+                          },
+                          "regex": "^in$"
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "dict-name",
+                        "pattern": "$D",
+                        "follows": {
+                          "stopBy": {
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "comment"
+                                },
+                                {
+                                  "kind": "line_continuation"
+                                }
+                              ]
+                            }
+                          },
+                          "regex": "^in$"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "key-in-dict"
+                  }
+                }
+              ]
+            },
+            "del-item": {
+              "any": [
+                {
+                  "kind": "subscript",
+                  "pattern": "$E[$L]",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "del-item"
+                  }
+                }
+              ]
+            },
+            "sole-del": {
+              "kind": "delete_statement",
+              "has": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "matches": "del-item"
+                  },
+                  {
+                    "kind": "expression_list",
+                    "count": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "comment"
+                            },
+                            {
+                              "kind": "line_continuation"
+                            },
+                            {
+                              "regex": "^,$"
+                            }
+                          ]
+                        }
+                      },
+                      "min": 1,
+                      "max": 1
+                    },
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "del-item"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "rule": {
+            "kind": "if_statement",
+            "all": [
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "elif_clause"
+                      },
+                      {
+                        "kind": "else_clause"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "has": {
+                  "field": "condition",
+                  "matches": "key-in-dict"
+                }
+              },
+              {
+                "has": {
+                  "field": "consequence",
+                  "kind": "block",
+                  "all": [
+                    {
+                      "count": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "comment"
+                              },
+                              {
+                                "kind": "line_continuation"
+                              }
+                            ]
+                          }
+                        },
+                        "min": 1,
+                        "max": 1
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "sole-del",
+                        "pattern": "$DEL"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "compare": {
+                  "left": "K",
+                  "op": "eq",
+                  "right": "L",
+                  "text": "structure"
+                }
+              },
+              {
+                "compare": {
+                  "left": "D",
+                  "op": "eq",
+                  "right": "E",
+                  "text": "structure"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.DEL",
+        "code": "RUF051",
+        "message": "Use `$D.pop($K, None)` instead of checking `$K in $D` and then running `del $D[$K]`; keep any comments from the removed lines.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF051"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

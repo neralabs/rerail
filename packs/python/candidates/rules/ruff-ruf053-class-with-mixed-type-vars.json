@@ -1,0 +1,141 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf053-class-with-mixed-type-vars",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't inherit from Generic in a class that already has a type parameter list; declare every type variable in that list instead.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "generic-ref": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "typing.Generic",
+                    "_typeshed.Generic",
+                    "typing_extensions.Generic"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "generic-ref"
+                }
+              }
+            ]
+          },
+          "generic-sub": {
+            "kind": "subscript",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "value",
+              "matches": "generic-ref"
+            }
+          },
+          "generic-base": {
+            "any": [
+              {
+                "matches": "generic-sub"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "generic-base"
+                }
+              }
+            ]
+          },
+          "first-base": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "superclasses",
+                    "kind": "class_definition",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "type_parameters",
+                      "kind": "type_parameter"
+                    }
+                  }
+                },
+                "not": {
+                  "follows": {
+                    "stopBy": "end",
+                    "matches": "generic-base"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "first-base"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "generic-base-with-type-params",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "min": "3.12"
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "matches": "generic-sub"
+              },
+              {
+                "matches": "first-base"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "RUF053",
+        "anchor": "witness.span",
+        "message": "Remove the `Generic[...]` base and move its type variables into the class's `[...]` type parameter list, as `T`, `*Ts` or `**P`; `Generic` and a type parameter list cannot be combined.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF053"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

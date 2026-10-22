@@ -1,0 +1,1321 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ann401-any-type",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use a specific type instead of Any in function signatures; Any switches off type checking for every value that passes through it.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "any-type",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "seen-builtins": {
+              "inside": {
+                "stopBy": "end",
+                "kind": "module",
+                "has": {
+                  "stopBy": "end",
+                  "kind": "dotted_name",
+                  "regex": "^builtins\\b",
+                  "any": [
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "field": "name",
+                        "kind": "import_statement"
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "aliased_import",
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "import_statement"
+                        }
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "field": "module_name",
+                        "kind": "import_from_statement"
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "static-ref": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^staticmethod$",
+                  "not": {
+                    "any": [
+                      {
+                        "matches": "seen-builtins"
+                      },
+                      {
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "module",
+                          "has": {
+                            "stopBy": "end",
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "dotted_name"
+                              }
+                            ],
+                            "regex": "^staticmethod$",
+                            "binds": {
+                              "scope": "module"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "matches": "seen-builtins",
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "staticmethod"
+                    ],
+                    "import": [
+                      "builtins.staticmethod"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "static-ref"
+                  }
+                }
+              ]
+            },
+            "overload-ref": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.overload",
+                      "typing_extensions.overload",
+                      "_typeshed.overload"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "overload-ref"
+                  }
+                }
+              ]
+            },
+            "def-like": {
+              "any": [
+                {
+                  "kind": "function_definition"
+                },
+                {
+                  "kind": "class_definition"
+                },
+                {
+                  "kind": "decorated_definition"
+                }
+              ]
+            },
+            "overload-of-name": {
+              "kind": "decorated_definition",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "decorator",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "overload-ref"
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "function_definition",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "name",
+                      "pattern": "$N"
+                    }
+                  }
+                }
+              ]
+            },
+            "has-def": {
+              "any": [
+                {
+                  "matches": "def-like"
+                },
+                {
+                  "has": {
+                    "stopBy": "end",
+                    "matches": "def-like"
+                  }
+                }
+              ]
+            },
+            "ends-with-overload": {
+              "any": [
+                {
+                  "matches": "overload-of-name"
+                },
+                {
+                  "not": {
+                    "kind": "function_definition"
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "has-def",
+                    "not": {
+                      "precedes": {
+                        "stopBy": "end",
+                        "matches": "has-def"
+                      }
+                    },
+                    "all": [
+                      {
+                        "matches": "ends-with-overload"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "after-overload": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": {
+                      "matches": "has-def"
+                    },
+                    "matches": "ends-with-overload"
+                  }
+                },
+                {
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "matches": "has-def"
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "kind": "class_definition"
+                        },
+                        {
+                          "kind": "module"
+                        }
+                      ]
+                    },
+                    "matches": "after-overload"
+                  }
+                }
+              ]
+            },
+            "overload-impl": {
+              "kind": "function_definition",
+              "not": {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "decorated_definition",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "decorator",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "overload-ref"
+                    }
+                  }
+                }
+              },
+              "matches": "after-overload"
+            },
+            "override-ref": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.override",
+                      "typing_extensions.override",
+                      "_typeshed.override"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "override-ref"
+                  }
+                }
+              ]
+            },
+            "any-ref": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.Any",
+                      "typing_extensions.Any",
+                      "_typeshed.Any"
+                    ]
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "type"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "any-ref"
+                  }
+                }
+              ]
+            },
+            "optional-ref": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.Optional",
+                      "typing_extensions.Optional",
+                      "_typeshed.Optional"
+                    ]
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "type"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "optional-ref"
+                  }
+                }
+              ]
+            },
+            "union-ref": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.Union",
+                      "typing_extensions.Union",
+                      "_typeshed.Union"
+                    ]
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "type"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "union-ref"
+                  }
+                }
+              ]
+            },
+            "annotated-ref": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.Annotated",
+                      "typing_extensions.Annotated",
+                      "_typeshed.Annotated"
+                    ]
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "type"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "annotated-ref"
+                  }
+                }
+              ]
+            },
+            "plain-string": {
+              "any": [
+                {
+                  "kind": "string",
+                  "regex": "^[rRuU]{0,2}['\"]",
+                  "not": {
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "interpolation"
+                    }
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "not": {
+                        "regex": "^[rRuU]{0,2}['\"]"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "tuple-like": {
+              "any": [
+                {
+                  "kind": "tuple"
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "type"
+                    },
+                    {
+                      "kind": "parenthesized_expression"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "tuple-like"
+                  }
+                }
+              ]
+            },
+            "c-any": {
+              "any": [
+                {
+                  "matches": "any-ref"
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "type"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "c-any"
+                  }
+                },
+                {
+                  "kind": "binary_operator",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "operator",
+                        "regex": "^\\|$"
+                      }
+                    },
+                    {
+                      "any": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "left",
+                            "matches": "c-any"
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "right",
+                            "matches": "c-any"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "subscript",
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "value",
+                            "matches": "optional-ref"
+                          }
+                        },
+                        {
+                          "all": [
+                            {
+                              "not": {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "regex": "^,$"
+                                }
+                              }
+                            },
+                            {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "follows": {
+                                  "stopBy": "end",
+                                  "regex": "^\\[$"
+                                },
+                                "matches": "c-any"
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "generic_type",
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "identifier",
+                            "matches": "optional-ref"
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "type_parameter",
+                            "all": [
+                              {
+                                "all": [
+                                  {
+                                    "not": {
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "regex": "^,$"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "follows": {
+                                        "stopBy": "end",
+                                        "regex": "^\\[$"
+                                      },
+                                      "matches": "c-any"
+                                    }
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "subscript",
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "value",
+                            "matches": "union-ref"
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "any": [
+                              {
+                                "matches": "c-any"
+                              },
+                              {
+                                "matches": "tuple-like",
+                                "inside": {
+                                  "stopBy": "neighbor",
+                                  "all": [
+                                    {
+                                      "not": {
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "regex": "^,$"
+                                        }
+                                      }
+                                    }
+                                  ]
+                                },
+                                "has": {
+                                  "stopBy": "end",
+                                  "matches": "tuple-first-c"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "generic_type",
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "identifier",
+                            "matches": "union-ref"
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "type_parameter",
+                            "all": [
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "any": [
+                                    {
+                                      "matches": "c-any"
+                                    },
+                                    {
+                                      "matches": "tuple-like",
+                                      "inside": {
+                                        "stopBy": "neighbor",
+                                        "all": [
+                                          {
+                                            "not": {
+                                              "has": {
+                                                "stopBy": "neighbor",
+                                                "regex": "^,$"
+                                              }
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      "has": {
+                                        "stopBy": "end",
+                                        "matches": "tuple-first-c"
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "subscript",
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "value",
+                            "matches": "annotated-ref"
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "all": [
+                              {
+                                "follows": {
+                                  "stopBy": "end",
+                                  "regex": "^\\[$"
+                                },
+                                "not": {
+                                  "any": [
+                                    {
+                                      "follows": {
+                                        "stopBy": "end",
+                                        "regex": "^,$"
+                                      }
+                                    },
+                                    {
+                                      "kind": "comment"
+                                    }
+                                  ]
+                                },
+                                "matches": "first-c"
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "generic_type",
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "identifier",
+                            "matches": "annotated-ref"
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "type_parameter",
+                            "all": [
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "all": [
+                                    {
+                                      "follows": {
+                                        "stopBy": "end",
+                                        "regex": "^\\[$"
+                                      },
+                                      "not": {
+                                        "any": [
+                                          {
+                                            "follows": {
+                                              "stopBy": "end",
+                                              "regex": "^,$"
+                                            }
+                                          },
+                                          {
+                                            "kind": "comment"
+                                          }
+                                        ]
+                                      },
+                                      "matches": "first-c"
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "matches": "plain-string",
+                  "parse": {
+                    "grammar": "annotation",
+                    "any": [
+                      {
+                        "kind": "ERROR"
+                      },
+                      {
+                        "kind": "expression_statement",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "matches": "plain-string"
+                            },
+                            {
+                              "matches": "c-any"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "tuple-first-c": {
+              "kind": "tuple",
+              "has": {
+                "stopBy": "neighbor",
+                "not": {
+                  "any": [
+                    {
+                      "regex": "^[(),]$"
+                    },
+                    {
+                      "kind": "comment"
+                    }
+                  ]
+                },
+                "matches": "c-any"
+              }
+            },
+            "first-c": {
+              "any": [
+                {
+                  "not": {
+                    "matches": "tuple-like"
+                  },
+                  "matches": "c-any"
+                },
+                {
+                  "matches": "tuple-like",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "all": [
+                      {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "regex": "^,$"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "tuple",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "all": [
+                        {
+                          "not": {
+                            "any": [
+                              {
+                                "regex": "^[(),]$"
+                              },
+                              {
+                                "kind": "comment"
+                              },
+                              {
+                                "follows": {
+                                  "stopBy": "end",
+                                  "regex": "^,$"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ],
+                      "matches": "c-any"
+                    }
+                  }
+                }
+              ]
+            },
+            "r-extra": {
+              "any": [
+                {
+                  "matches": "optional-ref"
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "type"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "r-extra"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "subscript",
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "value",
+                            "matches": "annotated-ref"
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "all": [
+                              {
+                                "follows": {
+                                  "stopBy": "end",
+                                  "regex": "^\\[$"
+                                },
+                                "not": {
+                                  "any": [
+                                    {
+                                      "follows": {
+                                        "stopBy": "end",
+                                        "regex": "^,$"
+                                      }
+                                    },
+                                    {
+                                      "kind": "comment"
+                                    }
+                                  ]
+                                },
+                                "matches": "first-r"
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "generic_type",
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "identifier",
+                            "matches": "annotated-ref"
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "type_parameter",
+                            "all": [
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "all": [
+                                    {
+                                      "follows": {
+                                        "stopBy": "end",
+                                        "regex": "^\\[$"
+                                      },
+                                      "not": {
+                                        "any": [
+                                          {
+                                            "follows": {
+                                              "stopBy": "end",
+                                              "regex": "^,$"
+                                            }
+                                          },
+                                          {
+                                            "kind": "comment"
+                                          }
+                                        ]
+                                      },
+                                      "matches": "first-r"
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "first-r": {
+              "any": [
+                {
+                  "not": {
+                    "matches": "tuple-like"
+                  },
+                  "matches": "r-extra"
+                },
+                {
+                  "matches": "tuple-like",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "all": [
+                      {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "regex": "^,$"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "tuple",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "all": [
+                        {
+                          "not": {
+                            "any": [
+                              {
+                                "regex": "^[(),]$"
+                              },
+                              {
+                                "kind": "comment"
+                              },
+                              {
+                                "follows": {
+                                  "stopBy": "end",
+                                  "regex": "^,$"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ],
+                      "matches": "r-extra"
+                    }
+                  }
+                }
+              ]
+            },
+            "top-any": {
+              "any": [
+                {
+                  "not": {
+                    "matches": "plain-string"
+                  },
+                  "any": [
+                    {
+                      "matches": "c-any"
+                    },
+                    {
+                      "matches": "r-extra"
+                    }
+                  ]
+                },
+                {
+                  "matches": "plain-string",
+                  "parse": {
+                    "grammar": "annotation",
+                    "kind": "expression_statement",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "matches": "c-any"
+                        },
+                        {
+                          "matches": "r-extra"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "matches": "plain-string",
+                  "any": [
+                    {
+                      "kind": "concatenated_string"
+                    },
+                    {
+                      "kind": "string",
+                      "regex": "(?s)^[uU]?['\"].*\\\\"
+                    }
+                  ],
+                  "parse": {
+                    "grammar": "annotation",
+                    "kind": "expression_statement",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "plain-string"
+                    }
+                  }
+                }
+              ]
+            },
+            "non-variadic": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "default_parameter"
+                },
+                {
+                  "kind": "typed_default_parameter"
+                },
+                {
+                  "kind": "typed_parameter",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "list_splat_pattern"
+                        },
+                        {
+                          "kind": "dictionary_splat_pattern"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "method-not-static": {
+              "kind": "function_definition",
+              "inside": {
+                "stopBy": {
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "class_definition"
+                    }
+                  ]
+                },
+                "kind": "class_definition"
+              },
+              "not": {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "decorated_definition",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "decorator",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "static-ref"
+                    }
+                  }
+                }
+              }
+            },
+            "checked-fn": {
+              "kind": "function_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "name",
+                "pattern": "$N"
+              },
+              "not": {
+                "any": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "decorated_definition",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "decorator",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "override-ref"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "matches": "overload-impl"
+                  }
+                ]
+              }
+            },
+            "checked-param": {
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "parameters",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "function_definition",
+                  "matches": "checked-fn"
+                }
+              },
+              "not": {
+                "matches": "non-variadic",
+                "not": {
+                  "follows": {
+                    "stopBy": "end",
+                    "matches": "non-variadic"
+                  }
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parameters",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "method-not-static"
+                  }
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              },
+              {
+                "kind": "subscript"
+              },
+              {
+                "kind": "generic_type"
+              },
+              {
+                "kind": "binary_operator"
+              },
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              "kind": "type",
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "return_type",
+                    "kind": "function_definition",
+                    "matches": "checked-fn"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "type",
+                    "any": [
+                      {
+                        "kind": "typed_parameter"
+                      },
+                      {
+                        "kind": "typed_default_parameter"
+                      }
+                    ],
+                    "matches": "checked-param"
+                  }
+                }
+              ]
+            },
+            "matches": "top-any"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "ANN401",
+        "message": "Replace `Any` here with the type the code actually accepts or returns, such as a union, a TypeVar or a Protocol; keep it only where every type is truly allowed.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "ANN401"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

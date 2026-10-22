@@ -1,0 +1,209 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pt002-pytest-fixture-positional-args",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Pass pytest fixture configuration such as scope or params as keyword arguments, not positionally, for clarity.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "fixture-positional-args",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "fixture-name": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "pytest.fixture",
+                  "pytest.yield_fixture"
+                ]
+              }
+            },
+            "fixture-ref": {
+              "matches": "fixture-name",
+              "pattern": "$F"
+            },
+            "callee": {
+              "any": [
+                {
+                  "matches": "fixture-ref"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            },
+            "plain-callee": {
+              "any": [
+                {
+                  "matches": "fixture-name"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "plain-callee"
+                  }
+                }
+              ]
+            },
+            "fixture-expr": {
+              "any": [
+                {
+                  "matches": "plain-callee"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "matches": "plain-callee"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "fixture-expr"
+                  }
+                }
+              ]
+            },
+            "positional-call": {
+              "any": [
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "matches": "callee"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "field": "arguments",
+                        "any": [
+                          {
+                            "kind": "generator_expression"
+                          },
+                          {
+                            "kind": "argument_list",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "not": {
+                                "any": [
+                                  {
+                                    "kind": "keyword_argument"
+                                  },
+                                  {
+                                    "kind": "dictionary_splat"
+                                  },
+                                  {
+                                    "kind": "comment"
+                                  },
+                                  {
+                                    "kind": "line_continuation"
+                                  },
+                                  {
+                                    "regex": "^[(),]$"
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "positional-call"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "decorator",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "positional-call"
+            },
+            "not": {
+              "follows": {
+                "stopBy": "end",
+                "kind": "decorator",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "fixture-expr"
+                }
+              }
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "decorated_definition",
+              "has": {
+                "field": "definition",
+                "kind": "function_definition"
+              }
+            },
+            "any": [
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "comment"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "comment"
+                },
+                "regex": "(?s)^(?<SPAN>@(?:[^#\"'\\\\]|\\\\.|#[^\\n]*\\n|\"\"\"[^\"\\\\]*(?:(?:\\\\.|\"{1,2}[^\"\\\\])[^\"\\\\]*)*\"\"\"|'''[^'\\\\]*(?:(?:\\\\.|'{1,2}[^'\\\\])[^'\\\\]*)*'''|\"\"[^\"#'\\\\]|\"(?:[^\"\\\\]|\\\\.)+\"|''[^\"#'\\\\]|'(?:[^'\\\\]|\\\\.)+')*?(?:\"\"|'')?\\))(?:[ \\t]|\\\\\\r?\\n)*(?:#[^\\n]*)?\\s*$"
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "comment"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.SPAN",
+        "code": "PT002",
+        "message": "Pass the options of `$F` as keyword arguments, such as `scope=\"module\"` or `params=[...]`, instead of positional arguments.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT002"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

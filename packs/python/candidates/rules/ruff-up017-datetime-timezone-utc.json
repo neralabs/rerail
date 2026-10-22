@@ -1,0 +1,126 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up017-datetime-timezone-utc",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use the datetime.UTC alias instead of datetime.timezone.utc; the alias is shorter and has been available since Python 3.11.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "datetime-timezone-utc",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "min": "3.11"
+            }
+          },
+          "utils": {
+            "utc-attribute": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "resolves": {
+                    "import": [
+                      "datetime.timezone.utc"
+                    ]
+                  }
+                },
+                {
+                  "kind": "dotted_name",
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "case_pattern"
+                  },
+                  "any": [
+                    {
+                      "regex": "^[^.\\s]+\\s*\\.\\s*timezone\\s*\\.\\s*utc$",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "identifier",
+                        "nthChild": 1,
+                        "resolves": {
+                          "import": [
+                            "datetime"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "regex": "^[^.\\s]+\\s*\\.\\s*utc$",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "identifier",
+                        "nthChild": 1,
+                        "resolves": {
+                          "import": [
+                            "datetime.timezone"
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "utc-in-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "utc-attribute",
+                      "capture": "UTC"
+                    },
+                    {
+                      "matches": "utc-in-string"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "utc-attribute",
+                "pattern": "$UTC"
+              },
+              {
+                "matches": "utc-in-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.UTC",
+        "code": "UP017",
+        "message": "Replace `datetime.timezone.utc` with the `datetime.UTC` alias (`from datetime import UTC` when `timezone` is imported by name); it is the same object since Python 3.11.",
+        "each": "UTC",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP017"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

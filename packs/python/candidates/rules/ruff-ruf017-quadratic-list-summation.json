@@ -1,0 +1,257 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf017-quadratic-list-summation",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid flattening lists by summing them onto an empty list; it is quadratic, so chain them with itertools instead.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "quadratic-list-summation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "callee-sum": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "sum"
+                    ],
+                    "import": [
+                      "builtins.sum"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee-sum"
+                  }
+                }
+              ]
+            },
+            "callee-list": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "list"
+                    ],
+                    "import": [
+                      "builtins.list"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee-list"
+                  }
+                }
+              ]
+            },
+            "trivia": {
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                }
+              ]
+            },
+            "not-positional": {
+              "any": [
+                {
+                  "kind": "keyword_argument"
+                },
+                {
+                  "kind": "dictionary_splat"
+                },
+                {
+                  "matches": "trivia"
+                },
+                {
+                  "regex": "^[(),]$"
+                }
+              ]
+            },
+            "empty-list": {
+              "any": [
+                {
+                  "kind": "list",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "regex": "^[\\[\\]]$"
+                          },
+                          {
+                            "matches": "trivia"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "matches": "callee-list"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "field": "arguments",
+                        "kind": "argument_list",
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "not": {
+                              "any": [
+                                {
+                                  "regex": "^[()]$"
+                                },
+                                {
+                                  "matches": "trivia"
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "empty-list"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "callee-sum"
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "kind": "argument_list",
+                  "any": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "keyword_argument",
+                        "has": {
+                          "field": "name",
+                          "regex": "^start$"
+                        },
+                        "all": [
+                          {
+                            "has": {
+                              "field": "value",
+                              "matches": "empty-list"
+                            }
+                          }
+                        ]
+                      },
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "not": {
+                              "matches": "not-positional"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "keyword_argument",
+                          "has": {
+                            "field": "name",
+                            "regex": "^start$"
+                          }
+                        }
+                      },
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "empty-list",
+                        "nthChild": {
+                          "position": 2,
+                          "ofRule": {
+                            "not": {
+                              "matches": "not-positional"
+                            }
+                          }
+                        },
+                        "not": {
+                          "follows": {
+                            "stopBy": "end",
+                            "kind": "list_splat"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RUF017",
+        "message": "Replace `sum(lists, [])` with `list(itertools.chain.from_iterable(lists))`; summing onto a list copies it at every step (quadratic). Leave it when the input is only a few short lists.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF017"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

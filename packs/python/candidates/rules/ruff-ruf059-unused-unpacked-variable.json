@@ -1,0 +1,271 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf059-unused-unpacked-variable",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Prefix unused variables from tuple or list unpacking with an underscore; unused names suggest a mistake or confuse readers.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "options",
+      "define": {
+        "options": {
+          "dummy-variable-rgx": {
+            "type": "string",
+            "default": "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$",
+            "description": "Names of variables that may be unused."
+          }
+        }
+      }
+    },
+    {
+      "id": "unused-unpacked-variable",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "display": {
+              "any": [
+                {
+                  "kind": "tuple"
+                },
+                {
+                  "kind": "expression_list"
+                },
+                {
+                  "kind": "list"
+                },
+                {
+                  "kind": "set"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "display"
+                  }
+                }
+              ]
+            },
+            "chain-all-tuple": {
+              "kind": "assignment",
+              "has": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "pattern_list"
+                  },
+                  {
+                    "kind": "list_pattern"
+                  },
+                  {
+                    "kind": "tuple_pattern",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  }
+                ]
+              },
+              "any": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "assignment",
+                    "matches": "chain-all-tuple"
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "assignment"
+                    }
+                  }
+                }
+              ]
+            },
+            "chain-display-value": {
+              "kind": "assignment",
+              "any": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "assignment",
+                    "matches": "chain-display-value"
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "assignment"
+                    }
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "display"
+                  }
+                }
+              ]
+            },
+            "chain-top": {
+              "kind": "assignment",
+              "not": {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "assignment"
+                }
+              }
+            },
+            "unpacked": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": {
+                      "kind": "assignment"
+                    },
+                    "any": [
+                      {
+                        "kind": "pattern_list"
+                      },
+                      {
+                        "kind": "list_pattern"
+                      },
+                      {
+                        "kind": "tuple_pattern",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "regex": "^,$"
+                        }
+                      }
+                    ]
+                  },
+                  "all": [
+                    {
+                      "inside": {
+                        "stopBy": "end",
+                        "matches": "chain-top",
+                        "any": [
+                          {
+                            "not": {
+                              "matches": "chain-display-value"
+                            }
+                          },
+                          {
+                            "not": {
+                              "matches": "chain-all-tuple"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "binds": {
+                    "form": "named"
+                  },
+                  "inside": {
+                    "stopBy": "end",
+                    "matches": "chain-top",
+                    "all": [
+                      {
+                        "matches": "chain-all-tuple"
+                      },
+                      {
+                        "not": {
+                          "matches": "chain-display-value"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "binds": {
+                    "form": "with"
+                  },
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "tuple",
+                    "matches": "with-target-top"
+                  }
+                }
+              ]
+            },
+            "with-target-top": {
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "as_pattern_target"
+                  },
+                  {
+                    "kind": "parenthesized_expression",
+                    "matches": "with-target-top"
+                  }
+                ]
+              }
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$N",
+            "any": [
+              {
+                "binds": {
+                  "form": [
+                    "assignment",
+                    "annotated",
+                    "augmented",
+                    "named",
+                    "with",
+                    "match",
+                    "typeAlias"
+                  ],
+                  "scope": [
+                    "function",
+                    "lambda"
+                  ],
+                  "latest": true,
+                  "outer": false,
+                  "used": false
+                },
+                "not": {
+                  "regex": "^(?:__tracebackhide__|__traceback_info__|__traceback_supplement__|__debuggerskip__)$"
+                },
+                "all": [
+                  {
+                    "matches": "unpacked"
+                  }
+                ]
+              }
+            ],
+            "not": {
+              "regex": {
+                "$option": "dummy-variable-rgx"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RUF059",
+        "message": "Unpacked variable `$N` is never used; rename it to `_$N` or `_` to mark it unused, or use it.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF059"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

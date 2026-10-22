@@ -1,0 +1,235 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-rse102-unnecessary-paren-on-raise-exception",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove the empty parentheses when raising an exception class; raise instantiates the class itself.",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "clauses": [
+    {
+      "id": "unnecessary-paren-on-raise",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "raised": {
+              "any": [
+                {
+                  "follows": {"stopBy": {"not": {"kind": "line_continuation"}}, "regex": "^raise$"},
+                  "inside": {"stopBy": "neighbor", "kind": "raise_statement"}
+                },
+                {"inside": {"stopBy": "neighbor", "kind": "parenthesized_expression", "matches": "raised"}}
+              ]
+            },
+            "lowercase-name": {"regex": "^_?\\p{Lowercase}"},
+            "win-error": {"resolves": {"import": ["ctypes.WinError"]}},
+            "callee": {
+              "any": [
+                {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "callee"}},
+                {
+                  "kind": "identifier",
+                  "any": [
+                    {"resolves": {"global": true}},
+                    {"resolves": {"binding": {"site": {"kind": "class_definition"}}}},
+                    {
+                      "not": {
+                        "any": [
+                          {"resolves": {"binding": {"site": {"kind": "function_definition"}}}},
+                          {"matches": "lowercase-name"},
+                          {"matches": "win-error"}
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "attribute",
+                  "any": [
+                    {"any": [{"matches": "class-member-class"}, {"matches": "class-member-class-2"}]},
+                    {
+                      "not": {
+                        "any": [
+                          {"matches": "class-member-function"},
+                          {"matches": "class-member-function-2"},
+                          {"has": {"field": "attribute", "matches": "lowercase-name"}},
+                          {"matches": "win-error"}
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "not": {
+                    "any": [
+                      {"kind": "identifier"},
+                      {"kind": "attribute"},
+                      {"kind": "parenthesized_expression"},
+                      {"kind": "comment"},
+                      {"kind": "line_continuation"},
+                      {"regex": "^[()]$"}
+                    ]
+                  }
+                }
+              ]
+            },
+            "class-member-function": {
+              "kind": "attribute",
+              "pattern": "$OBJ.$MEMBER",
+              "has": {
+                "field": "object",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "class_definition",
+                      "has": {
+                        "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]},
+                        "kind": "function_definition",
+                        "has": {
+                          "field": "name",
+                          "pattern": "$MEMBERD",
+                          "compare": {"left": "MEMBERD", "op": "eq", "right": "MEMBER", "text": "tokens"},
+                          "binds": {"latest": true}
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "class-member-class": {
+              "kind": "attribute",
+              "pattern": "$OBJ.$MEMBER",
+              "has": {
+                "field": "object",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "class_definition",
+                      "has": {
+                        "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]},
+                        "kind": "class_definition",
+                        "has": {
+                          "field": "name",
+                          "pattern": "$MEMBERD",
+                          "compare": {"left": "MEMBERD", "op": "eq", "right": "MEMBER", "text": "tokens"},
+                          "binds": {"latest": true}
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "class-member-function-2": {
+              "kind": "attribute",
+              "pattern": "$ROOT.$MID.$MEMBER",
+              "has": {
+                "field": "object",
+                "has": {
+                  "field": "object",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "class_definition",
+                        "has": {
+                          "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]},
+                          "kind": "class_definition",
+                          "all": [
+                            {
+                              "has": {
+                                "field": "name",
+                                "pattern": "$MIDD",
+                                "compare": {"left": "MIDD", "op": "eq", "right": "MID", "text": "tokens"},
+                                "binds": {"latest": true}
+                              }
+                            },
+                            {
+                              "has": {
+                                "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]},
+                                "kind": "function_definition",
+                                "has": {
+                                  "field": "name",
+                                  "pattern": "$MEMBERD",
+                                  "compare": {"left": "MEMBERD", "op": "eq", "right": "MEMBER", "text": "tokens"},
+                                  "binds": {"latest": true}
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "class-member-class-2": {
+              "kind": "attribute",
+              "pattern": "$ROOT.$MID.$MEMBER",
+              "has": {
+                "field": "object",
+                "has": {
+                  "field": "object",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "class_definition",
+                        "has": {
+                          "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]},
+                          "kind": "class_definition",
+                          "all": [
+                            {
+                              "has": {
+                                "field": "name",
+                                "pattern": "$MIDD",
+                                "compare": {"left": "MIDD", "op": "eq", "right": "MID", "text": "tokens"},
+                                "binds": {"latest": true}
+                              }
+                            },
+                            {
+                              "has": {
+                                "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]},
+                                "kind": "class_definition",
+                                "has": {
+                                  "field": "name",
+                                  "pattern": "$MEMBERD",
+                                  "compare": {"left": "MEMBERD", "op": "eq", "right": "MEMBER", "text": "tokens"},
+                                  "binds": {"latest": true}
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "rule": {
+            "kind": "argument_list",
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "not": {"any": [{"kind": "comment"}, {"kind": "line_continuation"}, {"regex": "^[()]$"}]}
+              }
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "call",
+              "matches": "raised",
+              "has": {"stopBy": "neighbor", "field": "function", "matches": "callee"}
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RSE102",
+        "message": "Remove the empty parentheses so the class is raised directly; keep them if the callee is a function that returns the exception.",
+        "suppress": {"noqa": {"codes": ["RSE102"]}}
+      }
+    }
+  ]
+}

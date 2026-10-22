@@ -3,7 +3,7 @@
  "id": "ruff-dtz007-call-datetime-strptime-without-zone",
  "revision": 1,
  "mode": "steer",
- "description": "Port of Ruff's DTZ007 (call-datetime-strptime-without-zone): a call whose callee (parentheses transparent) resolves to `datetime.datetime.strptime` through the file's imports (Ruff's `resolve_qualified_name`), unless the call (parentheses transparent) is followed by zero or more `.replace(...)` calls and then an `.astimezone` attribute (Ruff's `followed_by_astimezone`), or its second positional argument (comments aside, starred ones counted) is a str literal whose decoded value contains `%z` or an f-string one of whose literal parts contains `%z`. Reported on the call when the call is not the object of a `.replace` attribute whose enclosing expression (Ruff's grandparent: through parentheses and the argument list) is a call passing a `tzinfo=` keyword, and with the `tz=None` message when that keyword is the literal `None`.",
+ "description": "Make datetimes parsed from text timezone-aware, by parsing a UTC offset or attaching a timezone afterwards; naive datetimes can't be safely compared with aware ones.",
  "scope": {
   "include": [
    "**/*"
@@ -413,7 +413,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "DTZ007",
-    "message": "Naive datetime constructed using `datetime.datetime.strptime()` without %z",
+    "message": "Make the result aware: parse a UTC offset with `%z`, else chain `.replace(tzinfo=...)` with the text's timezone (`.astimezone()` if it is local time); keep it naive only if that is intended.",
     "suppress": {
      "noqa": {
       "codes": [
@@ -456,7 +456,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "DTZ007",
-    "message": "`datetime.datetime.strptime(...).replace(tz=None)` used",
+    "message": "Pass the timezone the text is in to `tzinfo`, e.g. `datetime.timezone.utc`, instead of `None`; keep `None` only if a naive datetime is intended.",
     "suppress": {
      "noqa": {
       "codes": [

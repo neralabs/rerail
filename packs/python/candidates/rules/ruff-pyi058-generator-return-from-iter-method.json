@@ -1,0 +1,402 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi058-generator-return-from-iter-method",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Annotate a simple iteration method as returning an iterator, not a generator; the kind of iterator it returns is an implementation detail.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "any-or-none": {
+            "any": [
+              { "kind": "none" },
+              {
+                "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+                "resolves": { "import": ["typing.Any", "typing_extensions.Any", "_typeshed.Any"] }
+              },
+              {
+                "any": [{"kind": "parenthesized_expression"}, {"kind": "type"}],
+                "has": { "stopBy": "neighbor", "matches": "any-or-none" }
+              }
+            ]
+          },
+          "generator-ref": {
+            "any": [
+              {
+                "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+                "resolves": {
+                  "import": ["typing.Generator", "typing_extensions.Generator", "collections.abc.Generator"]
+                }
+              },
+              {
+                "any": [{"kind": "parenthesized_expression"}, {"kind": "type"}],
+                "has": { "stopBy": "neighbor", "matches": "generator-ref" }
+              }
+            ]
+          },
+          "async-generator-ref": {
+            "any": [
+              {
+                "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+                "resolves": {
+                  "import": [
+                    "typing.AsyncGenerator",
+                    "typing_extensions.AsyncGenerator",
+                    "collections.abc.AsyncGenerator"
+                  ]
+                }
+              },
+              {
+                "any": [{"kind": "parenthesized_expression"}, {"kind": "type"}],
+                "has": { "stopBy": "neighbor", "matches": "async-generator-ref" }
+              }
+            ]
+          },
+          "generator-return": {
+            "any": [
+              { "matches": "generator-ref" },
+              {
+                "any": [{"kind": "parenthesized_expression"}, {"kind": "type"}],
+                "has": { "stopBy": "neighbor", "matches": "generator-return" }
+              },
+              {
+                "kind": "generic_type",
+                "all": [
+                  {
+                    "has": { "stopBy": "neighbor", "kind": "identifier", "matches": "generator-ref" }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "type_parameter",
+                      "count": { "has": {"stopBy": "neighbor", "kind": "type"}, "min": 3, "max": 3 },
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "type",
+                          "nthChild": { "position": "n+2", "ofRule": {"kind": "type"} },
+                          "not": { "matches": "any-or-none" }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "subscript",
+                "all": [
+                  { "has": {"stopBy": "neighbor", "field": "value", "matches": "generator-ref"} },
+                  {
+                    "count": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "nthChild": { "position": "n+1", "ofRule": {"not": {"kind": "comment"}} }
+                      },
+                      "min": 4,
+                      "max": 4
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "nthChild": { "position": "n+3", "ofRule": {"not": {"kind": "comment"}} },
+                        "not": { "matches": "any-or-none" }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "async-generator-return": {
+            "any": [
+              { "matches": "async-generator-ref" },
+              {
+                "any": [{"kind": "parenthesized_expression"}, {"kind": "type"}],
+                "has": { "stopBy": "neighbor", "matches": "async-generator-return" }
+              },
+              {
+                "kind": "generic_type",
+                "all": [
+                  {
+                    "has": { "stopBy": "neighbor", "kind": "identifier", "matches": "async-generator-ref" }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "type_parameter",
+                      "count": { "has": {"stopBy": "neighbor", "kind": "type"}, "min": 2, "max": 2 },
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "type",
+                          "nthChild": { "position": "n+2", "ofRule": {"kind": "type"} },
+                          "not": { "matches": "any-or-none" }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "subscript",
+                "all": [
+                  {
+                    "has": { "stopBy": "neighbor", "field": "value", "matches": "async-generator-ref" }
+                  },
+                  {
+                    "count": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "nthChild": { "position": "n+1", "ofRule": {"not": {"kind": "comment"}} }
+                      },
+                      "min": 3,
+                      "max": 3
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "nthChild": { "position": "n+3", "ofRule": {"not": {"kind": "comment"}} },
+                        "not": { "matches": "any-or-none" }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "single-parameter": {
+            "kind": "parameters",
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "any": [
+                  { "kind": "list_splat_pattern" },
+                  { "kind": "dictionary_splat_pattern" },
+                  { "kind": "keyword_separator" }
+                ]
+              }
+            },
+            "count": {
+              "has": {
+                "stopBy": "neighbor",
+                "any": [
+                  { "kind": "identifier" },
+                  { "kind": "typed_parameter" },
+                  { "kind": "default_parameter" },
+                  { "kind": "typed_default_parameter" }
+                ]
+              },
+              "min": 1,
+              "max": 1
+            }
+          },
+          "plain-method": {
+            "kind": "function_definition",
+            "not": { "regex": "^async\\b" },
+            "inside": {
+              "stopBy": { "any": [{"kind": "function_definition"}, {"kind": "class_definition"}] },
+              "kind": "class_definition"
+            },
+            "has": { "stopBy": "neighbor", "field": "parameters", "matches": "single-parameter" }
+          },
+          "iter-method": {
+            "matches": "plain-method",
+            "all": [
+              { "has": {"stopBy": "neighbor", "field": "name", "regex": "^__iter__$"} },
+              {
+                "has": { "stopBy": "neighbor", "field": "return_type", "matches": "generator-return" }
+              }
+            ]
+          },
+          "aiter-method": {
+            "matches": "plain-method",
+            "all": [
+              { "has": {"stopBy": "neighbor", "field": "name", "regex": "^__aiter__$"} },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "return_type",
+                  "matches": "async-generator-return"
+                }
+              }
+            ]
+          },
+          "none-value": {
+            "any": [
+              { "kind": "none" },
+              {
+                "kind": "parenthesized_expression",
+                "has": { "stopBy": "neighbor", "matches": "none-value" }
+              }
+            ]
+          },
+          "plain-string": {
+            "any": [
+              { "kind": "string", "regex": "^[rRuU]{0,2}['\"]" },
+              {
+                "kind": "concatenated_string",
+                "not": {
+                  "has": { "stopBy": "neighbor", "kind": "string", "not": {"regex": "^[rRuU]{0,2}['\"]"} }
+                }
+              }
+            ]
+          },
+          "yield-expr": {
+            "any": [
+              { "kind": "yield" },
+              {
+                "kind": "parenthesized_expression",
+                "has": { "stopBy": "neighbor", "matches": "yield-expr" }
+              }
+            ]
+          },
+          "statement-expr": {
+            "any": [
+              { "matches": "plain-string" },
+              { "kind": "ellipsis" },
+              { "matches": "yield-expr" },
+              {
+                "kind": "parenthesized_expression",
+                "has": { "stopBy": "neighbor", "matches": "statement-expr" }
+              }
+            ]
+          },
+          "yield-statement": { "kind": "expression_statement", "has": {"stopBy": "neighbor", "matches": "yield-expr"} },
+          "late-value-return": {
+            "kind": "return_statement",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "nthChild": { "position": "n+1", "ofRule": {"not": {"kind": "comment"}} },
+                  "not": { "matches": "none-value" }
+                }
+              },
+              { "follows": {"stopBy": "end", "matches": "yield-statement"} }
+            ]
+          },
+          "simple-statement": {
+            "any": [
+              { "kind": "pass_statement" },
+              { "kind": "comment" },
+              { "regex": "^;$" },
+              {
+                "kind": "expression_statement",
+                "has": { "stopBy": "neighbor", "matches": "statement-expr" }
+              },
+              { "kind": "return_statement", "not": {"matches": "late-value-return"} }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "generator-from-iter",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": { "path": {"regex": "\\.py$"} },
+          "rule": {
+            "kind": "identifier",
+            "regex": "^__iter__$",
+            "inside": {
+              "stopBy": "neighbor",
+              "field": "name",
+              "matches": "iter-method",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "body",
+                "kind": "block",
+                "not": { "has": {"stopBy": "neighbor", "not": {"matches": "simple-statement"}} }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI058",
+        "message": "Annotate `__iter__` as returning `Iterator[...]` with the same yield type, not `Generator`; keep `Generator` only if callers rely on `send` or `throw`.",
+        "suppress": { "noqa": {"codes": ["PYI058"]} }
+      }
+    },
+    {
+      "id": "generator-from-iter-stub",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": { "path": {"regex": "\\.pyi$"} },
+          "rule": {
+            "kind": "identifier",
+            "regex": "^__iter__$",
+            "inside": { "stopBy": "neighbor", "field": "name", "matches": "iter-method" }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI058",
+        "message": "Annotate `__iter__` as returning `Iterator[...]` with the same yield type, not `Generator`; keep `Generator` only if callers rely on `send` or `throw`.",
+        "suppress": { "noqa": {"codes": ["PYI058"]} }
+      }
+    },
+    {
+      "id": "async-generator-from-aiter",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": { "path": {"regex": "\\.py$"} },
+          "rule": {
+            "kind": "identifier",
+            "regex": "^__aiter__$",
+            "inside": {
+              "stopBy": "neighbor",
+              "field": "name",
+              "matches": "aiter-method",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "body",
+                "kind": "block",
+                "not": { "has": {"stopBy": "neighbor", "not": {"matches": "simple-statement"}} }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI058",
+        "message": "Annotate `__aiter__` as returning `AsyncIterator[...]` with the same yield type, not `AsyncGenerator`; keep `AsyncGenerator` only if callers rely on `asend` or `athrow`.",
+        "suppress": { "noqa": {"codes": ["PYI058"]} }
+      }
+    },
+    {
+      "id": "async-generator-from-aiter-stub",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": { "path": {"regex": "\\.pyi$"} },
+          "rule": {
+            "kind": "identifier",
+            "regex": "^__aiter__$",
+            "inside": { "stopBy": "neighbor", "field": "name", "matches": "aiter-method" }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI058",
+        "message": "Annotate `__aiter__` as returning `AsyncIterator[...]` with the same yield type, not `AsyncGenerator`; keep `AsyncGenerator` only if callers rely on `asend` or `athrow`.",
+        "suppress": { "noqa": {"codes": ["PYI058"]} }
+      }
+    }
+  ]
+}

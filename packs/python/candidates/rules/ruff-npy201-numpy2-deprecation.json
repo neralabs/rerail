@@ -1,0 +1,2928 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-npy201-numpy2-deprecation",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Replace NumPy members that NumPy 2.0 removes from the main namespace with their supported replacements.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "in-handler": {
+            "inside": {
+              "stopBy": {
+                "kind": "block",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "class_definition"
+                    }
+                  ]
+                }
+              },
+              "kind": "except_clause"
+            }
+          },
+          "attribute-error": {
+            "any": [
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "global": [
+                    "AttributeError"
+                  ]
+                }
+              },
+              {
+                "kind": "attribute",
+                "resolves": {
+                  "import": [
+                    "builtins.AttributeError"
+                  ]
+                }
+              }
+            ]
+          },
+          "import-error": {
+            "any": [
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "global": [
+                    "ImportError",
+                    "ModuleNotFoundError"
+                  ]
+                }
+              },
+              {
+                "kind": "attribute",
+                "resolves": {
+                  "import": [
+                    "builtins.ImportError",
+                    "builtins.ModuleNotFoundError"
+                  ]
+                }
+              }
+            ]
+          },
+          "catches-attribute-error": {
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "except_clause",
+              "has": {
+                "stopBy": {
+                  "kind": "block"
+                },
+                "matches": "attribute-error"
+              }
+            }
+          },
+          "fallback": {
+            "any": [
+              {
+                "kind": "attribute",
+                "matches": "in-handler",
+                "inside": {
+                  "stopBy": {
+                    "kind": "try_statement"
+                  },
+                  "kind": "try_statement",
+                  "matches": "catches-attribute-error",
+                  "has": {
+                    "field": "body",
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "attribute",
+                      "resolves": {
+                        "import": [
+                          "ast.literal_eval",
+                          "inspect.getsource",
+                          "numpy.all",
+                          "numpy.any",
+                          "numpy.asmatrix",
+                          "numpy.bytes_",
+                          "numpy.char.chararray",
+                          "numpy.char.compare_chararrays",
+                          "numpy.clongdouble",
+                          "numpy.complex128",
+                          "numpy.complex64",
+                          "numpy.cumprod",
+                          "numpy.exceptions.AxisError",
+                          "numpy.exceptions.ComplexWarning",
+                          "numpy.exceptions.DTypePromotionError",
+                          "numpy.exceptions.ModuleDeprecationWarning",
+                          "numpy.exceptions.RankWarning",
+                          "numpy.exceptions.TooHardError",
+                          "numpy.exceptions.VisibleDeprecationWarning",
+                          "numpy.float64",
+                          "numpy.inf",
+                          "numpy.issubdtype",
+                          "numpy.lib.add_docstring",
+                          "numpy.lib.add_newdoc",
+                          "numpy.lib.array_utils.byte_bounds",
+                          "numpy.lib.npyio.DataSource",
+                          "numpy.lib.tracemalloc_domain",
+                          "numpy.longdouble",
+                          "numpy.nan",
+                          "numpy.prod",
+                          "numpy.rec.format_parser",
+                          "numpy.round",
+                          "numpy.str_",
+                          "numpy.trapezoid",
+                          "numpy.vstack"
+                        ]
+                      },
+                      "has": {
+                        "field": "attribute",
+                        "kind": "identifier",
+                        "pattern": "$TID",
+                        "compare": {
+                          "left": "TID",
+                          "op": "eq",
+                          "right": "NEW",
+                          "text": "source"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "matches": "in-handler",
+                      "inside": {
+                        "stopBy": {
+                          "kind": "try_statement"
+                        },
+                        "kind": "try_statement",
+                        "matches": "catches-import-error",
+                        "has": {
+                          "field": "body",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "import_from_statement",
+                            "has": {
+                              "stopBy": "end",
+                              "kind": "dotted_name",
+                              "resolves": {
+                                "imported": [
+                                  "ast.literal_eval",
+                                  "inspect.getsource",
+                                  "numpy.all",
+                                  "numpy.any",
+                                  "numpy.asmatrix",
+                                  "numpy.bytes_",
+                                  "numpy.char.chararray",
+                                  "numpy.char.compare_chararrays",
+                                  "numpy.clongdouble",
+                                  "numpy.complex128",
+                                  "numpy.complex64",
+                                  "numpy.cumprod",
+                                  "numpy.exceptions.AxisError",
+                                  "numpy.exceptions.ComplexWarning",
+                                  "numpy.exceptions.DTypePromotionError",
+                                  "numpy.exceptions.ModuleDeprecationWarning",
+                                  "numpy.exceptions.RankWarning",
+                                  "numpy.exceptions.TooHardError",
+                                  "numpy.exceptions.VisibleDeprecationWarning",
+                                  "numpy.float64",
+                                  "numpy.inf",
+                                  "numpy.issubdtype",
+                                  "numpy.lib.add_docstring",
+                                  "numpy.lib.add_newdoc",
+                                  "numpy.lib.array_utils.byte_bounds",
+                                  "numpy.lib.npyio.DataSource",
+                                  "numpy.lib.tracemalloc_domain",
+                                  "numpy.longdouble",
+                                  "numpy.nan",
+                                  "numpy.prod",
+                                  "numpy.rec.format_parser",
+                                  "numpy.round",
+                                  "numpy.str_",
+                                  "numpy.trapezoid",
+                                  "numpy.vstack"
+                                ]
+                              },
+                              "pattern": "$IID",
+                              "compare": {
+                                "left": "IID",
+                                "op": "eq",
+                                "right": "NEW",
+                                "text": "source"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "catches-import-error": {
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "except_clause",
+              "has": {
+                "stopBy": {
+                  "kind": "block"
+                },
+                "matches": "import-error"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "add-docstring",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.add_docstring"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "add_docstring"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.lib.add_docstring` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "add-newdoc",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.add_newdoc"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "add_newdoc"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.lib.add_newdoc` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "add-newdoc-ufunc",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.add_newdoc_ufunc"
+              ]
+            },
+            "pattern": "$NAME"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "NumPy 2.0 removes `$NAME`, an internal function with no public replacement; drop the call or guard it behind a NumPy 1.x version check.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "alltrue",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.alltrue"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "all"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.all` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "asfarray",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.asfarray"
+              ]
+            },
+            "pattern": "$NAME"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `np.asarray` with a float dtype instead of `$NAME`; NumPy 2.0 removes it.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "byte-bounds",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.byte_bounds"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "byte_bounds"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.lib.array_utils.byte_bounds` instead of `$NAME` on NumPy 2.0; keep `$NAME` while NumPy 1.x must still be supported.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "cast",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.cast"
+              ]
+            },
+            "pattern": "$NAME"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `np.asarray(arr, dtype=dtype)` instead of `$NAME`; NumPy 2.0 removes it.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "complex128-aliases",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.cfloat",
+                "numpy.complex_"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "complex128"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.complex128` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "clongdouble-aliases",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.clongfloat",
+                "numpy.longcomplex"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "clongdouble"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.clongdouble` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "compat",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.compat"
+              ]
+            },
+            "pattern": "$NAME"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use the Python 3 builtin or standard library equivalent instead of `$NAME`; NumPy 2.0 removes this Python 2 compatibility module.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "cumproduct",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.cumproduct"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "cumprod"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.cumprod` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "datasource",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.DataSource"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "DataSource"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.lib.npyio.DataSource` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "deprecate-and-deprecate-with-doc",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.deprecate",
+                "numpy.deprecate_with_doc"
+              ]
+            },
+            "pattern": "$NAME"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Emit a `DeprecationWarning` with `warnings.warn`, or use `typing.deprecated`, instead of `$NAME`; NumPy 2.0 removes it.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "disp",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.disp"
+              ]
+            },
+            "pattern": "$NAME"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use a dedicated print function instead of `$NAME`; NumPy 2.0 removes it.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "fastcopyandtranspose",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.fastCopyAndTranspose"
+              ]
+            },
+            "pattern": "$NAME"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `arr.T.copy()` instead of `$NAME`; NumPy 2.0 removes it.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "find-common-type",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.find_common_type"
+              ]
+            },
+            "pattern": "$NAME"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.promote_types` or `numpy.result_type` instead of `$NAME`; for its scalar_types semantics pass `0`, `0.0` or `0j` to `result_type`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "no-replacement",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.get_array_wrap",
+                "numpy.issctype",
+                "numpy.maximum_sctype",
+                "numpy.obj2sctype",
+                "numpy.sctype2char",
+                "numpy.sctypes"
+              ]
+            },
+            "pattern": "$NAME"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "NumPy 2.0 removes `$NAME` without a replacement; stop using it, or keep it behind a NumPy 1.x version check.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "float-underscore",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.float_"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "float64"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.float64` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "geterrobj-and-seterrobj",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.geterrobj",
+                "numpy.seterrobj"
+              ]
+            },
+            "pattern": "$NAME"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use the `np.errstate` context manager instead of `$NAME`; NumPy 2.0 removes it.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "in1d",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.in1d"
+              ]
+            },
+            "pattern": "$NAME"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `np.isin` instead of `$NAME`; it keeps the input's shape, so `np.in1d(a, b)` is `np.isin(a, b).ravel()`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "inf-aliases",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.INF",
+                "numpy.Inf",
+                "numpy.Infinity",
+                "numpy.infty",
+                "numpy.PINF"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "inf"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.inf` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "issubclass-underscore",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.issubclass_"
+              ]
+            },
+            "pattern": "$NAME"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `issubclass` instead of `$NAME`; NumPy 2.0 removes the old name.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "issubsctype",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.issubsctype"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "issubdtype"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.issubdtype` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "mat",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.mat"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "asmatrix"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.asmatrix` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "nan-aliases",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.NaN",
+                "numpy.NAN"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "nan"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.nan` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "nbytes",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.nbytes"
+              ]
+            },
+            "pattern": "$NAME"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `np.dtype(<dtype>).itemsize` instead of `$NAME`; NumPy 2.0 removes it.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "ninf",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.NINF"
+              ]
+            },
+            "pattern": "$NAME"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `-np.inf` instead of `$NAME`; NumPy 2.0 removes the old name.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "nzero",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.NZERO"
+              ]
+            },
+            "pattern": "$NAME"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `-0.0` instead of `$NAME`; NumPy 2.0 removes the old name.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "longfloat",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.longfloat"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "longdouble"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.longdouble` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "lookfor",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.lookfor"
+              ]
+            },
+            "pattern": "$NAME"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Search NumPy's documentation directly instead of calling `$NAME`; NumPy 2.0 removes it.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "product",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.product"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "prod"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.prod` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "pzero",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.PZERO"
+              ]
+            },
+            "pattern": "$NAME"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `0.0` instead of `$NAME`; NumPy 2.0 removes the old name.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "recfromcsv",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.recfromcsv"
+              ]
+            },
+            "pattern": "$NAME"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `np.genfromtxt` with a comma delimiter instead of `$NAME`; NumPy 2.0 removes it.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "recfromtxt",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.recfromtxt"
+              ]
+            },
+            "pattern": "$NAME"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `np.genfromtxt` instead of `$NAME`; NumPy 2.0 removes it.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "round-underscore",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.round_"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "round"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.round` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "safe-eval",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.safe_eval"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "literal_eval"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `ast.literal_eval` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "set-string-function",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.set_string_function"
+              ]
+            },
+            "pattern": "$NAME"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `np.set_printoptions` to customize how NumPy objects print instead of `$NAME`; NumPy 2.0 removes it.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "singlecomplex",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.singlecomplex"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "complex64"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.complex64` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "string-underscore",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.string_"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "bytes_"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.bytes_` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "sometrue",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.sometrue"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "any"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.any` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "source",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.source"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "getsource"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `inspect.getsource` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "tracemalloc-domain",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.tracemalloc_domain"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "tracemalloc_domain"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.lib.tracemalloc_domain` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "trapz",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.trapz"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "trapezoid"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.trapezoid` instead of `$NAME` on NumPy 2.0; keep `$NAME` while NumPy 1.x must still be supported.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "unicode-underscore",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.unicode_"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "str_"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.str_` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "who",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.who"
+              ]
+            },
+            "pattern": "$NAME"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use an IDE variable explorer or `locals()` instead of `$NAME`; NumPy 2.0 removes it.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "row-stack",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.row_stack"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "vstack"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.vstack` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "axiserror",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.AxisError"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "AxisError"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.exceptions.AxisError` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "complexwarning",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.ComplexWarning"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "ComplexWarning"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.exceptions.ComplexWarning` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "dtypepromotionerror",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.DTypePromotionError"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "DTypePromotionError"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.exceptions.DTypePromotionError` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "moduledeprecationwarning",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.ModuleDeprecationWarning"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "ModuleDeprecationWarning"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.exceptions.ModuleDeprecationWarning` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "rankwarning",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.RankWarning"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "RankWarning"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.exceptions.RankWarning` instead of `$NAME` on NumPy 2.0; keep `$NAME` while NumPy 1.x must still be supported.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "tooharderror",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.TooHardError"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "TooHardError"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.exceptions.TooHardError` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "visibledeprecationwarning",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.VisibleDeprecationWarning"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "VisibleDeprecationWarning"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.exceptions.VisibleDeprecationWarning` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "compare-chararrays",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.compare_chararrays"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "compare_chararrays"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.char.compare_chararrays` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "chararray",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.chararray"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "chararray"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.char.chararray` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "format-parser",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.format_parser"
+              ]
+            },
+            "pattern": "$NAME",
+            "not": {
+              "matches": "fallback"
+            }
+          },
+          "transform": {
+            "NEW": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "[\\s\\S]+",
+                "by": "format_parser"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY201",
+        "message": "Use `numpy.rec.format_parser` instead of `$NAME`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "string-annotation-or-pattern",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "reference": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "numpy.add_docstring",
+                  "numpy.add_newdoc",
+                  "numpy.add_newdoc_ufunc",
+                  "numpy.alltrue",
+                  "numpy.asfarray",
+                  "numpy.byte_bounds",
+                  "numpy.cast",
+                  "numpy.cfloat",
+                  "numpy.clongfloat",
+                  "numpy.compat",
+                  "numpy.complex_",
+                  "numpy.cumproduct",
+                  "numpy.DataSource",
+                  "numpy.deprecate",
+                  "numpy.deprecate_with_doc",
+                  "numpy.disp",
+                  "numpy.fastCopyAndTranspose",
+                  "numpy.find_common_type",
+                  "numpy.get_array_wrap",
+                  "numpy.float_",
+                  "numpy.geterrobj",
+                  "numpy.in1d",
+                  "numpy.INF",
+                  "numpy.Inf",
+                  "numpy.Infinity",
+                  "numpy.infty",
+                  "numpy.issctype",
+                  "numpy.issubclass_",
+                  "numpy.issubsctype",
+                  "numpy.mat",
+                  "numpy.maximum_sctype",
+                  "numpy.NaN",
+                  "numpy.NAN",
+                  "numpy.nbytes",
+                  "numpy.NINF",
+                  "numpy.NZERO",
+                  "numpy.longcomplex",
+                  "numpy.longfloat",
+                  "numpy.lookfor",
+                  "numpy.obj2sctype",
+                  "numpy.PINF",
+                  "numpy.product",
+                  "numpy.PZERO",
+                  "numpy.recfromcsv",
+                  "numpy.recfromtxt",
+                  "numpy.round_",
+                  "numpy.safe_eval",
+                  "numpy.sctype2char",
+                  "numpy.sctypes",
+                  "numpy.seterrobj",
+                  "numpy.set_string_function",
+                  "numpy.singlecomplex",
+                  "numpy.string_",
+                  "numpy.sometrue",
+                  "numpy.source",
+                  "numpy.tracemalloc_domain",
+                  "numpy.trapz",
+                  "numpy.unicode_",
+                  "numpy.who",
+                  "numpy.row_stack",
+                  "numpy.AxisError",
+                  "numpy.ComplexWarning",
+                  "numpy.DTypePromotionError",
+                  "numpy.ModuleDeprecationWarning",
+                  "numpy.RankWarning",
+                  "numpy.TooHardError",
+                  "numpy.VisibleDeprecationWarning",
+                  "numpy.compare_chararrays",
+                  "numpy.chararray",
+                  "numpy.format_parser"
+                ]
+              }
+            },
+            "in-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "reference",
+                      "capture": "NAME"
+                    },
+                    {
+                      "matches": "in-string"
+                    }
+                  ]
+                }
+              }
+            },
+            "pattern-name": {
+              "kind": "dotted_name",
+              "regex": "^\\w+\\s*\\.\\s*(?:add_docstring|add_newdoc|add_newdoc_ufunc|alltrue|asfarray|byte_bounds|cast|cfloat|clongfloat|compat|complex_|cumproduct|DataSource|deprecate|deprecate_with_doc|disp|fastCopyAndTranspose|find_common_type|get_array_wrap|float_|geterrobj|in1d|INF|Inf|Infinity|infty|issctype|issubclass_|issubsctype|mat|maximum_sctype|NaN|NAN|nbytes|NINF|NZERO|longcomplex|longfloat|lookfor|obj2sctype|PINF|product|PZERO|recfromcsv|recfromtxt|round_|safe_eval|sctype2char|sctypes|seterrobj|set_string_function|singlecomplex|string_|sometrue|source|tracemalloc_domain|trapz|unicode_|who|row_stack|AxisError|ComplexWarning|DTypePromotionError|ModuleDeprecationWarning|RankWarning|TooHardError|VisibleDeprecationWarning|compare_chararrays|chararray|format_parser)$",
+              "inside": {
+                "stopBy": "end",
+                "kind": "case_pattern"
+              },
+              "has": {
+                "kind": "identifier",
+                "resolves": {
+                  "import": [
+                    "numpy"
+                  ]
+                }
+              }
+            },
+            "any-fallback": {
+              "matches": "in-handler",
+              "inside": {
+                "stopBy": {
+                  "kind": "try_statement"
+                },
+                "kind": "try_statement",
+                "matches": "catches-attribute-error",
+                "has": {
+                  "field": "body",
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "attribute",
+                    "resolves": {
+                      "import": [
+                        "ast.literal_eval",
+                        "inspect.getsource",
+                        "numpy.all",
+                        "numpy.any",
+                        "numpy.asmatrix",
+                        "numpy.bytes_",
+                        "numpy.char.chararray",
+                        "numpy.char.compare_chararrays",
+                        "numpy.clongdouble",
+                        "numpy.complex128",
+                        "numpy.complex64",
+                        "numpy.cumprod",
+                        "numpy.exceptions.AxisError",
+                        "numpy.exceptions.ComplexWarning",
+                        "numpy.exceptions.DTypePromotionError",
+                        "numpy.exceptions.ModuleDeprecationWarning",
+                        "numpy.exceptions.RankWarning",
+                        "numpy.exceptions.TooHardError",
+                        "numpy.exceptions.VisibleDeprecationWarning",
+                        "numpy.float64",
+                        "numpy.inf",
+                        "numpy.issubdtype",
+                        "numpy.lib.add_docstring",
+                        "numpy.lib.add_newdoc",
+                        "numpy.lib.array_utils.byte_bounds",
+                        "numpy.lib.npyio.DataSource",
+                        "numpy.lib.tracemalloc_domain",
+                        "numpy.longdouble",
+                        "numpy.nan",
+                        "numpy.prod",
+                        "numpy.rec.format_parser",
+                        "numpy.round",
+                        "numpy.str_",
+                        "numpy.trapezoid",
+                        "numpy.vstack"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "matches": "pattern-name",
+                    "pattern": "$NAME"
+                  },
+                  {
+                    "matches": "in-string"
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "matches": "any-fallback"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.NAME",
+        "code": "NPY201",
+        "message": "NumPy 2.0 removes `$NAME`; use its replacement from the 2.0 migration guide (for example `np.float64` for `float_`, `np.inf` for `Inf`, `np.exceptions.X` for exceptions).",
+        "each": "NAME",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY201"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

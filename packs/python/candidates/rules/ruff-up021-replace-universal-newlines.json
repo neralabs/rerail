@@ -1,0 +1,106 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up021-replace-universal-newlines",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Pass text instead of universal_newlines to subprocess.run; universal_newlines is the legacy name for the same option.",
+  "scope": {
+    "include": ["**/*"],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "run-callee": {
+            "any": [
+              {
+                "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                "resolves": { "import": ["subprocess.run"] }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": { "stopBy": "neighbor", "matches": "run-callee" }
+              }
+            ]
+          },
+          "legacy-keyword": {
+            "kind": "identifier",
+            "regex": "^universal_newlines$",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "keyword_argument",
+              "field": "name"
+            }
+          },
+          "run-arguments": {
+            "kind": "argument_list",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "call",
+              "has": { "stopBy": "neighbor", "field": "function", "matches": "run-callee" }
+            }
+          },
+          "text-keyword": {
+            "kind": "keyword_argument",
+            "has": { "stopBy": "neighbor", "field": "name", "kind": "identifier", "regex": "^text$" }
+          }
+        }
+      }
+    },
+    {
+      "id": "rename-to-text",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "legacy-keyword",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "keyword_argument",
+              "inside": {
+                "stopBy": "neighbor",
+                "matches": "run-arguments",
+                "not": { "has": { "stopBy": "neighbor", "matches": "text-keyword" } }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP021",
+        "message": "Rename the `universal_newlines` keyword to `text`; it is the same option under its current name.",
+        "suppress": { "noqa": { "codes": ["UP021"] } }
+      }
+    },
+    {
+      "id": "drop-duplicate",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "legacy-keyword",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "keyword_argument",
+              "inside": {
+                "stopBy": "neighbor",
+                "matches": "run-arguments",
+                "has": { "stopBy": "neighbor", "matches": "text-keyword" }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP021",
+        "message": "Remove the `universal_newlines` keyword; `text` is already passed and means the same thing.",
+        "suppress": { "noqa": { "codes": ["UP021"] } }
+      }
+    }
+  ]
+}

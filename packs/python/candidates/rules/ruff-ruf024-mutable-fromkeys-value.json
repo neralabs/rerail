@@ -1,0 +1,253 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf024-mutable-fromkeys-value",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't pass a mutable object such as a list, dict or set as the value to dict.fromkeys; every key shares the same instance.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "mutable-fromkeys-value",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "dict-ref": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "dict"
+                    ],
+                    "import": [
+                      "builtins.dict"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "kind": "comment"
+                    },
+                    "matches": "dict-ref"
+                  }
+                }
+              ]
+            },
+            "fromkeys-callee": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "matches": "dict-ref"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "attribute",
+                        "regex": "^fromkeys$"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "kind": "comment"
+                    },
+                    "matches": "fromkeys-callee"
+                  }
+                }
+              ]
+            },
+            "mutable-name": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "global": [
+                  "dict",
+                  "list",
+                  "set"
+                ],
+                "import": [
+                  "builtins.dict",
+                  "builtins.list",
+                  "builtins.set",
+                  "collections.Counter",
+                  "collections.OrderedDict",
+                  "collections.defaultdict",
+                  "collections.deque"
+                ]
+              }
+            },
+            "mutable-callee": {
+              "any": [
+                {
+                  "matches": "mutable-name"
+                },
+                {
+                  "kind": "subscript",
+                  "has": {
+                    "field": "value",
+                    "matches": "mutable-callee"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "kind": "comment"
+                    },
+                    "matches": "mutable-callee"
+                  }
+                }
+              ]
+            },
+            "mutable-value": {
+              "any": [
+                {
+                  "kind": "list"
+                },
+                {
+                  "kind": "dictionary"
+                },
+                {
+                  "kind": "set"
+                },
+                {
+                  "kind": "list_comprehension"
+                },
+                {
+                  "kind": "dictionary_comprehension"
+                },
+                {
+                  "kind": "set_comprehension"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "matches": "mutable-callee"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "kind": "comment"
+                    },
+                    "matches": "mutable-value"
+                  }
+                }
+              ]
+            },
+            "positional": {
+              "not": {
+                "any": [
+                  {
+                    "kind": "comment"
+                  },
+                  {
+                    "kind": "keyword_argument"
+                  },
+                  {
+                    "kind": "dictionary_splat"
+                  },
+                  {
+                    "regex": "^[(),]$"
+                  }
+                ]
+              }
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "fromkeys-callee"
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "kind": "argument_list",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "positional",
+                    "not": {
+                      "precedes": {
+                        "stopBy": "end",
+                        "matches": "positional"
+                      }
+                    },
+                    "follows": {
+                      "stopBy": "end",
+                      "matches": "positional"
+                    },
+                    "all": [
+                      {
+                        "matches": "mutable-value"
+                      },
+                      {
+                        "count": {
+                          "follows": {
+                            "stopBy": "end",
+                            "matches": "positional"
+                          },
+                          "min": 1,
+                          "max": 1
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RUF024",
+        "message": "Build the dict with a comprehension such as `{key: [] for key in keys}`; `dict.fromkeys` shares one mutable value across every key. Leave it if sharing is intended.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF024"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

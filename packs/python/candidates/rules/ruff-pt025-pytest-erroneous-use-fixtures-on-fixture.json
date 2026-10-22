@@ -1,0 +1,202 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pt025-pytest-erroneous-use-fixtures-on-fixture",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't apply a pytest usefixtures marker to a fixture function; it has no effect there, so request other fixtures as parameters instead.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "usefixtures-on-fixture",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "uf-ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "pytest.mark.usefixtures"
+                ]
+              }
+            },
+            "uf-callee": {
+              "any": [
+                {
+                  "matches": "uf-ref"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "uf-callee"
+                  }
+                }
+              ]
+            },
+            "uf-expr": {
+              "any": [
+                {
+                  "matches": "uf-callee"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "matches": "uf-callee"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "uf-expr"
+                  }
+                }
+              ]
+            },
+            "fixture-ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "pytest.fixture",
+                  "pytest.yield_fixture"
+                ]
+              }
+            },
+            "fixture-callee": {
+              "any": [
+                {
+                  "matches": "fixture-ref"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "fixture-callee"
+                  }
+                }
+              ]
+            },
+            "fixture-expr": {
+              "any": [
+                {
+                  "matches": "fixture-callee"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "matches": "fixture-callee"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "fixture-expr"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "decorator",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "uf-expr"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "decorated_definition",
+              "all": [
+                {
+                  "has": {
+                    "field": "definition",
+                    "kind": "function_definition"
+                  }
+                },
+                {
+                  "has": {
+                    "kind": "decorator",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "fixture-expr"
+                    }
+                  }
+                }
+              ]
+            },
+            "any": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "comment"
+                    },
+                    {
+                      "kind": "line_continuation"
+                    }
+                  ]
+                },
+                "regex": "^(?P<span>(?:\"\"\"(?:[^\\\\]|\\\\[\\s\\S])*?\"\"\"|'''(?:[^\\\\]|\\\\[\\s\\S])*?'''|\"(?:[^\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^'\\\\]|\\\\[\\s\\S])*'|#[^\\n]*\\n|[^#'\"])*?)(?:\\s|\\\\\\r?\\n|#[^\\n]*)*$"
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "comment"
+                      },
+                      {
+                        "kind": "line_continuation"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "regex": "^(?P<span>(?:\"\"\"(?:[^\\\\]|\\\\[\\s\\S])*?\"\"\"|'''(?:[^\\\\]|\\\\[\\s\\S])*?'''|\"(?:[^\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^'\\\\]|\\\\[\\s\\S])*'|#[^\\n]*\\n|[^#'\"])*?)(?:\\s|\\\\\\r?\\n|#[^\\n]*)*$"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.span",
+        "code": "PT025",
+        "message": "Remove this `usefixtures` mark; it has no effect on a fixture. To make the fixture depend on other fixtures, list them as parameters of the fixture function.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT025"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

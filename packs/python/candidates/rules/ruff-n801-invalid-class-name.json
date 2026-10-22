@@ -1,0 +1,54 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-n801-invalid-class-name",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Name classes in CapWords style, starting with a capital letter and without underscores between words, as PEP 8 recommends.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "invalid-class-name",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$NAME",
+            "inside": {
+              "stopBy": "neighbor",
+              "field": "name",
+              "kind": "class_definition"
+            },
+            "not": {
+              "any": [
+                {
+                  "regex": "^[_\\x{FE33}\\x{FE34}\\x{FE4D}-\\x{FE4F}\\x{FF3F}]*[\\p{Uppercase}\\x{1C5}\\x{1C8}\\x{1CB}\\x{1F2}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}][^_\\x{FE33}\\x{FE34}\\x{FE4D}-\\x{FE4F}\\x{FF3F}]*$"
+                },
+                {
+                  "regex": "^(?:setUp|tearDown|setUpClass|tearDownClass|setUpModule|tearDownModule|asyncSetUp|asyncTearDown|setUpTestData|failureException|longMessage|maxDiff)$"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "N801",
+        "message": "Rename class `$NAME` to CapWords, such as `MyClass`, and update its references; keep the name if callers outside this code import it.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "N801"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

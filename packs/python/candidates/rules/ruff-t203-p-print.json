@@ -1,0 +1,219 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-t203-p-print",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use a logger instead of pprint; pretty-printed output can leak sensitive data and cannot be configured by clients.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "pprint-call",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "pprint.pprint"
+                    ]
+                  },
+                  "pattern": "$F"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            },
+            "default-target": {
+              "any": [
+                {
+                  "kind": "none"
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "sys.stdout",
+                      "sys.stderr"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "default-target"
+                  }
+                }
+              ]
+            },
+            "custom-target-keyword": {
+              "kind": "keyword_argument",
+              "all": [
+                {
+                  "has": {
+                    "field": "name",
+                    "regex": "^stream$"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "value",
+                    "not": {
+                      "matches": "default-target"
+                    }
+                  }
+                }
+              ]
+            },
+            "python2-statement": {
+              "any": [
+                {
+                  "kind": "print_statement",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "chevron"
+                    }
+                  }
+                },
+                {
+                  "kind": "exec_statement"
+                }
+              ]
+            },
+            "python3-file": {
+              "inside": {
+                "stopBy": "end",
+                "kind": "module",
+                "not": {
+                  "has": {
+                    "stopBy": "end",
+                    "matches": "python2-statement"
+                  }
+                }
+              }
+            },
+            "default-output": {
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "custom-target-keyword"
+                  }
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "call",
+                "any": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "matches": "callee"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "function",
+                      "kind": "list_splat",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "callee"
+                      }
+                    }
+                  }
+                ],
+                "all": [
+                  {
+                    "matches": "default-output"
+                  },
+                  {
+                    "matches": "python3-file"
+                  }
+                ]
+              },
+              {
+                "kind": "attribute",
+                "regex": "(?s)^\\*\\s*(?<F>.+)$",
+                "all": [
+                  {
+                    "has": {
+                      "field": "attribute",
+                      "regex": "^pprint$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "list_splat",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "identifier",
+                        "resolves": {
+                          "import": [
+                            "pprint"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ],
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "call",
+                  "matches": "default-output"
+                },
+                "matches": "python3-file"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.F",
+        "code": "T203",
+        "message": "Log the value through `logging` (`pprint.pformat` keeps the layout), or remove this call if it was debug output; leave it where the program's job is to write to the terminal.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "T203"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,339 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf041-unnecessary-nested-literal",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Flatten a Literal that wraps another Literal into a single Literal; the nesting adds nothing but noise.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "lit-name": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "typing.Literal",
+                    "typing_extensions.Literal",
+                    "_typeshed.Literal"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "lit-name"
+                }
+              }
+            ]
+          },
+          "lit-sub": {
+            "kind": "subscript",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "value",
+              "matches": "lit-name"
+            }
+          },
+          "lit-gen": {
+            "kind": "generic_type",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "identifier",
+              "matches": "lit-name"
+            }
+          },
+          "lit": {
+            "any": [
+              {
+                "matches": "lit-sub"
+              },
+              {
+                "matches": "lit-gen"
+              }
+            ]
+          },
+          "elem-lit": {
+            "any": [
+              {
+                "matches": "lit"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "parenthesized_expression"
+                  },
+                  {
+                    "kind": "type"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "elem-lit"
+                }
+              }
+            ]
+          },
+          "tuple-lit": {
+            "any": [
+              {
+                "kind": "tuple",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "elem-lit"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "parenthesized_expression"
+                  },
+                  {
+                    "kind": "type"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "tuple-lit"
+                }
+              }
+            ]
+          },
+          "holds-lit": {
+            "any": [
+              {
+                "kind": "subscript",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "elem-lit",
+                  "follows": {
+                    "stopBy": "end",
+                    "regex": "^\\[$"
+                  }
+                }
+              },
+              {
+                "kind": "subscript",
+                "all": [
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "regex": "^,$"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "tuple-lit",
+                      "follows": {
+                        "stopBy": "end",
+                        "regex": "^\\[$"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "generic_type",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "type_parameter",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "type",
+                    "matches": "elem-lit"
+                  }
+                }
+              },
+              {
+                "kind": "generic_type",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "type_parameter",
+                  "all": [
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "regex": "^,$"
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "type",
+                        "matches": "tuple-lit"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "under-lit0": {
+            "any": [
+              {
+                "follows": {
+                  "stopBy": "end",
+                  "regex": "^\\[$"
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "lit-sub"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "type_parameter",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "lit-gen"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "type"
+                    }
+                  ],
+                  "matches": "under-lit0"
+                }
+              }
+            ]
+          },
+          "under-lit": {
+            "any": [
+              {
+                "matches": "under-lit0"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "tuple",
+                  "matches": "under-lit0"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "nested-literal",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "matches": "lit"
+              },
+              {
+                "matches": "holds-lit"
+              },
+              {
+                "not": {
+                  "matches": "under-lit"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "RUF041",
+        "anchor": "witness.span",
+        "message": "Flatten this nested `Literal` into one `Literal[...]` listing every value; keep a named alias such as `Mode = Literal[...]` for a group reused elsewhere.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF041"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "nested-literal-in-string",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "matches": "lit"
+                      },
+                      {
+                        "matches": "holds-lit"
+                      },
+                      {
+                        "not": {
+                          "matches": "under-lit"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "capture": "C"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "RUF041",
+        "anchor": "capture.C",
+        "message": "Flatten this nested `Literal` into one `Literal[...]` listing every value; keep a named alias such as `Mode = Literal[...]` for a group reused elsewhere.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF041"
+            ]
+          }
+        },
+        "each": "C"
+      }
+    }
+  ]
+}

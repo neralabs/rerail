@@ -1,0 +1,246 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-try201-verbose-raise",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use a bare raise to re-raise the caught exception instead of raising it again by name; the bare form is the idiomatic way to propagate it.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "verbose-raise",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "exc-slot": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "raise_statement",
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "regex": "^from$"
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "exc-slot"
+                  }
+                }
+              ]
+            },
+            "reached": {
+              "any": [
+                {
+                  "matches": "vis"
+                },
+                {
+                  "matches": "wis"
+                }
+              ]
+            },
+            "vis": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "decorated_definition",
+                    "matches": "vis"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "block",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "except_clause",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "as_pattern",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "as_pattern_target",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "identifier",
+                                "pattern": "$E"
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "kind": "except_clause",
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "try_statement",
+                            "matches": "wis"
+                          }
+                        },
+                        {
+                          "kind": "else_clause",
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "try_statement",
+                            "matches": "wis"
+                          }
+                        },
+                        {
+                          "kind": "finally_clause",
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "try_statement",
+                            "matches": "wis"
+                          }
+                        },
+                        {
+                          "kind": "try_statement",
+                          "matches": "wis"
+                        },
+                        {
+                          "any": [
+                            {
+                              "kind": "function_definition"
+                            },
+                            {
+                              "kind": "class_definition"
+                            },
+                            {
+                              "kind": "if_statement"
+                            },
+                            {
+                              "kind": "for_statement"
+                            },
+                            {
+                              "kind": "while_statement"
+                            },
+                            {
+                              "kind": "with_statement"
+                            }
+                          ],
+                          "matches": "reached"
+                        },
+                        {
+                          "any": [
+                            {
+                              "kind": "elif_clause"
+                            },
+                            {
+                              "kind": "else_clause"
+                            }
+                          ],
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "any": [
+                              {
+                                "kind": "if_statement"
+                              },
+                              {
+                                "kind": "for_statement"
+                              },
+                              {
+                                "kind": "while_statement"
+                              }
+                            ],
+                            "matches": "reached"
+                          }
+                        },
+                        {
+                          "kind": "case_clause",
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "block",
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "kind": "match_statement",
+                              "matches": "reached"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "wis": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "decorated_definition",
+                    "matches": "wis"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "block",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "try_statement",
+                          "matches": "vis"
+                        },
+                        {
+                          "kind": "finally_clause",
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "try_statement",
+                            "matches": "vis"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$E",
+            "all": [
+              {
+                "matches": "exc-slot"
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "raise_statement",
+                  "matches": "vis"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "TRY201",
+        "message": "Use a bare `raise` instead of `raise $E`. Keep the name if `$E` was reassigned before this line or the raise sits in a nested function that runs later.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "TRY201"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,218 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-em103-dot-format-in-exception",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Assign a formatted exception message to a variable before raising instead of calling format on a literal inline; the traceback otherwise shows the message twice.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "dot-format-in-exception",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "raised": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "raise_statement"
+                  },
+                  "not": {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "raise_statement",
+                      "field": "cause"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "raised"
+                  }
+                }
+              ]
+            },
+            "typing-cast": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.cast",
+                      "typing_extensions.cast",
+                      "_typeshed.cast"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "typing-cast"
+                  }
+                }
+              ]
+            },
+            "first-arg-of-raised-call": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "argument_list",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "call",
+                      "matches": "raised",
+                      "not": {
+                        "has": {
+                          "field": "function",
+                          "matches": "typing-cast"
+                        }
+                      }
+                    }
+                  },
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "regex": "^,$"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "first-arg-of-raised-call"
+                  }
+                }
+              ]
+            },
+            "plain-string": {
+              "kind": "string",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "string_start",
+                  "regex": "^[^'\"]*[fFtT]"
+                }
+              }
+            },
+            "plain-string-literal": {
+              "any": [
+                {
+                  "matches": "plain-string"
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "not": {
+                        "matches": "plain-string"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "literal": {
+              "any": [
+                {
+                  "matches": "plain-string-literal"
+                },
+                {
+                  "kind": "integer"
+                },
+                {
+                  "kind": "float"
+                },
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "false"
+                },
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "ellipsis"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "literal"
+                  }
+                }
+              ]
+            },
+            "format-callee": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "attribute",
+                    "regex": "^format$"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "matches": "literal"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "format-callee"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "matches": "first-arg-of-raised-call",
+            "has": {
+              "field": "function",
+              "matches": "format-callee"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "EM103",
+        "message": "Assign the result of this `.format()` call to a new variable such as `msg` before the `raise`, then pass that variable to the exception instead.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "EM103"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,503 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-n804-invalid-first-argument-name-for-class-method",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Name the first parameter of class methods cls, as PEP 8 recommends, so it reads as the class and not as an instance.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "cls-name": {
+            "any": [
+              {
+                "regex": "^cls$"
+              },
+              {
+                "regex": "^(?:setUp|tearDown|setUpClass|tearDownClass|setUpModule|tearDownModule|asyncSetUp|asyncTearDown|setUpTestData|failureException|longMessage|maxDiff)$"
+              }
+            ]
+          },
+          "class-ref": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "classmethod"
+                  ],
+                  "import": [
+                    "builtins.classmethod",
+                    "abc.abstractclassmethod"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "class-ref"
+                }
+              }
+            ]
+          },
+          "static-ref": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "staticmethod"
+                  ],
+                  "import": [
+                    "builtins.staticmethod",
+                    "abc.abstractstaticmethod"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "static-ref"
+                }
+              }
+            ]
+          },
+          "type-ref": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "type"
+                  ],
+                  "import": [
+                    "builtins.type"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "type-ref"
+                }
+              }
+            ]
+          },
+          "meta-base": {
+            "any": [
+              {
+                "matches": "type-ref"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "abc.ABCMeta",
+                    "enum.EnumMeta",
+                    "enum.EnumType"
+                  ]
+                }
+              },
+              {
+                "kind": "subscript",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "matches": "type-ref"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "meta-base"
+                }
+              }
+            ]
+          },
+          "meta-class": {
+            "kind": "class_definition",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "argument_list",
+              "has": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "matches": "meta-base"
+                  },
+                  {
+                    "matches": "local-meta"
+                  }
+                ],
+                "not": {
+                  "follows": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "call"
+                      },
+                      {
+                        "matches": "call-tainted"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "local-meta": {
+            "any": [
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "matches": "meta-class"
+                    },
+                    "scope": "module",
+                    "latest": true
+                  }
+                }
+              },
+              {
+                "kind": "subscript",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "matches": "local-meta"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "local-meta"
+                }
+              }
+            ]
+          },
+          "call-tainted-class": {
+            "kind": "class_definition",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "argument_list",
+              "has": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "matches": "call-tainted"
+                  }
+                ]
+              }
+            }
+          },
+          "call-tainted": {
+            "any": [
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "matches": "call-tainted-class"
+                    },
+                    "scope": "module",
+                    "latest": true
+                  }
+                }
+              },
+              {
+                "kind": "subscript",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "matches": "call-tainted"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "call-tainted"
+                }
+              }
+            ]
+          },
+          "class-method": {
+            "kind": "function_definition",
+            "inside": {
+              "stopBy": {
+                "any": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "kind": "class_definition"
+                  }
+                ]
+              },
+              "kind": "class_definition"
+            },
+            "not": {
+              "matches": "static-decorated"
+            },
+            "any": [
+              {
+                "matches": "class-decorated"
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "regex": "^(?:__init_subclass__|__class_getitem__)$"
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "name",
+                    "regex": "^__new__$"
+                  }
+                },
+                "inside": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "class_definition"
+                      }
+                    ]
+                  },
+                  "kind": "class_definition",
+                  "matches": "meta-class"
+                }
+              }
+            ]
+          },
+          "static-decorated": {
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "decorated_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "decorator",
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "matches": "static-ref"
+                    },
+                    {
+                      "kind": "call",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "function",
+                        "matches": "static-ref"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "class-decorated": {
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "decorated_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "decorator",
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "matches": "class-ref"
+                    },
+                    {
+                      "kind": "call",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "function",
+                        "matches": "class-ref"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "first-slot": {
+            "nthChild": {
+              "position": 1,
+              "ofRule": {
+                "not": {
+                  "any": [
+                    {
+                      "kind": "comment"
+                    },
+                    {
+                      "kind": "line_continuation"
+                    }
+                  ]
+                }
+              }
+            },
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "list_splat_pattern"
+                  },
+                  {
+                    "kind": "dictionary_splat_pattern"
+                  }
+                ]
+              }
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "parameters",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "function_definition",
+                "matches": "class-method"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-first-argument-name",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier",
+                "matches": "first-slot",
+                "not": {
+                  "matches": "cls-name"
+                }
+              },
+              {
+                "kind": "identifier",
+                "not": {
+                  "matches": "cls-name"
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "kind": "default_parameter",
+                  "matches": "first-slot"
+                }
+              },
+              {
+                "kind": "typed_parameter",
+                "matches": "first-slot",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "identifier",
+                  "not": {
+                    "matches": "cls-name"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "N804",
+        "message": "Name the first parameter of this class method `cls` and update its uses in the body; keep the current name only if the project follows another convention.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "N804"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-first-argument-name-annotated-default",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "typed_default_parameter",
+            "matches": "first-slot",
+            "regex": "^(?P<PARAM>(?:[^=\\[\\]()\"']|\"[^\"]*\"|'[^']*'|\\[(?:[^\\[\\]]|\\[[^\\[\\]]*\\])*\\]|\\((?:[^()]|\\([^()]*\\))*\\))+?)\\s*=",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "name",
+              "not": {
+                "matches": "cls-name"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.PARAM",
+        "code": "N804",
+        "message": "Name the first parameter of this class method `cls` and update its uses in the body; keep the current name only if the project follows another convention.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "N804"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,594 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-tc002-typing-only-third-party-import",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Move third-party imports that only annotate types into an if TYPE_CHECKING block; this avoids importing them at runtime.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "typing-only-import",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "path": {
+              "notRegex": "\\.pyi$"
+            }
+          },
+          "utils": {
+            "type-checking-test": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^TYPE_CHECKING$"
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "import": [
+                      "typing.TYPE_CHECKING",
+                      "typing_extensions.TYPE_CHECKING"
+                    ]
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "attribute",
+                    "regex": "^TYPE_CHECKING$"
+                  }
+                }
+              ]
+            },
+            "in-type-checking-block": {
+              "inside": {
+                "stopBy": "end",
+                "field": "consequence",
+                "kind": "if_statement",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "condition",
+                  "matches": "type-checking-test"
+                }
+              }
+            },
+            "future-annotations": {
+              "inside": {
+                "stopBy": "end",
+                "kind": "module",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "future_import_statement"
+                }
+              }
+            },
+            "singledispatch-impl": {
+              "kind": "function_definition",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "decorated_definition",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "decorator",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "attribute",
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "attribute",
+                          "regex": "^register$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "object",
+                          "kind": "identifier",
+                          "resolves": {
+                            "binding": {
+                              "form": "definition",
+                              "site": {
+                                "kind": "function_definition",
+                                "inside": {
+                                  "stopBy": "neighbor",
+                                  "kind": "decorated_definition",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "decorator",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "resolves": {
+                                        "import": [
+                                          "functools.singledispatch",
+                                          "functools.singledispatchmethod"
+                                        ]
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "dispatch-annotation": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "field": "type",
+                    "any": [
+                      {
+                        "kind": "typed_parameter",
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "any": [
+                              {
+                                "kind": "list_splat_pattern"
+                              },
+                              {
+                                "kind": "dictionary_splat_pattern"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "kind": "typed_default_parameter"
+                      }
+                    ],
+                    "inside": {
+                      "stopBy": "end",
+                      "field": "parameters",
+                      "kind": "function_definition",
+                      "matches": "singledispatch-impl"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "field": "return_type",
+                    "kind": "function_definition",
+                    "matches": "singledispatch-impl"
+                  }
+                }
+              ]
+            },
+            "typing-only-annotation": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "field": "type",
+                    "kind": "assignment",
+                    "inside": {
+                      "stopBy": {
+                        "any": [
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "kind": "class_definition"
+                          }
+                        ]
+                      },
+                      "kind": "function_definition"
+                    }
+                  }
+                },
+                {
+                  "matches": "future-annotations",
+                  "not": {
+                    "matches": "dispatch-annotation"
+                  },
+                  "any": [
+                    {
+                      "inside": {
+                        "stopBy": "end",
+                        "field": "type",
+                        "any": [
+                          {
+                            "kind": "assignment"
+                          },
+                          {
+                            "kind": "typed_parameter"
+                          },
+                          {
+                            "kind": "typed_default_parameter"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "end",
+                        "field": "return_type",
+                        "kind": "function_definition"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "runtime-ref": {
+              "params": [
+                "S"
+              ],
+              "rule": {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "form": "import",
+                    "site": {
+                      "pattern": "$RS"
+                    }
+                  }
+                },
+                "compare": {
+                  "left": "S",
+                  "op": "eq",
+                  "right": "RS",
+                  "text": "node"
+                },
+                "not": {
+                  "any": [
+                    {
+                      "matches": "in-type-checking-block"
+                    },
+                    {
+                      "matches": "typing-only-annotation"
+                    }
+                  ]
+                }
+              }
+            },
+            "import-key": {
+              "params": [
+                "K"
+              ],
+              "rule": {
+                "any": [
+                  {
+                    "kind": "dotted_name",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "import_statement"
+                    },
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "nthChild": 1,
+                      "pattern": "$K"
+                    }
+                  },
+                  {
+                    "kind": "identifier",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "aliased_import",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "name",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "identifier",
+                          "nthChild": 1,
+                          "pattern": "$K"
+                        }
+                      },
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "import_statement"
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "import_from_statement",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "module_name",
+                        "pattern": "$K"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "runtime-import": {
+              "params": [
+                "S",
+                "KB"
+              ],
+              "rule": {
+                "any": [
+                  {
+                    "kind": "dotted_name"
+                  },
+                  {
+                    "kind": "identifier"
+                  }
+                ],
+                "binds": {
+                  "form": "import",
+                  "scope": [
+                    "module",
+                    "function"
+                  ],
+                  "latest": true,
+                  "site": {
+                    "pattern": "$RSITE"
+                  }
+                },
+                "matches": {
+                  "import-key": {
+                    "K": "$KR"
+                  }
+                },
+                "all": [
+                  {
+                    "compare": {
+                      "left": "KB",
+                      "op": "eq",
+                      "right": "KR"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": {
+                        "any": [
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "kind": "module"
+                          }
+                        ]
+                      },
+                      "any": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "kind": "module"
+                        }
+                      ],
+                      "pattern": "$RS"
+                    }
+                  },
+                  {
+                    "compare": {
+                      "left": "S",
+                      "op": "eq",
+                      "right": "RS",
+                      "text": "node"
+                    }
+                  },
+                  {
+                    "not": {
+                      "matches": "in-type-checking-block"
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "binds": {
+                          "exported": true
+                        }
+                      },
+                      {
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "module",
+                          "has": {
+                            "stopBy": "end",
+                            "matches": {
+                              "runtime-ref": {
+                                "S": "$RSITE"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "dotted_name"
+              },
+              {
+                "kind": "identifier"
+              }
+            ],
+            "pattern": "$NAME",
+            "binds": {
+              "form": "import",
+              "scope": [
+                "module",
+                "function"
+              ],
+              "latest": true,
+              "used": true,
+              "exported": false,
+              "site": {
+                "pattern": "$SITE"
+              }
+            },
+            "matches": {
+              "import-key": {
+                "K": "$KB"
+              }
+            },
+            "not": {
+              "any": [
+                {
+                  "matches": "in-type-checking-block"
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "future_import_statement"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "dotted_name",
+                      "regex": "^(?:typing|typing_extensions)(?:\\.|$)",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "import_statement"
+                      }
+                    },
+                    {
+                      "kind": "identifier",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "aliased_import",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "name",
+                          "regex": "^(?:typing|typing_extensions)(?:\\.|$)"
+                        },
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "import_statement"
+                        }
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_from_statement",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "module_name",
+                          "regex": "^(?:typing|typing_extensions)(?:\\.|$)"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "module"
+                      }
+                    ],
+                    "pattern": "$S",
+                    "has": {
+                      "stopBy": "end",
+                      "matches": {
+                        "runtime-import": {
+                          "S": "$S",
+                          "KB": "$KB"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "inside": {
+              "stopBy": "end",
+              "kind": "module",
+              "not": {
+                "has": {
+                  "stopBy": "end",
+                  "matches": {
+                    "runtime-ref": {
+                      "S": "$SITE"
+                    }
+                  }
+                }
+              }
+            },
+            "all": [
+              {
+                "not": {
+                  "any": [
+                    {
+                      "kind": "dotted_name",
+                      "regex": "^(?:__hello__|__phello__|_abc|_aix_support|_ast|_asyncio|_bisect|_blake2|_bootsubprocess|_bz2|_codecs|_codecs_cn|_codecs_hk|_codecs_iso2022|_codecs_jp|_codecs_kr|_codecs_tw|_collections|_collections_abc|_compat_pickle|_compression|_contextvars|_crypt|_csv|_ctypes|_ctypes_test|_curses|_curses_panel|_datetime|_dbm|_decimal|_elementtree|_frozen_importlib|_frozen_importlib_external|_functools|_gdbm|_hashlib|_heapq|_imp|_io|_json|_locale|_lsprof|_lzma|_markupbase|_md5|_msi|_multibytecodec|_multiprocessing|_opcode|_operator|_osx_support|_overlapped|_pickle|_posixshmem|_posixsubprocess|_py_abc|_pydecimal|_pyio|_queue|_random|_scproxy|_sha1|_sha256|_sha3|_sha512|_signal|_sitebuiltins|_socket|_sqlite3|_sre|_ssl|_stat|_statistics|_string|_strptime|_struct|_symtable|_testbuffer|_testcapi|_testclinic|_testconsole|_testimportmultiple|_testinternalcapi|_testmultiphase|_thread|_threading_local|_tkinter|_tracemalloc|_uuid|_warnings|_weakref|_weakrefset|_winapi|_xxsubinterpreters|_xxtestfuzz|_zoneinfo|abc|aifc|antigravity|argparse|array|ast|asynchat|asyncio|asyncore|atexit|audioop|base64|bdb|binascii|binhex|bisect|builtins|bz2|cProfile|calendar|cgi|cgitb|chunk|cmath|cmd|code|codecs|codeop|collections|colorsys|compileall|concurrent|configparser|contextlib|contextvars|copy|copyreg|crypt|csv|ctypes|curses|dataclasses|datetime|dbm|decimal|difflib|dis|distutils|doctest|email|encodings|ensurepip|enum|errno|faulthandler|fcntl|filecmp|fileinput|fnmatch|fractions|ftplib|functools|gc|genericpath|getopt|getpass|gettext|glob|graphlib|grp|gzip|hashlib|heapq|hmac|html|http|idlelib|imaplib|imghdr|imp|importlib|inspect|io|ipaddress|itertools|json|keyword|lib2to3|linecache|locale|logging|lzma|mailbox|mailcap|marshal|math|mimetypes|mmap|modulefinder|msilib|msvcrt|multiprocessing|netrc|nis|nntplib|nt|ntpath|nturl2path|numbers|opcode|operator|optparse|os|ossaudiodev|pathlib|pdb|pickle|pickletools|pipes|pkgutil|platform|plistlib|poplib|posix|posixpath|pprint|profile|pstats|pty|pwd|py_compile|pyclbr|pydoc|pydoc_data|pyexpat|queue|quopri|random|re|readline|reprlib|resource|rlcompleter|runpy|sched|secrets|select|selectors|shelve|shlex|shutil|signal|site|smtpd|smtplib|sndhdr|socket|socketserver|spwd|sqlite3|sre_compile|sre_constants|sre_parse|ssl|stat|statistics|string|stringprep|struct|subprocess|sunau|symtable|sys|sysconfig|syslog|tabnanny|tarfile|telnetlib|tempfile|termios|textwrap|this|threading|time|timeit|tkinter|token|tokenize|trace|traceback|tracemalloc|tty|turtle|turtledemo|types|typing|unicodedata|unittest|urllib|uu|uuid|venv|warnings|wave|weakref|webbrowser|winreg|winsound|wsgiref|xdrlib|xml|xmlrpc|xx|xxlimited|xxlimited_35|xxsubtype|zipapp|zipfile|zipimport|zlib|zoneinfo)(?:\\.|$)|^\\.|^__main__$",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "import_statement"
+                      }
+                    },
+                    {
+                      "kind": "identifier",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "aliased_import",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "name",
+                          "regex": "^(?:__hello__|__phello__|_abc|_aix_support|_ast|_asyncio|_bisect|_blake2|_bootsubprocess|_bz2|_codecs|_codecs_cn|_codecs_hk|_codecs_iso2022|_codecs_jp|_codecs_kr|_codecs_tw|_collections|_collections_abc|_compat_pickle|_compression|_contextvars|_crypt|_csv|_ctypes|_ctypes_test|_curses|_curses_panel|_datetime|_dbm|_decimal|_elementtree|_frozen_importlib|_frozen_importlib_external|_functools|_gdbm|_hashlib|_heapq|_imp|_io|_json|_locale|_lsprof|_lzma|_markupbase|_md5|_msi|_multibytecodec|_multiprocessing|_opcode|_operator|_osx_support|_overlapped|_pickle|_posixshmem|_posixsubprocess|_py_abc|_pydecimal|_pyio|_queue|_random|_scproxy|_sha1|_sha256|_sha3|_sha512|_signal|_sitebuiltins|_socket|_sqlite3|_sre|_ssl|_stat|_statistics|_string|_strptime|_struct|_symtable|_testbuffer|_testcapi|_testclinic|_testconsole|_testimportmultiple|_testinternalcapi|_testmultiphase|_thread|_threading_local|_tkinter|_tracemalloc|_uuid|_warnings|_weakref|_weakrefset|_winapi|_xxsubinterpreters|_xxtestfuzz|_zoneinfo|abc|aifc|antigravity|argparse|array|ast|asynchat|asyncio|asyncore|atexit|audioop|base64|bdb|binascii|binhex|bisect|builtins|bz2|cProfile|calendar|cgi|cgitb|chunk|cmath|cmd|code|codecs|codeop|collections|colorsys|compileall|concurrent|configparser|contextlib|contextvars|copy|copyreg|crypt|csv|ctypes|curses|dataclasses|datetime|dbm|decimal|difflib|dis|distutils|doctest|email|encodings|ensurepip|enum|errno|faulthandler|fcntl|filecmp|fileinput|fnmatch|fractions|ftplib|functools|gc|genericpath|getopt|getpass|gettext|glob|graphlib|grp|gzip|hashlib|heapq|hmac|html|http|idlelib|imaplib|imghdr|imp|importlib|inspect|io|ipaddress|itertools|json|keyword|lib2to3|linecache|locale|logging|lzma|mailbox|mailcap|marshal|math|mimetypes|mmap|modulefinder|msilib|msvcrt|multiprocessing|netrc|nis|nntplib|nt|ntpath|nturl2path|numbers|opcode|operator|optparse|os|ossaudiodev|pathlib|pdb|pickle|pickletools|pipes|pkgutil|platform|plistlib|poplib|posix|posixpath|pprint|profile|pstats|pty|pwd|py_compile|pyclbr|pydoc|pydoc_data|pyexpat|queue|quopri|random|re|readline|reprlib|resource|rlcompleter|runpy|sched|secrets|select|selectors|shelve|shlex|shutil|signal|site|smtpd|smtplib|sndhdr|socket|socketserver|spwd|sqlite3|sre_compile|sre_constants|sre_parse|ssl|stat|statistics|string|stringprep|struct|subprocess|sunau|symtable|sys|sysconfig|syslog|tabnanny|tarfile|telnetlib|tempfile|termios|textwrap|this|threading|time|timeit|tkinter|token|tokenize|trace|traceback|tracemalloc|tty|turtle|turtledemo|types|typing|unicodedata|unittest|urllib|uu|uuid|venv|warnings|wave|weakref|webbrowser|winreg|winsound|wsgiref|xdrlib|xml|xmlrpc|xx|xxlimited|xxlimited_35|xxsubtype|zipapp|zipfile|zipimport|zlib|zoneinfo)(?:\\.|$)|^\\.|^__main__$"
+                        },
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "import_statement"
+                        }
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_from_statement",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "module_name",
+                          "regex": "^(?:__hello__|__phello__|_abc|_aix_support|_ast|_asyncio|_bisect|_blake2|_bootsubprocess|_bz2|_codecs|_codecs_cn|_codecs_hk|_codecs_iso2022|_codecs_jp|_codecs_kr|_codecs_tw|_collections|_collections_abc|_compat_pickle|_compression|_contextvars|_crypt|_csv|_ctypes|_ctypes_test|_curses|_curses_panel|_datetime|_dbm|_decimal|_elementtree|_frozen_importlib|_frozen_importlib_external|_functools|_gdbm|_hashlib|_heapq|_imp|_io|_json|_locale|_lsprof|_lzma|_markupbase|_md5|_msi|_multibytecodec|_multiprocessing|_opcode|_operator|_osx_support|_overlapped|_pickle|_posixshmem|_posixsubprocess|_py_abc|_pydecimal|_pyio|_queue|_random|_scproxy|_sha1|_sha256|_sha3|_sha512|_signal|_sitebuiltins|_socket|_sqlite3|_sre|_ssl|_stat|_statistics|_string|_strptime|_struct|_symtable|_testbuffer|_testcapi|_testclinic|_testconsole|_testimportmultiple|_testinternalcapi|_testmultiphase|_thread|_threading_local|_tkinter|_tracemalloc|_uuid|_warnings|_weakref|_weakrefset|_winapi|_xxsubinterpreters|_xxtestfuzz|_zoneinfo|abc|aifc|antigravity|argparse|array|ast|asynchat|asyncio|asyncore|atexit|audioop|base64|bdb|binascii|binhex|bisect|builtins|bz2|cProfile|calendar|cgi|cgitb|chunk|cmath|cmd|code|codecs|codeop|collections|colorsys|compileall|concurrent|configparser|contextlib|contextvars|copy|copyreg|crypt|csv|ctypes|curses|dataclasses|datetime|dbm|decimal|difflib|dis|distutils|doctest|email|encodings|ensurepip|enum|errno|faulthandler|fcntl|filecmp|fileinput|fnmatch|fractions|ftplib|functools|gc|genericpath|getopt|getpass|gettext|glob|graphlib|grp|gzip|hashlib|heapq|hmac|html|http|idlelib|imaplib|imghdr|imp|importlib|inspect|io|ipaddress|itertools|json|keyword|lib2to3|linecache|locale|logging|lzma|mailbox|mailcap|marshal|math|mimetypes|mmap|modulefinder|msilib|msvcrt|multiprocessing|netrc|nis|nntplib|nt|ntpath|nturl2path|numbers|opcode|operator|optparse|os|ossaudiodev|pathlib|pdb|pickle|pickletools|pipes|pkgutil|platform|plistlib|poplib|posix|posixpath|pprint|profile|pstats|pty|pwd|py_compile|pyclbr|pydoc|pydoc_data|pyexpat|queue|quopri|random|re|readline|reprlib|resource|rlcompleter|runpy|sched|secrets|select|selectors|shelve|shlex|shutil|signal|site|smtpd|smtplib|sndhdr|socket|socketserver|spwd|sqlite3|sre_compile|sre_constants|sre_parse|ssl|stat|statistics|string|stringprep|struct|subprocess|sunau|symtable|sys|sysconfig|syslog|tabnanny|tarfile|telnetlib|tempfile|termios|textwrap|this|threading|time|timeit|tkinter|token|tokenize|trace|traceback|tracemalloc|tty|turtle|turtledemo|types|typing|unicodedata|unittest|urllib|uu|uuid|venv|warnings|wave|weakref|webbrowser|winreg|winsound|wsgiref|xdrlib|xml|xmlrpc|xx|xxlimited|xxlimited_35|xxsubtype|zipapp|zipfile|zipimport|zlib|zoneinfo)(?:\\.|$)|^\\.|^__main__$"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "TC002",
+        "message": "Move the third-party import `$NAME` into an `if TYPE_CHECKING:` block, since it is only used in type annotations; keep it if importing it has side effects the program needs.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "TC002"
+            ],
+            "parent": "statement"
+          }
+        }
+      }
+    }
+  ]
+}

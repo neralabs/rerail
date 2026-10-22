@@ -1,0 +1,109 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-isc004-implicit-string-concatenation-in-collection-literal",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Add the missing comma, or wrap the strings in parentheses, where adjacent strings concatenate inside a list, tuple or set literal; the merge usually hides a forgotten comma.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "implicit-string-concatenation-in-collection-literal",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "comma": {
+              "has": {
+                "stopBy": "neighbor",
+                "regex": "^,$"
+              }
+            }
+          },
+          "rule": {
+            "kind": "concatenated_string",
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "list"
+                    },
+                    {
+                      "kind": "tuple"
+                    },
+                    {
+                      "kind": "set"
+                    },
+                    {
+                      "kind": "expression_list"
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "expression_statement"
+                    },
+                    {
+                      "kind": "match_statement"
+                    },
+                    {
+                      "kind": "print_statement"
+                    }
+                  ],
+                  "matches": "comma"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "subscript",
+                  "matches": "comma"
+                },
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "subscript",
+                    "field": "value"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "type",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "type_parameter",
+                    "matches": "comma"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "ISC004",
+        "message": "Add the missing comma if these strings are separate items; if joining them is intended, wrap the concatenation in parentheses.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "ISC004"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

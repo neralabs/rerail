@@ -3,7 +3,7 @@
  "id": "ruff-dtz005-call-datetime-now-without-tzinfo",
  "revision": 1,
  "mode": "steer",
- "description": "Port of Ruff's DTZ005 (call-datetime-now-without-tzinfo): a call whose callee (parentheses transparent) resolves to `datetime.datetime.now` through the file's imports (Ruff's `resolve_qualified_name`), unless the call (parentheses transparent) is followed by zero or more `.replace(...)` calls and then an `.astimezone` attribute (Ruff's `followed_by_astimezone`; the attribute need not be called), and whose `tz` argument (Ruff's `find_argument_value(\"tz\", 0)`: the `tz=` keyword, else positional argument 0 among those before the first starred one; `**kwargs` passes nothing) is missing or is the literal `None` (parentheses transparent). Reported on the call, with Ruff's message for each case.",
+ "description": "Pass a real timezone to datetime.now; without one, or with None, it returns a naive local time with no zone information.",
  "scope": {
   "include": [
    "**/*"
@@ -124,7 +124,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "DTZ005",
-    "message": "`datetime.datetime.now()` called without a `tz` argument",
+    "message": "Pass `tz=` with the zone you mean, such as `datetime.now(tz=datetime.timezone.utc)`, so the result is aware. Leave `now()` bare only where a naive local time is required.",
     "suppress": {
      "noqa": {
       "codes": [
@@ -169,7 +169,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "DTZ005",
-    "message": "`tz=None` passed to `datetime.datetime.now()`",
+    "message": "Replace `tz=None` with the zone you mean, such as `tz=datetime.timezone.utc`, so the result is aware. Keep `None` only where a naive local time is required.",
     "suppress": {
      "noqa": {
       "codes": [

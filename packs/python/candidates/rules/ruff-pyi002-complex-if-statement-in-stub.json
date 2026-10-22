@@ -1,0 +1,268 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi002-complex-if-statement-in-stub",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use only simple comparisons of sys.version_info or sys.platform as if tests in stub files; type checkers cannot evaluate other conditions.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "in-test": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "if_statement",
+                  "field": "condition"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "in-test"
+                }
+              }
+            ]
+          },
+          "chain-and": {
+            "kind": "boolean_operator",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "operator",
+              "regex": "^and$"
+            },
+            "any": [
+              {
+                "matches": "in-test"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "boolean_operator",
+                  "field": "left",
+                  "matches": "chain-and"
+                }
+              }
+            ]
+          },
+          "chain-or": {
+            "kind": "boolean_operator",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "operator",
+              "regex": "^or$"
+            },
+            "any": [
+              {
+                "matches": "in-test"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "boolean_operator",
+                  "field": "left",
+                  "matches": "chain-or"
+                }
+              }
+            ]
+          },
+          "operand-slot": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "boolean_operator",
+                  "field": "left",
+                  "any": [
+                    {
+                      "matches": "chain-and"
+                    },
+                    {
+                      "matches": "chain-or"
+                    }
+                  ]
+                },
+                "not": {
+                  "any": [
+                    {
+                      "matches": "chain-and"
+                    },
+                    {
+                      "matches": "chain-or"
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "boolean_operator",
+                  "field": "right",
+                  "any": [
+                    {
+                      "matches": "chain-and"
+                    },
+                    {
+                      "matches": "chain-or"
+                    }
+                  ]
+                },
+                "not": {
+                  "any": [
+                    {
+                      "matches": "chain-and"
+                    },
+                    {
+                      "matches": "chain-or"
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "operand-slot"
+                },
+                "not": {
+                  "any": [
+                    {
+                      "kind": "comment"
+                    },
+                    {
+                      "regex": "^[()]$"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "test-value": {
+            "not": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression"
+                },
+                {
+                  "kind": "comment"
+                },
+                {
+                  "regex": "^[()]$"
+                }
+              ]
+            },
+            "any": [
+              {
+                "not": {
+                  "kind": "boolean_operator"
+                },
+                "matches": "in-test"
+              },
+              {
+                "matches": "operand-slot"
+              }
+            ]
+          },
+          "sys-test": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "sys.version_info",
+                "sys.platform"
+              ]
+            }
+          },
+          "plain-left": {
+            "any": [
+              {
+                "kind": "subscript"
+              },
+              {
+                "matches": "sys-test"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "plain-left"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "complex-if-statement-in-stub",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          },
+          "rule": {
+            "matches": "test-value",
+            "any": [
+              {
+                "not": {
+                  "kind": "comparison_operator"
+                }
+              },
+              {
+                "kind": "comparison_operator",
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^(==|!=|<|<=|>|>=|<>|in|is|not\\s[\\s\\S]*in|is\\s[\\s\\S]*not)$"
+                  },
+                  "min": 2
+                }
+              },
+              {
+                "kind": "comparison_operator",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "nthChild": 1,
+                    "matches": "plain-left"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI002",
+        "message": "Use a simple comparison of `sys.version_info` or `sys.platform` as this stub `if` test, joining several with `and`/`or`; type checkers cannot evaluate other conditions.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI002"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

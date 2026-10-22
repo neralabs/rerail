@@ -1,0 +1,822 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-c417-unnecessary-map",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use a comprehension or generator expression instead of map with a lambda; it avoids a function call for each item.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "fn-map": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "map"
+                  ],
+                  "import": [
+                    "builtins.map"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "fn-map"
+                }
+              },
+              {
+                "kind": "list_splat",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "fn-map"
+                }
+              }
+            ]
+          },
+          "fn-list-set-dict": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "list",
+                    "set",
+                    "dict"
+                  ],
+                  "import": [
+                    "builtins.list",
+                    "builtins.set",
+                    "builtins.dict"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "fn-list-set-dict"
+                }
+              },
+              {
+                "kind": "list_splat",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "fn-list-set-dict"
+                }
+              }
+            ]
+          },
+          "lead": {
+            "any": [
+              {
+                "kind": "comment"
+              },
+              {
+                "kind": "line_continuation"
+              },
+              {
+                "regex": "^[(]$"
+              }
+            ]
+          },
+          "noise": {
+            "any": [
+              {
+                "kind": "comment"
+              },
+              {
+                "kind": "line_continuation"
+              },
+              {
+                "regex": "^[(),]$"
+              }
+            ]
+          },
+          "not-first": {
+            "follows": {
+              "stopBy": "end",
+              "not": {
+                "matches": "lead"
+              }
+            }
+          },
+          "lambda-ok": {
+            "any": [
+              {
+                "kind": "lambda",
+                "pattern": "$L",
+                "all": [
+                  {
+                    "has": {
+                      "field": "parameters",
+                      "kind": "lambda_parameters",
+                      "count": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "comment"
+                              },
+                              {
+                                "regex": "^,$"
+                              }
+                            ]
+                          }
+                        },
+                        "min": 1,
+                        "max": 1
+                      },
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "identifier",
+                        "pattern": "$P"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "body",
+                      "pattern": "$B"
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "yield"
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "identifier",
+                        "pattern": "$N",
+                        "resolves": {
+                          "binding": {}
+                        },
+                        "all": [
+                          {
+                            "inside": {
+                              "stopBy": "end",
+                              "kind": "lambda",
+                              "pattern": "$K",
+                              "has": {
+                                "field": "parameters",
+                                "has": {
+                                  "stopBy": "end",
+                                  "kind": "identifier",
+                                  "pattern": "$Q",
+                                  "binds": {
+                                    "form": "parameter"
+                                  },
+                                  "compare": {
+                                    "left": "Q",
+                                    "op": "eq",
+                                    "right": "P"
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          {
+                            "inside": {
+                              "stopBy": "end",
+                              "kind": "lambda",
+                              "pattern": "$M"
+                            }
+                          },
+                          {
+                            "compare": {
+                              "left": "N",
+                              "op": "eq",
+                              "right": "P"
+                            }
+                          },
+                          {
+                            "compare": {
+                              "left": "K",
+                              "op": "eq",
+                              "right": "L",
+                              "text": "node"
+                            }
+                          },
+                          {
+                            "compare": {
+                              "left": "M",
+                              "op": "ne",
+                              "right": "L",
+                              "text": "node"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "lambda-ok"
+                }
+              }
+            ]
+          },
+          "map-call": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "fn-map"
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "kind": "argument_list",
+                  "all": [
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "keyword_argument"
+                            },
+                            {
+                              "kind": "dictionary_splat"
+                            },
+                            {
+                              "kind": "list_splat"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "lambda-ok",
+                        "not": {
+                          "matches": "not-first"
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "not-first",
+                          "any": [
+                            {
+                              "kind": "named_expression"
+                            },
+                            {
+                              "has": {
+                                "stopBy": "end",
+                                "kind": "named_expression"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "pair-body": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "tuple"
+                  },
+                  {
+                    "kind": "list"
+                  }
+                ],
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "matches": "noise"
+                        },
+                        {
+                          "regex": "^[\\[\\]]$"
+                        }
+                      ]
+                    }
+                  },
+                  "min": 2,
+                  "max": 2
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "pair-body"
+                }
+              }
+            ]
+          },
+          "pair-lambda": {
+            "any": [
+              {
+                "kind": "lambda",
+                "has": {
+                  "field": "body",
+                  "matches": "pair-body"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "pair-lambda"
+                }
+              }
+            ]
+          },
+          "inner-map": {
+            "any": [
+              {
+                "matches": "map-call"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "inner-map"
+                }
+              }
+            ]
+          },
+          "inner-pair-map": {
+            "any": [
+              {
+                "matches": "map-call",
+                "has": {
+                  "field": "arguments",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "pair-lambda",
+                    "not": {
+                      "matches": "not-first"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "inner-pair-map"
+                }
+              }
+            ]
+          },
+          "container-arg": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "call",
+                    "has": {
+                      "field": "function",
+                      "matches": "fn-list-set-dict"
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "keyword_argument"
+                    },
+                    {
+                      "kind": "dictionary_splat"
+                    }
+                  ],
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "argument_list",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "call",
+                      "has": {
+                        "field": "function",
+                        "matches": "fn-list-set-dict"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "container-arg"
+                }
+              }
+            ]
+          },
+          "fn-list": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "list"
+                  ],
+                  "import": [
+                    "builtins.list"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "fn-list"
+                }
+              },
+              {
+                "kind": "list_splat",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "fn-list"
+                }
+              }
+            ]
+          },
+          "fn-set": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "set"
+                  ],
+                  "import": [
+                    "builtins.set"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "fn-set"
+                }
+              },
+              {
+                "kind": "list_splat",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "fn-set"
+                }
+              }
+            ]
+          },
+          "fn-dict": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "dict"
+                  ],
+                  "import": [
+                    "builtins.dict"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "fn-dict"
+                }
+              },
+              {
+                "kind": "list_splat",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "fn-dict"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "generator",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "map-call",
+            "not": {
+              "matches": "container-arg"
+            },
+            "regex": "(?s)^(?:\\*\\s*)?(?P<M>.*)$"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.M",
+        "code": "C417",
+        "message": "Replace this `map()` of a lambda with the generator expression `($B for $P in <iterable>)`; keep `map` if code resumes the iterator after the lambda raises.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C417"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "list",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "fn-list"
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "kind": "argument_list",
+                  "all": [
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "keyword_argument"
+                            },
+                            {
+                              "kind": "dictionary_splat"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "count": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "matches": "noise"
+                          }
+                        },
+                        "min": 1,
+                        "max": 1
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "inner-map"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "regex": "(?s)^(?:\\*\\s*)?(?P<M>.*)$"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.M",
+        "code": "C417",
+        "message": "Replace this `list(map(...))` of a lambda with the list comprehension `[$B for $P in <iterable>]`, which avoids a function call per item.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C417"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "set",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "fn-set"
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "kind": "argument_list",
+                  "all": [
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "keyword_argument"
+                            },
+                            {
+                              "kind": "dictionary_splat"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "count": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "matches": "noise"
+                          }
+                        },
+                        "min": 1,
+                        "max": 1
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "inner-map"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "regex": "(?s)^(?:\\*\\s*)?(?P<M>.*)$"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.M",
+        "code": "C417",
+        "message": "Replace this `set(map(...))` of a lambda with the set comprehension `{$B for $P in <iterable>}`, which avoids a function call per item.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C417"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "dict",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "fn-dict"
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "kind": "argument_list",
+                  "all": [
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "keyword_argument"
+                            },
+                            {
+                              "kind": "dictionary_splat"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "count": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "matches": "noise"
+                          }
+                        },
+                        "min": 1,
+                        "max": 1
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "inner-pair-map"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "regex": "(?s)^(?:\\*\\s*)?(?P<M>.*)$"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.M",
+        "code": "C417",
+        "message": "Replace this `dict(map(...))` of a lambda with a dict comprehension `{key: value for $P in <iterable>}`, using the lambda's two items as key and value.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C417"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

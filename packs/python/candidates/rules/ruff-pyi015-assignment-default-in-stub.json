@@ -1,0 +1,763 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi015-assignment-default-in-stub",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Replace complex assigned values in stub files with an ellipsis; only simple literal values belong in a stub.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "assignment-default-in-stub",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "trivia": {
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                },
+                {
+                  "regex": "^[,()\\[\\]{}]$"
+                }
+              ]
+            },
+            "fstring": {
+              "kind": "string",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "string_start",
+                "regex": "^[A-Za-z]*[fFtT]"
+              }
+            },
+            "number": {
+              "any": [
+                {
+                  "kind": "integer"
+                },
+                {
+                  "kind": "float"
+                }
+              ]
+            },
+            "neg-arg": {
+              "any": [
+                {
+                  "matches": "number"
+                },
+                {
+                  "kind": "attribute",
+                  "resolves": {
+                    "import": [
+                      "math.inf",
+                      "math.e",
+                      "math.pi",
+                      "math.tau"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "neg-arg"
+                  }
+                }
+              ]
+            },
+            "complex-arg": {
+              "any": [
+                {
+                  "matches": "number",
+                  "regex": "[jJ]$"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "complex-arg"
+                  }
+                }
+              ]
+            },
+            "real-arg": {
+              "any": [
+                {
+                  "matches": "number",
+                  "not": {
+                    "regex": "[jJ]$"
+                  },
+                  "regex": "^.{1,10}$"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "real-arg"
+                  }
+                }
+              ]
+            },
+            "minus": {
+              "kind": "unary_operator",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "operator",
+                "regex": "^-$"
+              }
+            },
+            "complex-left": {
+              "any": [
+                {
+                  "matches": "real-arg"
+                },
+                {
+                  "matches": "minus",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "argument",
+                    "matches": "real-arg"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "complex-left"
+                  }
+                }
+              ]
+            },
+            "scalar": {
+              "any": [
+                {
+                  "kind": "string",
+                  "not": {
+                    "matches": "fstring"
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "fstring"
+                    }
+                  }
+                },
+                {
+                  "matches": "number"
+                },
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "false"
+                },
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "ellipsis"
+                },
+                {
+                  "matches": "minus",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "argument",
+                    "matches": "neg-arg"
+                  }
+                },
+                {
+                  "kind": "binary_operator",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "operator",
+                    "regex": "^[+-]$"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "left",
+                        "matches": "complex-left"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "right",
+                        "matches": "complex-arg"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "attribute",
+                  "resolves": {
+                    "import": [
+                      "math.inf",
+                      "math.nan",
+                      "math.e",
+                      "math.pi",
+                      "math.tau",
+                      "sys.stdin",
+                      "sys.stdout",
+                      "sys.stderr",
+                      "sys.version",
+                      "sys.version_info",
+                      "sys.platform",
+                      "sys.executable",
+                      "sys.prefix",
+                      "sys.exec_prefix",
+                      "sys.base_prefix",
+                      "sys.byteorder",
+                      "sys.maxsize",
+                      "sys.hexversion",
+                      "sys.winver"
+                    ]
+                  }
+                }
+              ]
+            },
+            "elem": {
+              "any": [
+                {
+                  "matches": "scalar"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "elem"
+                  }
+                }
+              ]
+            },
+            "no-eleventh": {
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "nthChild": {
+                    "position": 11,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "pair-ok": {
+              "kind": "pair",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "key",
+                    "matches": "elem"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "elem"
+                  }
+                }
+              ]
+            },
+            "valid": {
+              "any": [
+                {
+                  "matches": "elem"
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "list"
+                    },
+                    {
+                      "kind": "tuple"
+                    },
+                    {
+                      "kind": "set"
+                    },
+                    {
+                      "kind": "expression_list"
+                    }
+                  ],
+                  "all": [
+                    {
+                      "matches": "no-eleventh"
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "any": [
+                              {
+                                "matches": "trivia"
+                              },
+                              {
+                                "matches": "elem"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "dictionary",
+                  "all": [
+                    {
+                      "matches": "no-eleventh"
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "any": [
+                              {
+                                "matches": "trivia"
+                              },
+                              {
+                                "matches": "pair-ok"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "valid"
+                  }
+                }
+              ]
+            },
+            "pipe": {
+              "kind": "binary_operator",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "operator",
+                "regex": "^\\|$"
+              }
+            },
+            "pep604": {
+              "matches": "pipe",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "left",
+                    "matches": "member"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "right",
+                    "matches": "member"
+                  }
+                }
+              ]
+            },
+            "member": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "subscript"
+                },
+                {
+                  "kind": "attribute"
+                },
+                {
+                  "kind": "none"
+                },
+                {
+                  "matches": "pep604"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "member"
+                  }
+                }
+              ]
+            },
+            "plain-ok": {
+              "any": [
+                {
+                  "kind": "call"
+                },
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                },
+                {
+                  "kind": "subscript"
+                },
+                {
+                  "kind": "ellipsis"
+                },
+                {
+                  "kind": "none"
+                },
+                {
+                  "matches": "pep604"
+                }
+              ]
+            },
+            "name-target": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "tuple_pattern",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "name-target"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "name-target"
+                  }
+                }
+              ]
+            },
+            "assign-slot": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "right",
+                    "kind": "assignment"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "assign-slot",
+                    "kind": "parenthesized_expression"
+                  },
+                  "not": {
+                    "kind": "comment"
+                  }
+                }
+              ]
+            },
+            "typevar-call": {
+              "kind": "call",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "function",
+                "resolves": {
+                  "import": [
+                    "typing.TypeVar",
+                    "typing.TypeVarTuple",
+                    "typing.NewType",
+                    "typing.ParamSpec",
+                    "typing_extensions.TypeVar",
+                    "typing_extensions.TypeVarTuple",
+                    "typing_extensions.NewType",
+                    "typing_extensions.ParamSpec"
+                  ]
+                }
+              }
+            },
+            "special": {
+              "any": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "left",
+                    "kind": "identifier",
+                    "regex": "^__all__$"
+                  },
+                  "not": {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "class_definition"
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "left",
+                    "kind": "identifier",
+                    "regex": "^(?:__match_args__|__slots__)$"
+                  },
+                  "inside": {
+                    "stopBy": {
+                      "any": [
+                        {
+                          "kind": "class_definition"
+                        },
+                        {
+                          "kind": "function_definition"
+                        }
+                      ]
+                    },
+                    "kind": "class_definition"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "not": {
+                  "any": [
+                    {
+                      "matches": "trivia"
+                    },
+                    {
+                      "kind": "parenthesized_expression"
+                    }
+                  ]
+                }
+              },
+              {
+                "matches": "assign-slot"
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "function_definition"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "matches": "valid"
+                }
+              },
+              {
+                "not": {
+                  "matches": "typevar-call"
+                }
+              },
+              {
+                "not": {
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "kind": "attribute"
+                        }
+                      ]
+                    },
+                    {
+                      "inside": {
+                        "stopBy": {
+                          "not": {
+                            "kind": "parenthesized_expression"
+                          }
+                        },
+                        "kind": "assignment",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "type",
+                          "kind": "type",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "attribute"
+                              }
+                            ],
+                            "resolves": {
+                              "import": [
+                                "typing.Final",
+                                "_typeshed.Final",
+                                "typing_extensions.Final"
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "inside": {
+                          "stopBy": {
+                            "not": {
+                              "kind": "parenthesized_expression"
+                            }
+                          },
+                          "kind": "assignment",
+                          "all": [
+                            {
+                              "not": {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "field": "type",
+                                  "kind": "type"
+                                }
+                              }
+                            },
+                            {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "left",
+                                "matches": "name-target"
+                              }
+                            },
+                            {
+                              "not": {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "field": "right",
+                                  "kind": "assignment"
+                                }
+                              }
+                            },
+                            {
+                              "not": {
+                                "inside": {
+                                  "stopBy": "neighbor",
+                                  "field": "right",
+                                  "kind": "assignment"
+                                }
+                              }
+                            },
+                            {
+                              "not": {
+                                "matches": "special"
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "not": {
+                          "matches": "plain-ok"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "stopBy": {
+                        "not": {
+                          "kind": "parenthesized_expression"
+                        }
+                      },
+                      "kind": "assignment",
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "type",
+                            "kind": "type"
+                          }
+                        },
+                        {
+                          "not": {
+                            "matches": "special"
+                          }
+                        },
+                        {
+                          "not": {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "field": "type",
+                              "kind": "type",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "any": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "kind": "attribute"
+                                  }
+                                ],
+                                "resolves": {
+                                  "import": [
+                                    "typing.TypeAlias",
+                                    "_typeshed.TypeAlias",
+                                    "typing_extensions.TypeAlias"
+                                  ]
+                                }
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI015",
+        "message": "Replace this assigned value with `...`; a stub only needs to show that the name has a value, and keeps literal values only when they are simple.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI015"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

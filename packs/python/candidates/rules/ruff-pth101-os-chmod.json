@@ -1,0 +1,532 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-pth101-os-chmod",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Use Path.chmod() instead of os.chmod(); path objects read better than string-based os calls.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "os-chmod",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "utils": {
+      "target": {
+       "any": [
+        {
+         "kind": "identifier"
+        },
+        {
+         "kind": "attribute"
+        }
+       ],
+       "resolves": {
+        "import": [
+         "os.chmod"
+        ]
+       }
+      },
+      "callee": {
+       "any": [
+        {
+         "matches": "target",
+         "pattern": "$F"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee"
+         }
+        }
+       ]
+      },
+      "none-literal": {
+       "any": [
+        {
+         "kind": "none"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "none-literal"
+         }
+        }
+       ]
+      },
+      "int-ref": {
+       "any": [
+        {
+         "kind": "identifier"
+        },
+        {
+         "kind": "attribute"
+        }
+       ],
+       "resolves": {
+        "global": [
+         "int"
+        ],
+        "import": [
+         "builtins.int"
+        ]
+       }
+      },
+      "int-initializer": {
+       "any": [
+        {
+         "kind": "call",
+         "has": {
+          "field": "function",
+          "matches": "int-ref"
+         }
+        },
+        {
+         "not": {
+          "any": [
+           {
+            "kind": "call"
+           },
+           {
+            "kind": "identifier"
+           },
+           {
+            "kind": "attribute"
+           },
+           {
+            "kind": "subscript"
+           }
+          ]
+         },
+         "value": {
+          "type": "int"
+         }
+        }
+       ]
+      },
+      "int-annotation": {
+       "any": [
+        {
+         "matches": "int-ref"
+        },
+        {
+         "kind": "type",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "int-annotation"
+         }
+        }
+       ]
+      },
+      "int-name": {
+       "kind": "identifier",
+       "any": [
+        {
+         "resolves": {
+          "binding": {
+           "only": true,
+           "site": {
+            "not": {
+             "kind": "assignment",
+             "has": {
+              "field": "type",
+              "kind": "type"
+             }
+            }
+           },
+           "value": {
+            "matches": "int-initializer"
+           }
+          }
+         }
+        },
+        {
+         "resolves": {
+          "binding": {
+           "only": true,
+           "site": {
+            "not": {
+             "has": {
+              "stopBy": "neighbor",
+              "any": [
+               {
+                "kind": "list_splat_pattern"
+               },
+               {
+                "kind": "dictionary_splat_pattern"
+               }
+              ]
+             }
+            }
+           },
+           "annotation": {
+            "matches": "int-annotation"
+           }
+          }
+         }
+        },
+        {
+         "resolves": {
+          "binding": {
+           "only": true,
+           "site": {
+            "kind": "function_definition",
+            "has": {
+             "field": "return_type",
+             "matches": "int-annotation"
+            }
+           }
+          }
+         }
+        }
+       ]
+      },
+      "name-root": {
+       "any": [
+        {
+         "matches": "int-name"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "name-root"
+         }
+        },
+        {
+         "kind": "call",
+         "has": {
+          "field": "function",
+          "matches": "name-root"
+         }
+        }
+       ]
+      },
+      "file-descriptor": {
+       "any": [
+        {
+         "kind": "integer",
+         "not": {
+          "regex": "[jJ]$"
+         }
+        },
+        {
+         "matches": "class-int-attr"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "file-descriptor"
+         }
+        },
+        {
+         "matches": "name-root"
+        }
+       ]
+      },
+      "class-int-attr": {
+       "kind": "attribute",
+       "all": [
+        {
+         "has": {
+          "field": "attribute",
+          "pattern": "$ATTR"
+         }
+        },
+        {
+         "has": {
+          "field": "object",
+          "any": [
+           {
+            "matches": "class-ref"
+           },
+           {
+            "kind": "attribute",
+            "all": [
+             {
+              "has": {
+               "field": "attribute",
+               "pattern": "$MID"
+              }
+             },
+             {
+              "has": {
+               "field": "object",
+               "kind": "identifier",
+               "resolves": {
+                "binding": {
+                 "site": {
+                  "kind": "class_definition",
+                  "has": {
+                   "field": "body",
+                   "has": {
+                    "stopBy": "neighbor",
+                    "kind": "class_definition",
+                    "all": [
+                     {
+                      "has": {
+                       "field": "name",
+                       "pattern": "$MID"
+                      }
+                     },
+                     {
+                      "matches": "class-int-member"
+                     }
+                    ]
+                   }
+                  }
+                 }
+                }
+               }
+              }
+             }
+            ]
+           }
+          ]
+         }
+        }
+       ]
+      },
+      "class-int-member": {
+       "kind": "class_definition",
+       "has": {
+        "field": "body",
+        "has": {
+         "stopBy": "neighbor",
+         "all": [
+          {
+           "any": [
+            {
+             "kind": "expression_statement",
+             "has": {
+              "stopBy": "neighbor",
+              "kind": "assignment",
+              "all": [
+               {
+                "has": {
+                 "field": "left",
+                 "pattern": "$ATTR"
+                }
+               },
+               {
+                "any": [
+                 {
+                  "has": {
+                   "field": "type",
+                   "matches": "int-annotation"
+                  }
+                 },
+                 {
+                  "not": {
+                   "has": {
+                    "field": "type",
+                    "kind": "type"
+                   }
+                  },
+                  "has": {
+                   "field": "right",
+                   "matches": "int-initializer"
+                  }
+                 }
+                ]
+               }
+              ]
+             }
+            },
+            {
+             "matches": "int-def"
+            },
+            {
+             "kind": "decorated_definition",
+             "has": {
+              "field": "definition",
+              "matches": "int-def"
+             }
+            }
+           ]
+          },
+          {
+           "not": {
+            "precedes": {
+             "stopBy": "end",
+             "matches": "rebinds-attr"
+            }
+           }
+          }
+         ]
+        }
+       }
+      },
+      "class-ref": {
+       "any": [
+        {
+         "kind": "identifier",
+         "resolves": {
+          "binding": {
+           "site": {
+            "matches": "class-int-member"
+           }
+          }
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "class-ref"
+         }
+        }
+       ]
+      },
+      "rebinds-attr": {
+       "any": [
+        {
+         "kind": "expression_statement",
+         "has": {
+          "stopBy": "neighbor",
+          "kind": "assignment",
+          "has": {
+           "field": "left",
+           "pattern": "$ATTR"
+          }
+         }
+        },
+        {
+         "kind": "function_definition",
+         "has": {
+          "field": "name",
+          "pattern": "$ATTR"
+         }
+        },
+        {
+         "kind": "class_definition",
+         "has": {
+          "field": "name",
+          "pattern": "$ATTR"
+         }
+        },
+        {
+         "kind": "decorated_definition",
+         "has": {
+          "field": "definition",
+          "has": {
+           "field": "name",
+           "pattern": "$ATTR"
+          }
+         }
+        }
+       ]
+      },
+      "int-def": {
+       "kind": "function_definition",
+       "all": [
+        {
+         "has": {
+          "field": "name",
+          "pattern": "$ATTR"
+         }
+        },
+        {
+         "has": {
+          "field": "return_type",
+          "matches": "int-annotation"
+         }
+        }
+       ]
+      }
+     },
+     "rule": {
+      "kind": "call",
+      "has": {
+       "field": "function",
+       "matches": "callee"
+      },
+      "all": [
+       {
+        "any": [
+         {
+          "arguments": {
+           "signature": [
+            "path"
+           ],
+           "mode": "syntactic",
+           "absent": [
+            "path"
+           ]
+          }
+         },
+         {
+          "arguments": {
+           "signature": [
+            "path"
+           ],
+           "mode": "syntactic",
+           "bind": {
+            "S": "path"
+           }
+          }
+         }
+        ]
+       },
+       {
+        "not": {
+         "has": {
+          "field": "arguments",
+          "kind": "argument_list",
+          "has": {
+           "stopBy": "neighbor",
+           "kind": "keyword_argument",
+           "all": [
+            {
+             "has": {
+              "field": "name",
+              "regex": "^dir_fd$"
+             }
+            },
+            {
+             "has": {
+              "field": "value",
+              "not": {
+               "matches": "none-literal"
+              }
+             }
+            }
+           ]
+          }
+         }
+        }
+       }
+      ]
+     },
+     "constraints": {
+      "S": {
+       "not": {
+        "matches": "file-descriptor"
+       }
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.F",
+    "code": "PTH101",
+    "message": "Use `Path(path).chmod(mode)` instead of `os.chmod(path, mode)`; leave it where the path is a file descriptor or bytes, or `dir_fd` comes through `**kwargs`.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "PTH101"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

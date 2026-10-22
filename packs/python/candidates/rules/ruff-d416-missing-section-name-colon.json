@@ -1,0 +1,207 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-d416-missing-section-name-colon",
+  "revision": 1,
+  "mode": "steer",
+  "description": "End the section names in Google-style docstrings with a colon so documentation tools recognize the sections.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "doc-stmt": {
+            "kind": "expression_statement",
+            "not": {
+              "any": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  }
+                },
+                {
+                  "follows": {
+                    "stopBy": "end",
+                    "not": {
+                      "kind": "comment"
+                    }
+                  }
+                }
+              ]
+            },
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "module"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "block",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "class_definition"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "doc-holder": {
+            "any": [
+              {
+                "matches": "doc-stmt"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "doc-holder"
+                }
+              }
+            ]
+          },
+          "docstring": {
+            "kind": "string",
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "string_start",
+                "regex": "[bBfFtT]"
+              }
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "matches": "doc-holder"
+            }
+          },
+          "google-style": {
+            "all": [
+              {
+                "not": {
+                  "regex": "(?:\\A[A-Za-z]*(?:\"\"\"|''')|\\n)(?:[^\\S\\n]*|[^\\n]*[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?i:parameters|other params|other parameters):?[^\\S\\n]*(?:(?m:$)|(?:\"\"\"|''')\\z)|\\n[^\\S\\n]*(?i:parameters|other params|other parameters):?[^\\S\\n]*\\n[^\\S\\n]*[-=]+[^\\S\\n]*(?:(?m:$)|(?:\"\"\"|''')\\z)"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "regex": "(?:\\A[A-Za-z]*(?:\"\"\"|''')|\\n)(?:[^\\S\\n]*|[^\\n]*[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?i:args|arguments|keyword args|keyword arguments|other args|other arguments):?[^\\S\\n]*(?:(?m:$)|(?:\"\"\"|''')\\z)|\\n[^\\S\\n]*(?i:args|arguments|keyword args|keyword arguments|other args|other arguments):?[^\\S\\n]*\\n[^\\S\\n]*[-=]+[^\\S\\n]*(?:(?m:$)|(?:\"\"\"|''')\\z)"
+                  },
+                  {
+                    "all": [
+                      {
+                        "regex": "(?:\\A[A-Za-z]*(?:\"\"\"|''')|\\n)(?:[^\\S\\n]*|[^\\n]*[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?i:args|arguments|attention|caution|danger|error|example|hint|important|keyword args|keyword arguments|note|other args|other arguments|return|tip|todo|warning|yield):?[^\\S\\n]*(?:(?m:$)|(?:\"\"\"|''')\\z)|\\n[^\\S\\n]*(?i:args|arguments|attention|caution|danger|error|example|hint|important|keyword args|keyword arguments|note|other args|other arguments|return|tip|todo|warning|yield):?[^\\S\\n]*\\n[^\\S\\n]*[-=]+[^\\S\\n]*(?:(?m:$)|(?:\"\"\"|''')\\z)"
+                      },
+                      {
+                        "not": {
+                          "regex": "(?:\\A[A-Za-z]*(?:\"\"\"|''')|\\n)(?:[^\\S\\n]*|[^\\n]*[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?i:extended summary|receives|short summary):?[^\\S\\n]*(?:(?m:$)|(?:\"\"\"|''')\\z)|\\n[^\\S\\n]*(?i:extended summary|receives|short summary):?[^\\S\\n]*\\n[^\\S\\n]*[-=]+[^\\S\\n]*(?:(?m:$)|(?:\"\"\"|''')\\z)"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "not": {
+                          "regex": "(?:\\A[A-Za-z]*(?:\"\"\"|''')|\\n)(?:[^\\S\\n]*|[^\\n]*[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?i:args|arguments|attention|caution|danger|error|example|hint|important|keyword args|keyword arguments|note|other args|other arguments|return|tip|todo|warning|yield):?[^\\S\\n]*(?:(?m:$)|(?:\"\"\"|''')\\z)|\\n[^\\S\\n]*(?i:args|arguments|attention|caution|danger|error|example|hint|important|keyword args|keyword arguments|note|other args|other arguments|return|tip|todo|warning|yield):?[^\\S\\n]*\\n[^\\S\\n]*[-=]+[^\\S\\n]*(?:(?m:$)|(?:\"\"\"|''')\\z)"
+                        }
+                      },
+                      {
+                        "not": {
+                          "regex": "(?:\\A[A-Za-z]*(?:\"\"\"|''')|\\n)(?:[^\\S\\n]*|[^\\n]*[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?i:extended summary|receives|short summary):?[^\\S\\n]*(?:(?m:$)|(?:\"\"\"|''')\\z)|\\n[^\\S\\n]*(?i:extended summary|receives|short summary):?[^\\S\\n]*\\n[^\\S\\n]*[-=]+[^\\S\\n]*(?:(?m:$)|(?:\"\"\"|''')\\z)"
+                        }
+                      },
+                      {
+                        "regex": "(?:\\A[A-Za-z]*(?:\"\"\"|''')|\\n)(?:[^\\S\\n]*|[^\\n]*[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?i:attributes|examples|methods|notes|raises|references|returns|see also|warnings|warns|yields):[^\\S\\n]*(?:(?m:$)|(?:\"\"\"|''')\\z)"
+                      },
+                      {
+                        "not": {
+                          "regex": "\\n[^\\S\\n]*(?i:attributes|examples|methods|notes|raises|references|returns|see also|warnings|warns|yields):?[^\\S\\n]*\\n[^\\S\\n]*-+[^\\S\\n]*(?:(?m:$)|(?:\"\"\"|''')\\z)"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "missing-colon",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "docstring",
+            "regex": "(?:\\A[A-Za-z]*(?:\"\"\"|''')|\\n)(?:[^\\S\\n]*|[^\\n]*[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?<N>(?i:args|arguments|attention|caution|danger|error|example|hint|important|keyword args|keyword arguments|note|other args|other arguments|return|tip|todo|warning|yield|attributes|examples|methods|notes|raises|references|returns|see also|warnings|warns|yields))(?:[^\\S\\n]*|:[^\\S\\r\\n]+\\r?)(?:(?m:$)|(?:\"\"\"|''')\\z)",
+            "all": [
+              {
+                "matches": "google-style"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "D416",
+        "anchor": "capture.N",
+        "each": "N",
+        "message": "Add a colon right after the section name `$N`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "D416"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "missing-colon-underlined",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "docstring",
+            "regex": "(?:\\A[A-Za-z]*(?:\"\"\"|''')|\\n)[^\\n]*[^\\s,;.\\-\\\\/\\]})][^\\S\\n]*\\n[^\\S\\n]*(?<N>(?i:args|arguments|attention|caution|danger|error|example|hint|important|keyword args|keyword arguments|note|other args|other arguments|return|tip|todo|warning|yield|attributes|examples|methods|notes|raises|references|returns|see also|warnings|warns|yields))(?:[^\\S\\n]*|:[^\\S\\r\\n]+\\r?)\\n[^\\S\\n]*[-=]+[^\\S\\n]*(?:(?m:$)|(?:\"\"\"|''')\\z)",
+            "all": [
+              {
+                "matches": "google-style"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "D416",
+        "anchor": "capture.N",
+        "each": "N",
+        "message": "Add a colon right after `$N`; if this docstring is NumPy style, use the NumPy section name instead (for example Examples for Example) so its underline reads as NumPy.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "D416"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

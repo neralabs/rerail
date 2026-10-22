@@ -1,0 +1,103 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-n807-dunder-function-name",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't name a function with leading and trailing double underscores; that naming is reserved for Python's special methods.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "dunder-function-name",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "in-function-scope": {
+              "kind": "function_definition",
+              "not": {
+                "inside": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "class_definition"
+                      }
+                    ]
+                  },
+                  "kind": "class_definition"
+                }
+              }
+            },
+            "at-module-scope": {
+              "kind": "function_definition",
+              "not": {
+                "inside": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "class_definition"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$NAME",
+            "all": [
+              {
+                "regex": "^__"
+              },
+              {
+                "regex": "__$"
+              }
+            ],
+            "inside": {
+              "stopBy": "neighbor",
+              "field": "name",
+              "kind": "function_definition",
+              "matches": "in-function-scope"
+            },
+            "not": {
+              "all": [
+                {
+                  "regex": "^__(?:getattr|dir)__$"
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "name",
+                    "matches": "at-module-scope"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "N807",
+        "message": "Rename `$NAME` without the leading and trailing double underscores and update its callers; only a method of a class should use such a name.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "N807"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,1348 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-air311-airflow3-suggested-update",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Replace Airflow APIs that Airflow 3 deprecated but still supports with their newer equivalents, and stop passing the sla arguments; the old ones are expected to be removed.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "import-error": {
+            "any": [
+              {
+                "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                "resolves": {
+                  "global": ["ImportError", "ModuleNotFoundError"],
+                  "import": ["builtins.ImportError", "builtins.ModuleNotFoundError"]
+                }
+              },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "import-error" } }
+            ]
+          },
+          "import-error-type": {
+            "any": [
+              { "matches": "import-error" },
+              {
+                "any": [{ "kind": "tuple" }, { "kind": "parenthesized_expression" }, { "kind": "as_pattern" }],
+                "has": { "stopBy": "neighbor", "matches": "import-error-type" }
+              }
+            ]
+          },
+          "attribute-error": {
+            "any": [
+              {
+                "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                "resolves": { "global": ["AttributeError"], "import": ["builtins.AttributeError"] }
+              },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "attribute-error" } }
+            ]
+          },
+          "attribute-error-type": {
+            "any": [
+              { "matches": "attribute-error" },
+              {
+                "any": [{ "kind": "tuple" }, { "kind": "parenthesized_expression" }, { "kind": "as_pattern" }],
+                "has": { "stopBy": "neighbor", "matches": "attribute-error-type" }
+              }
+            ]
+          },
+          "import-fallback": {
+            "all": [
+              { "inside": { "stopBy": "end", "kind": "except_clause" } },
+              {
+                "inside": {
+                  "stopBy": { "kind": "try_statement" },
+                  "kind": "try_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "except_clause",
+                    "has": { "stopBy": "neighbor", "field": "value", "matches": "import-error-type" }
+                  }
+                }
+              }
+            ]
+          },
+          "attribute-fallback": {
+            "all": [
+              { "inside": { "stopBy": "end", "kind": "except_clause" } },
+              {
+                "inside": {
+                  "stopBy": { "kind": "try_statement" },
+                  "kind": "try_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "except_clause",
+                    "has": { "stopBy": "neighbor", "field": "value", "matches": "attribute-error-type" }
+                  }
+                }
+              }
+            ]
+          },
+          "moved-bare": {
+            "any": [
+              {
+                "kind": "identifier",
+                "pattern": "$N",
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "resolves": {
+                          "binding": {
+                            "site": {
+                              "kind": "aliased_import",
+                              "has": { "stopBy": "neighbor", "field": "name", "pattern": "$ORIG" }
+                            }
+                          }
+                        }
+                      },
+                      { "pattern": "$ORIG" }
+                    ]
+                  }
+                ],
+                "not": { "inside": { "stopBy": "neighbor", "kind": "augmented_assignment", "field": "left" } }
+              },
+              {
+                "kind": "attribute",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "attribute",
+                  "all": [{ "pattern": "$N" }, { "pattern": "$ORIG" }]
+                }
+              }
+            ]
+          },
+          "moved-1": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "kind": "dotted_name",
+                                  "all": [
+                                    {
+                                      "any": [
+                                        { "inside": { "stopBy": "neighbor", "kind": "aliased_import" } },
+                                        { "follows": { "stopBy": "end", "regex": "^import$" } }
+                                      ]
+                                    },
+                                    {
+                                      "inside": {
+                                        "stopBy": { "kind": "import_from_statement" },
+                                        "kind": "import_from_statement",
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "field": "module_name",
+                                          "regex": "^airflow\\.sdk$"
+                                        }
+                                      }
+                                    }
+                                  ],
+                                  "has": { "stopBy": "neighbor", "kind": "identifier", "pattern": "$ORIG" }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "all": [
+                    { "matches": "attribute-fallback" },
+                    {
+                      "inside": {
+                        "stopBy": { "kind": "try_statement" },
+                        "kind": "try_statement",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "body",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "attribute",
+                            "resolves": { "import": ["airflow.sdk"], "prefix": true },
+                            "has": { "stopBy": "neighbor", "field": "attribute", "pattern": "$ORIG" }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "moved-2": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "kind": "dotted_name",
+                                  "all": [
+                                    {
+                                      "any": [
+                                        { "inside": { "stopBy": "neighbor", "kind": "aliased_import" } },
+                                        { "follows": { "stopBy": "end", "regex": "^import$" } }
+                                      ]
+                                    },
+                                    {
+                                      "inside": {
+                                        "stopBy": { "kind": "import_from_statement" },
+                                        "kind": "import_from_statement",
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "field": "module_name",
+                                          "regex": "^airflow\\.sdk$"
+                                        }
+                                      }
+                                    }
+                                  ],
+                                  "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^Asset$" }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "all": [
+                    { "matches": "attribute-fallback" },
+                    {
+                      "inside": {
+                        "stopBy": { "kind": "try_statement" },
+                        "kind": "try_statement",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "body",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "attribute",
+                            "resolves": { "import": ["airflow.sdk.Asset"] }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "moved-3": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "kind": "dotted_name",
+                                  "all": [
+                                    {
+                                      "any": [
+                                        { "inside": { "stopBy": "neighbor", "kind": "aliased_import" } },
+                                        { "follows": { "stopBy": "end", "regex": "^import$" } }
+                                      ]
+                                    },
+                                    {
+                                      "inside": {
+                                        "stopBy": { "kind": "import_from_statement" },
+                                        "kind": "import_from_statement",
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "field": "module_name",
+                                          "regex": "^airflow\\.sdk$"
+                                        }
+                                      }
+                                    }
+                                  ],
+                                  "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^AssetAlias$" }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "all": [
+                    { "matches": "attribute-fallback" },
+                    {
+                      "inside": {
+                        "stopBy": { "kind": "try_statement" },
+                        "kind": "try_statement",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "body",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "attribute",
+                            "resolves": { "import": ["airflow.sdk.AssetAlias"] }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "moved-4": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "kind": "dotted_name",
+                                  "all": [
+                                    {
+                                      "any": [
+                                        { "inside": { "stopBy": "neighbor", "kind": "aliased_import" } },
+                                        { "follows": { "stopBy": "end", "regex": "^import$" } }
+                                      ]
+                                    },
+                                    {
+                                      "inside": {
+                                        "stopBy": { "kind": "import_from_statement" },
+                                        "kind": "import_from_statement",
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "field": "module_name",
+                                          "regex": "^airflow\\.sdk$"
+                                        }
+                                      }
+                                    }
+                                  ],
+                                  "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^AssetAll$" }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "all": [
+                    { "matches": "attribute-fallback" },
+                    {
+                      "inside": {
+                        "stopBy": { "kind": "try_statement" },
+                        "kind": "try_statement",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "body",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "attribute",
+                            "resolves": { "import": ["airflow.sdk.AssetAll"] }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "moved-5": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "kind": "dotted_name",
+                                  "all": [
+                                    {
+                                      "any": [
+                                        { "inside": { "stopBy": "neighbor", "kind": "aliased_import" } },
+                                        { "follows": { "stopBy": "end", "regex": "^import$" } }
+                                      ]
+                                    },
+                                    {
+                                      "inside": {
+                                        "stopBy": { "kind": "import_from_statement" },
+                                        "kind": "import_from_statement",
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "field": "module_name",
+                                          "regex": "^airflow\\.sdk$"
+                                        }
+                                      }
+                                    }
+                                  ],
+                                  "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^AssetAny$" }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "all": [
+                    { "matches": "attribute-fallback" },
+                    {
+                      "inside": {
+                        "stopBy": { "kind": "try_statement" },
+                        "kind": "try_statement",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "body",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "attribute",
+                            "resolves": { "import": ["airflow.sdk.AssetAny"] }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "moved-6": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "kind": "dotted_name",
+                                  "all": [
+                                    {
+                                      "any": [
+                                        { "inside": { "stopBy": "neighbor", "kind": "aliased_import" } },
+                                        { "follows": { "stopBy": "end", "regex": "^import$" } }
+                                      ]
+                                    },
+                                    {
+                                      "inside": {
+                                        "stopBy": { "kind": "import_from_statement" },
+                                        "kind": "import_from_statement",
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "field": "module_name",
+                                          "regex": "^airflow\\.sdk\\.bases\\.decorator$"
+                                        }
+                                      }
+                                    }
+                                  ],
+                                  "has": { "stopBy": "neighbor", "kind": "identifier", "pattern": "$ORIG" }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "all": [
+                    { "matches": "attribute-fallback" },
+                    {
+                      "inside": {
+                        "stopBy": { "kind": "try_statement" },
+                        "kind": "try_statement",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "body",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "attribute",
+                            "resolves": { "import": ["airflow.sdk.bases.decorator"], "prefix": true },
+                            "has": { "stopBy": "neighbor", "field": "attribute", "pattern": "$ORIG" }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "moved-7": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "kind": "dotted_name",
+                                  "all": [
+                                    {
+                                      "any": [
+                                        { "inside": { "stopBy": "neighbor", "kind": "aliased_import" } },
+                                        { "follows": { "stopBy": "end", "regex": "^import$" } }
+                                      ]
+                                    },
+                                    {
+                                      "inside": {
+                                        "stopBy": { "kind": "import_from_statement" },
+                                        "kind": "import_from_statement",
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "field": "module_name",
+                                          "regex": "^airflow\\.sdk\\.io$"
+                                        }
+                                      }
+                                    }
+                                  ],
+                                  "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^attach$" }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "all": [
+                    { "matches": "attribute-fallback" },
+                    {
+                      "inside": {
+                        "stopBy": { "kind": "try_statement" },
+                        "kind": "try_statement",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "body",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "attribute",
+                            "resolves": { "import": ["airflow.sdk.io.attach"] }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "moved-8": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "kind": "dotted_name",
+                                  "all": [
+                                    {
+                                      "any": [
+                                        { "inside": { "stopBy": "neighbor", "kind": "aliased_import" } },
+                                        { "follows": { "stopBy": "end", "regex": "^import$" } }
+                                      ]
+                                    },
+                                    {
+                                      "inside": {
+                                        "stopBy": { "kind": "import_from_statement" },
+                                        "kind": "import_from_statement",
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "field": "module_name",
+                                          "regex": "^airflow\\.sdk\\.bases\\.sensor$"
+                                        }
+                                      }
+                                    }
+                                  ],
+                                  "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^poke_mode_only$" }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "all": [
+                    { "matches": "attribute-fallback" },
+                    {
+                      "inside": {
+                        "stopBy": { "kind": "try_statement" },
+                        "kind": "try_statement",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "body",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "attribute",
+                            "resolves": { "import": ["airflow.sdk.bases.sensor.poke_mode_only"] }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "moved-9": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "kind": "dotted_name",
+                                  "all": [
+                                    {
+                                      "any": [
+                                        { "inside": { "stopBy": "neighbor", "kind": "aliased_import" } },
+                                        { "follows": { "stopBy": "end", "regex": "^import$" } }
+                                      ]
+                                    },
+                                    {
+                                      "inside": {
+                                        "stopBy": { "kind": "import_from_statement" },
+                                        "kind": "import_from_statement",
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "field": "module_name",
+                                          "regex": "^airflow\\.models\\.asset$"
+                                        }
+                                      }
+                                    }
+                                  ],
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "identifier",
+                                    "regex": "^expand_alias_to_assets$"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "all": [
+                    { "matches": "attribute-fallback" },
+                    {
+                      "inside": {
+                        "stopBy": { "kind": "try_statement" },
+                        "kind": "try_statement",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "body",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "attribute",
+                            "resolves": { "import": ["airflow.models.asset.expand_alias_to_assets"] }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "moved-10": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "kind": "dotted_name",
+                                  "all": [
+                                    {
+                                      "any": [
+                                        { "inside": { "stopBy": "neighbor", "kind": "aliased_import" } },
+                                        { "follows": { "stopBy": "end", "regex": "^import$" } }
+                                      ]
+                                    },
+                                    {
+                                      "inside": {
+                                        "stopBy": { "kind": "import_from_statement" },
+                                        "kind": "import_from_statement",
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "field": "module_name",
+                                          "regex": "^airflow\\.timetables\\.assets$"
+                                        }
+                                      }
+                                    }
+                                  ],
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "identifier",
+                                    "regex": "^AssetOrTimeSchedule$"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "all": [
+                    { "matches": "attribute-fallback" },
+                    {
+                      "inside": {
+                        "stopBy": { "kind": "try_statement" },
+                        "kind": "try_statement",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "body",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "attribute",
+                            "resolves": { "import": ["airflow.timetables.assets.AssetOrTimeSchedule"] }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "moved-11": {
+            "matches": "moved-bare",
+            "not": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "all": [
+                          { "matches": "import-fallback" },
+                          {
+                            "inside": {
+                              "stopBy": { "kind": "try_statement" },
+                              "kind": "try_statement",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "end",
+                                  "kind": "dotted_name",
+                                  "all": [
+                                    {
+                                      "any": [
+                                        { "inside": { "stopBy": "neighbor", "kind": "aliased_import" } },
+                                        { "follows": { "stopBy": "end", "regex": "^import$" } }
+                                      ]
+                                    },
+                                    {
+                                      "inside": {
+                                        "stopBy": { "kind": "import_from_statement" },
+                                        "kind": "import_from_statement",
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "field": "module_name",
+                                          "regex": "^airflow\\.sdk\\.definitions\\.param$"
+                                        }
+                                      }
+                                    }
+                                  ],
+                                  "has": { "stopBy": "neighbor", "kind": "identifier", "pattern": "$ORIG" }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "all": [
+                    { "matches": "attribute-fallback" },
+                    {
+                      "inside": {
+                        "stopBy": { "kind": "try_statement" },
+                        "kind": "try_statement",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "body",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "attribute",
+                            "resolves": { "import": ["airflow.sdk.definitions.param"], "prefix": true },
+                            "has": { "stopBy": "neighbor", "field": "attribute", "pattern": "$ORIG" }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "name-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.datasets.metadata.Metadata",
+                "airflow.decorators.dag",
+                "airflow.decorators.task",
+                "airflow.decorators.task_group",
+                "airflow.decorators.setup",
+                "airflow.decorators.teardown",
+                "airflow.io.path.ObjectStoragePath",
+                "airflow.models.Connection",
+                "airflow.models.Variable",
+                "airflow.models.baseoperator.chain",
+                "airflow.models.baseoperator.chain_linear",
+                "airflow.models.baseoperator.cross_downstream",
+                "airflow.models.baseoperatorlink.BaseOperatorLink",
+                "airflow.models.dag.DAG",
+                "airflow.models.DAG",
+                "airflow.DAG",
+                "airflow.sensors.base.BaseSensorOperator",
+                "airflow.sensors.base.PokeReturnValue",
+                "airflow.utils.dag_parsing_context.get_parsing_context"
+              ]
+            },
+            "matches": "moved-1"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR311",
+        "message": "Import `$ORIG` from `airflow.sdk` instead (needs apache-airflow-task-sdk>=1.0.0); the old name still works in Airflow 3 but is expected to be removed in a future version.",
+        "suppress": { "noqa": { "codes": ["AIR311"] } }
+      }
+    },
+    {
+      "id": "name-2",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.Dataset", "airflow.datasets.Dataset"] }, "matches": "moved-2" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR311",
+        "message": "Import `Asset` from `airflow.sdk` instead (needs apache-airflow-task-sdk>=1.0.0); the old name still works in Airflow 3 but is expected to be removed in a future version.",
+        "suppress": { "noqa": { "codes": ["AIR311"] } }
+      }
+    },
+    {
+      "id": "name-3",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.datasets.DatasetAlias"] }, "matches": "moved-3" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR311",
+        "message": "Import `AssetAlias` from `airflow.sdk` instead (needs apache-airflow-task-sdk>=1.0.0); the old name still works in Airflow 3 but is expected to be removed in a future version.",
+        "suppress": { "noqa": { "codes": ["AIR311"] } }
+      }
+    },
+    {
+      "id": "name-4",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.datasets.DatasetAll"] }, "matches": "moved-4" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR311",
+        "message": "Import `AssetAll` from `airflow.sdk` instead (needs apache-airflow-task-sdk>=1.0.0); the old name still works in Airflow 3 but is expected to be removed in a future version.",
+        "suppress": { "noqa": { "codes": ["AIR311"] } }
+      }
+    },
+    {
+      "id": "name-5",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.datasets.DatasetAny"] }, "matches": "moved-5" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR311",
+        "message": "Import `AssetAny` from `airflow.sdk` instead (needs apache-airflow-task-sdk>=1.0.0); the old name still works in Airflow 3 but is expected to be removed in a future version.",
+        "suppress": { "noqa": { "codes": ["AIR311"] } }
+      }
+    },
+    {
+      "id": "name-6",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": {
+              "import": [
+                "airflow.decorators.base.DecoratedMappedOperator",
+                "airflow.decorators.base.DecoratedOperator",
+                "airflow.decorators.base.TaskDecorator",
+                "airflow.decorators.base.get_unique_task_id",
+                "airflow.decorators.base.task_decorator_factory"
+              ]
+            },
+            "matches": "moved-6"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR311",
+        "message": "Import `$ORIG` from `airflow.sdk.bases.decorator` instead (needs apache-airflow-task-sdk>=1.0.0); the old name still works in Airflow 3 but is expected to be removed in a future version.",
+        "suppress": { "noqa": { "codes": ["AIR311"] } }
+      }
+    },
+    {
+      "id": "name-7",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.io.store.attach"] }, "matches": "moved-7" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR311",
+        "message": "Import `attach` from `airflow.sdk.io` instead (needs apache-airflow-task-sdk>=1.0.0); the old name still works in Airflow 3 but is expected to be removed in a future version.",
+        "suppress": { "noqa": { "codes": ["AIR311"] } }
+      }
+    },
+    {
+      "id": "name-8",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.sensors.base.poke_mode_only"] }, "matches": "moved-8" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR311",
+        "message": "Import `poke_mode_only` from `airflow.sdk.bases.sensor` instead (needs apache-airflow-task-sdk>=1.0.0); the old name still works in Airflow 3 but is expected to be removed in a future version.",
+        "suppress": { "noqa": { "codes": ["AIR311"] } }
+      }
+    },
+    {
+      "id": "name-9",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.datasets.expand_alias_to_datasets"] }, "matches": "moved-9" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR311",
+        "message": "Use `expand_alias_to_assets` from `airflow.models.asset` instead; the old name still works in Airflow 3 but is expected to be removed in a future version.",
+        "suppress": { "noqa": { "codes": ["AIR311"] } }
+      }
+    },
+    {
+      "id": "name-10",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "resolves": { "import": ["airflow.timetables.datasets.DatasetOrTimeSchedule"] },
+            "matches": "moved-10"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR311",
+        "message": "Use `AssetOrTimeSchedule` from `airflow.timetables.assets` instead; the old name still works in Airflow 3 but is expected to be removed in a future version.",
+        "suppress": { "noqa": { "codes": ["AIR311"] } }
+      }
+    },
+    {
+      "id": "name-param",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.models"], "prefix": true }, "matches": "moved-11" },
+          "constraints": { "ORIG": { "regex": "^(Param|ParamsDict|DagParam)$" } }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR311",
+        "message": "Import `$ORIG` from `airflow.sdk.definitions.param` instead (needs apache-airflow-task-sdk>=1.0.0); the old name still works in Airflow 3 but is expected to be removed in a future version.",
+        "suppress": { "noqa": { "codes": ["AIR311"] } }
+      }
+    },
+    {
+      "id": "name-no-replacement",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": { "resolves": { "import": ["airflow.datasets.DatasetAliasEvent"] }, "matches": "moved-bare" }
+        }
+      },
+      "violation": {
+        "anchor": "capture.N",
+        "code": "AIR311",
+        "message": "`$ORIG` has no replacement and is expected to be removed in a future Airflow version; stop relying on it where you can.",
+        "suppress": { "noqa": { "codes": ["AIR311"] } }
+      }
+    },
+    {
+      "id": "dag-sla-miss-callback",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "keyword_argument",
+            "all": [
+              { "has": { "stopBy": "neighbor", "field": "name", "regex": "^sla_miss_callback$", "pattern": "$K" } },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "call",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "function",
+                      "resolves": { "import": ["airflow"], "prefix": true },
+                      "matches": "moved-bare"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "constraints": { "ORIG": { "regex": "^(DAG|dag)$" } }
+        }
+      },
+      "violation": {
+        "anchor": "capture.K",
+        "code": "AIR311",
+        "message": "`$K` has no replacement and is expected to be removed in a future Airflow version; keep it only while the code must still support Airflow 2.",
+        "suppress": { "noqa": { "codes": ["AIR311"] } }
+      }
+    },
+    {
+      "id": "timetable-datasets",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "keyword_argument",
+            "all": [
+              { "has": { "stopBy": "neighbor", "field": "name", "regex": "^datasets$", "pattern": "$K" } },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "call",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "function",
+                      "resolves": { "import": ["airflow.timetables.datasets.DatasetOrTimeSchedule"] },
+                      "matches": "moved-bare"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.K",
+        "code": "AIR311",
+        "message": "Rename the `$K` argument to `assets`; the old name still works in Airflow 3 but is expected to be removed in a future version.",
+        "suppress": { "noqa": { "codes": ["AIR311"] } }
+      }
+    },
+    {
+      "id": "builtin-operator-sla",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "keyword_argument",
+            "all": [
+              { "has": { "stopBy": "neighbor", "field": "name", "regex": "^sla$", "pattern": "$K" } },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "call",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "function",
+                      "resolves": { "import": ["airflow.operators"], "prefix": true },
+                      "matches": "moved-bare"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "constraints": { "ORIG": { "regex": "Operator$" } }
+        }
+      },
+      "violation": {
+        "anchor": "capture.K",
+        "code": "AIR311",
+        "message": "`$K` has no replacement and is expected to be removed in a future Airflow version; keep it only while the code must still support Airflow 2.",
+        "suppress": { "noqa": { "codes": ["AIR311"] } }
+      }
+    },
+    {
+      "id": "provider-operator-sla",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "keyword_argument",
+            "all": [
+              { "has": { "stopBy": "neighbor", "field": "name", "regex": "^sla$", "pattern": "$K" } },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "call",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "function",
+                      "resolves": { "import": ["airflow.providers"], "prefix": true },
+                      "matches": "moved-bare",
+                      "all": [
+                        { "any": [{ "regex": "(^|[^\\w])operators([^\\w]|$)" }, { "matches": "operators-module" }] }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "constraints": { "ORIG": { "regex": "Operator$" } },
+          "utils": {
+            "operators-module": {
+              "any": [
+                { "regex": "(^|[^\\w])operators([^\\w]|$)" },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "any": [
+                          { "regex": "(^|[^\\w])operators([^\\w]|$)" },
+                          {
+                            "inside": {
+                              "stopBy": { "any": [{ "kind": "import_statement" }, { "kind": "import_from_statement" }] },
+                              "any": [{ "kind": "import_statement" }, { "kind": "import_from_statement" }],
+                              "regex": "(^|[^\\w])operators([^\\w]|$)"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "has": { "stopBy": "neighbor", "field": "object", "matches": "operators-module" }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.K",
+        "code": "AIR311",
+        "message": "`$K` has no replacement and is expected to be removed in a future Airflow version; keep it only while the code must still support Airflow 2.",
+        "suppress": { "noqa": { "codes": ["AIR311"] } }
+      }
+    }
+  ]
+}

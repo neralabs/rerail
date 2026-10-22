@@ -1,0 +1,267 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi032-any-eq-ne-annotation",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use object instead of Any to annotate the other operand of equality and inequality methods; object accepts every value while keeping type checking on.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "any-eq-ne-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "any-ref": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.Any",
+                      "typing_extensions.Any",
+                      "_typeshed.Any"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "any-ref"
+                  }
+                }
+              ]
+            },
+            "any-annotation": {
+              "any": [
+                {
+                  "matches": "any-ref"
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "string"
+                    },
+                    {
+                      "kind": "concatenated_string"
+                    }
+                  ],
+                  "parse": {
+                    "grammar": "annotation",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "any-ref"
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "any-annotation"
+                  }
+                }
+              ]
+            },
+            "star-param": {
+              "any": [
+                {
+                  "kind": "keyword_separator"
+                },
+                {
+                  "kind": "list_splat_pattern"
+                },
+                {
+                  "kind": "dictionary_splat_pattern"
+                },
+                {
+                  "kind": "typed_parameter",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier"
+                    }
+                  }
+                }
+              ]
+            },
+            "arg-param": {
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "parameters"
+              },
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "default_parameter"
+                },
+                {
+                  "kind": "typed_default_parameter"
+                },
+                {
+                  "kind": "typed_parameter",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier"
+                  }
+                }
+              ]
+            },
+            "first-arg": {
+              "matches": "arg-param",
+              "follows": {
+                "stopBy": {
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "comment"
+                      },
+                      {
+                        "regex": "^,$"
+                      }
+                    ]
+                  }
+                },
+                "any": [
+                  {
+                    "kind": "positional_separator"
+                  },
+                  {
+                    "regex": "^\\($"
+                  }
+                ]
+              }
+            },
+            "second-arg": {
+              "any": [
+                {
+                  "kind": "typed_parameter"
+                },
+                {
+                  "kind": "typed_default_parameter"
+                }
+              ],
+              "matches": "arg-param",
+              "follows": {
+                "stopBy": {
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "comment"
+                      },
+                      {
+                        "regex": "^,$"
+                      }
+                    ]
+                  }
+                },
+                "matches": "first-arg"
+              },
+              "not": {
+                "precedes": {
+                  "stopBy": {
+                    "matches": "star-param"
+                  },
+                  "any": [
+                    {
+                      "matches": "arg-param"
+                    },
+                    {
+                      "kind": "positional_separator"
+                    }
+                  ]
+                }
+              },
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "parameters",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "function_definition",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "name",
+                    "regex": "^__(eq|ne)__$"
+                  },
+                  "inside": {
+                    "stopBy": {
+                      "any": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "kind": "class_definition"
+                        }
+                      ]
+                    },
+                    "kind": "class_definition"
+                  }
+                }
+              }
+            },
+            "annotation-slot": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "type",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "field": "type",
+                      "matches": "second-arg"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "annotation-slot"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "matches": "any-annotation",
+            "not": {
+              "kind": "parenthesized_expression"
+            },
+            "all": [
+              {
+                "matches": "annotation-slot"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI032",
+        "message": "Annotate the other operand of this `__eq__` or `__ne__` as `object` instead of `Any`; `==` and `!=` must accept any value, and `Any` turns type checking off.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI032"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

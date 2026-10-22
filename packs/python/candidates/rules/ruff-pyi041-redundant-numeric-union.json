@@ -1,0 +1,424 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi041-redundant-numeric-union",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't combine int, float and complex in a parameter annotation union; a float parameter already accepts ints and a complex parameter accepts both.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "union-ref": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "typing.Union",
+                "typing_extensions.Union",
+                "_typeshed.Union"
+              ]
+            }
+          },
+          "int-ref": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "builtins.int"
+              ],
+              "global": [
+                "int"
+              ]
+            }
+          },
+          "float-ref": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "builtins.float"
+              ],
+              "global": [
+                "float"
+              ]
+            }
+          },
+          "complex-ref": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "builtins.complex"
+              ],
+              "global": [
+                "complex"
+              ]
+            }
+          },
+          "register-ref": {
+            "kind": "attribute",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "attribute",
+                  "regex": "^register$"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "object",
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "function_definition",
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "decorated_definition",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "decorator",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "any": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "kind": "attribute"
+                                }
+                              ],
+                              "resolves": {
+                                "import": [
+                                  "functools.singledispatch",
+                                  "functools.singledispatchmethod"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "dispatch-first": {
+            "any": [
+              {
+                "kind": "typed_parameter"
+              },
+              {
+                "kind": "typed_default_parameter"
+              }
+            ],
+            "not": {
+              "follows": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "kind": "typed_parameter"
+                  },
+                  {
+                    "kind": "typed_default_parameter"
+                  }
+                ]
+              }
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "parameters",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "function_definition",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "decorated_definition",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "decorator",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "register-ref"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "top-union": {
+            "any": [
+              {
+                "kind": "binary_operator",
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^\\|$"
+                }
+              },
+              {
+                "kind": "union_type"
+              },
+              {
+                "kind": "generic_type",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "union-ref"
+                }
+              },
+              {
+                "kind": "subscript",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "matches": "union-ref"
+                }
+              }
+            ],
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              "kind": "type",
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "typed_parameter"
+                  },
+                  {
+                    "kind": "typed_default_parameter"
+                  }
+                ],
+                "not": {
+                  "matches": "dispatch-first"
+                }
+              }
+            }
+          },
+          "union-part": {
+            "any": [
+              {
+                "kind": "parenthesized_expression"
+              },
+              {
+                "kind": "type"
+              },
+              {
+                "kind": "type_parameter"
+              },
+              {
+                "kind": "tuple"
+              },
+              {
+                "kind": "union_type"
+              },
+              {
+                "kind": "binary_operator",
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^\\|$"
+                }
+              },
+              {
+                "kind": "generic_type",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "union-ref"
+                }
+              },
+              {
+                "kind": "subscript",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "matches": "union-ref"
+                }
+              }
+            ]
+          },
+          "member": {
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "matches": "union-part"
+                }
+              },
+              "matches": "top-union"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "redundant-beside-complex",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "top-union",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "end",
+                  "all": [
+                    {
+                      "matches": "complex-ref"
+                    },
+                    {
+                      "matches": "member"
+                    }
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "has": {
+                      "stopBy": "end",
+                      "all": [
+                        {
+                          "matches": "int-ref"
+                        },
+                        {
+                          "matches": "member"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "end",
+                      "all": [
+                        {
+                          "matches": "float-ref"
+                        },
+                        {
+                          "matches": "member"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI041",
+        "message": "Remove `int` and `float` from this parameter union where `complex` is also listed; `complex` already accepts both.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI041"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "int-beside-float",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "top-union",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "end",
+                  "all": [
+                    {
+                      "matches": "int-ref"
+                    },
+                    {
+                      "matches": "member"
+                    }
+                  ]
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "end",
+                  "all": [
+                    {
+                      "matches": "float-ref"
+                    },
+                    {
+                      "matches": "member"
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "end",
+                    "all": [
+                      {
+                        "matches": "complex-ref"
+                      },
+                      {
+                        "matches": "member"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI041",
+        "message": "Remove `int` from this parameter union where `float` is also listed; `float` already accepts ints.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI041"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

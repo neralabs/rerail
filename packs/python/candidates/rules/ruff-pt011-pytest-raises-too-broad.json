@@ -3,7 +3,7 @@
   "id": "ruff-pt011-pytest-raises-too-broad",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's PT011 (pytest-raises-too-broad) under its default `raises-require-match-for` (`BaseException`, `Exception`, `ValueError`, `OSError`, `IOError`, `EnvironmentError`, `socket.error`): a call whose callee (parentheses transparent) resolves to `pytest.raises`, passing no `func` (neither the keyword nor a second positional argument before any `*args`), whose `expected_exception` (the keyword, else the first positional argument if it is not `*args`; parentheses transparent; arguments read as Ruff's find_argument does, skipping comments and line continuations) resolves to one of those names: the unshadowed builtin by its bare name (`builtins.ValueError` is `builtins.ValueError` to Ruff, not `ValueError`), or `socket.error` through the file's imports; with no `match=` keyword or one that is an empty or null string (`None`, `\"\"`, an f-string whose literal parts are empty and whose fields are each such a string; not a t-string or bytes), and no `check=` keyword or `check=None`. Reported on the exception expression, naming its qualified name.",
+  "description": "Constrain pytest.raises for broad exceptions such as ValueError or OSError with a message match or a more specific exception; otherwise unrelated errors also pass.",
   "scope": {
     "include": [
       "**/*"
@@ -347,7 +347,7 @@
       "violation": {
         "anchor": "capture.X",
         "code": "PT011",
-        "message": "`pytest.raises($X)` is too broad, set the `match` parameter or use a more specific exception",
+        "message": "Add `match=` with the expected message (or `check=` on pytest 8.4+) to `pytest.raises($X)`, or expect a more specific exception, so unrelated `$X` errors do not pass.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -404,7 +404,7 @@
       "violation": {
         "anchor": "capture.X",
         "code": "PT011",
-        "message": "`pytest.raises(socket.error)` is too broad, set the `match` parameter or use a more specific exception",
+        "message": "`$X` is an alias of `OSError`; expect a specific subclass such as `ConnectionRefusedError`, or add `match=` (or `check=` on pytest 8.4+) so unrelated OS errors do not pass.",
         "suppress": {
           "noqa": {
             "codes": [

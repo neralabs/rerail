@@ -1,0 +1,149 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pd002-pandas-use-of-inplace-argument",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid passing True for the inplace argument of pandas methods; assign the returned object instead, which keeps chaining and avoids hidden mutation.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "pandas-use-of-inplace-argument",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "true-literal": {
+              "any": [
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "true-literal"
+                  }
+                }
+              ]
+            },
+            "inplace-method": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "attribute",
+                    "regex": "^(where|mask|query|clip|eval|backfill|bfill|ffill|fillna|interpolate|dropna|pad|replace|drop|drop_duplicates|rename|rename_axis|reset_index|set_index|sort_values|sort_index|set_names)$"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "inplace-method"
+                  }
+                }
+              ]
+            },
+            "hit": {
+              "kind": "keyword_argument",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "name",
+                    "regex": "^inplace$"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "true-literal"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "argument_list",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "call",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "function",
+                        "matches": "inplace-method"
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "imported": [
+                      "pandas"
+                    ],
+                    "seenBefore": true
+                  }
+                }
+              ]
+            },
+            "in-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "hit",
+                      "capture": "KW"
+                    },
+                    {
+                      "matches": "in-string"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "hit",
+                "pattern": "$KW"
+              },
+              {
+                "matches": "in-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.KW",
+        "code": "PD002",
+        "message": "Remove `inplace=True` and assign the returned object back, e.g. `df = df.sort_values(\"a\")`; leave it if this isn't a pandas object.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PD002"
+            ]
+          }
+        },
+        "each": "KW"
+      }
+    }
+  ]
+}

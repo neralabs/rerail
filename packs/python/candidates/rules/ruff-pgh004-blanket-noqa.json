@@ -1,0 +1,202 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pgh004-blanket-noqa",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Name specific rule codes in noqa comments instead of suppressing every check, and put a colon before the codes; a blanket noqa hides unrelated problems.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "blanket-noqa",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "missing-colon": {
+              "kind": "comment",
+              "regex": "^[^#]*(?:#\\s*(?i:[^\\s#n][^#]*|n(?:[^#o][^#]*)?|no(?:[^#q][^#]*)?|noq(?:[^#a][^#]*)?)?)*(?<D>#\\s*(?i:noqa)\\s+)[\\s,]*[A-Z]+[0-9]+(?:[\\s,]*[A-Z]+[0-9]+)*(?:$|#|[\\s,]+(?:$|[^\\s,A-Z]|[A-Z]+(?:[^A-Z0-9]|$)))"
+            },
+            "exempt-file": {
+              "kind": "comment",
+              "regex": "#\\s*(?:ruff|flake8)\\s*:\\s*(?i:noqa)\\s*:[\\s,]*(?:[A-Z]+[0-9]+[\\s,]*)*?PGH004(?:[\\s,]*[A-Z]+[0-9]+)*(?:$|#|[\\s,]+(?:$|[^\\s,A-Z]|[A-Z]+(?:[^A-Z0-9]|$)))",
+              "not": {
+                "layout": {
+                  "before": {
+                    "to": "token",
+                    "breaks": {
+                      "eq": 0
+                    }
+                  }
+                }
+              }
+            },
+            "earlier-file-directive": {
+              "kind": "comment",
+              "regex": "#\\s*(?:ruff|flake8)\\s*:\\s*(?i:noqa)(?:[^\\s#]|\\s+:).*#\\s*(?:ruff|flake8)\\s*:\\s*(?i:noqa)(?:$|#|\\s+(?:$|[^\\s:]))"
+            },
+            "enabled": {
+              "inside": {
+                "stopBy": "end",
+                "kind": "module",
+                "not": {
+                  "has": {
+                    "stopBy": "end",
+                    "matches": "exempt-file"
+                  }
+                }
+              }
+            }
+          },
+          "rule": {
+            "kind": "comment",
+            "regex": "^[^#]*(?:#\\s*(?i:[^\\s#n][^#]*|n(?:[^#o][^#]*)?|no(?:[^#q][^#]*)?|noq(?:[^#a][^#]*)?)?)*(?<D>#\\s*(?i:noqa))(?:$|#|\\s+(?:$|[^\\s:]))",
+            "not": {
+              "matches": "missing-colon"
+            },
+            "matches": "enabled"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.D",
+        "code": "PGH004",
+        "message": "List the specific rule codes to suppress, as in `# noqa: F401`, instead of a blanket `noqa`, so other problems on this line still surface."
+      }
+    },
+    {
+      "id": "noqa-missing-colon",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "missing-colon": {
+              "kind": "comment",
+              "regex": "^[^#]*(?:#\\s*(?i:[^\\s#n][^#]*|n(?:[^#o][^#]*)?|no(?:[^#q][^#]*)?|noq(?:[^#a][^#]*)?)?)*(?<D>#\\s*(?i:noqa)\\s+)[\\s,]*[A-Z]+[0-9]+(?:[\\s,]*[A-Z]+[0-9]+)*(?:$|#|[\\s,]+(?:$|[^\\s,A-Z]|[A-Z]+(?:[^A-Z0-9]|$)))"
+            },
+            "exempt-file": {
+              "kind": "comment",
+              "regex": "#\\s*(?:ruff|flake8)\\s*:\\s*(?i:noqa)\\s*:[\\s,]*(?:[A-Z]+[0-9]+[\\s,]*)*?PGH004(?:[\\s,]*[A-Z]+[0-9]+)*(?:$|#|[\\s,]+(?:$|[^\\s,A-Z]|[A-Z]+(?:[^A-Z0-9]|$)))",
+              "not": {
+                "layout": {
+                  "before": {
+                    "to": "token",
+                    "breaks": {
+                      "eq": 0
+                    }
+                  }
+                }
+              }
+            },
+            "earlier-file-directive": {
+              "kind": "comment",
+              "regex": "#\\s*(?:ruff|flake8)\\s*:\\s*(?i:noqa)(?:[^\\s#]|\\s+:).*#\\s*(?:ruff|flake8)\\s*:\\s*(?i:noqa)(?:$|#|\\s+(?:$|[^\\s:]))"
+            },
+            "enabled": {
+              "inside": {
+                "stopBy": "end",
+                "kind": "module",
+                "not": {
+                  "has": {
+                    "stopBy": "end",
+                    "matches": "exempt-file"
+                  }
+                }
+              }
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "matches": "missing-colon"
+              },
+              {
+                "matches": "enabled"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.D",
+        "code": "PGH004",
+        "message": "Add a colon after `noqa` before the codes, as in `# noqa: F401`; without it the comment silences every check on the line, not just those codes."
+      }
+    },
+    {
+      "id": "blanket-file-noqa",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "missing-colon": {
+              "kind": "comment",
+              "regex": "^[^#]*(?:#\\s*(?i:[^\\s#n][^#]*|n(?:[^#o][^#]*)?|no(?:[^#q][^#]*)?|noq(?:[^#a][^#]*)?)?)*(?<D>#\\s*(?i:noqa)\\s+)[\\s,]*[A-Z]+[0-9]+(?:[\\s,]*[A-Z]+[0-9]+)*(?:$|#|[\\s,]+(?:$|[^\\s,A-Z]|[A-Z]+(?:[^A-Z0-9]|$)))"
+            },
+            "exempt-file": {
+              "kind": "comment",
+              "regex": "#\\s*(?:ruff|flake8)\\s*:\\s*(?i:noqa)\\s*:[\\s,]*(?:[A-Z]+[0-9]+[\\s,]*)*?PGH004(?:[\\s,]*[A-Z]+[0-9]+)*(?:$|#|[\\s,]+(?:$|[^\\s,A-Z]|[A-Z]+(?:[^A-Z0-9]|$)))",
+              "not": {
+                "layout": {
+                  "before": {
+                    "to": "token",
+                    "breaks": {
+                      "eq": 0
+                    }
+                  }
+                }
+              }
+            },
+            "earlier-file-directive": {
+              "kind": "comment",
+              "regex": "#\\s*(?:ruff|flake8)\\s*:\\s*(?i:noqa)(?:[^\\s#]|\\s+:).*#\\s*(?:ruff|flake8)\\s*:\\s*(?i:noqa)(?:$|#|\\s+(?:$|[^\\s:]))"
+            },
+            "enabled": {
+              "inside": {
+                "stopBy": "end",
+                "kind": "module",
+                "not": {
+                  "has": {
+                    "stopBy": "end",
+                    "matches": "exempt-file"
+                  }
+                }
+              }
+            }
+          },
+          "rule": {
+            "kind": "comment",
+            "regex": "#\\s*(?:ruff|flake8)\\s*:\\s*(?i:noqa)(?:$|#|\\s+(?:$|[^\\s:]))",
+            "not": {
+              "any": [
+                {
+                  "layout": {
+                    "before": {
+                      "to": "token",
+                      "breaks": {
+                        "eq": 0
+                      }
+                    }
+                  }
+                },
+                {
+                  "matches": "earlier-file-directive"
+                }
+              ]
+            },
+            "matches": "enabled"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PGH004",
+        "message": "Name the specific rule codes in this file-wide `noqa` comment, as in `# ruff: noqa: F401`, instead of silencing every check for the whole file."
+      }
+    }
+  ]
+}

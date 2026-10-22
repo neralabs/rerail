@@ -1,0 +1,448 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi011-typed-argument-default-in-stub",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use an ellipsis for annotated parameter defaults in stub files unless the default is a simple literal; type checkers ignore the value.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "typed-argument-default-in-stub",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "plain-prefix": {
+              "regex": "^[rRuUbB]{0,2}[\"']"
+            },
+            "str-literal": {
+              "any": [
+                {
+                  "kind": "string",
+                  "matches": "plain-prefix"
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "not": {
+                        "matches": "plain-prefix"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "number": {
+              "any": [
+                {
+                  "kind": "integer"
+                },
+                {
+                  "kind": "float"
+                }
+              ]
+            },
+            "peeled-number": {
+              "any": [
+                {
+                  "matches": "number"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "peeled-number"
+                  }
+                }
+              ]
+            },
+            "real-short": {
+              "matches": "number",
+              "regex": "^[^jJ]{1,10}$"
+            },
+            "peeled-real-short": {
+              "any": [
+                {
+                  "matches": "real-short"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "peeled-real-short"
+                  }
+                }
+              ]
+            },
+            "peeled-imaginary": {
+              "any": [
+                {
+                  "matches": "number",
+                  "regex": "[jJ]$"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "peeled-imaginary"
+                  }
+                }
+              ]
+            },
+            "signed-real-short": {
+              "any": [
+                {
+                  "matches": "peeled-real-short"
+                },
+                {
+                  "kind": "unary_operator",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "operator",
+                        "regex": "^-$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "argument",
+                        "matches": "peeled-real-short"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "signed-real-short"
+                  }
+                }
+              ]
+            },
+            "negatable-constant": {
+              "kind": "attribute",
+              "resolves": {
+                "import": [
+                  "math.inf",
+                  "math.e",
+                  "math.pi",
+                  "math.tau"
+                ]
+              }
+            },
+            "peeled-negatable-constant": {
+              "any": [
+                {
+                  "matches": "negatable-constant"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "peeled-negatable-constant"
+                  }
+                }
+              ]
+            },
+            "allowed-constant": {
+              "kind": "attribute",
+              "resolves": {
+                "import": [
+                  "math.inf",
+                  "math.nan",
+                  "math.e",
+                  "math.pi",
+                  "math.tau",
+                  "sys.stdin",
+                  "sys.stdout",
+                  "sys.stderr",
+                  "sys.version",
+                  "sys.version_info",
+                  "sys.platform",
+                  "sys.executable",
+                  "sys.prefix",
+                  "sys.exec_prefix",
+                  "sys.base_prefix",
+                  "sys.byteorder",
+                  "sys.maxsize",
+                  "sys.hexversion",
+                  "sys.winver"
+                ]
+              }
+            },
+            "negation": {
+              "kind": "unary_operator",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "operator",
+                    "regex": "^-$"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "argument",
+                    "any": [
+                      {
+                        "matches": "peeled-number"
+                      },
+                      {
+                        "matches": "peeled-negatable-constant"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "complex-sum": {
+              "kind": "binary_operator",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "operator",
+                    "regex": "^[+-]$"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "right",
+                    "matches": "peeled-imaginary"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "left",
+                    "matches": "signed-real-short"
+                  }
+                }
+              ]
+            },
+            "simple-value": {
+              "any": [
+                {
+                  "kind": "integer"
+                },
+                {
+                  "kind": "float"
+                },
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "false"
+                },
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "ellipsis"
+                },
+                {
+                  "matches": "str-literal"
+                },
+                {
+                  "matches": "negation"
+                },
+                {
+                  "matches": "complex-sum"
+                },
+                {
+                  "matches": "allowed-constant"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "simple-value"
+                  }
+                }
+              ]
+            },
+            "punctuation": {
+              "regex": "^[\\[\\](){},]$"
+            },
+            "dict-pair": {
+              "kind": "pair",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "key",
+                    "matches": "simple-value"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "simple-value"
+                  }
+                }
+              ]
+            },
+            "too-long": {
+              "has": {
+                "stopBy": "neighbor",
+                "nthChild": {
+                  "position": "n+11",
+                  "ofRule": {
+                    "not": {
+                      "kind": "comment"
+                    }
+                  }
+                }
+              }
+            },
+            "simple-container": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "list"
+                    },
+                    {
+                      "kind": "tuple"
+                    },
+                    {
+                      "kind": "set"
+                    }
+                  ],
+                  "all": [
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "any": [
+                              {
+                                "matches": "simple-value"
+                              },
+                              {
+                                "kind": "comment"
+                              },
+                              {
+                                "matches": "punctuation"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "matches": "too-long"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "dictionary",
+                  "all": [
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "any": [
+                              {
+                                "matches": "dict-pair"
+                              },
+                              {
+                                "kind": "comment"
+                              },
+                              {
+                                "matches": "punctuation"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "matches": "too-long"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "default-slot": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "kind": "typed_default_parameter"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "default-slot"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "matches": "default-slot",
+            "not": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression"
+                },
+                {
+                  "kind": "comment"
+                },
+                {
+                  "matches": "punctuation"
+                },
+                {
+                  "matches": "simple-value"
+                },
+                {
+                  "matches": "simple-container"
+                }
+              ]
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI011",
+        "message": "Replace this default with `...`; type checkers ignore defaults in stubs, and only simple literals and short containers are worth keeping.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI011"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,125 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up022-replace-stdout-stderr",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use capture_output=True with subprocess.run instead of sending stdout and stderr to a pipe separately; it is the same behavior, stated once.",
+  "scope": {
+    "include": ["**/*"],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "run-callee": {
+            "any": [
+              {
+                "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                "resolves": { "import": ["subprocess.run"] }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": { "stopBy": "neighbor", "matches": "run-callee" }
+              }
+            ]
+          },
+          "pipe": {
+            "any": [
+              {
+                "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                "resolves": { "import": ["subprocess.PIPE"] }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": { "stopBy": "neighbor", "matches": "pipe" }
+              }
+            ]
+          },
+          "stdout-pipe": {
+            "kind": "keyword_argument",
+            "has": { "stopBy": "neighbor", "field": "name", "kind": "identifier", "regex": "^stdout$" },
+            "all": [{ "has": { "stopBy": "neighbor", "field": "value", "matches": "pipe" } }]
+          },
+          "stderr-pipe": {
+            "kind": "keyword_argument",
+            "has": { "stopBy": "neighbor", "field": "name", "kind": "identifier", "regex": "^stderr$" },
+            "all": [{ "has": { "stopBy": "neighbor", "field": "value", "matches": "pipe" } }]
+          },
+          "capture-output": {
+            "kind": "keyword_argument",
+            "has": { "stopBy": "neighbor", "field": "name", "kind": "identifier", "regex": "^capture_output$" }
+          },
+          "piped-run": {
+            "kind": "call",
+            "has": { "stopBy": "neighbor", "field": "function", "matches": "run-callee" },
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "has": { "stopBy": "neighbor", "matches": "stdout-pipe" }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "has": { "stopBy": "neighbor", "matches": "stderr-pipe" }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "use-capture-output",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "piped-run",
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "argument_list",
+                "has": { "stopBy": "neighbor", "matches": "capture-output" }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP022",
+        "message": "Replace `stdout=subprocess.PIPE` and `stderr=subprocess.PIPE` with one `capture_output=True`; they are equivalent. Keep both if comments on them must stay.",
+        "suppress": { "noqa": { "codes": ["UP022"] } }
+      }
+    },
+    {
+      "id": "merge-into-capture-output",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "piped-run",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "argument_list",
+              "has": { "stopBy": "neighbor", "matches": "capture-output" }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP022",
+        "message": "Drop `stdout=subprocess.PIPE` and `stderr=subprocess.PIPE` and let `capture_output=True` do both; combining them with it raises ValueError. If it is `capture_output=False`, set it to `True`.",
+        "suppress": { "noqa": { "codes": ["UP022"] } }
+      }
+    }
+  ]
+}

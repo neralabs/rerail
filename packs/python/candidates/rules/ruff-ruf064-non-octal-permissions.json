@@ -1,0 +1,501 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf064-non-octal-permissions",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Write file permission modes passed to os, dbm and pathlib functions as octal literals with a 0o prefix; a plain integer such as 644 is decimal and sets different permissions.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "bad-mode": {
+            "any": [
+              {
+                "kind": "integer",
+                "pattern": "$LIT",
+                "regex": "^(?:0[xXbB][0-9a-fA-F_]+|[0-9][0-9_]*)$",
+                "not": {
+                  "regex": "^0$"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "bad-mode"
+                }
+              }
+            ]
+          },
+          "path-class": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "pathlib.Path",
+                    "pathlib.PosixPath",
+                    "pathlib.WindowsPath"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "path-class"
+                }
+              }
+            ]
+          },
+          "path-call": {
+            "any": [
+              {
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "path-class"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "path-call"
+                }
+              }
+            ]
+          },
+          "plain-target": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "plain-target"
+                }
+              }
+            ]
+          },
+          "path-object": {
+            "any": [
+              {
+                "matches": "path-call"
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "value": {
+                      "matches": "path-call"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "as_pattern",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "with_item"
+                      },
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "path-call",
+                            "precedes": {
+                              "stopBy": "end",
+                              "regex": "^as$"
+                            }
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "as_pattern_target",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "plain-target"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "path-object"
+                }
+              }
+            ]
+          },
+          "path-mode-method": {
+            "any": [
+              {
+                "kind": "attribute",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "attribute",
+                      "regex": "^(?:chmod|lchmod|mkdir|touch)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "object",
+                      "matches": "path-object"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "path-mode-method"
+                }
+              }
+            ]
+          },
+          "path-mkdir": {
+            "any": [
+              {
+                "kind": "attribute",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "attribute",
+                      "regex": "^mkdir$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "object",
+                      "matches": "path-object"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "path-mkdir"
+                }
+              }
+            ]
+          },
+          "umask-fn": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "os.umask"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "umask-fn"
+                }
+              }
+            ]
+          },
+          "second-slot-fn": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "os.chmod",
+                    "os.fchmod",
+                    "os.lchmod",
+                    "os.mkdir",
+                    "os.makedirs",
+                    "os.mkfifo",
+                    "os.mknod"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "second-slot-fn"
+                }
+              }
+            ]
+          },
+          "third-slot-fn": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "os.open",
+                    "dbm.open",
+                    "dbm.gnu.open",
+                    "dbm.ndbm.open"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "third-slot-fn"
+                }
+              }
+            ]
+          },
+          "makedirs-fn": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "os.makedirs"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "makedirs-fn"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "non-octal-mode",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "umask-fn"
+                },
+                "arguments": {
+                  "signature": [
+                    "mode"
+                  ],
+                  "bind": {
+                    "MODE": "mode"
+                  },
+                  "mode": "syntactic"
+                }
+              },
+              {
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "path-mode-method"
+                },
+                "arguments": {
+                  "signature": [
+                    "mode"
+                  ],
+                  "bind": {
+                    "MODE": "mode"
+                  },
+                  "mode": "syntactic"
+                }
+              },
+              {
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "second-slot-fn"
+                },
+                "arguments": {
+                  "signature": [
+                    "a",
+                    "mode"
+                  ],
+                  "bind": {
+                    "MODE": "mode"
+                  },
+                  "mode": "syntactic"
+                }
+              },
+              {
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "third-slot-fn"
+                },
+                "arguments": {
+                  "signature": [
+                    "a",
+                    "b",
+                    "mode"
+                  ],
+                  "bind": {
+                    "MODE": "mode"
+                  },
+                  "mode": "syntactic"
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "MODE": {
+              "matches": "bad-mode"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.LIT",
+        "code": "RUF064",
+        "message": "Write this mode as an octal literal such as `0o644`. A bare number is read as decimal, hex or binary and sets different bits than its digits suggest; use the octal form of the intended permissions.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF064"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "non-octal-parent-mode",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "makedirs-fn"
+                },
+                "arguments": {
+                  "signature": [
+                    "*",
+                    "parent_mode"
+                  ],
+                  "bind": {
+                    "MODE": "parent_mode"
+                  },
+                  "mode": "syntactic"
+                }
+              },
+              {
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "path-mkdir"
+                },
+                "arguments": {
+                  "signature": [
+                    "*",
+                    "parent_mode"
+                  ],
+                  "bind": {
+                    "MODE": "parent_mode"
+                  },
+                  "mode": "syntactic"
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "MODE": {
+              "matches": "bad-mode"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.LIT",
+        "code": "RUF064",
+        "message": "Write this mode as an octal literal such as `0o644`. A bare number is read as decimal, hex or binary and sets different bits than its digits suggest; use the octal form of the intended permissions.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF064"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,221 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi057-byte-string-usage",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid ByteString from typing and collections.abc; it is deprecated and unclear, so use Buffer or a union of bytes types instead.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "byte-string-attribute",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "attribute",
+            "resolves": {
+              "import": [
+                "typing.ByteString",
+                "collections.abc.ByteString"
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI057",
+        "message": "Use `collections.abc.Buffer` (`typing_extensions.Buffer` before Python 3.12) or `bytes | bytearray | memoryview` instead of `ByteString`; it is deprecated and has unclear semantics.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI057"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "byte-string-in-match-pattern",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "dotted_name",
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "case_pattern"
+                },
+                {
+                  "kind": "class_pattern"
+                }
+              ]
+            },
+            "any": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "identifier",
+                  "resolves": {
+                    "import": [
+                      "typing",
+                      "collections.abc"
+                    ]
+                  }
+                },
+                "regex": "^[^.]+\\.\\s*ByteString$"
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "identifier",
+                  "resolves": {
+                    "import": [
+                      "collections"
+                    ]
+                  }
+                },
+                "regex": "^[^.]+\\.\\s*abc\\s*\\.\\s*ByteString$"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI057",
+        "message": "Use `collections.abc.Buffer` (`typing_extensions.Buffer` before Python 3.12) or `bytes | bytearray | memoryview` instead of `ByteString`; it is deprecated and has unclear semantics.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI057"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "byte-string-import",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "dotted_name",
+                "regex": "^ByteString$"
+              },
+              {
+                "kind": "aliased_import",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "kind": "dotted_name",
+                  "regex": "^ByteString$"
+                }
+              }
+            ],
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "import_from_statement",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "module_name",
+                "any": [
+                  {
+                    "kind": "dotted_name",
+                    "regex": "^(typing|collections\\s*\\.\\s*abc)$"
+                  },
+                  {
+                    "kind": "relative_import",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "dotted_name",
+                      "regex": "^(typing|collections\\s*\\.\\s*abc)$"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI057",
+        "message": "Use `collections.abc.Buffer` (`typing_extensions.Buffer` before Python 3.12) or `bytes | bytearray | memoryview` instead of `ByteString`; it is deprecated and has unclear semantics.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI057"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "byte-string-in-string-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "in-annotation": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "kind": "attribute",
+                      "resolves": {
+                        "import": [
+                          "typing.ByteString",
+                          "collections.abc.ByteString"
+                        ]
+                      },
+                      "capture": "BS"
+                    },
+                    {
+                      "matches": "in-annotation"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "matches": "in-annotation"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.BS",
+        "code": "PYI057",
+        "message": "Use `collections.abc.Buffer` (`typing_extensions.Buffer` before Python 3.12) or `bytes | bytearray | memoryview` instead of `ByteString`; it is deprecated and has unclear semantics.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI057"
+            ]
+          }
+        },
+        "each": "BS"
+      }
+    }
+  ]
+}

@@ -1,0 +1,544 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-air303-airflow3-incompatible-function-signature",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Update calls and methods whose Airflow 3 signature changed: pass lineage asset arguments and dataset extras by keyword, and give get_link a ti_key parameter.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "create-asset",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "collector-class": {
+              "any": [
+                {
+                  "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                  "resolves": { "import": ["airflow.lineage.hook.HookLineageCollector"] }
+                },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "collector-class" } }
+              ]
+            },
+            "collector-call": {
+              "any": [
+                { "kind": "call", "has": { "stopBy": "neighbor", "field": "function", "matches": "collector-class" } },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "collector-call" } }
+              ]
+            },
+            "assigned-collector": {
+              "any": [
+                { "matches": "collector-call" },
+                {
+                  "kind": "assignment",
+                  "has": { "stopBy": "neighbor", "field": "right", "matches": "assigned-collector" }
+                }
+              ]
+            },
+            "collector": {
+              "any": [
+                { "matches": "collector-call" },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "assignment",
+                        "has": { "stopBy": "neighbor", "field": "right", "matches": "assigned-collector" }
+                      }
+                    }
+                  }
+                },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "collector" } }
+              ]
+            },
+            "collector-method": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "all": [
+                    {
+                      "has": { "stopBy": "neighbor", "field": "attribute", "regex": "^create_asset$", "pattern": "$M" }
+                    },
+                    { "has": { "stopBy": "neighbor", "field": "object", "matches": "collector" } }
+                  ]
+                },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "collector-method" } }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "all": [
+              { "has": { "stopBy": "neighbor", "field": "function", "matches": "collector-method" } },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "arguments",
+                  "any": [
+                    { "kind": "generator_expression" },
+                    {
+                      "kind": "argument_list",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "not": {
+                          "any": [
+                            { "regex": "^[(),]$" },
+                            { "kind": "comment" },
+                            { "kind": "keyword_argument" },
+                            { "kind": "dictionary_splat" }
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.M",
+        "code": "AIR303",
+        "message": "Pass the arguments to `$M` by keyword, e.g. `$M(uri=...)`; Airflow 3 no longer accepts positional arguments here.",
+        "suppress": { "noqa": { "codes": ["AIR303"] } }
+      }
+    },
+    {
+      "id": "dataset-extra",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "dict-expr": {
+              "any": [
+                { "kind": "dictionary" },
+                { "kind": "dictionary_comprehension" },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "dict-expr" } },
+                {
+                  "kind": "named_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "follows": { "stopBy": "neighbor", "regex": "^:=$" },
+                    "matches": "dict-expr"
+                  }
+                },
+                {
+                  "kind": "conditional_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "precedes": { "stopBy": "neighbor", "regex": "^if$" },
+                        "matches": "dict-expr"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "follows": { "stopBy": "neighbor", "regex": "^else$" },
+                        "matches": "dict-expr"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "boolean_operator",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": { "any": [{ "regex": "^(and|or)$" }, { "kind": "comment" }, { "matches": "dict-expr" }] }
+                    }
+                  }
+                }
+              ]
+            },
+            "dict-callee": {
+              "any": [
+                {
+                  "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                  "resolves": { "global": ["dict"], "import": ["builtins.dict"] }
+                },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "dict-callee" } }
+              ]
+            },
+            "dict-init": {
+              "any": [
+                { "matches": "dict-expr" },
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "dict-callee",
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "any": [{ "kind": "argument_list" }, { "kind": "generator_expression" }]
+                    }
+                  }
+                }
+              ]
+            },
+            "dict-ann": {
+              "any": [
+                {
+                  "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                  "resolves": { "global": ["dict"], "import": ["builtins.dict"] }
+                },
+                {
+                  "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                  "resolves": { "import": ["typing.Dict", "_typeshed.Dict", "typing_extensions.Dict"] }
+                },
+                {
+                  "any": [{ "kind": "subscript" }, { "kind": "generic_type" }],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": { "follows": { "stopBy": "neighbor", "regex": "(?s)." } },
+                    "matches": "dict-ann"
+                  }
+                },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "dict-ann" } }
+              ]
+            },
+            "plain-target": {
+              "any": [
+                { "kind": "identifier" },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "plain-target" } }
+              ]
+            },
+            "dict-bound": {
+              "kind": "identifier",
+              "any": [
+                {
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "any": [
+                          {
+                            "kind": "dictionary_splat_pattern",
+                            "inside": { "stopBy": "neighbor", "kind": "parameters" }
+                          },
+                          {
+                            "kind": "typed_parameter",
+                            "inside": { "stopBy": "neighbor", "kind": "parameters" },
+                            "has": { "stopBy": "neighbor", "kind": "dictionary_splat_pattern" }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "value": { "matches": "dict-init" },
+                      "site": { "not": { "has": { "stopBy": "neighbor", "kind": "type" } } }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "as_pattern",
+                        "inside": { "stopBy": "neighbor", "kind": "with_item" },
+                        "all": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "dict-init",
+                              "precedes": { "stopBy": "end", "regex": "^as$" }
+                            }
+                          },
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "as_pattern_target",
+                              "has": { "stopBy": "neighbor", "matches": "plain-target" }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "annotation": { "matches": "dict-ann" },
+                      "site": {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "any": [{ "kind": "list_splat_pattern" }, { "kind": "dictionary_splat_pattern" }]
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "function_definition",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "type",
+                          "has": { "stopBy": "neighbor", "matches": "dict-ann" }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "dataset-callee": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$F",
+                  "resolves": { "import": ["airflow.Dataset", "airflow.datasets.Dataset", "airflow.sdk.Asset"] }
+                },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "dataset-callee" } }
+              ]
+            },
+            "dict-arg": {
+              "any": [
+                { "kind": "dictionary" },
+                { "kind": "dictionary_comprehension" },
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "dict-callee",
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "any": [{ "kind": "argument_list" }, { "kind": "generator_expression" }]
+                    }
+                  }
+                },
+                { "kind": "identifier", "matches": "dict-bound" },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "dict-arg" } }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "all": [
+              { "has": { "stopBy": "neighbor", "field": "function", "matches": "dataset-callee" } },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "arguments",
+                  "kind": "argument_list",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "dict-arg",
+                    "follows": {
+                      "stopBy": { "not": { "kind": "comment" } },
+                      "regex": "^,$",
+                      "follows": {
+                        "stopBy": { "not": { "kind": "comment" } },
+                        "not": {
+                          "any": [
+                            { "kind": "list_splat" },
+                            { "kind": "dictionary_splat" },
+                            { "kind": "keyword_argument" }
+                          ]
+                        },
+                        "follows": { "stopBy": { "not": { "kind": "comment" } }, "regex": "^\\($" }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.F",
+        "code": "AIR303",
+        "message": "Pass the dict to `$F` as the `extra=` keyword argument instead of as the second positional argument; that signature changed in Airflow 3.",
+        "suppress": { "noqa": { "codes": ["AIR303"] } }
+      }
+    },
+    {
+      "id": "get-link",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "link-name": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "has": { "stopBy": "neighbor", "field": "attribute", "regex": "^BaseOperatorLink$" }
+                },
+                {
+                  "kind": "identifier",
+                  "any": [
+                    {
+                      "resolves": {
+                        "binding": {
+                          "site": {
+                            "kind": "aliased_import",
+                            "has": { "stopBy": "neighbor", "field": "name", "regex": "^BaseOperatorLink$" }
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "regex": "^BaseOperatorLink$",
+                      "not": { "resolves": { "binding": { "site": { "kind": "aliased_import" } } } }
+                    }
+                  ]
+                }
+              ]
+            },
+            "link-base": {
+              "any": [
+                {
+                  "all": [
+                    {
+                      "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                      "resolves": { "import": ["airflow.models", "airflow.sdk"], "prefix": true }
+                    },
+                    { "matches": "link-name" }
+                  ]
+                },
+                {
+                  "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "class_definition",
+                        "not": {
+                          "inside": {
+                            "stopBy": { "any": [{ "kind": "class_definition" }, { "kind": "function_definition" }] },
+                            "kind": "class_definition"
+                          }
+                        },
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "superclasses",
+                          "kind": "argument_list",
+                          "has": { "stopBy": "neighbor", "matches": "link-base" }
+                        }
+                      }
+                    }
+                  }
+                },
+                { "kind": "subscript", "has": { "stopBy": "neighbor", "field": "value", "matches": "link-base" } },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "link-base" } }
+              ]
+            },
+            "pos-param": {
+              "any": [
+                { "kind": "identifier" },
+                { "kind": "default_parameter" },
+                { "kind": "typed_default_parameter" },
+                {
+                  "kind": "typed_parameter",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "any": [{ "kind": "list_splat_pattern" }, { "kind": "dictionary_splat_pattern" }]
+                    }
+                  }
+                }
+              ],
+              "not": {
+                "follows": {
+                  "stopBy": "end",
+                  "any": [
+                    { "kind": "keyword_separator" },
+                    { "kind": "list_splat_pattern" },
+                    { "kind": "typed_parameter", "has": { "stopBy": "neighbor", "kind": "list_splat_pattern" } }
+                  ]
+                }
+              }
+            },
+            "ti-key": {
+              "any": [
+                { "kind": "identifier", "regex": "^ti_key$" },
+                {
+                  "any": [{ "kind": "default_parameter" }, { "kind": "typed_default_parameter" }],
+                  "has": { "stopBy": "neighbor", "field": "name", "regex": "^ti_key$" }
+                },
+                {
+                  "kind": "typed_parameter",
+                  "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^ti_key$" }
+                }
+              ]
+            },
+            "valid-signature": {
+              "any": [
+                {
+                  "count": { "has": { "stopBy": "neighbor", "matches": "pos-param" }, "min": 2, "max": 2 },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "ti-key",
+                    "follows": {
+                      "stopBy": "end",
+                      "any": [
+                        { "kind": "keyword_separator" },
+                        { "kind": "list_splat_pattern" },
+                        { "kind": "typed_parameter", "has": { "stopBy": "neighbor", "kind": "list_splat_pattern" } }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "count": { "has": { "stopBy": "neighbor", "matches": "pos-param" }, "min": 3, "max": 3 },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "ti-key",
+                    "all": [{ "matches": "pos-param" }],
+                    "count": { "follows": { "stopBy": "end", "matches": "pos-param" }, "min": 2, "max": 2 }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "function_definition",
+            "all": [
+              { "has": { "stopBy": "neighbor", "field": "name", "regex": "^get_link$", "pattern": "$NAME" } },
+              {
+                "inside": {
+                  "stopBy": {
+                    "any": [{ "kind": "class_definition" }, { "kind": "function_definition" }, { "kind": "lambda" }]
+                  },
+                  "kind": "class_definition",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "superclasses",
+                    "kind": "argument_list",
+                    "has": { "stopBy": "neighbor", "matches": "link-base" }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "parameters",
+                  "kind": "parameters",
+                  "not": { "matches": "valid-signature" }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.NAME",
+        "code": "AIR303",
+        "message": "Use `def get_link(self, operator, *, ti_key)` or `def get_link(self, operator, ti_key)` as the method signature that Airflow 3 expects.",
+        "suppress": { "noqa": { "codes": ["AIR303"] } }
+      }
+    }
+  ]
+}

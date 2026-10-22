@@ -1,0 +1,466 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ann201-missing-return-type-undocumented-public-function",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Add a return type annotation to public functions and methods so callers and type checkers know what they return.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "missing-return-type-undocumented-public-function",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "module": {
+              "notRegex": "(?:^|\\.)(?:_|_[^_.][^.]*|__[^.]*[^_.]_?)(?:\\.|$)"
+            }
+          },
+          "utils": {
+            "overload-expr": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.overload",
+                      "typing_extensions.overload",
+                      "_typeshed.overload"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "overload-expr"
+                  }
+                }
+              ]
+            },
+            "overload-decorated": {
+              "kind": "decorated_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "decorator",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "overload-expr"
+                }
+              }
+            },
+            "definition-statement": {
+              "any": [
+                {
+                  "kind": "function_definition"
+                },
+                {
+                  "kind": "class_definition"
+                },
+                {
+                  "kind": "decorated_definition"
+                }
+              ]
+            },
+            "holds-definition": {
+              "any": [
+                {
+                  "matches": "definition-statement"
+                },
+                {
+                  "has": {
+                    "stopBy": {
+                      "matches": "definition-statement"
+                    },
+                    "matches": "definition-statement"
+                  }
+                }
+              ]
+            },
+            "last-definition-is-overload": {
+              "any": [
+                {
+                  "matches": "overload-decorated",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "function_definition",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "pattern": "$FN"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "decorated_definition",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "function_definition"
+                        }
+                      }
+                    ]
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "holds-definition",
+                    "not": {
+                      "precedes": {
+                        "stopBy": "end",
+                        "matches": "holds-definition"
+                      }
+                    },
+                    "all": [
+                      {
+                        "matches": "last-definition-is-overload"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "previous-overload": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": {
+                      "matches": "holds-definition"
+                    },
+                    "matches": "last-definition-is-overload"
+                  }
+                },
+                {
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "matches": "holds-definition"
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "kind": "class_definition"
+                        },
+                        {
+                          "kind": "module"
+                        }
+                      ]
+                    },
+                    "matches": "previous-overload"
+                  }
+                }
+              ]
+            },
+            "overload-implementation": {
+              "not": {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "overload-decorated"
+                }
+              },
+              "matches": "previous-overload"
+            },
+            "static-or-class-expr": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "staticmethod",
+                      "classmethod"
+                    ],
+                    "import": [
+                      "builtins.staticmethod",
+                      "builtins.classmethod"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "static-or-class-expr"
+                  }
+                }
+              ]
+            },
+            "accessor-expr": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "object",
+                        "kind": "identifier",
+                        "pattern": "$FN"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "attribute",
+                        "regex": "^(setter|deleter)$"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "accessor-expr"
+                  }
+                }
+              ]
+            },
+            "underscore-named": {
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "identifier",
+                "regex": "^_"
+              }
+            },
+            "declares-all": {
+              "has": {
+                "stopBy": {
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "class_definition"
+                    }
+                  ]
+                },
+                "kind": "identifier",
+                "regex": "^__all__$",
+                "binds": {
+                  "scope": "module",
+                  "form": [
+                    "assignment",
+                    "annotated",
+                    "annotation",
+                    "augmented"
+                  ]
+                }
+              }
+            },
+            "listed": {
+              "any": [
+                {
+                  "not": {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "module",
+                      "matches": "declares-all"
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "binds": {
+                      "form": "definition",
+                      "exported": true
+                    }
+                  }
+                }
+              ]
+            },
+            "public-class": {
+              "not": {
+                "any": [
+                  {
+                    "matches": "underscore-named"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "any": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "kind": "class_definition",
+                          "matches": "underscore-named"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "class_definition",
+                    "not": {
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "class_definition"
+                      }
+                    },
+                    "matches": "listed"
+                  }
+                },
+                {
+                  "not": {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "class_definition"
+                    }
+                  },
+                  "matches": "listed"
+                }
+              ]
+            },
+            "method": {
+              "inside": {
+                "stopBy": {
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "class_definition"
+                    }
+                  ]
+                },
+                "kind": "class_definition"
+              }
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$FN",
+            "not": {
+              "regex": "^_"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "function_definition",
+              "field": "name",
+              "all": [
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "return_type",
+                      "kind": "type"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "matches": "overload-implementation"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "inside": {
+                        "stopBy": {
+                          "any": [
+                            {
+                              "kind": "function_definition"
+                            },
+                            {
+                              "kind": "class_definition"
+                            }
+                          ]
+                        },
+                        "kind": "class_definition",
+                        "matches": "public-class"
+                      },
+                      "not": {
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "decorated_definition",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "decorator",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "any": [
+                                {
+                                  "matches": "static-or-class-expr"
+                                },
+                                {
+                                  "matches": "accessor-expr"
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "inside": {
+                          "stopBy": "end",
+                          "any": [
+                            {
+                              "kind": "function_definition"
+                            },
+                            {
+                              "kind": "class_definition"
+                            }
+                          ]
+                        }
+                      },
+                      "matches": "listed"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "ANN201",
+        "message": "Add a return type annotation to `$FN` (for example `-> None` if it returns nothing).",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "ANN201"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,254 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-try203-useless-try-except",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove exception handlers that only re-raise; the try block adds nothing when every handler immediately raises the same error again.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "name-chain": {
+            "any": [
+              {
+                "kind": "identifier",
+                "pattern": "$N"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "name-chain"
+                }
+              }
+            ]
+          },
+          "first-raise": {
+            "kind": "raise_statement",
+            "not": {
+              "follows": {
+                "stopBy": "end",
+                "not": {
+                  "kind": "comment"
+                }
+              }
+            },
+            "all": [
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^from$"
+                  }
+                }
+              }
+            ]
+          },
+          "useless-handler": {
+            "kind": "except_clause",
+            "any": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "block",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "first-raise",
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "not": {
+                          "regex": "^raise$"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "block",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "first-raise",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "name-chain"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "as_pattern",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "as_pattern_target",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "identifier",
+                          "pattern": "$N"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "has-string": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "has": {
+                  "stopBy": "end",
+                  "kind": "string"
+                }
+              }
+            ]
+          },
+          "string-last": {
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "block",
+              "any": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^;$"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "has-string",
+                    "not": {
+                      "precedes": {
+                        "stopBy": "end",
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "comment"
+                            },
+                            {
+                              "regex": "^;$"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    "all": [
+                      {
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "comment"
+                            },
+                            {
+                              "regex": "^;$"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          "all-useless": {
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "try_statement",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "except_clause",
+                  "not": {
+                    "matches": "useless-handler"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "reraise-only-handler",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "except_clause",
+            "regex": "(?s)^(?<HANDLER>.*?)(?:\\s|#[^\\n]*)*$",
+            "matches": "all-useless",
+            "all": [
+              {
+                "not": {
+                  "matches": "string-last"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.HANDLER",
+        "code": "TRY203",
+        "message": "This handler only re-raises: drop the `try`/`except` so the error propagates, moving any `else` code after the body and keeping any `finally`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "TRY203"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "reraise-only-handler-ending-in-string",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "except_clause",
+            "regex": "(?s)^(?<HANDLER>.*?)(?:\\s|\\n[ \\t]*#[^\\n]*|[ \\t]*#[^\\n\"']*)*$",
+            "matches": "all-useless",
+            "all": [
+              {
+                "matches": "string-last"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.HANDLER",
+        "code": "TRY203",
+        "message": "This handler only re-raises: drop the `try`/`except` so the error propagates, moving any `else` code after the body and keeping any `finally`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "TRY203"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

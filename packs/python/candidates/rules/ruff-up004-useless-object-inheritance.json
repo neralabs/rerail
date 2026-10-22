@@ -3,7 +3,7 @@
   "id": "ruff-up004-useless-object-inheritance",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's UP004 (useless-object-inheritance): each positional base of a class definition (not a keyword such as `metaclass=`, not a starred base; parentheses transparent) that resolves to the builtin `object` (Ruff's `match_builtin_expr`: the unshadowed name, or `object` of the `builtins` module through the file's imports), one finding per such base, reported on the base expression inside any parentheses.",
+  "description": "Omit object from a class's base list; every Python 3 class already inherits from it.",
   "scope": {
     "include": [
       "**/*"
@@ -69,7 +69,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "UP004",
-        "message": "Class `$NAME` inherits from `object`",
+        "message": "Remove `object` from the bases of `$NAME`; Python 3 classes inherit from it already. Keep it only if the code must still run on Python 2.",
         "suppress": {
           "noqa": {
             "codes": [

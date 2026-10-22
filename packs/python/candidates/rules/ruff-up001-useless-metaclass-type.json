@@ -3,7 +3,7 @@
   "id": "ruff-up001-useless-metaclass-type",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's UP001 (useless-metaclass-type): an assignment statement `__metaclass__ = type` with a single target, the name `__metaclass__` (parentheses transparent, so `(__metaclass__) = type`; not a tuple target, not an annotated assignment, not a chained `a = __metaclass__ = type`), whose value is the name `type` (parentheses transparent; the name is compared, not resolved, as in Ruff), anywhere in the file. Reported on the assignment statement.",
+  "description": "Remove redundant assignments of type to __metaclass__; Python 3 classes already use type as their metaclass.",
   "scope": {
     "include": [
       "**/*"
@@ -88,7 +88,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "UP001",
-        "message": "`__metaclass__ = type` is implied",
+        "message": "Remove this `__metaclass__ = type` line; Python 3 classes already use `type` as their metaclass. Keep it only if the code must still run on Python 2.",
         "suppress": {
           "noqa": {
             "codes": [

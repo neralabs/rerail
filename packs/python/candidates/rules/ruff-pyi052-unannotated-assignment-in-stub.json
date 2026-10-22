@@ -1,0 +1,554 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi052-unannotated-assignment-in-stub",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Annotate simple assignments in stub files with their type; a stub declares types, so a bare assignment of a literal or small container should carry an explicit annotation.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unannotated-assignment-in-stub",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "enum-base": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "enum.Enum",
+                  "enum.Flag",
+                  "enum.IntEnum",
+                  "enum.IntFlag",
+                  "enum.StrEnum",
+                  "enum.ReprEnum",
+                  "enum.CheckEnum"
+                ]
+              }
+            },
+            "enum-class": {
+              "kind": "class_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "argument_list",
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "matches": "enum-ref"
+                    },
+                    {
+                      "kind": "subscript",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "value",
+                        "matches": "enum-ref"
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "enum-ref": {
+              "any": [
+                {
+                  "matches": "enum-base"
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "matches": "enum-class"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "plain-lit": {
+              "any": [
+                {
+                  "kind": "string",
+                  "regex": "^[rRuUbB]{0,2}['\\\"]",
+                  "not": {
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "interpolation"
+                    }
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "not": {
+                        "regex": "^[rRuUbB]{0,2}['\\\"]"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "math-attr": {
+              "kind": "attribute",
+              "resolves": {
+                "import": [
+                  "math.inf",
+                  "math.nan",
+                  "math.e",
+                  "math.pi",
+                  "math.tau",
+                  "sys.stdin",
+                  "sys.stdout",
+                  "sys.stderr",
+                  "sys.version",
+                  "sys.version_info",
+                  "sys.platform",
+                  "sys.executable",
+                  "sys.prefix",
+                  "sys.exec_prefix",
+                  "sys.base_prefix",
+                  "sys.byteorder",
+                  "sys.maxsize",
+                  "sys.hexversion",
+                  "sys.winver"
+                ]
+              }
+            },
+            "neg-math-attr": {
+              "kind": "attribute",
+              "resolves": {
+                "import": [
+                  "math.inf",
+                  "math.e",
+                  "math.pi",
+                  "math.tau"
+                ]
+              }
+            },
+            "neg-arg": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "integer"
+                    },
+                    {
+                      "kind": "float"
+                    }
+                  ]
+                },
+                {
+                  "matches": "neg-math-attr"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "neg-arg"
+                  }
+                }
+              ]
+            },
+            "neg-number": {
+              "kind": "unary_operator",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "operator",
+                    "regex": "^-$"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "argument",
+                    "matches": "neg-arg"
+                  }
+                }
+              ]
+            },
+            "complex-sum": {
+              "kind": "binary_operator",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "operator",
+                    "regex": "^[+-]$"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "right",
+                    "matches": "imaginary"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "left",
+                    "matches": "real-left"
+                  }
+                }
+              ]
+            },
+            "imaginary": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "integer"
+                    },
+                    {
+                      "kind": "float"
+                    }
+                  ],
+                  "regex": "[jJ]$"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "imaginary"
+                  }
+                }
+              ]
+            },
+            "short-real": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "integer"
+                    },
+                    {
+                      "kind": "float"
+                    }
+                  ],
+                  "regex": "^[^jJ]{1,10}$"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "short-real"
+                  }
+                }
+              ]
+            },
+            "real-left": {
+              "any": [
+                {
+                  "matches": "short-real"
+                },
+                {
+                  "kind": "unary_operator",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "operator",
+                        "regex": "^-$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "argument",
+                        "matches": "short-real"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "real-left"
+                  }
+                }
+              ]
+            },
+            "leaf": {
+              "any": [
+                {
+                  "matches": "plain-lit"
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "integer"
+                    },
+                    {
+                      "kind": "float"
+                    }
+                  ]
+                },
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "false"
+                },
+                {
+                  "matches": "neg-number"
+                },
+                {
+                  "matches": "complex-sum"
+                }
+              ]
+            },
+            "elem": {
+              "any": [
+                {
+                  "matches": "leaf"
+                },
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "ellipsis"
+                },
+                {
+                  "matches": "math-attr"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "elem"
+                  }
+                }
+              ]
+            },
+            "pair-ok": {
+              "kind": "pair",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "key",
+                    "matches": "elem"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "elem"
+                  }
+                }
+              ]
+            },
+            "small": {
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "nthChild": {
+                    "position": 11,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "container": {
+              "matches": "small",
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "list"
+                    },
+                    {
+                      "kind": "set"
+                    },
+                    {
+                      "kind": "tuple"
+                    },
+                    {
+                      "kind": "expression_list"
+                    }
+                  ],
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "regex": "^[\\[\\](){},]$"
+                          },
+                          {
+                            "matches": "elem"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "dictionary",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "regex": "^[{},]$"
+                          },
+                          {
+                            "matches": "pair-ok"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "special": {
+              "kind": "identifier",
+              "any": [
+                {
+                  "regex": "^__all__$",
+                  "not": {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "class_definition"
+                    }
+                  }
+                },
+                {
+                  "regex": "^__(?:match_args|slots)__$",
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "class_definition"
+                  }
+                }
+              ]
+            },
+            "plain-assign": {
+              "kind": "assignment",
+              "not": {
+                "any": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "type"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "function_definition"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": {
+                        "kind": "class_definition"
+                      },
+                      "matches": "enum-class"
+                    }
+                  }
+                ]
+              },
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "expression_statement"
+              },
+              "has": {
+                "stopBy": "neighbor",
+                "field": "left",
+                "kind": "identifier",
+                "pattern": "$NAME",
+                "not": {
+                  "matches": "special"
+                }
+              }
+            },
+            "value-of": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "right",
+                    "matches": "plain-assign"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "value-of"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "matches": "leaf"
+                  },
+                  {
+                    "matches": "container"
+                  }
+                ]
+              },
+              {
+                "matches": "value-of"
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI052",
+        "message": "Add a type annotation to `$NAME` (`$NAME: <type> = ...`); stubs should declare the type rather than leave it to be inferred from the assigned value.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI052"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

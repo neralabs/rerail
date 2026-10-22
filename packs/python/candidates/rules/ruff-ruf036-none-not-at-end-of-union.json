@@ -1,0 +1,344 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-ruf036-none-not-at-end-of-union",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Put None last in union type annotations; the order does not change the type, and the informative types read first.",
+ "scope": {"include": ["**/*"], "exclude": []},
+ "clauses": [
+  {
+   "id": "none-not-at-end-of-union",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "utils": {
+      "trivia": {"any": [{"kind": "comment"}, {"kind": "line_continuation"}]},
+      "union-head": {
+       "any": [
+        {
+         "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+         "resolves": {"import": ["typing.Union", "typing_extensions.Union", "_typeshed.Union"]}
+        },
+        {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "union-head"}}
+       ]
+      },
+      "annotated-head": {
+       "any": [
+        {
+         "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+         "resolves": {"import": ["typing.Annotated", "typing_extensions.Annotated"]}
+        },
+        {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "annotated-head"}}
+       ]
+      },
+      "generic-head": {
+       "any": [
+        {
+         "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+         "resolves": {
+          "global": ["dict", "frozendict", "frozenset", "list", "set", "slice", "tuple", "type"],
+          "import": [
+           "builtins.dict", "builtins.frozendict", "builtins.frozenset", "builtins.list", "builtins.set",
+           "builtins.slice", "builtins.tuple", "builtins.type", "typing.AbstractSet",
+           "typing.AsyncContextManager", "typing.AsyncGenerator", "typing.AsyncIterator", "typing.Awaitable",
+           "typing.BinaryIO", "typing.ByteString", "typing.Callable", "typing.ClassVar", "typing.Collection",
+           "typing.Concatenate", "typing.Container", "typing.ContextManager", "typing.Coroutine",
+           "typing.DefaultDict", "typing.Deque", "typing.Dict", "typing.Final", "typing.FrozenSet",
+           "typing.Generator", "typing.Generic", "typing.IO", "typing.ItemsView", "typing.Iterable",
+           "typing.Iterator", "typing.KeysView", "typing.List", "typing.Mapping", "typing.MutableMapping",
+           "typing.MutableSequence", "typing.MutableSet", "typing.Optional", "typing.Reversible",
+           "typing.Sequence", "typing.Set", "typing.TextIO", "typing.Tuple", "typing.Type", "typing.TypeForm",
+           "typing.TypeGuard", "typing.TypeIs", "typing.Union", "typing.Unpack", "typing.ValuesView",
+           "typing.ChainMap", "typing.Counter", "typing.OrderedDict", "typing.Match", "typing.Pattern",
+           "typing_extensions.AsyncContextManager", "typing_extensions.AsyncGenerator",
+           "typing_extensions.AsyncIterable", "typing_extensions.AsyncIterator",
+           "typing_extensions.Awaitable", "typing_extensions.ClassVar", "typing_extensions.Concatenate",
+           "typing_extensions.ContextManager", "typing_extensions.Coroutine", "typing_extensions.DefaultDict",
+           "typing_extensions.Deque", "typing_extensions.Type", "typing_extensions.TypeForm",
+           "typing_extensions.TypeGuard", "typing_extensions.TypeIs", "typing_extensions.ChainMap",
+           "typing_extensions.Counter", "collections.ChainMap", "collections.Counter",
+           "collections.OrderedDict", "collections.defaultdict", "collections.deque",
+           "collections.abc.AsyncGenerator", "collections.abc.AsyncIterable", "collections.abc.AsyncIterator",
+           "collections.abc.Awaitable", "collections.abc.ByteString", "collections.abc.Callable",
+           "collections.abc.Collection", "collections.abc.Container", "collections.abc.Coroutine",
+           "collections.abc.Generator", "collections.abc.ItemsView", "collections.abc.Iterable",
+           "collections.abc.Iterator", "collections.abc.KeysView", "collections.abc.Mapping",
+           "collections.abc.MappingView", "collections.abc.MutableMapping", "collections.abc.MutableSequence",
+           "collections.abc.MutableSet", "collections.abc.Reversible", "collections.abc.Sequence",
+           "collections.abc.Set", "collections.abc.ValuesView", "contextlib.AbstractAsyncContextManager",
+           "contextlib.AbstractContextManager", "re.Match", "re.Pattern", "typing.io.BinaryIO",
+           "typing.io.IO", "typing.io.TextIO", "typing.re.Match", "typing.re.Pattern",
+           "weakref.WeakKeyDictionary", "weakref.WeakSet", "weakref.WeakValueDictionary"
+          ]
+         }
+        },
+        {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "generic-head"}}
+       ]
+      },
+      "newtype-head": {
+       "any": [
+        {
+         "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+         "resolves": {"import": ["typing.NewType", "typing_extensions.NewType", "_typeshed.NewType"]}
+        },
+        {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "newtype-head"}}
+       ]
+      },
+      "typevar-head": {
+       "any": [
+        {
+         "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+         "resolves": {"import": ["typing.TypeVar", "typing_extensions.TypeVar", "_typeshed.TypeVar"]}
+        },
+        {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "typevar-head"}}
+       ]
+      },
+      "pipe-bin": {"kind": "binary_operator", "has": {"stopBy": "neighbor", "field": "operator", "regex": "^\\|$"}},
+      "pipe": {"any": [{"matches": "pipe-bin"}, {"kind": "union_type"}]},
+      "union-sub": {
+       "any": [
+        {"kind": "subscript", "has": {"stopBy": "neighbor", "field": "value", "matches": "union-head"}},
+        {"kind": "generic_type", "has": {"stopBy": "neighbor", "matches": "union-head"}}
+       ]
+      },
+      "union": {"any": [{"matches": "pipe"}, {"matches": "union-sub"}]},
+      "sole-tuple": {
+       "kind": "tuple",
+       "any": [
+        {
+         "inside": {
+          "stopBy": "neighbor",
+          "kind": "subscript",
+          "matches": "union-sub",
+          "not": {"has": {"stopBy": "neighbor", "regex": "^,$"}}
+         }
+        },
+        {
+         "inside": {
+          "stopBy": "neighbor",
+          "kind": "type",
+          "inside": {
+           "stopBy": "neighbor",
+           "kind": "type_parameter",
+           "all": [
+            {"not": {"has": {"stopBy": "neighbor", "regex": "^,$"}}},
+            {"inside": {"stopBy": "neighbor", "matches": "union-sub"}}
+           ]
+          }
+         }
+        }
+       ]
+      },
+      "in-union": {
+       "any": [
+        {"inside": {"stopBy": "neighbor", "matches": "pipe-bin"}},
+        {"inside": {"stopBy": "neighbor", "kind": "subscript", "matches": "union-sub"}},
+        {"inside": {"stopBy": "neighbor", "matches": "sole-tuple"}},
+        {"inside": {"stopBy": "neighbor", "kind": "parenthesized_expression", "matches": "in-union"}},
+        {
+         "inside": {
+          "stopBy": "neighbor",
+          "kind": "type",
+          "inside": {
+           "stopBy": "neighbor",
+           "any": [
+            {"kind": "union_type"},
+            {"kind": "type_parameter", "inside": {"stopBy": "neighbor", "matches": "union-sub"}}
+           ]
+          }
+         }
+        }
+       ]
+      },
+      "last-slot": {
+       "not": {"precedes": {"stopBy": "end", "not": {"any": [{"regex": "^[,\\])]$"}, {"matches": "trivia"}]}}}
+      },
+      "has-none": {
+       "any": [
+        {"kind": "none"},
+        {
+         "any": [
+          {"any": [{"kind": "parenthesized_expression"}, {"kind": "type"}, {"kind": "type_parameter"}]},
+          {"matches": "pipe"},
+          {"matches": "union-sub"},
+          {"matches": "sole-tuple"}
+         ],
+         "has": {"stopBy": "neighbor", "matches": "has-none"}
+        }
+       ]
+      },
+      "last-none": {
+       "any": [
+        {"kind": "none"},
+        {
+         "any": [
+          {"any": [{"kind": "parenthesized_expression"}, {"kind": "type"}, {"kind": "type_parameter"}]},
+          {"kind": "union_type"},
+          {"matches": "union-sub"},
+          {"matches": "sole-tuple"}
+         ],
+         "has": {"stopBy": "neighbor", "all": [{"matches": "last-none"}, {"matches": "last-slot"}]}
+        },
+        {"matches": "pipe-bin", "has": {"stopBy": "neighbor", "field": "right", "matches": "last-none"}}
+       ]
+      },
+      "bad-union": {
+       "all": [
+        {"matches": "union"},
+        {"matches": "has-none"},
+        {"not": {"matches": "last-none"}},
+        {"not": {"matches": "in-union"}}
+       ]
+      },
+      "annotated-tail": {
+       "any": [
+        {
+         "inside": {
+          "stopBy": "neighbor",
+          "kind": "subscript",
+          "has": {"stopBy": "neighbor", "field": "value", "matches": "annotated-head"}
+         },
+         "follows": {"stopBy": "end", "regex": "^,$"}
+        },
+        {
+         "kind": "type",
+         "follows": {"stopBy": "end", "regex": "^,$"},
+         "inside": {
+          "stopBy": "neighbor",
+          "kind": "type_parameter",
+          "inside": {
+           "stopBy": "neighbor",
+           "kind": "generic_type",
+           "has": {"stopBy": "neighbor", "matches": "annotated-head"}
+          }
+         }
+        }
+       ]
+      },
+      "boundary": {"any": [{"kind": "call"}, {"matches": "annotated-tail"}]},
+      "newtype-args": {
+       "inside": {
+        "stopBy": "neighbor",
+        "kind": "argument_list",
+        "inside": {
+         "stopBy": "neighbor",
+         "kind": "call",
+         "has": {"stopBy": "neighbor", "field": "function", "matches": "newtype-head"}
+        }
+       }
+      },
+      "typevar-args": {
+       "inside": {
+        "stopBy": "neighbor",
+        "kind": "argument_list",
+        "inside": {
+         "stopBy": "neighbor",
+         "kind": "call",
+         "has": {"stopBy": "neighbor", "field": "function", "matches": "typevar-head"}
+        }
+       }
+      },
+      "call-type-argument": {
+       "any": [
+        {
+         "all": [
+          {"matches": "newtype-args"},
+          {"matches": "positional"},
+          {"nthChild": {"position": 2, "ofRule": {"not": {"kind": "comment"}}}}
+         ]
+        },
+        {
+         "all": [
+          {"matches": "newtype-args"},
+          {"kind": "keyword_argument", "has": {"stopBy": "neighbor", "field": "name", "regex": "^tp$"}}
+         ]
+        },
+        {
+         "all": [
+          {"matches": "typevar-args"},
+          {"matches": "positional"},
+          {"nthChild": {"position": "n+2", "ofRule": {"not": {"kind": "comment"}}}}
+         ]
+        },
+        {"all": [{"matches": "typevar-args"}, {"kind": "keyword_argument"}]}
+       ]
+      },
+      "positional": {
+       "not": {
+        "any": [
+         {"kind": "keyword_argument"},
+         {"kind": "list_splat"},
+         {"kind": "dictionary_splat"},
+         {"matches": "trivia"}
+        ]
+       }
+      },
+      "slot-context": {
+       "inside": {
+        "stopBy": {"matches": "boundary"},
+        "kind": "subscript",
+        "has": {
+         "stopBy": "neighbor",
+         "field": "value",
+         "any": [{"matches": "generic-head"}, {"matches": "annotated-head"}]
+        }
+       }
+      },
+      "typedef": {
+       "any": [
+        {"inside": {"stopBy": {"matches": "boundary"}, "kind": "type", "not": {"matches": "annotated-tail"}}},
+        {"matches": "slot-context"},
+        {"matches": "call-type-argument"},
+        {"inside": {"stopBy": {"matches": "boundary"}, "matches": "call-type-argument"}}
+       ]
+      },
+      "string-typedef": {
+       "any": [
+        {"inside": {"stopBy": {"matches": "boundary"}, "kind": "expression_statement"}},
+        {"matches": "slot-context"}
+       ]
+      },
+      "in-annotation": {
+       "any": [{"kind": "string"}, {"kind": "concatenated_string"}],
+       "parse": {
+        "grammar": "annotation",
+        "has": {
+         "stopBy": "end",
+         "any": [
+          {
+           "all": [
+            {"matches": "bad-union", "capture": "UNION"},
+            {"not": {"matches": "annotated-tail"}},
+            {"matches": "string-typedef"}
+           ]
+          },
+          {"matches": "in-annotation"}
+         ]
+        }
+       }
+      }
+     },
+     "rule": {
+      "any": [
+       {
+        "all": [
+         {"matches": "bad-union", "pattern": "$UNION"},
+         {"not": {"matches": "annotated-tail"}},
+         {"matches": "typedef"}
+        ]
+       },
+       {"matches": "in-annotation"}
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.UNION",
+    "each": "UNION",
+    "code": "RUF036",
+    "message": "Move `None` to the end of this union, as in `int | None` or `Union[int, None]`, keeping the other members in order; the type stays the same.",
+    "suppress": {"noqa": {"codes": ["RUF036"]}}
+   }
+  }
+ ]
+}

@@ -1,0 +1,461 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf022-unsorted-dunder-all",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Keep the names in __all__ sorted: SCREAMING_CASE constants first, then CamelCase classes, then everything else, each group in natural order.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unsorted-dunder-all",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "str-literal": {
+              "any": [
+                {
+                  "kind": "string",
+                  "regex": "^[rRuU]{0,2}['\"]"
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "not": {
+                        "regex": "^[rRuU]{0,2}['\"]"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "kind": "comment"
+                    },
+                    "matches": "str-literal"
+                  }
+                }
+              ]
+            },
+            "elem": {
+              "not": {
+                "any": [
+                  {
+                    "kind": "comment"
+                  },
+                  {
+                    "regex": "^[\\[\\](){},]$"
+                  }
+                ]
+              }
+            },
+            "k-const": {
+              "all": [
+                {
+                  "value": {
+                    "regex": "\\p{Uppercase}"
+                  }
+                },
+                {
+                  "not": {
+                    "value": {
+                      "regex": "\\p{Lowercase}"
+                    }
+                  }
+                },
+                {
+                  "value": {
+                    "regex": "(?s)^(?:..|[^\\x00-\\x7f])"
+                  }
+                }
+              ]
+            },
+            "k-class": {
+              "all": [
+                {
+                  "value": {
+                    "regex": "^\\p{Uppercase}"
+                  }
+                },
+                {
+                  "not": {
+                    "matches": "k-const"
+                  }
+                }
+              ]
+            },
+            "k-other": {
+              "all": [
+                {
+                  "not": {
+                    "value": {
+                      "regex": "^\\p{Uppercase}"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "matches": "k-const"
+                  }
+                }
+              ]
+            },
+            "seq-display": {
+              "any": [
+                {
+                  "kind": "list"
+                },
+                {
+                  "kind": "tuple"
+                },
+                {
+                  "kind": "expression_list"
+                }
+              ]
+            },
+            "all-strings": {
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "comment"
+                      },
+                      {
+                        "regex": "^[\\[\\](){},]$"
+                      },
+                      {
+                        "matches": "str-literal"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "out-of-order": {
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "str-literal",
+                "pattern": "$Y",
+                "any": [
+                  {
+                    "matches": "k-const",
+                    "follows": {
+                      "stopBy": {
+                        "matches": "elem"
+                      },
+                      "matches": "str-literal",
+                      "pattern": "$X",
+                      "any": [
+                        {
+                          "not": {
+                            "matches": "k-const"
+                          }
+                        },
+                        {
+                          "matches": "k-const",
+                          "compare": {
+                            "left": "YT",
+                            "op": "lt",
+                            "right": "XT",
+                            "collation": "natural"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "matches": "k-class",
+                    "follows": {
+                      "stopBy": {
+                        "matches": "elem"
+                      },
+                      "matches": "str-literal",
+                      "pattern": "$X",
+                      "any": [
+                        {
+                          "matches": "k-other"
+                        },
+                        {
+                          "matches": "k-class",
+                          "compare": {
+                            "left": "YT",
+                            "op": "lt",
+                            "right": "XT",
+                            "collation": "natural"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "matches": "k-other",
+                    "follows": {
+                      "stopBy": {
+                        "matches": "elem"
+                      },
+                      "matches": "str-literal",
+                      "pattern": "$X",
+                      "any": [
+                        {
+                          "matches": "k-other",
+                          "compare": {
+                            "left": "YT",
+                            "op": "lt",
+                            "right": "XT",
+                            "collation": "natural"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "all-name": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^__all__$"
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "tuple_pattern"
+                    }
+                  ],
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "regex": "^[()]$"
+                        }
+                      ]
+                    },
+                    "matches": "all-name"
+                  }
+                }
+              ]
+            },
+            "all-slot": {
+              "any": [
+                {
+                  "inside": {
+                    "field": "right",
+                    "stopBy": {
+                      "not": {
+                        "kind": "parenthesized_expression"
+                      }
+                    },
+                    "kind": "assignment",
+                    "has": {
+                      "field": "left",
+                      "matches": "all-name"
+                    },
+                    "not": {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "assignment"
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "field": "right",
+                    "stopBy": {
+                      "not": {
+                        "kind": "parenthesized_expression"
+                      }
+                    },
+                    "kind": "augmented_assignment",
+                    "has": {
+                      "field": "left",
+                      "matches": "all-name"
+                    },
+                    "all": [
+                      {
+                        "has": {
+                          "field": "operator",
+                          "regex": "^\\+=$"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": {
+                      "not": {
+                        "kind": "parenthesized_expression"
+                      }
+                    },
+                    "kind": "argument_list",
+                    "count": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "elem"
+                      },
+                      "min": 1,
+                      "max": 1
+                    },
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "call",
+                      "has": {
+                        "field": "function",
+                        "kind": "attribute",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "object",
+                              "matches": "all-name"
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "attribute",
+                              "regex": "^extend$"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "transform": {
+            "YS": {
+              "replace": {
+                "source": "$Y",
+                "replace": "\\s+",
+                "by": "",
+                "value": true
+              }
+            },
+            "YT": {
+              "replace": {
+                "source": "$YS",
+                "replace": "_",
+                "by": "Zz\uffff"
+              }
+            },
+            "XS": {
+              "replace": {
+                "source": "$X",
+                "replace": "\\s+",
+                "by": "",
+                "value": true
+              }
+            },
+            "XT": {
+              "replace": {
+                "source": "$XS",
+                "replace": "_",
+                "by": "Zz\uffff"
+              }
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "matches": "seq-display"
+              },
+              {
+                "matches": "all-slot"
+              },
+              {
+                "all": [
+                  {
+                    "not": {
+                      "inside": {
+                        "stopBy": "end",
+                        "field": "body",
+                        "any": [
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "kind": "lambda"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "stopBy": "end",
+                        "any": [
+                          {
+                            "kind": "class_definition"
+                          },
+                          {
+                            "kind": "list_comprehension"
+                          },
+                          {
+                            "kind": "set_comprehension"
+                          },
+                          {
+                            "kind": "dictionary_comprehension"
+                          },
+                          {
+                            "kind": "generator_expression"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "matches": "all-strings"
+              },
+              {
+                "matches": "out-of-order"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RUF022",
+        "message": "Sort `__all__`: SCREAMING_CASE constants first, then CamelCase classes, then the rest, each in natural order (digit runs by number). Leave it if other code relies on the current order.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF022"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

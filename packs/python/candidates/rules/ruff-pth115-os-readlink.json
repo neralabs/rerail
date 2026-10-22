@@ -1,0 +1,119 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pth115-os-readlink",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use Path.readlink() instead of os.readlink(); path objects read better than string-based os calls.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "os-readlink",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "min": "3.9"
+            }
+          },
+          "utils": {
+            "target": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "os.readlink"
+                ]
+              }
+            },
+            "callee": {
+              "any": [
+                {
+                  "matches": "target",
+                  "pattern": "$F"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "has": {
+              "field": "function",
+              "matches": "callee"
+            },
+            "arguments": {
+              "signature": [
+                "path"
+              ],
+              "bind": {
+                "S": "path"
+              },
+              "mode": "syntactic"
+            },
+            "any": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "regex": "^[(),\\[\\]{}]$"
+                          },
+                          {
+                            "kind": "comment"
+                          }
+                        ]
+                      }
+                    },
+                    "min": 1,
+                    "max": 1
+                  }
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "kind": "generator_expression"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.F",
+        "code": "PTH115",
+        "message": "Use `Path($S).readlink()` from pathlib instead of `os.readlink($S)`; it returns a `Path`, not a string, so adjust code that uses the result.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PTH115"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

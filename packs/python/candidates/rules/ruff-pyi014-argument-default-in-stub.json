@@ -1,0 +1,423 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi014-argument-default-in-stub",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Replace complex default values of untyped parameters in stub files with an ellipsis; only simple literal defaults belong in a stub.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "argument-default-in-stub",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "trivia": {
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                },
+                {
+                  "regex": "^[,()\\[\\]{}]$"
+                }
+              ]
+            },
+            "fstring": {
+              "kind": "string",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "string_start",
+                "regex": "^[A-Za-z]*[fFtT]"
+              }
+            },
+            "number": {
+              "any": [
+                {
+                  "kind": "integer"
+                },
+                {
+                  "kind": "float"
+                }
+              ]
+            },
+            "neg-arg": {
+              "any": [
+                {
+                  "matches": "number"
+                },
+                {
+                  "kind": "attribute",
+                  "resolves": {
+                    "import": [
+                      "math.inf",
+                      "math.e",
+                      "math.pi",
+                      "math.tau"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "neg-arg"
+                  }
+                }
+              ]
+            },
+            "complex-arg": {
+              "any": [
+                {
+                  "matches": "number",
+                  "regex": "[jJ]$"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "complex-arg"
+                  }
+                }
+              ]
+            },
+            "real-arg": {
+              "any": [
+                {
+                  "matches": "number",
+                  "not": {
+                    "regex": "[jJ]$"
+                  },
+                  "regex": "^.{1,10}$"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "real-arg"
+                  }
+                }
+              ]
+            },
+            "minus": {
+              "kind": "unary_operator",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "operator",
+                "regex": "^-$"
+              }
+            },
+            "complex-left": {
+              "any": [
+                {
+                  "matches": "real-arg"
+                },
+                {
+                  "matches": "minus",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "argument",
+                    "matches": "real-arg"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "complex-left"
+                  }
+                }
+              ]
+            },
+            "scalar": {
+              "any": [
+                {
+                  "kind": "string",
+                  "not": {
+                    "matches": "fstring"
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "fstring"
+                    }
+                  }
+                },
+                {
+                  "matches": "number"
+                },
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "false"
+                },
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "ellipsis"
+                },
+                {
+                  "matches": "minus",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "argument",
+                    "matches": "neg-arg"
+                  }
+                },
+                {
+                  "kind": "binary_operator",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "operator",
+                    "regex": "^[+-]$"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "left",
+                        "matches": "complex-left"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "right",
+                        "matches": "complex-arg"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "attribute",
+                  "resolves": {
+                    "import": [
+                      "math.inf",
+                      "math.nan",
+                      "math.e",
+                      "math.pi",
+                      "math.tau",
+                      "sys.stdin",
+                      "sys.stdout",
+                      "sys.stderr",
+                      "sys.version",
+                      "sys.version_info",
+                      "sys.platform",
+                      "sys.executable",
+                      "sys.prefix",
+                      "sys.exec_prefix",
+                      "sys.base_prefix",
+                      "sys.byteorder",
+                      "sys.maxsize",
+                      "sys.hexversion",
+                      "sys.winver"
+                    ]
+                  }
+                }
+              ]
+            },
+            "elem": {
+              "any": [
+                {
+                  "matches": "scalar"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "elem"
+                  }
+                }
+              ]
+            },
+            "no-eleventh": {
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "nthChild": {
+                    "position": 11,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "pair-ok": {
+              "kind": "pair",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "key",
+                    "matches": "elem"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "elem"
+                  }
+                }
+              ]
+            },
+            "valid": {
+              "any": [
+                {
+                  "matches": "elem"
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "list"
+                    },
+                    {
+                      "kind": "tuple"
+                    },
+                    {
+                      "kind": "set"
+                    },
+                    {
+                      "kind": "expression_list"
+                    }
+                  ],
+                  "all": [
+                    {
+                      "matches": "no-eleventh"
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "any": [
+                              {
+                                "matches": "trivia"
+                              },
+                              {
+                                "matches": "elem"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "dictionary",
+                  "all": [
+                    {
+                      "matches": "no-eleventh"
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "any": [
+                              {
+                                "matches": "trivia"
+                              },
+                              {
+                                "matches": "pair-ok"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "valid"
+                  }
+                }
+              ]
+            },
+            "default-slot": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "kind": "default_parameter"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "default-slot",
+                    "kind": "parenthesized_expression"
+                  },
+                  "not": {
+                    "kind": "comment"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "not": {
+                  "any": [
+                    {
+                      "matches": "trivia"
+                    },
+                    {
+                      "kind": "parenthesized_expression"
+                    }
+                  ]
+                }
+              },
+              {
+                "matches": "default-slot"
+              },
+              {
+                "not": {
+                  "matches": "valid"
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI014",
+        "message": "Replace this default value with `...`; a stub only needs to show that the parameter has a default, and keeps literal values only when they are simple.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI014"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

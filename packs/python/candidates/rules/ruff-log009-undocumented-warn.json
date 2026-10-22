@@ -3,7 +3,7 @@
  "id": "ruff-log009-undocumented-warn",
  "revision": 1,
  "mode": "steer",
- "description": "Port of Ruff's LOG009 (undocumented-warn): a name or attribute expression resolving to `logging.WARN` through the file's imports (Ruff's `resolve_qualified_name`; e.g. `logging.WARN`, or `WARN` after `from logging import WARN`), reported on it.",
+ "description": "Use logging.WARNING instead of logging.WARN; WARN is an undocumented alias that the logging documentation does not mention.",
  "scope": {
   "include": [
    "**/*"
@@ -36,7 +36,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "LOG009",
-    "message": "Use of undocumented `logging.WARN` constant",
+    "message": "Replace this use of the undocumented `WARN` alias with `logging.WARNING` (or `WARNING` imported from `logging`); the value is identical.",
     "suppress": {
      "noqa": {
       "codes": [

@@ -1,0 +1,263 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf002-ambiguous-unicode-character-docstring",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid look-alike Unicode characters in docstrings; they read like ASCII letters or punctuation but are different characters.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "plain-string": {
+            "kind": "string",
+            "regex": "^[rRuU]{0,2}['\"]"
+          },
+          "string-expression": {
+            "any": [
+              {
+                "matches": "plain-string"
+              },
+              {
+                "kind": "concatenated_string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "not": {
+                      "regex": "^[rRuU]{0,2}['\"]"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "string-expression"
+                }
+              }
+            ]
+          },
+          "docstring-statement": {
+            "kind": "expression_statement",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "string-expression"
+            },
+            "nthChild": {
+              "position": 1,
+              "ofRule": {
+                "not": {
+                  "kind": "comment"
+                }
+              }
+            },
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "module"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "block",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "class_definition"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "has-unambiguous-letter": {
+            "regex": "[[\\p{Alphabetic}\\p{N}]--[\\x00-\\x7f]--[ıſƄƍƦƧƷƼƽǀǃȜȢȣɁɑɡɣɩɪɯʋʏʔʹʻ-ʾˆˈˊˋːʹͺͿΑΒΕ-ΗΙΚΜΝΟΡΤΥΧαγινορσυϒϜϨϱ-ϳϹϺЅІЈАВЕЗКМ-ОР-УХЬабгеорсухѕіјѡѴѵҮүһҽӀӏӠԁԌԛ-ԝՍՏՕագզհոռսցքօוטיןסاه٠١٥٧ھہە۰۱۵۷߀ߊߴߵߺ\u0903०ॽ০৪৭੦੧੪\u0a83૦\u0b03ଠ୦୨௦\u0c02౦\u0c82೦\u0d02ഠ൦൭\u0d82๐໐ဝ၀ყჿሀዐᎠ-ᎢᎥᎩ-ᎬᎮᎳᎷᎻᎽᏀᏂᏃᏎᏏᏒᏔᏕᏙᏚᏞᏟᏢᏦᏧᏮᏳᏴᐯᐳᐸᑊᑌᑭᑯᑲᒍᒪᒿᕁᕼᕽᖇᖯᖴᗅᗞᗪᗰᗷᚲᚷᛁᛌᛕᛖᴄᴏᴑᴜᴠ-ᴢᴦᶃᶌẝỿιℂℊ-ℎℐ-ℓℕℙ-ℝℤℨKℬℭℯ-ℱℳℴℹℽⅅ-ⅉⅠⅤⅩⅬ-ⅰⅴⅹⅼ-ⅾⲅⲎⲒⲔⲘⲚⲞⲟⲢ-ⲦⲨⲬⲺⳆⳊⳌⳐⳒⴸⴹⵏⵑⵔⵕⵝ〇〳ノ丶丿ꓐ-ꓔꓖꓗꓙꓚꓜꓝꓟ-ꓣꓦꓧꓪ-ꓬꓮꓰꓲ-ꓴꓸꓹꓽꙄꙇꛟꛫꛯꜱꝚꝪꝮꝸꞌꞘꞙꞟꞫꞲ-Ꞵꬲꬵꬽꭇꭈꭎꭒꭚꭵꮁꮃꮓꮩꮪꮯﮦ-ﮭﺍﺎﻩ-ﻬ０-９Ａ-Ｚａ-ｚ𐊂𐊆𐊇𐊊𐊐𐊒𐊕-𐊗𐊛𐊠-𐊢𐊥𐊫𐊰-𐊲𐊴𐋏𐋵𐌁𐌂𐌉𐌑𐌕𐌗𐌚𐌟𐌠𐌢𐐄𐐕𐐛𐐠𐐬𐐽𐑈𐒴𐓂𐓎𐓒𐓪𐓶𐔓𐔖𐔘𐔜𐔝𐔥-𐔧𑓐𑜆𑜊𑜎𑜏𑢠𑢢-𑢤𑢦𑢩𑢬𑢮𑢯𑢲𑢵𑢸𑢻𑢼𑣀-𑣄𑣆𑣈𑣊𑣌𑣕-𑣘𑣜𑣠𑣥𑣦𑣩𑣬𑣯𑣲𖼈𖼊𖼖𖼨𖼵𖼺𖼻𖼿𖽀𖽂𖽃\ud81b\udf51\ud81b\udf52𝐀-𝑔𝑖-𝑙𝑛-𝒍𝒏-𝒜𝒞𝒟𝒢𝒥𝒦𝒩-𝒬𝒮-𝒹𝒻𝒽-𝓁𝓃𝓅-𝓵𝓷-𝔅𝔇-𝔊𝔍-𝔔𝔖-𝔜𝔞-𝔩𝔫-𝔹𝔻-𝔾𝕀-𝕄𝕆𝕊-𝕐𝕒-𝕝𝕟-𝖑𝖓-𝗅𝗇-𝗹𝗻-𝘭𝘯-𝙡𝙣-𝚕𝚗-𝚤𝚨𝚩𝚬-𝚮𝚰𝚱𝚳𝚴𝚶𝚸𝚻𝚼𝚾𝛂𝛄𝛊𝛎𝛐𝛒𝛔𝛖𝛠𝛢𝛣𝛦-𝛨𝛪𝛫𝛭𝛮𝛰𝛲𝛵𝛶𝛸𝛼𝛾𝜄𝜈𝜊𝜌𝜎𝜐𝜚𝜜𝜝𝜠-𝜢𝜤𝜥𝜧𝜨𝜪𝜬𝜯𝜰𝜲𝜶𝜸𝜾𝝂𝝄𝝆𝝈𝝊𝝔𝝖𝝗𝝚-𝝜𝝞𝝟𝝡𝝢𝝤𝝦𝝩𝝪𝝬𝝰𝝲𝝸𝝼𝝾𝞀𝞂𝞄𝞎𝞐𝞑𝞔-𝞖𝞘𝞙𝞛𝞜𝞞𝞠𝞣𝞤𝞦𝞪𝞬𝞲𝞶𝞸𝞺𝞼𝞾𝟈𝟊𝟎-𝟿𞣇𞣋𞸀𞸤𞹤𞺀𞺄🯰-🯹]]"
+          }
+        }
+      }
+    },
+    {
+      "id": "symbol-lookalike",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "string_content",
+            "inside": {
+              "stopBy": "end",
+              "matches": "docstring-statement"
+            },
+            "regex": "(?P<CH>[\u00a0´¸×˂-˄˗˛˜˴˸;΄՚՝։׀׃׳؍٫٭۔܁-܄᐀᙭᙮\u1680᛬᛭᜵᠃᠉᾽᾿῀`´῾\u2000-\u200a‐-–‘-‛․\u2028\u2029\u202f′‵‹›⁁⁃⁄⁎⁓⁚\u205f℮−∕-∗∣∨∪∶∼⊤⋁⋃⋿⍳⍴⍺⏽╱╳❨❩❮❯❲-❵➕➖⟋⟍⟙⤫⤬⧵⧸⧹⨯⹀⼂⼃〔〕゠㇓㇔꓿꘎꞉﴾﴿︰﹍-﹏﹘﹨！-／：-＠［-｀｛-～￨𐩐𝄔\ud834\udd6d𝈆𝈍𝈏𝈒𝈓𝈖𝈪𝈶𝈷𝈺𝈻🝌🝨])"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.CH",
+        "each": "CH",
+        "code": "RUF002",
+        "message": "Replace the look-alike character `$CH` in this docstring with the ASCII punctuation or space it imitates, unless the text really needs it.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF002"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "lookalike-without-other-letters",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "string_content",
+            "inside": {
+              "stopBy": "end",
+              "matches": "docstring-statement"
+            },
+            "regex": "(?P<CH>[ıſƄƍƦƧƷƼƽǀǃȜȢȣɁɑɡɣɩɪɯʋʏʔʹʻ-ʾˆˈˊˋːʹͺͿΑΒΕ-ΗΙΚΜΝΟΡΤΥΧαγινορσυϒϜϨϱ-ϳϹϺЅІЈАВЕЗКМ-ОР-УХЬабгеорсухѕіјѡѴѵҮүһҽӀӏӠԁԌԛ-ԝՍՏՕագզհոռսցքօוטיןסاه٠١٥٧ھہە۰۱۵۷߀ߊߴߵߺ\u0903०ॽ০৪৭੦੧੪\u0a83૦\u0b03ଠ୦୨௦\u0c02౦\u0c82೦\u0d02ഠ൦൭\u0d82๐໐ဝ၀ყჿሀዐᎠ-ᎢᎥᎩ-ᎬᎮᎳᎷᎻᎽᏀᏂᏃᏎᏏᏒᏔᏕᏙᏚᏞᏟᏢᏦᏧᏮᏳᏴᐯᐳᐸᑊᑌᑭᑯᑲᒍᒪᒿᕁᕼᕽᖇᖯᖴᗅᗞᗪᗰᗷᚲᚷᛁᛌᛕᛖᴄᴏᴑᴜᴠ-ᴢᴦᶃᶌẝỿιℂℊ-ℎℐ-ℓℕℙ-ℝℤℨKℬℭℯ-ℱℳℴℹℽⅅ-ⅉⅠⅤⅩⅬ-ⅰⅴⅹⅼ-ⅾⲅⲎⲒⲔⲘⲚⲞⲟⲢ-ⲦⲨⲬⲺⳆⳊⳌⳐⳒⴸⴹⵏⵑⵔⵕⵝ〇〳ノ丶丿ꓐ-ꓔꓖꓗꓙꓚꓜꓝꓟ-ꓣꓦꓧꓪ-ꓬꓮꓰꓲ-ꓴꓸꓹꓽꙄꙇꛟꛫꛯꜱꝚꝪꝮꝸꞌꞘꞙꞟꞫꞲ-Ꞵꬲꬵꬽꭇꭈꭎꭒꭚꭵꮁꮃꮓꮩꮪꮯﮦ-ﮭﺍﺎﻩ-ﻬ０-９Ａ-Ｚａ-ｚ𐊂𐊆𐊇𐊊𐊐𐊒𐊕-𐊗𐊛𐊠-𐊢𐊥𐊫𐊰-𐊲𐊴𐋏𐋵𐌁𐌂𐌉𐌑𐌕𐌗𐌚𐌟𐌠𐌢𐐄𐐕𐐛𐐠𐐬𐐽𐑈𐒴𐓂𐓎𐓒𐓪𐓶𐔓𐔖𐔘𐔜𐔝𐔥-𐔧𑓐𑜆𑜊𑜎𑜏𑢠𑢢-𑢤𑢦𑢩𑢬𑢮𑢯𑢲𑢵𑢸𑢻𑢼𑣀-𑣄𑣆𑣈𑣊𑣌𑣕-𑣘𑣜𑣠𑣥𑣦𑣩𑣬𑣯𑣲𖼈𖼊𖼖𖼨𖼵𖼺𖼻𖼿𖽀𖽂𖽃\ud81b\udf51\ud81b\udf52𝐀-𝑔𝑖-𝑙𝑛-𝒍𝒏-𝒜𝒞𝒟𝒢𝒥𝒦𝒩-𝒬𝒮-𝒹𝒻𝒽-𝓁𝓃𝓅-𝓵𝓷-𝔅𝔇-𝔊𝔍-𝔔𝔖-𝔜𝔞-𝔩𝔫-𝔹𝔻-𝔾𝕀-𝕄𝕆𝕊-𝕐𝕒-𝕝𝕟-𝖑𝖓-𝗅𝗇-𝗹𝗻-𝘭𝘯-𝙡𝙣-𝚕𝚗-𝚤𝚨𝚩𝚬-𝚮𝚰𝚱𝚳𝚴𝚶𝚸𝚻𝚼𝚾𝛂𝛄𝛊𝛎𝛐𝛒𝛔𝛖𝛠𝛢𝛣𝛦-𝛨𝛪𝛫𝛭𝛮𝛰𝛲𝛵𝛶𝛸𝛼𝛾𝜄𝜈𝜊𝜌𝜎𝜐𝜚𝜜𝜝𝜠-𝜢𝜤𝜥𝜧𝜨𝜪𝜬𝜯𝜰𝜲𝜶𝜸𝜾𝝂𝝄𝝆𝝈𝝊𝝔𝝖𝝗𝝚-𝝜𝝞𝝟𝝡𝝢𝝤𝝦𝝩𝝪𝝬𝝰𝝲𝝸𝝼𝝾𝞀𝞂𝞄𝞎𝞐𝞑𝞔-𝞖𝞘𝞙𝞛𝞜𝞞𝞠𝞣𝞤𝞦𝞪𝞬𝞲𝞶𝞸𝞺𝞼𝞾𝟈𝟊𝟎-𝟿𞣇𞣋𞸀𞸤𞹤𞺀𞺄🯰-🯹])",
+            "all": [
+              {
+                "not": {
+                  "matches": "has-unambiguous-letter"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.CH",
+        "each": "CH",
+        "code": "RUF002",
+        "message": "Replace the look-alike letter or digit `$CH` in this docstring with the ASCII character it imitates, unless the text really needs it (for example a word in another language).",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF002"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "lookalike-after-ascii-letter",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "string_content",
+            "inside": {
+              "stopBy": "end",
+              "matches": "docstring-statement"
+            },
+            "regex": "[0-9A-Za-z][\\p{Alphabetic}\\p{N}]*?(?P<CH>[ıſƄƍƦƧƷƼƽǀǃȜȢȣɁɑɡɣɩɪɯʋʏʔʹʻ-ʾˆˈˊˋːʹͺͿΑΒΕ-ΗΙΚΜΝΟΡΤΥΧαγινορσυϒϜϨϱ-ϳϹϺЅІЈАВЕЗКМ-ОР-УХЬабгеорсухѕіјѡѴѵҮүһҽӀӏӠԁԌԛ-ԝՍՏՕագզհոռսցքօוטיןסاه٠١٥٧ھہە۰۱۵۷߀ߊߴߵߺ\u0903०ॽ০৪৭੦੧੪\u0a83૦\u0b03ଠ୦୨௦\u0c02౦\u0c82೦\u0d02ഠ൦൭\u0d82๐໐ဝ၀ყჿሀዐᎠ-ᎢᎥᎩ-ᎬᎮᎳᎷᎻᎽᏀᏂᏃᏎᏏᏒᏔᏕᏙᏚᏞᏟᏢᏦᏧᏮᏳᏴᐯᐳᐸᑊᑌᑭᑯᑲᒍᒪᒿᕁᕼᕽᖇᖯᖴᗅᗞᗪᗰᗷᚲᚷᛁᛌᛕᛖᴄᴏᴑᴜᴠ-ᴢᴦᶃᶌẝỿιℂℊ-ℎℐ-ℓℕℙ-ℝℤℨKℬℭℯ-ℱℳℴℹℽⅅ-ⅉⅠⅤⅩⅬ-ⅰⅴⅹⅼ-ⅾⲅⲎⲒⲔⲘⲚⲞⲟⲢ-ⲦⲨⲬⲺⳆⳊⳌⳐⳒⴸⴹⵏⵑⵔⵕⵝ〇〳ノ丶丿ꓐ-ꓔꓖꓗꓙꓚꓜꓝꓟ-ꓣꓦꓧꓪ-ꓬꓮꓰꓲ-ꓴꓸꓹꓽꙄꙇꛟꛫꛯꜱꝚꝪꝮꝸꞌꞘꞙꞟꞫꞲ-Ꞵꬲꬵꬽꭇꭈꭎꭒꭚꭵꮁꮃꮓꮩꮪꮯﮦ-ﮭﺍﺎﻩ-ﻬ０-９Ａ-Ｚａ-ｚ𐊂𐊆𐊇𐊊𐊐𐊒𐊕-𐊗𐊛𐊠-𐊢𐊥𐊫𐊰-𐊲𐊴𐋏𐋵𐌁𐌂𐌉𐌑𐌕𐌗𐌚𐌟𐌠𐌢𐐄𐐕𐐛𐐠𐐬𐐽𐑈𐒴𐓂𐓎𐓒𐓪𐓶𐔓𐔖𐔘𐔜𐔝𐔥-𐔧𑓐𑜆𑜊𑜎𑜏𑢠𑢢-𑢤𑢦𑢩𑢬𑢮𑢯𑢲𑢵𑢸𑢻𑢼𑣀-𑣄𑣆𑣈𑣊𑣌𑣕-𑣘𑣜𑣠𑣥𑣦𑣩𑣬𑣯𑣲𖼈𖼊𖼖𖼨𖼵𖼺𖼻𖼿𖽀𖽂𖽃\ud81b\udf51\ud81b\udf52𝐀-𝑔𝑖-𝑙𝑛-𝒍𝒏-𝒜𝒞𝒟𝒢𝒥𝒦𝒩-𝒬𝒮-𝒹𝒻𝒽-𝓁𝓃𝓅-𝓵𝓷-𝔅𝔇-𝔊𝔍-𝔔𝔖-𝔜𝔞-𝔩𝔫-𝔹𝔻-𝔾𝕀-𝕄𝕆𝕊-𝕐𝕒-𝕝𝕟-𝖑𝖓-𝗅𝗇-𝗹𝗻-𝘭𝘯-𝙡𝙣-𝚕𝚗-𝚤𝚨𝚩𝚬-𝚮𝚰𝚱𝚳𝚴𝚶𝚸𝚻𝚼𝚾𝛂𝛄𝛊𝛎𝛐𝛒𝛔𝛖𝛠𝛢𝛣𝛦-𝛨𝛪𝛫𝛭𝛮𝛰𝛲𝛵𝛶𝛸𝛼𝛾𝜄𝜈𝜊𝜌𝜎𝜐𝜚𝜜𝜝𝜠-𝜢𝜤𝜥𝜧𝜨𝜪𝜬𝜯𝜰𝜲𝜶𝜸𝜾𝝂𝝄𝝆𝝈𝝊𝝔𝝖𝝗𝝚-𝝜𝝞𝝟𝝡𝝢𝝤𝝦𝝩𝝪𝝬𝝰𝝲𝝸𝝼𝝾𝞀𝞂𝞄𝞎𝞐𝞑𝞔-𝞖𝞘𝞙𝞛𝞜𝞞𝞠𝞣𝞤𝞦𝞪𝞬𝞲𝞶𝞸𝞺𝞼𝞾𝟈𝟊𝟎-𝟿𞣇𞣋𞸀𞸤𞹤𞺀𞺄🯰-🯹])",
+            "all": [
+              {
+                "matches": "has-unambiguous-letter"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.CH",
+        "each": "CH",
+        "code": "RUF002",
+        "message": "Replace the look-alike letter or digit `$CH` in this docstring with the ASCII character it imitates, unless the text really needs it (for example a word in another language).",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF002"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "lookalike-before-ascii-letter",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "string_content",
+            "inside": {
+              "stopBy": "end",
+              "matches": "docstring-statement"
+            },
+            "regex": "(?:^|[^\\p{Alphabetic}\\p{N}])[[\\p{Alphabetic}\\p{N}]--[0-9A-Za-z]]*?(?P<CH>[ıſƄƍƦƧƷƼƽǀǃȜȢȣɁɑɡɣɩɪɯʋʏʔʹʻ-ʾˆˈˊˋːʹͺͿΑΒΕ-ΗΙΚΜΝΟΡΤΥΧαγινορσυϒϜϨϱ-ϳϹϺЅІЈАВЕЗКМ-ОР-УХЬабгеорсухѕіјѡѴѵҮүһҽӀӏӠԁԌԛ-ԝՍՏՕագզհոռսցքօוטיןסاه٠١٥٧ھہە۰۱۵۷߀ߊߴߵߺ\u0903०ॽ০৪৭੦੧੪\u0a83૦\u0b03ଠ୦୨௦\u0c02౦\u0c82೦\u0d02ഠ൦൭\u0d82๐໐ဝ၀ყჿሀዐᎠ-ᎢᎥᎩ-ᎬᎮᎳᎷᎻᎽᏀᏂᏃᏎᏏᏒᏔᏕᏙᏚᏞᏟᏢᏦᏧᏮᏳᏴᐯᐳᐸᑊᑌᑭᑯᑲᒍᒪᒿᕁᕼᕽᖇᖯᖴᗅᗞᗪᗰᗷᚲᚷᛁᛌᛕᛖᴄᴏᴑᴜᴠ-ᴢᴦᶃᶌẝỿιℂℊ-ℎℐ-ℓℕℙ-ℝℤℨKℬℭℯ-ℱℳℴℹℽⅅ-ⅉⅠⅤⅩⅬ-ⅰⅴⅹⅼ-ⅾⲅⲎⲒⲔⲘⲚⲞⲟⲢ-ⲦⲨⲬⲺⳆⳊⳌⳐⳒⴸⴹⵏⵑⵔⵕⵝ〇〳ノ丶丿ꓐ-ꓔꓖꓗꓙꓚꓜꓝꓟ-ꓣꓦꓧꓪ-ꓬꓮꓰꓲ-ꓴꓸꓹꓽꙄꙇꛟꛫꛯꜱꝚꝪꝮꝸꞌꞘꞙꞟꞫꞲ-Ꞵꬲꬵꬽꭇꭈꭎꭒꭚꭵꮁꮃꮓꮩꮪꮯﮦ-ﮭﺍﺎﻩ-ﻬ０-９Ａ-Ｚａ-ｚ𐊂𐊆𐊇𐊊𐊐𐊒𐊕-𐊗𐊛𐊠-𐊢𐊥𐊫𐊰-𐊲𐊴𐋏𐋵𐌁𐌂𐌉𐌑𐌕𐌗𐌚𐌟𐌠𐌢𐐄𐐕𐐛𐐠𐐬𐐽𐑈𐒴𐓂𐓎𐓒𐓪𐓶𐔓𐔖𐔘𐔜𐔝𐔥-𐔧𑓐𑜆𑜊𑜎𑜏𑢠𑢢-𑢤𑢦𑢩𑢬𑢮𑢯𑢲𑢵𑢸𑢻𑢼𑣀-𑣄𑣆𑣈𑣊𑣌𑣕-𑣘𑣜𑣠𑣥𑣦𑣩𑣬𑣯𑣲𖼈𖼊𖼖𖼨𖼵𖼺𖼻𖼿𖽀𖽂𖽃\ud81b\udf51\ud81b\udf52𝐀-𝑔𝑖-𝑙𝑛-𝒍𝒏-𝒜𝒞𝒟𝒢𝒥𝒦𝒩-𝒬𝒮-𝒹𝒻𝒽-𝓁𝓃𝓅-𝓵𝓷-𝔅𝔇-𝔊𝔍-𝔔𝔖-𝔜𝔞-𝔩𝔫-𝔹𝔻-𝔾𝕀-𝕄𝕆𝕊-𝕐𝕒-𝕝𝕟-𝖑𝖓-𝗅𝗇-𝗹𝗻-𝘭𝘯-𝙡𝙣-𝚕𝚗-𝚤𝚨𝚩𝚬-𝚮𝚰𝚱𝚳𝚴𝚶𝚸𝚻𝚼𝚾𝛂𝛄𝛊𝛎𝛐𝛒𝛔𝛖𝛠𝛢𝛣𝛦-𝛨𝛪𝛫𝛭𝛮𝛰𝛲𝛵𝛶𝛸𝛼𝛾𝜄𝜈𝜊𝜌𝜎𝜐𝜚𝜜𝜝𝜠-𝜢𝜤𝜥𝜧𝜨𝜪𝜬𝜯𝜰𝜲𝜶𝜸𝜾𝝂𝝄𝝆𝝈𝝊𝝔𝝖𝝗𝝚-𝝜𝝞𝝟𝝡𝝢𝝤𝝦𝝩𝝪𝝬𝝰𝝲𝝸𝝼𝝾𝞀𝞂𝞄𝞎𝞐𝞑𝞔-𝞖𝞘𝞙𝞛𝞜𝞞𝞠𝞣𝞤𝞦𝞪𝞬𝞲𝞶𝞸𝞺𝞼𝞾𝟈𝟊𝟎-𝟿𞣇𞣋𞸀𞸤𞹤𞺀𞺄🯰-🯹])[\\p{Alphabetic}\\p{N}]*?[0-9A-Za-z]",
+            "all": [
+              {
+                "matches": "has-unambiguous-letter"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.CH",
+        "each": "CH",
+        "code": "RUF002",
+        "message": "Replace the look-alike letter or digit `$CH` in this docstring with the ASCII character it imitates, unless the text really needs it (for example a word in another language).",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF002"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "lookalike-single-letter-word",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "string_content",
+            "inside": {
+              "stopBy": "end",
+              "matches": "docstring-statement"
+            },
+            "regex": "(?:^|[^\\p{Alphabetic}\\p{N}])(?P<CH>[ıſƄƍƦƧƷƼƽǀǃȜȢȣɁɑɡɣɩɪɯʋʏʔʹʻ-ʾˆˈˊˋːʹͺͿΑΒΕ-ΗΙΚΜΝΟΡΤΥΧαγινορσυϒϜϨϱ-ϳϹϺЅІЈАВЕЗКМ-ОР-УХЬабгеорсухѕіјѡѴѵҮүһҽӀӏӠԁԌԛ-ԝՍՏՕագզհոռսցքօוטיןסاه٠١٥٧ھہە۰۱۵۷߀ߊߴߵߺ\u0903०ॽ০৪৭੦੧੪\u0a83૦\u0b03ଠ୦୨௦\u0c02౦\u0c82೦\u0d02ഠ൦൭\u0d82๐໐ဝ၀ყჿሀዐᎠ-ᎢᎥᎩ-ᎬᎮᎳᎷᎻᎽᏀᏂᏃᏎᏏᏒᏔᏕᏙᏚᏞᏟᏢᏦᏧᏮᏳᏴᐯᐳᐸᑊᑌᑭᑯᑲᒍᒪᒿᕁᕼᕽᖇᖯᖴᗅᗞᗪᗰᗷᚲᚷᛁᛌᛕᛖᴄᴏᴑᴜᴠ-ᴢᴦᶃᶌẝỿιℂℊ-ℎℐ-ℓℕℙ-ℝℤℨKℬℭℯ-ℱℳℴℹℽⅅ-ⅉⅠⅤⅩⅬ-ⅰⅴⅹⅼ-ⅾⲅⲎⲒⲔⲘⲚⲞⲟⲢ-ⲦⲨⲬⲺⳆⳊⳌⳐⳒⴸⴹⵏⵑⵔⵕⵝ〇〳ノ丶丿ꓐ-ꓔꓖꓗꓙꓚꓜꓝꓟ-ꓣꓦꓧꓪ-ꓬꓮꓰꓲ-ꓴꓸꓹꓽꙄꙇꛟꛫꛯꜱꝚꝪꝮꝸꞌꞘꞙꞟꞫꞲ-Ꞵꬲꬵꬽꭇꭈꭎꭒꭚꭵꮁꮃꮓꮩꮪꮯﮦ-ﮭﺍﺎﻩ-ﻬ０-９Ａ-Ｚａ-ｚ𐊂𐊆𐊇𐊊𐊐𐊒𐊕-𐊗𐊛𐊠-𐊢𐊥𐊫𐊰-𐊲𐊴𐋏𐋵𐌁𐌂𐌉𐌑𐌕𐌗𐌚𐌟𐌠𐌢𐐄𐐕𐐛𐐠𐐬𐐽𐑈𐒴𐓂𐓎𐓒𐓪𐓶𐔓𐔖𐔘𐔜𐔝𐔥-𐔧𑓐𑜆𑜊𑜎𑜏𑢠𑢢-𑢤𑢦𑢩𑢬𑢮𑢯𑢲𑢵𑢸𑢻𑢼𑣀-𑣄𑣆𑣈𑣊𑣌𑣕-𑣘𑣜𑣠𑣥𑣦𑣩𑣬𑣯𑣲𖼈𖼊𖼖𖼨𖼵𖼺𖼻𖼿𖽀𖽂𖽃\ud81b\udf51\ud81b\udf52𝐀-𝑔𝑖-𝑙𝑛-𝒍𝒏-𝒜𝒞𝒟𝒢𝒥𝒦𝒩-𝒬𝒮-𝒹𝒻𝒽-𝓁𝓃𝓅-𝓵𝓷-𝔅𝔇-𝔊𝔍-𝔔𝔖-𝔜𝔞-𝔩𝔫-𝔹𝔻-𝔾𝕀-𝕄𝕆𝕊-𝕐𝕒-𝕝𝕟-𝖑𝖓-𝗅𝗇-𝗹𝗻-𝘭𝘯-𝙡𝙣-𝚕𝚗-𝚤𝚨𝚩𝚬-𝚮𝚰𝚱𝚳𝚴𝚶𝚸𝚻𝚼𝚾𝛂𝛄𝛊𝛎𝛐𝛒𝛔𝛖𝛠𝛢𝛣𝛦-𝛨𝛪𝛫𝛭𝛮𝛰𝛲𝛵𝛶𝛸𝛼𝛾𝜄𝜈𝜊𝜌𝜎𝜐𝜚𝜜𝜝𝜠-𝜢𝜤𝜥𝜧𝜨𝜪𝜬𝜯𝜰𝜲𝜶𝜸𝜾𝝂𝝄𝝆𝝈𝝊𝝔𝝖𝝗𝝚-𝝜𝝞𝝟𝝡𝝢𝝤𝝦𝝩𝝪𝝬𝝰𝝲𝝸𝝼𝝾𝞀𝞂𝞄𝞎𝞐𝞑𝞔-𝞖𝞘𝞙𝞛𝞜𝞞𝞠𝞣𝞤𝞦𝞪𝞬𝞲𝞶𝞸𝞺𝞼𝞾𝟈𝟊𝟎-𝟿𞣇𞣋𞸀𞸤𞹤𞺀𞺄🯰-🯹])(?:$|[^\\p{Alphabetic}\\p{N}])",
+            "all": [
+              {
+                "matches": "has-unambiguous-letter"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.CH",
+        "each": "CH",
+        "code": "RUF002",
+        "message": "Replace the look-alike letter or digit `$CH` in this docstring with the ASCII character it imitates, unless the text really needs it (for example a word in another language).",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF002"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

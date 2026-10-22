@@ -1,0 +1,230 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pth205-os-path-getctime",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use Path.stat().st_ctime instead of os.path.getctime(); path objects read better than string-based os.path calls.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "ref": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "os.path.getctime"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "os-path-getctime",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "callee": {
+              "any": [
+                {
+                  "matches": "ref",
+                  "pattern": "$F"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "has": {
+              "field": "function",
+              "matches": "callee"
+            },
+            "arguments": {
+              "signature": [
+                "filename"
+              ],
+              "bind": {
+                "S": "filename"
+              },
+              "mode": "syntactic"
+            },
+            "any": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "regex": "^[(),\\[\\]{}]$"
+                          },
+                          {
+                            "kind": "comment"
+                          }
+                        ]
+                      }
+                    },
+                    "min": 1,
+                    "max": 1
+                  }
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "kind": "generator_expression"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.F",
+        "code": "PTH205",
+        "message": "Use `Path($S).stat().st_ctime` instead of `os.path.getctime($S)` (without the `Path(...)` wrapper if `$S` is already a path); leave it where the argument is a bytes path or a file descriptor.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PTH205"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "os-path-getctime-in-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "ref",
+                  "capture": "F"
+                },
+                "any": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "generator_expression"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "argument_list",
+                      "count": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "any": [
+                              {
+                                "regex": "^[(),\\[\\]{}]$"
+                              },
+                              {
+                                "kind": "comment"
+                              }
+                            ]
+                          }
+                        },
+                        "min": 1,
+                        "max": 1
+                      },
+                      "has": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "kind": "keyword_argument",
+                            "regex": "^filename\\s*="
+                          },
+                          {
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "keyword_argument"
+                                },
+                                {
+                                  "kind": "list_splat"
+                                },
+                                {
+                                  "kind": "dictionary_splat"
+                                },
+                                {
+                                  "any": [
+                                    {
+                                      "regex": "^[(),\\[\\]{}]$"
+                                    },
+                                    {
+                                      "kind": "comment"
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.F",
+        "each": "F",
+        "code": "PTH205",
+        "message": "Use `Path(...).stat().st_ctime` instead of `os.path.getctime(...)`; leave it where the argument is a bytes path or a file descriptor.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PTH205"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

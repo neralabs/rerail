@@ -1,0 +1,90 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf021-parenthesize-chained-operators",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Parenthesize an and expression that is chained with or, so the operator precedence is explicit.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unparenthesized-and-in-or",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "and-in-or": {
+              "kind": "boolean_operator",
+              "has": {
+                "stopBy": "neighbor",
+                "regex": "^and$"
+              },
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "boolean_operator",
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^or$"
+                }
+              }
+            },
+            "and-in-or-in-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "and-in-or",
+                      "pattern": "$C",
+                      "capture": "C"
+                    },
+                    {
+                      "matches": "and-in-or-in-string"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "and-in-or",
+                "pattern": "$C"
+              },
+              {
+                "matches": "and-in-or-in-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.C",
+        "code": "RUF021",
+        "each": "C",
+        "message": "Wrap this `and` expression in parentheses, as `(a and b)`, so its precedence under `or` is explicit; the result is unchanged.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF021"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

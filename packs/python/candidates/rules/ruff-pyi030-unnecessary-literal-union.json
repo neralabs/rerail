@@ -1,0 +1,506 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi030-unnecessary-literal-union",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Merge the Literal members of a union into a single Literal listing all the values; it means the same thing and is shorter.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unnecessary-literal-union",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "literal-name": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.Literal",
+                      "typing_extensions.Literal",
+                      "_typeshed.Literal"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "literal-name"
+                  }
+                }
+              ]
+            },
+            "union-name": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.Union",
+                      "typing_extensions.Union",
+                      "_typeshed.Union"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "union-name"
+                  }
+                }
+              ]
+            },
+            "literal": {
+              "any": [
+                {
+                  "kind": "subscript",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "literal-name"
+                  }
+                },
+                {
+                  "kind": "generic_type",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "matches": "literal-name"
+                  }
+                }
+              ]
+            },
+            "union-subscript": {
+              "any": [
+                {
+                  "kind": "subscript",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "union-name"
+                  }
+                },
+                {
+                  "kind": "generic_type",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "matches": "union-name"
+                  }
+                }
+              ]
+            },
+            "union-expr": {
+              "any": [
+                {
+                  "kind": "binary_operator",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "operator",
+                    "regex": "^\\|$"
+                  }
+                },
+                {
+                  "kind": "union_type"
+                },
+                {
+                  "matches": "union-subscript"
+                }
+              ]
+            },
+            "sole-slot": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^\\[$"
+                  },
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "regex": "^\\]$"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "type"
+                      },
+                      {
+                        "kind": "parenthesized_expression"
+                      }
+                    ],
+                    "matches": "sole-slot"
+                  }
+                }
+              ]
+            },
+            "sole-tuple": {
+              "kind": "tuple",
+              "matches": "sole-slot"
+            },
+            "wrapper": {
+              "any": [
+                {
+                  "kind": "type"
+                },
+                {
+                  "kind": "type_parameter"
+                },
+                {
+                  "kind": "parenthesized_expression"
+                },
+                {
+                  "matches": "sole-tuple"
+                }
+              ]
+            },
+            "container": {
+              "any": [
+                {
+                  "matches": "union-expr"
+                },
+                {
+                  "matches": "wrapper"
+                }
+              ]
+            },
+            "top-literal-union": {
+              "matches": "union-expr",
+              "not": {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "matches": "wrapper"
+                    }
+                  },
+                  "matches": "union-expr"
+                }
+              },
+              "count": {
+                "has": {
+                  "stopBy": {
+                    "not": {
+                      "matches": "container"
+                    }
+                  },
+                  "matches": "literal"
+                },
+                "min": 2
+              }
+            },
+            "string-union": {
+              "kind": "string",
+              "not": {
+                "has": {
+                  "stopBy": "end",
+                  "kind": "escape_sequence"
+                }
+              },
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "top-literal-union",
+                      "capture": "U"
+                    },
+                    {
+                      "matches": "string-union"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "matches": "top-literal-union"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI030",
+        "message": "Merge the `Literal[...]` members of this union into one `Literal[...]` holding all their values, keeping the other members, e.g. `Literal[1, 2] | str`; the meaning is identical.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI030"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "unnecessary-literal-union-in-string",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "literal-name": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.Literal",
+                      "typing_extensions.Literal",
+                      "_typeshed.Literal"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "literal-name"
+                  }
+                }
+              ]
+            },
+            "union-name": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.Union",
+                      "typing_extensions.Union",
+                      "_typeshed.Union"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "union-name"
+                  }
+                }
+              ]
+            },
+            "literal": {
+              "any": [
+                {
+                  "kind": "subscript",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "literal-name"
+                  }
+                },
+                {
+                  "kind": "generic_type",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "matches": "literal-name"
+                  }
+                }
+              ]
+            },
+            "union-subscript": {
+              "any": [
+                {
+                  "kind": "subscript",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "union-name"
+                  }
+                },
+                {
+                  "kind": "generic_type",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "matches": "union-name"
+                  }
+                }
+              ]
+            },
+            "union-expr": {
+              "any": [
+                {
+                  "kind": "binary_operator",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "operator",
+                    "regex": "^\\|$"
+                  }
+                },
+                {
+                  "kind": "union_type"
+                },
+                {
+                  "matches": "union-subscript"
+                }
+              ]
+            },
+            "sole-slot": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^\\[$"
+                  },
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "regex": "^\\]$"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "type"
+                      },
+                      {
+                        "kind": "parenthesized_expression"
+                      }
+                    ],
+                    "matches": "sole-slot"
+                  }
+                }
+              ]
+            },
+            "sole-tuple": {
+              "kind": "tuple",
+              "matches": "sole-slot"
+            },
+            "wrapper": {
+              "any": [
+                {
+                  "kind": "type"
+                },
+                {
+                  "kind": "type_parameter"
+                },
+                {
+                  "kind": "parenthesized_expression"
+                },
+                {
+                  "matches": "sole-tuple"
+                }
+              ]
+            },
+            "container": {
+              "any": [
+                {
+                  "matches": "union-expr"
+                },
+                {
+                  "matches": "wrapper"
+                }
+              ]
+            },
+            "top-literal-union": {
+              "matches": "union-expr",
+              "not": {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "matches": "wrapper"
+                    }
+                  },
+                  "matches": "union-expr"
+                }
+              },
+              "count": {
+                "has": {
+                  "stopBy": {
+                    "not": {
+                      "matches": "container"
+                    }
+                  },
+                  "matches": "literal"
+                },
+                "min": 2
+              }
+            },
+            "string-union": {
+              "kind": "string",
+              "not": {
+                "has": {
+                  "stopBy": "end",
+                  "kind": "escape_sequence"
+                }
+              },
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "top-literal-union",
+                      "capture": "U"
+                    },
+                    {
+                      "matches": "string-union"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "matches": "string-union"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.U",
+        "each": "U",
+        "code": "PYI030",
+        "message": "Merge the `Literal[...]` members of this union into one `Literal[...]` holding all their values, keeping the other members, e.g. `Literal[1, 2] | str`; the meaning is identical.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI030"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

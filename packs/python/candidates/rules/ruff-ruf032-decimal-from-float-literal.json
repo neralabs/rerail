@@ -1,0 +1,153 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf032-decimal-from-float-literal",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Pass Decimal a string instead of a float literal; a float is already rounded, so the decimal value is not the one written.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "decimal-from-float-literal",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "decimal.Decimal"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            },
+            "float-operand": {
+              "any": [
+                {
+                  "matches": "float-expr"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "float-operand"
+                  }
+                }
+              ]
+            },
+            "float-expr": {
+              "any": [
+                {
+                  "kind": "float",
+                  "regex": "^[^jJ]*$"
+                },
+                {
+                  "kind": "unary_operator",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "operator",
+                        "regex": "^[+-]$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "argument",
+                        "matches": "float-operand"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "first-arg": {
+              "any": [
+                {
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "line_continuation"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "argument_list",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "call",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "function",
+                        "matches": "callee"
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "first-arg"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "matches": "float-expr",
+            "all": [
+              {
+                "matches": "first-arg"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RUF032",
+        "message": "Pass the number as a string, such as `Decimal(\"1.2345\")`, so it keeps the exact decimal value; keep the float only if its exact binary value is intended.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF032"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

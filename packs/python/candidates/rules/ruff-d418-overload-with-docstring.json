@@ -1,0 +1,66 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-d418-overload-with-docstring",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Document an overloaded Python function on its implementation, not on its overload signatures; type checkers and help() ignore those docstrings.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "overload-with-docstring",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": { "path": { "notRegex": "\\.pyi$" } },
+          "utils": {
+            "overload": {
+              "any": [
+                { "any": [ { "kind": "identifier" }, { "kind": "attribute" } ], "resolves": { "import": ["typing.overload", "typing_extensions.overload", "_typeshed.overload"] } },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "overload" } }
+              ]
+            },
+            "doc-expr": {
+              "any": [
+                {
+                  "kind": "string",
+                  "not": { "has": { "stopBy": "neighbor", "kind": "string_start", "regex": "[bBfFtT]" } },
+                  "has": { "stopBy": "neighbor", "kind": "string_content", "regex": "\\S" }
+                },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "doc-expr" } }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "inside": {
+              "stopBy": "neighbor",
+              "field": "name",
+              "kind": "function_definition",
+              "all": [
+                { "inside": { "stopBy": "neighbor", "kind": "decorated_definition", "has": { "stopBy": "neighbor", "kind": "decorator", "has": { "stopBy": "neighbor", "matches": "overload" } } } },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "body",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "expression_statement",
+                      "not": { "any": [ { "has": { "stopBy": "neighbor", "regex": "^,$" } }, { "follows": { "stopBy": "end", "not": { "kind": "comment" } } } ] },
+                      "has": { "stopBy": "neighbor", "matches": "doc-expr" }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "D418",
+        "anchor": "witness.span",
+        "message": "Remove the docstring from this `@overload` signature and document the function on its implementation instead.",
+        "suppress": { "noqa": { "codes": ["D418"] } }
+      }
+    }
+  ]
+}

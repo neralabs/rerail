@@ -1,0 +1,125 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pth124-py-path",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use pathlib instead of py.path.local; the py library's path API is in maintenance mode.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "ref": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "py.path.local"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "py-path-local",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "callee": {
+              "any": [
+                {
+                  "matches": "ref",
+                  "pattern": "$F"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "has": {
+              "field": "function",
+              "matches": "callee"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.F",
+        "code": "PTH124",
+        "message": "Use `pathlib.Path(...)` instead of `py.path.local(...)`; py.path is in maintenance mode. Keep `py.path.local` only where the code calls its py-only methods, such as `sysfind` or `visit`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PTH124"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "py-path-local-in-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "ref",
+                  "capture": "F"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.F",
+        "each": "F",
+        "code": "PTH124",
+        "message": "Use `pathlib.Path(...)` instead of `py.path.local(...)`; py.path is in maintenance mode. Keep `py.path.local` only where the code calls its py-only methods, such as `sysfind` or `visit`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PTH124"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

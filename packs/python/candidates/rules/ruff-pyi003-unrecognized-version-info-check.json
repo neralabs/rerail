@@ -1,0 +1,583 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi003-unrecognized-version-info-check",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Compare sys.version_info in stub files only against tuples of integers, or its major version against an integer; type checkers do not understand other forms.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "in-test": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "if_statement",
+                  "field": "condition"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "in-test"
+                }
+              }
+            ]
+          },
+          "chain-and": {
+            "kind": "boolean_operator",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "operator",
+              "regex": "^and$"
+            },
+            "any": [
+              {
+                "matches": "in-test"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "boolean_operator",
+                  "field": "left",
+                  "matches": "chain-and"
+                }
+              }
+            ]
+          },
+          "chain-or": {
+            "kind": "boolean_operator",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "operator",
+              "regex": "^or$"
+            },
+            "any": [
+              {
+                "matches": "in-test"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "boolean_operator",
+                  "field": "left",
+                  "matches": "chain-or"
+                }
+              }
+            ]
+          },
+          "operand-slot": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "boolean_operator",
+                  "field": "left",
+                  "any": [
+                    {
+                      "matches": "chain-and"
+                    },
+                    {
+                      "matches": "chain-or"
+                    }
+                  ]
+                },
+                "not": {
+                  "any": [
+                    {
+                      "matches": "chain-and"
+                    },
+                    {
+                      "matches": "chain-or"
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "boolean_operator",
+                  "field": "right",
+                  "any": [
+                    {
+                      "matches": "chain-and"
+                    },
+                    {
+                      "matches": "chain-or"
+                    }
+                  ]
+                },
+                "not": {
+                  "any": [
+                    {
+                      "matches": "chain-and"
+                    },
+                    {
+                      "matches": "chain-or"
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "operand-slot"
+                },
+                "not": {
+                  "any": [
+                    {
+                      "kind": "comment"
+                    },
+                    {
+                      "regex": "^[()]$"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "test-value": {
+            "not": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression"
+                },
+                {
+                  "kind": "comment"
+                },
+                {
+                  "regex": "^[()]$"
+                }
+              ]
+            },
+            "any": [
+              {
+                "not": {
+                  "kind": "boolean_operator"
+                },
+                "matches": "in-test"
+              },
+              {
+                "matches": "operand-slot"
+              }
+            ]
+          },
+          "single-compare": {
+            "kind": "comparison_operator",
+            "matches": "test-value",
+            "count": {
+              "has": {
+                "stopBy": "neighbor",
+                "regex": "^(==|!=|<|<=|>|>=|<>|in|is|not\\s[\\s\\S]*in|is\\s[\\s\\S]*not)$"
+              },
+              "min": 1,
+              "max": 1
+            }
+          },
+          "comparator": {
+            "follows": {
+              "stopBy": "neighbor",
+              "regex": "^(==|!=|<|<=|>|>=|<>|in|is|not\\s[\\s\\S]*in|is\\s[\\s\\S]*not)$"
+            }
+          },
+          "version-ref": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "sys.version_info"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "version-ref"
+                }
+              }
+            ]
+          },
+          "int-literal": {
+            "any": [
+              {
+                "kind": "integer",
+                "value": {
+                  "type": "int"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "int-literal"
+                }
+              }
+            ]
+          },
+          "zero-literal": {
+            "any": [
+              {
+                "kind": "integer",
+                "value": {
+                  "type": "int",
+                  "eq": 0
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "zero-literal"
+                }
+              }
+            ]
+          },
+          "small-literal": {
+            "any": [
+              {
+                "kind": "integer",
+                "value": {
+                  "type": "int",
+                  "ge": 1,
+                  "le": 2
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "small-literal"
+                }
+              }
+            ]
+          },
+          "sole-index": {
+            "not": {
+              "any": [
+                {
+                  "precedes": {
+                    "stopBy": "end",
+                    "regex": "^,$"
+                  }
+                },
+                {
+                  "follows": {
+                    "stopBy": "end",
+                    "regex": "^,$"
+                  }
+                }
+              ]
+            }
+          },
+          "version-subscript": {
+            "kind": "subscript",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "value",
+              "matches": "version-ref"
+            }
+          },
+          "major-subscript": {
+            "kind": "subscript",
+            "matches": "version-subscript",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "subscript",
+              "all": [
+                {
+                  "matches": "zero-literal"
+                },
+                {
+                  "matches": "sole-index"
+                }
+              ]
+            }
+          },
+          "prefix-subscript": {
+            "kind": "subscript",
+            "matches": "version-subscript",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "subscript",
+              "all": [
+                {
+                  "kind": "slice",
+                  "regex": "^:[^:]*:?\\s*$",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "small-literal"
+                  }
+                },
+                {
+                  "matches": "sole-index"
+                }
+              ]
+            }
+          },
+          "bad-subscript": {
+            "matches": "version-subscript",
+            "not": {
+              "any": [
+                {
+                  "matches": "major-subscript"
+                },
+                {
+                  "matches": "prefix-subscript"
+                }
+              ]
+            }
+          },
+          "left-bad": {
+            "any": [
+              {
+                "matches": "bad-subscript"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "left-bad"
+                }
+              }
+            ]
+          },
+          "left-major": {
+            "any": [
+              {
+                "matches": "major-subscript"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "left-major"
+                }
+              }
+            ]
+          },
+          "left-tuple": {
+            "any": [
+              {
+                "matches": "version-ref"
+              },
+              {
+                "matches": "prefix-subscript"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "left-tuple"
+                }
+              }
+            ]
+          },
+          "int-tuple": {
+            "any": [
+              {
+                "kind": "tuple",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "^[(),]$"
+                        },
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "matches": "int-literal"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "int-tuple"
+                }
+              }
+            ]
+          },
+          "patch-tuple": {
+            "any": [
+              {
+                "kind": "tuple",
+                "matches": "int-tuple",
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "^[(),]$"
+                        },
+                        {
+                          "kind": "comment"
+                        }
+                      ]
+                    }
+                  },
+                  "min": 3
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "patch-tuple"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "unrecognized-version-subscript",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          },
+          "rule": {
+            "matches": "single-compare",
+            "has": {
+              "stopBy": "neighbor",
+              "nthChild": 1,
+              "matches": "left-bad"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI003",
+        "message": "Index `sys.version_info` only with `[0]`, `[:1]` or `[:2]`, or compare the whole value against a tuple; type checkers do not understand other forms.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI003"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "unrecognized-major-comparison",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          },
+          "rule": {
+            "matches": "single-compare",
+            "has": {
+              "stopBy": "neighbor",
+              "nthChild": 1,
+              "matches": "left-major"
+            },
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "comparator",
+                  "not": {
+                    "matches": "int-literal"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI003",
+        "message": "Compare `sys.version_info[0]` against an integer literal such as `3`; type checkers do not understand other comparands.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI003"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "unrecognized-tuple-comparison",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          },
+          "rule": {
+            "matches": "single-compare",
+            "has": {
+              "stopBy": "neighbor",
+              "nthChild": 1,
+              "matches": "left-tuple"
+            },
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "comparator",
+                  "not": {
+                    "matches": "int-tuple"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI003",
+        "message": "Compare `sys.version_info` against a tuple of integer literals such as `(3, 10)`; type checkers do not understand other comparands.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI003"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

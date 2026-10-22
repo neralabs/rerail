@@ -1,0 +1,372 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up019-typing-text-str-alias",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use str instead of typing.Text; Text is an alias of str that only exists for Python 2 compatibility and is deprecated.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "typing-text",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "text-ref": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.Text",
+                      "typing_extensions.Text"
+                    ]
+                  }
+                },
+                {
+                  "kind": "dotted_name",
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "case_pattern"
+                  },
+                  "regex": "^[^.\\s]+\\s*\\.\\s*Text$",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "nthChild": 1,
+                    "resolves": {
+                      "import": [
+                        "typing",
+                        "typing_extensions"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "forward-ref-excluded": {
+              "inside": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "kind": "generic_type"
+                  },
+                  {
+                    "kind": "subscript"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.Literal",
+                      "typing_extensions.Literal"
+                    ]
+                  }
+                }
+              }
+            },
+            "text-in-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "not": {
+                "matches": "forward-ref-excluded"
+              },
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "text-ref",
+                      "capture": "T"
+                    },
+                    {
+                      "matches": "text-in-string"
+                    }
+                  ]
+                }
+              }
+            },
+            "annotation-string": {
+              "matches": "text-in-string",
+              "inside": {
+                "stopBy": "end",
+                "kind": "type"
+              }
+            },
+            "cast-callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.cast",
+                      "typing_extensions.cast"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "cast-callee"
+                  }
+                }
+              ]
+            },
+            "cast-args": {
+              "kind": "argument_list",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "cast-callee"
+                }
+              }
+            },
+            "typevar-callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.TypeVar",
+                      "typing_extensions.TypeVar"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "typevar-callee"
+                  }
+                }
+              ]
+            },
+            "typevar-args": {
+              "kind": "argument_list",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "typevar-callee"
+                }
+              }
+            },
+            "newtype-callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.NewType",
+                      "typing_extensions.NewType"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "newtype-callee"
+                  }
+                }
+              ]
+            },
+            "newtype-args": {
+              "kind": "argument_list",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "newtype-callee"
+                }
+              }
+            },
+            "call-type-argument": {
+              "any": [
+                {
+                  "nthChild": 1,
+                  "not": {
+                    "kind": "keyword_argument"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "cast-args"
+                  }
+                },
+                {
+                  "kind": "keyword_argument",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "name",
+                    "regex": "^typ$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "cast-args"
+                  }
+                },
+                {
+                  "nthChild": 2,
+                  "not": {
+                    "kind": "keyword_argument"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "newtype-args"
+                  }
+                },
+                {
+                  "kind": "keyword_argument",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "name",
+                    "regex": "^tp$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "newtype-args"
+                  }
+                },
+                {
+                  "not": {
+                    "any": [
+                      {
+                        "nthChild": 1
+                      },
+                      {
+                        "kind": "keyword_argument"
+                      },
+                      {
+                        "kind": "dictionary_splat"
+                      },
+                      {
+                        "kind": "list_splat"
+                      },
+                      {
+                        "kind": "comment"
+                      }
+                    ]
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "typevar-args"
+                  }
+                },
+                {
+                  "kind": "keyword_argument",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "name",
+                    "regex": "^(bound|default)$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "typevar-args"
+                  }
+                }
+              ]
+            },
+            "call-type-string": {
+              "matches": "text-in-string",
+              "any": [
+                {
+                  "matches": "call-type-argument"
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "matches": "call-type-argument"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "text-ref",
+                "pattern": "$T"
+              },
+              {
+                "matches": "annotation-string"
+              },
+              {
+                "matches": "call-type-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.T",
+        "each": "T",
+        "code": "UP019",
+        "message": "Replace this `Text` alias with the builtin `str`, the same type, and drop the import if nothing else uses it. Skip it if the file rebinds `str`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP019"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

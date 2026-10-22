@@ -1,0 +1,133 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pth109-os-getcwd",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use Path.cwd() instead of os.getcwd() or os.getcwdb(); path objects read better than string-based os calls.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "os-getcwd",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "target": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "os.getcwd"
+                ]
+              }
+            },
+            "callee": {
+              "any": [
+                {
+                  "matches": "target",
+                  "pattern": "$F"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "has": {
+              "field": "function",
+              "matches": "callee"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.F",
+        "code": "PTH109",
+        "message": "Use `Path.cwd()` from pathlib instead of `os.getcwd()`; it returns a `Path`, so wrap it in `str()` or adjust the code where a string is required.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PTH109"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "os-getcwdb",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "target": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "os.getcwdb"
+                ]
+              }
+            },
+            "callee": {
+              "any": [
+                {
+                  "matches": "target",
+                  "pattern": "$F"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "has": {
+              "field": "function",
+              "matches": "callee"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.F",
+        "code": "PTH109",
+        "message": "Use `Path.cwd()` from pathlib instead of `os.getcwdb()`; it returns a `Path`, not bytes, so leave it where a bytes value is required.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PTH109"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

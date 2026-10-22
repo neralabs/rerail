@@ -1,0 +1,153 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-c405-unnecessary-literal-set",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Write a set literal instead of passing a list or tuple literal to set(); the call builds a throwaway sequence first.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unnecessary-literal-set",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "callee-set": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^set$",
+                  "resolves": {
+                    "global": [
+                      "set"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee-set"
+                  }
+                }
+              ]
+            },
+            "sequence-literal": {
+              "any": [
+                {
+                  "kind": "list"
+                },
+                {
+                  "kind": "tuple"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "sequence-literal"
+                  }
+                }
+              ]
+            },
+            "argument": {
+              "not": {
+                "any": [
+                  {
+                    "kind": "comment"
+                  },
+                  {
+                    "kind": "line_continuation"
+                  },
+                  {
+                    "regex": "^[(),]$"
+                  }
+                ]
+              }
+            },
+            "target": {
+              "kind": "call",
+              "has": {
+                "field": "function",
+                "matches": "callee-set"
+              },
+              "all": [
+                {
+                  "has": {
+                    "field": "arguments",
+                    "kind": "argument_list",
+                    "count": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "argument"
+                      },
+                      "min": 1,
+                      "max": 1
+                    },
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "sequence-literal"
+                    }
+                  }
+                }
+              ]
+            },
+            "in-annotation": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "target",
+                      "capture": "CALL"
+                    },
+                    {
+                      "matches": "in-annotation"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "target",
+                "pattern": "$CALL"
+              },
+              {
+                "matches": "in-annotation"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.CALL",
+        "code": "C405",
+        "message": "Replace `set([...])` or `set((...))` with the set literal `{...}`; an empty sequence becomes `set()`.",
+        "each": "CALL",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C405"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

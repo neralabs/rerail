@@ -1,0 +1,460 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf048-map-int-version-parsing",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Parse a version string with a real version parser, not by mapping int over its dot-separated parts; versions can contain non-numeric parts.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "map-int-version-parsing",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "builtin-map": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "map"
+                    ],
+                    "import": [
+                      "builtins.map"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "builtin-map"
+                  }
+                }
+              ]
+            },
+            "builtin-int": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "int"
+                    ],
+                    "import": [
+                      "builtins.int"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "builtin-int"
+                  }
+                }
+              ]
+            },
+            "dunder-version": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^__version__$"
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "regex": "^__version__$",
+                    "follows": {
+                      "stopBy": {
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "comment"
+                            },
+                            {
+                              "kind": "line_continuation"
+                            }
+                          ]
+                        }
+                      },
+                      "regex": "^\\.$"
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "dunder-version"
+                  }
+                }
+              ]
+            },
+            "plain-string": {
+              "kind": "string",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "string_start",
+                  "regex": "[fFtT]"
+                }
+              }
+            },
+            "dot-string": {
+              "any": [
+                {
+                  "matches": "plain-string",
+                  "value": {
+                    "eq": "."
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "value": {
+                    "eq": "."
+                  },
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "string_start",
+                        "regex": "[fFtT]"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "dot-string"
+                  }
+                }
+              ]
+            },
+            "version-split": {
+              "kind": "call",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "attribute",
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "kind": "argument_list"
+                    },
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "identifier",
+                          "regex": "^split$",
+                          "follows": {
+                            "stopBy": {
+                              "not": {
+                                "any": [
+                                  {
+                                    "kind": "comment"
+                                  },
+                                  {
+                                    "kind": "line_continuation"
+                                  }
+                                ]
+                              }
+                            },
+                            "regex": "^\\.$"
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "dunder-version",
+                          "precedes": {
+                            "stopBy": {
+                              "not": {
+                                "any": [
+                                  {
+                                    "kind": "comment"
+                                  },
+                                  {
+                                    "kind": "line_continuation"
+                                  }
+                                ]
+                              }
+                            },
+                            "regex": "^\\.$"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "argument_list",
+                    "all": [
+                      {
+                        "count": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "comment"
+                                },
+                                {
+                                  "kind": "line_continuation"
+                                },
+                                {
+                                  "regex": "^[(),]$"
+                                }
+                              ]
+                            }
+                          },
+                          "min": 1,
+                          "max": 1
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "matches": "dot-string"
+                            },
+                            {
+                              "kind": "keyword_argument",
+                              "all": [
+                                {
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "identifier",
+                                    "regex": "^sep$",
+                                    "precedes": {
+                                      "stopBy": {
+                                        "not": {
+                                          "any": [
+                                            {
+                                              "kind": "comment"
+                                            },
+                                            {
+                                              "kind": "line_continuation"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "regex": "^=$"
+                                    }
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "matches": "dot-string",
+                                    "follows": {
+                                      "stopBy": {
+                                        "not": {
+                                          "any": [
+                                            {
+                                              "kind": "comment"
+                                            },
+                                            {
+                                              "kind": "line_continuation"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "regex": "^=$"
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "version-split-expr": {
+              "any": [
+                {
+                  "matches": "version-split"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "version-split-expr"
+                  }
+                }
+              ]
+            },
+            "map-int-version": {
+              "kind": "call",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "matches": "builtin-map"
+                      },
+                      {
+                        "kind": "list_splat",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "builtin-map"
+                        }
+                      }
+                    ],
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "kind": "argument_list"
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "argument_list",
+                    "all": [
+                      {
+                        "count": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "comment"
+                                },
+                                {
+                                  "kind": "line_continuation"
+                                },
+                                {
+                                  "regex": "^[(),]$"
+                                }
+                              ]
+                            }
+                          },
+                          "min": 2,
+                          "max": 2
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "builtin-int",
+                          "follows": {
+                            "stopBy": {
+                              "not": {
+                                "any": [
+                                  {
+                                    "kind": "comment"
+                                  },
+                                  {
+                                    "kind": "line_continuation"
+                                  }
+                                ]
+                              }
+                            },
+                            "regex": "^\\($"
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "version-split-expr"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "check-in-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "map-int-version",
+                      "pattern": "$C",
+                      "capture": "C"
+                    },
+                    {
+                      "matches": "check-in-string"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "map-int-version",
+                "pattern": "$C"
+              },
+              {
+                "matches": "check-in-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.C",
+        "code": "RUF048",
+        "message": "`int` fails on non-numeric version parts such as `post1`; parse with `packaging.version.parse(...)` instead, unless the version is known to be purely numeric.",
+        "each": "C",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF048"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

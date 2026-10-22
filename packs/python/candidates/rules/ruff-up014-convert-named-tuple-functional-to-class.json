@@ -1,0 +1,387 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up014-convert-named-tuple-functional-to-class",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Define named tuples with class syntax instead of the functional NamedTuple call; the class form is easier to read.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "plain-text": {
+            "any": [
+              {
+                "kind": "string",
+                "not": {
+                  "regex": "^[A-Za-z]*[bBfFtT]"
+                }
+              },
+              {
+                "kind": "concatenated_string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "regex": "^[A-Za-z]*[bBfFtT]"
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "plain-text"
+                }
+              }
+            ]
+          },
+          "arg-node": {
+            "not": {
+              "any": [
+                {
+                  "regex": "^[()\\[\\],]$"
+                },
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                }
+              ]
+            }
+          },
+          "keyword-arg": {
+            "any": [
+              {
+                "kind": "keyword_argument"
+              },
+              {
+                "kind": "dictionary_splat"
+              }
+            ]
+          },
+          "positional-arg": {
+            "matches": "arg-node",
+            "not": {
+              "matches": "keyword-arg"
+            }
+          },
+          "one-positional": {
+            "kind": "argument_list",
+            "count": {
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "positional-arg"
+              },
+              "min": 1,
+              "max": 1
+            }
+          },
+          "no-keywords": {
+            "kind": "argument_list",
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "keyword-arg"
+              }
+            }
+          },
+          "no-splat-keywords": {
+            "kind": "argument_list",
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "dictionary_splat"
+              }
+            }
+          },
+          "two-positional": {
+            "kind": "argument_list",
+            "count": {
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "positional-arg"
+              },
+              "min": 2,
+              "max": 2
+            }
+          },
+          "second-positional": {
+            "matches": "positional-arg",
+            "follows": {
+              "stopBy": "end",
+              "matches": "positional-arg"
+            }
+          },
+          "named-tuple-ref": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "typing.NamedTuple",
+                "typing_extensions.NamedTuple",
+                "_typeshed.NamedTuple"
+              ]
+            }
+          },
+          "named-tuple-callee": {
+            "any": [
+              {
+                "matches": "named-tuple-ref"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "named-tuple-callee"
+                }
+              }
+            ]
+          },
+          "name-target": {
+            "any": [
+              {
+                "kind": "identifier",
+                "pattern": "$NAME"
+              },
+              {
+                "kind": "tuple_pattern",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  }
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "name-target"
+                }
+              }
+            ]
+          },
+          "named-tuple-value": {
+            "any": [
+              {
+                "kind": "call",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "function",
+                      "matches": "named-tuple-callee"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "arguments",
+                      "matches": "named-tuple-arguments"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "named-tuple-value"
+                }
+              }
+            ]
+          },
+          "named-tuple-field-name": {
+            "matches": "plain-text",
+            "value": {
+              "regex": "^[\\p{XID_Start}_]\\p{XID_Continue}*$"
+            },
+            "not": {
+              "any": [
+                {
+                  "value": {
+                    "regex": "^(?:False|None|True|and|as|assert|async|await|break|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lambda|nonlocal|not|or|pass|raise|return|try|while|with|yield)$"
+                  }
+                },
+                {
+                  "value": {
+                    "regex": "^__(?:_|.*__)?$"
+                  }
+                }
+              ]
+            }
+          },
+          "field-tuple": {
+            "any": [
+              {
+                "kind": "tuple",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "named-tuple-field-name",
+                      "not": {
+                        "follows": {
+                          "stopBy": "end",
+                          "matches": "arg-node"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "list_splat"
+                      }
+                    }
+                  },
+                  {
+                    "count": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "arg-node"
+                      },
+                      "min": 2,
+                      "max": 2
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "field-tuple"
+                }
+              }
+            ]
+          },
+          "field-list": {
+            "any": [
+              {
+                "kind": "list",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "arg-node",
+                    "not": {
+                      "matches": "field-tuple"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "field-list"
+                }
+              }
+            ]
+          },
+          "named-tuple-arguments": {
+            "any": [
+              {
+                "kind": "generator_expression"
+              },
+              {
+                "matches": "one-positional",
+                "all": [
+                  {
+                    "matches": "no-splat-keywords"
+                  }
+                ]
+              },
+              {
+                "matches": "two-positional",
+                "all": [
+                  {
+                    "matches": "no-keywords"
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "second-positional",
+                      "all": [
+                        {
+                          "matches": "field-list"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "named-tuple-functional",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "assignment",
+            "not": {
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "assignment"
+              }
+            },
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "left",
+                  "matches": "name-target"
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "type",
+                    "kind": "type"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "right",
+                  "matches": "named-tuple-value"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP014",
+        "message": "Define `$NAME` with class syntax: `class $NAME(NamedTuple):` with one `field: type` line per field.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP014"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

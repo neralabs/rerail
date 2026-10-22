@@ -1,0 +1,215 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-n803-invalid-argument-name",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Name function parameters in lowercase snake_case, as PEP 8 recommends, so they read differently from classes and constants.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "override-ref": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "typing.override",
+                    "typing_extensions.override",
+                    "_typeshed.override"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "override-ref"
+                }
+              }
+            ]
+          },
+          "bad-name": {
+            "kind": "identifier",
+            "pattern": "$NAME",
+            "regex": "[\\x{149}\\x{2E4}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{1E9A}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}\\x{107B6}-\\x{107B9}[\\p{Alphabetic}--\\p{Lowercase}--\\x{FF9E}--\\x{FF9F}]]",
+            "not": {
+              "regex": "^(?:setUp|tearDown|setUpClass|tearDownClass|setUpModule|tearDownModule|asyncSetUp|asyncTearDown|setUpTestData|failureException|longMessage|maxDiff)$"
+            }
+          },
+          "bad-param": {
+            "any": [
+              {
+                "kind": "identifier",
+                "matches": "bad-name"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "default_parameter"
+                  },
+                  {
+                    "kind": "typed_default_parameter"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "matches": "bad-name"
+                }
+              },
+              {
+                "kind": "typed_parameter",
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "matches": "bad-name"
+                    },
+                    {
+                      "any": [
+                        {
+                          "kind": "list_splat_pattern"
+                        },
+                        {
+                          "kind": "dictionary_splat_pattern"
+                        }
+                      ],
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "bad-name"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "list_splat_pattern"
+                  },
+                  {
+                    "kind": "dictionary_splat_pattern"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "bad-name"
+                }
+              }
+            ]
+          },
+          "exempt-override-method": {
+            "all": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "decorated_definition",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "decorator",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "override-ref"
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "class_definition"
+                      }
+                    ]
+                  },
+                  "kind": "class_definition"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-argument-name",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "bad-param",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "parameters",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "function_definition",
+                "not": {
+                  "matches": "exempt-override-method"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "N803",
+        "message": "Rename parameter `$NAME` to lowercase snake_case and update callers that pass it by keyword; if this method overrides a superclass method, mark it `@typing.override` instead.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "N803"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-lambda-argument-name",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "bad-param",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "lambda_parameters"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "N803",
+        "message": "Rename lambda parameter `$NAME` to lowercase snake_case and update its uses in the lambda body.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "N803"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

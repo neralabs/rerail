@@ -3,7 +3,7 @@
   "id": "ruff-pt009-pytest-unittest-assertion",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's PT009 (pytest-unittest-assertion): a call whose callee (parentheses transparent) is an attribute access named one of unittest's assertion methods Ruff lists (`assertEqual`, `assertTrue`, `assertIsNone`, `failUnless`, `assert_`, ... 41 names), on any object and in any context, syntactically as Ruff matches it (no name resolution). Reported on the callee attribute expression.",
+  "description": "Use plain assert statements instead of unittest-style assertion methods; pytest rewrites them to show detailed failure output.",
   "scope": {
     "include": [
       "**/*"
@@ -51,7 +51,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PT009",
-        "message": "Use a regular `assert` instead of unittest-style `$NAME`",
+        "message": "Use a plain `assert` (for example `assert a == b`) instead of `$NAME`; leave it if this is not a unittest assertion or the tests run under unittest only.",
         "suppress": {
           "noqa": {
             "codes": [

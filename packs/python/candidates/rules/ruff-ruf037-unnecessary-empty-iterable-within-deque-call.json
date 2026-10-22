@@ -1,0 +1,231 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-ruf037-unnecessary-empty-iterable-within-deque-call",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Don't pass an empty list, tuple, dict, set or string as the iterable of a deque; a deque starts empty, so drop it and keep maxlen if it is set.",
+ "scope": {"include": ["**/*"], "exclude": []},
+ "clauses": [
+  {
+   "id": "shared",
+   "define": {
+    "language": "python",
+    "utils": {
+     "trivia": {"any": [{"kind": "comment"}, {"kind": "line_continuation"}, {"regex": "^[(),]$"}]},
+     "empty-body": {
+      "not": {
+       "has": {
+        "stopBy": "neighbor",
+        "not": {"any": [{"kind": "comment"}, {"kind": "line_continuation"}, {"regex": "^[\\[\\]{}(),]$"}]}
+       }
+      }
+     },
+     "callee": {
+      "any": [
+       {"any": [{"kind": "identifier"}, {"kind": "attribute"}], "resolves": {"import": ["collections.deque"]}},
+       {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "callee"}}
+      ]
+     },
+     "builtin-callee": {
+      "any": [
+       {
+        "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+        "resolves": {
+         "global": ["set", "list", "dict", "tuple"],
+         "import": ["builtins.set", "builtins.list", "builtins.dict", "builtins.tuple"]
+        }
+       },
+       {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "builtin-callee"}}
+      ]
+     },
+     "empty-builtin-call": {
+      "kind": "call",
+      "all": [
+       {"has": {"field": "function", "matches": "builtin-callee"}},
+       {
+        "has": {
+         "field": "arguments",
+         "kind": "argument_list",
+         "not": {"has": {"stopBy": "neighbor", "not": {"matches": "trivia"}}}
+        }
+       }
+      ]
+     },
+     "t-prefix": {"regex": "^[a-zA-Z]*[tT]"},
+     "b-prefix": {"regex": "^[a-zA-Z]*[bB]"},
+     "empty-interpolation": {
+      "kind": "interpolation",
+      "all": [
+       {"has": {"field": "expression", "matches": "empty-inner"}},
+       {
+        "not": {
+         "has": {
+          "stopBy": "neighbor",
+          "any": [{"kind": "format_specifier"}, {"kind": "type_conversion"}, {"regex": "^=$"}]
+         }
+        }
+       }
+      ]
+     },
+     "empty-part": {
+      "kind": "string",
+      "not": {
+       "has": {
+        "stopBy": "neighbor",
+        "not": {
+         "any": [
+          {"kind": "string_start"},
+          {"kind": "string_end"},
+          {
+           "matches": "empty-interpolation",
+           "inside": {"stopBy": "neighbor", "kind": "string", "not": {"matches": "t-prefix"}}
+          }
+         ]
+        }
+       }
+      }
+     },
+     "empty-inner-part": {"matches": "empty-part", "not": {"any": [{"matches": "t-prefix"}, {"matches": "b-prefix"}]}},
+     "empty-inner": {
+      "any": [
+       {"kind": "string", "matches": "empty-inner-part"},
+       {
+        "kind": "concatenated_string",
+        "not": {
+         "has": {"stopBy": "neighbor", "not": {"any": [{"matches": "trivia"}, {"matches": "empty-inner-part"}]}}
+        }
+       },
+       {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "empty-inner"}}
+      ]
+     },
+     "empty-iterable": {
+      "any": [
+       {"kind": "dictionary", "matches": "empty-body"},
+       {"kind": "list", "matches": "empty-body"},
+       {"kind": "tuple", "matches": "empty-body"},
+       {"matches": "empty-builtin-call"},
+       {"matches": "empty-part"},
+       {
+        "kind": "concatenated_string",
+        "not": {"has": {"stopBy": "neighbor", "not": {"any": [{"matches": "trivia"}, {"matches": "empty-part"}]}}}
+       },
+       {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "empty-iterable"}}
+      ]
+     },
+     "count-ok": {
+      "has": {
+       "field": "arguments",
+       "kind": "argument_list",
+       "count": {"has": {"stopBy": "neighbor", "not": {"matches": "trivia"}}, "min": 1, "max": 2}
+      }
+     },
+     "target-str": {
+      "kind": "call",
+      "all": [
+       {"has": {"stopBy": "neighbor", "field": "function", "matches": "callee"}},
+       {"matches": "count-ok"},
+       {
+        "has": {
+         "field": "arguments",
+         "kind": "argument_list",
+         "any": [
+          {
+           "has": {
+            "stopBy": "neighbor",
+            "matches": "empty-iterable",
+            "follows": {"stopBy": {"not": {"kind": "comment"}}, "regex": "^\\($"}
+           }
+          },
+          {
+           "has": {
+            "stopBy": "neighbor",
+            "kind": "keyword_argument",
+            "all": [
+             {"has": {"field": "name", "regex": "^iterable$"}},
+             {"has": {"field": "value", "matches": "empty-iterable"}}
+            ]
+           }
+          }
+         ]
+        }
+       }
+      ]
+     },
+     "in-annotation": {
+      "any": [{"kind": "string"}, {"kind": "concatenated_string"}],
+      "parse": {
+       "grammar": "annotation",
+       "has": {"stopBy": "end", "any": [{"matches": "target-str", "capture": "CALL"}, {"matches": "in-annotation"}]}
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "empty-iterable-with-maxlen",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "call",
+      "all": [
+       {"has": {"stopBy": "neighbor", "field": "function", "matches": "callee"}},
+       {"matches": "count-ok"},
+       {
+        "arguments": {"signature": ["iterable", "maxlen"], "bind": {"IT": "iterable", "ML": "maxlen"}, "mode": "syntactic"}
+       }
+      ]
+     },
+     "constraints": {"IT": {"matches": "empty-iterable"}}
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "RUF037",
+    "message": "Drop the empty first argument and pass the bound by keyword: `deque(maxlen=...)`. A deque already starts empty.",
+    "suppress": {"noqa": {"codes": ["RUF037"]}}
+   }
+  },
+  {
+   "id": "empty-iterable",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "call",
+      "all": [
+       {"has": {"stopBy": "neighbor", "field": "function", "matches": "callee"}},
+       {"matches": "count-ok"},
+       {
+        "arguments": {
+         "signature": ["iterable", "maxlen"],
+         "bind": {"IT": "iterable"},
+         "absent": ["maxlen"],
+         "mode": "syntactic"
+        }
+       }
+      ]
+     },
+     "constraints": {"IT": {"matches": "empty-iterable"}}
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "RUF037",
+    "message": "Remove the empty iterable argument; `deque()` already starts empty.",
+    "suppress": {"noqa": {"codes": ["RUF037"]}}
+   }
+  },
+  {
+   "id": "empty-iterable-in-annotation",
+   "forbid": {"ast": {"language": "python", "rule": {"matches": "in-annotation"}}},
+   "violation": {
+    "anchor": "capture.CALL",
+    "each": "CALL",
+    "code": "RUF037",
+    "message": "Remove the empty iterable argument; a deque starts empty. Keep any `maxlen` as a keyword: `deque(maxlen=...)`.",
+    "suppress": {"noqa": {"codes": ["RUF037"]}}
+   }
+  }
+ ]
+}

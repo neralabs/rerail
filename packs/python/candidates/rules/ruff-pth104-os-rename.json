@@ -1,0 +1,146 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-pth104-os-rename",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Use Path.rename() instead of os.rename(); path objects read better than string-based os calls.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "os-rename",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "utils": {
+      "target": {
+       "any": [
+        {
+         "kind": "identifier"
+        },
+        {
+         "kind": "attribute"
+        }
+       ],
+       "resolves": {
+        "import": [
+         "os.rename"
+        ]
+       }
+      },
+      "callee": {
+       "any": [
+        {
+         "matches": "target",
+         "pattern": "$F"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee"
+         }
+        }
+       ]
+      },
+      "none-literal": {
+       "any": [
+        {
+         "kind": "none"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "none-literal"
+         }
+        }
+       ]
+      }
+     },
+     "rule": {
+      "kind": "call",
+      "has": {
+       "field": "function",
+       "matches": "callee"
+      },
+      "all": [
+       {
+        "not": {
+         "has": {
+          "field": "arguments",
+          "kind": "argument_list",
+          "has": {
+           "stopBy": "neighbor",
+           "kind": "keyword_argument",
+           "all": [
+            {
+             "has": {
+              "field": "name",
+              "regex": "^src_dir_fd$"
+             }
+            },
+            {
+             "has": {
+              "field": "value",
+              "not": {
+               "matches": "none-literal"
+              }
+             }
+            }
+           ]
+          }
+         }
+        }
+       },
+       {
+        "not": {
+         "has": {
+          "field": "arguments",
+          "kind": "argument_list",
+          "has": {
+           "stopBy": "neighbor",
+           "kind": "keyword_argument",
+           "all": [
+            {
+             "has": {
+              "field": "name",
+              "regex": "^dst_dir_fd$"
+             }
+            },
+            {
+             "has": {
+              "field": "value",
+              "not": {
+               "matches": "none-literal"
+              }
+             }
+            }
+           ]
+          }
+         }
+        }
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.F",
+    "code": "PTH104",
+    "message": "Use `Path(src).rename(dst)` instead of `os.rename(src, dst)`; it returns a `Path`, so leave it where the paths are bytes or `src_dir_fd`/`dst_dir_fd` come through `**kwargs`.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "PTH104"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

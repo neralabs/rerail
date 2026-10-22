@@ -1,0 +1,74 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi059-generic-not-last-base-class",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Put Generic last in a class's list of base classes; earlier in the list it can give the class an unexpected method resolution order.",
+  "scope": {
+    "include": ["**/*"],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "generic-not-last-base-class",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "generic-name": {
+              "any": [
+                {
+                  "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                  "resolves": { "import": ["typing.Generic", "typing_extensions.Generic", "_typeshed.Generic"] }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": { "stopBy": "neighbor", "matches": "generic-name" }
+                }
+              ]
+            },
+            "generic-base": {
+              "any": [
+                { "matches": "generic-name" },
+                {
+                  "kind": "subscript",
+                  "has": { "stopBy": "neighbor", "field": "value", "matches": "generic-name" }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": { "stopBy": "neighbor", "matches": "generic-base" }
+                }
+              ]
+            },
+            "positional-base": {
+              "not": {
+                "any": [
+                  { "kind": "keyword_argument" },
+                  { "kind": "dictionary_splat" },
+                  { "kind": "comment" },
+                  { "kind": "line_continuation" },
+                  { "regex": "^[(),]$" }
+                ]
+              }
+            }
+          },
+          "rule": {
+            "kind": "argument_list",
+            "inside": { "stopBy": "neighbor", "kind": "class_definition", "field": "superclasses" },
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "generic-base",
+              "precedes": { "stopBy": "end", "matches": "positional-base" }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI059",
+        "message": "Move `Generic[...]` to the end of the base class list so the class gets the right method resolution order; check that reordering the other bases keeps the intended method lookup.",
+        "suppress": { "noqa": { "codes": ["PYI059"] } }
+      }
+    }
+  ]
+}

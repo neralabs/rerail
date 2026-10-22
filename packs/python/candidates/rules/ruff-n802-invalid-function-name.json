@@ -1,0 +1,395 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-n802-invalid-function-name",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Name functions and methods in lowercase snake_case, as PEP 8 recommends, so they read differently from classes and constants.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "typing-exempt": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "typing.override",
+                    "typing_extensions.override",
+                    "_typeshed.override",
+                    "typing.overload",
+                    "typing_extensions.overload",
+                    "_typeshed.overload"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "typing-exempt"
+                }
+              }
+            ]
+          },
+          "visitor-base": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "ast.NodeVisitor",
+                    "ast.NodeTransformer"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "visitor-base"
+                }
+              }
+            ]
+          },
+          "handler-base": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "http.server.BaseHTTPRequestHandler",
+                    "http.server.CGIHTTPRequestHandler",
+                    "http.server.SimpleHTTPRequestHandler"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "handler-base"
+                }
+              }
+            ]
+          },
+          "direct-method": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "block",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "class_definition"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "decorated_definition",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "block",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "class_definition"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "bad-function-name": {
+            "kind": "identifier",
+            "pattern": "$NAME",
+            "regex": "[\\x{149}\\x{2E4}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{1E9A}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}\\x{107B6}-\\x{107B9}[\\p{Alphabetic}--\\p{Lowercase}--\\x{FF9E}--\\x{FF9F}]]",
+            "not": {
+              "any": [
+                {
+                  "regex": "^(?:setUp|tearDown|setUpClass|tearDownClass|setUpModule|tearDownModule|asyncSetUp|asyncTearDown|setUpTestData|failureException|longMessage|maxDiff)$"
+                },
+                {
+                  "regex": "^(?:visit|do)_",
+                  "any": [
+                    {
+                      "regex": "^v",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "field": "name",
+                        "kind": "function_definition",
+                        "any": [
+                          {
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "kind": "block",
+                              "inside": {
+                                "stopBy": "neighbor",
+                                "matches": "visitor-class"
+                              }
+                            }
+                          },
+                          {
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "kind": "decorated_definition",
+                              "inside": {
+                                "stopBy": "neighbor",
+                                "kind": "block",
+                                "inside": {
+                                  "stopBy": "neighbor",
+                                  "matches": "visitor-class"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "regex": "^d",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "field": "name",
+                        "kind": "function_definition",
+                        "any": [
+                          {
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "kind": "block",
+                              "inside": {
+                                "stopBy": "neighbor",
+                                "matches": "handler-class"
+                              }
+                            }
+                          },
+                          {
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "kind": "decorated_definition",
+                              "inside": {
+                                "stopBy": "neighbor",
+                                "kind": "block",
+                                "inside": {
+                                  "stopBy": "neighbor",
+                                  "matches": "handler-class"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "field": "name",
+              "kind": "function_definition",
+              "not": {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "decorated_definition",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "decorator",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "typing-exempt"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "visitor-class": {
+            "kind": "class_definition",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "argument_list",
+              "has": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "matches": "visitor-base"
+                  },
+                  {
+                    "matches": "local-visitor"
+                  }
+                ]
+              }
+            }
+          },
+          "local-visitor": {
+            "any": [
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "matches": "visitor-class"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "subscript",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "matches": "local-visitor"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "local-visitor"
+                }
+              }
+            ]
+          },
+          "handler-class": {
+            "kind": "class_definition",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "argument_list",
+              "has": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "matches": "handler-base"
+                  },
+                  {
+                    "matches": "local-handler"
+                  }
+                ]
+              }
+            }
+          },
+          "local-handler": {
+            "any": [
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "matches": "handler-class"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "subscript",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "matches": "local-handler"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "local-handler"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-method-name",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "bad-function-name",
+            "inside": {
+              "stopBy": "neighbor",
+              "field": "name",
+              "kind": "function_definition",
+              "matches": "direct-method"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "N802",
+        "message": "Rename method `$NAME` to lowercase snake_case and update its callers; if it overrides a superclass method, decorate it with `@typing.override` instead.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "N802"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-function-name",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "bad-function-name",
+            "not": {
+              "inside": {
+                "stopBy": "neighbor",
+                "field": "name",
+                "kind": "function_definition",
+                "matches": "direct-method"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "N802",
+        "message": "Rename function `$NAME` to lowercase snake_case, such as `my_function`, and update its callers; keep the name if code outside this project calls it.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "N802"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -3,7 +3,7 @@
  "id": "ruff-dtz901-datetime-min-max",
  "revision": 1,
  "mode": "steer",
- "description": "Port of Ruff's DTZ901 (datetime-min-max): an attribute expression (any context) resolving to `datetime.datetime.min` or `datetime.datetime.max` through the file's imports (Ruff's `resolve_qualified_name`), reported on it, unless it is (parentheses transparent) the object of a `.time` attribute, or of a `.replace` attribute, whose enclosing expression (Ruff's grandparent: through parentheses, the argument list, a keyword or `**` argument) is a call; for `.replace` that call must also pass a `tzinfo=` keyword that is not the literal `None`.",
+ "description": "Attach a timezone to the minimum and maximum datetime constants; the bare values are naive and fail when ordered against aware datetimes.",
  "scope": {
   "include": [
    "**/*"
@@ -154,7 +154,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "DTZ901",
-    "message": "Use of `datetime.datetime.$M` without timezone information",
+    "message": "Use `datetime.datetime.$M.replace(tzinfo=...)` so the value is aware; the bare naive value raises TypeError when ordered against aware datetimes. Keep it only when the other values are naive.",
     "suppress": {
      "noqa": {
       "codes": [

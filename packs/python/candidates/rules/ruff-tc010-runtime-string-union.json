@@ -1,0 +1,291 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-tc010-runtime-string-union",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid quoted members in X | Y union types that Python evaluates at runtime; quote the whole union or remove the quotes, since a string cannot be an operand of the | operator.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "future-seen": {
+            "resolves": {
+              "imported": [
+                "__future__"
+              ],
+              "seenBefore": true
+            }
+          },
+          "type-checking-test": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^TYPE_CHECKING$"
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "import": [
+                    "typing.TYPE_CHECKING",
+                    "typing_extensions.TYPE_CHECKING",
+                    "_typeshed.TYPE_CHECKING"
+                  ]
+                }
+              },
+              {
+                "kind": "attribute",
+                "has": {
+                  "field": "attribute",
+                  "regex": "^TYPE_CHECKING$"
+                }
+              }
+            ]
+          },
+          "in-type-checking-block": {
+            "inside": {
+              "stopBy": "end",
+              "kind": "block",
+              "inside": {
+                "stopBy": "neighbor",
+                "field": "consequence",
+                "kind": "if_statement",
+                "has": {
+                  "field": "condition",
+                  "matches": "type-checking-test"
+                }
+              }
+            }
+          },
+          "plain-string": {
+            "any": [
+              {
+                "kind": "string",
+                "not": {
+                  "regex": "^[a-zA-Z]*[fFtT]"
+                }
+              },
+              {
+                "kind": "concatenated_string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "regex": "^[a-zA-Z]*[fFtT]"
+                  }
+                }
+              }
+            ]
+          },
+          "annotation-root": {
+            "kind": "type",
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "type",
+                  "any": [
+                    {
+                      "kind": "typed_parameter"
+                    },
+                    {
+                      "kind": "typed_default_parameter"
+                    },
+                    {
+                      "kind": "assignment"
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "return_type",
+                  "kind": "function_definition"
+                }
+              }
+            ]
+          },
+          "local-annotation": {
+            "inside": {
+              "stopBy": "end",
+              "matches": "annotation-root",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "assignment",
+                "inside": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "class_definition"
+                      }
+                    ]
+                  },
+                  "kind": "function_definition"
+                }
+              }
+            }
+          },
+          "union-member": {
+            "matches": "plain-string",
+            "parse": {
+              "grammar": "annotation",
+              "any": [
+                {
+                  "kind": "expression_statement"
+                },
+                {
+                  "kind": "ERROR"
+                }
+              ]
+            },
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              "kind": "binary_operator",
+              "has": {
+                "field": "operator",
+                "regex": "^\\|$"
+              }
+            },
+            "not": {
+              "any": [
+                {
+                  "matches": "in-type-checking-block"
+                },
+                {
+                  "inside": {
+                    "stopBy": {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "parenthesized_expression"
+                          },
+                          {
+                            "kind": "binary_operator",
+                            "has": {
+                              "field": "operator",
+                              "regex": "^\\|$"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "kind": "subscript",
+                    "has": {
+                      "field": "value",
+                      "any": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "kind": "attribute"
+                        }
+                      ],
+                      "resolves": {
+                        "import": [
+                          "typing.Union",
+                          "typing_extensions.Union",
+                          "_typeshed.Union"
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "runtime-string-union-in-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "path": {
+              "notRegex": "\\.pyi$"
+            }
+          },
+          "when": {
+            "pythonVersion": {
+              "max": "3.13"
+            }
+          },
+          "rule": {
+            "matches": "union-member",
+            "inside": {
+              "stopBy": "end",
+              "matches": "annotation-root"
+            },
+            "not": {
+              "any": [
+                {
+                  "matches": "future-seen"
+                },
+                {
+                  "matches": "local-annotation"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "TC010",
+        "message": "Remove the quotes from this union member or quote the whole union; a string cannot be an operand of `|` at runtime.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "TC010"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "runtime-string-union-in-expression",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "union-member",
+            "not": {
+              "inside": {
+                "stopBy": "end",
+                "kind": "type"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "TC010",
+        "message": "Remove the quotes from this union member or quote the whole union; a string cannot be an operand of `|` at runtime.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "TC010"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

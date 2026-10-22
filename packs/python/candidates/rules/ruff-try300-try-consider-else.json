@@ -1,0 +1,221 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-try300-try-consider-else",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Move the final return of a try body into an else block; code that runs only on success should not sit under the handlers' protection.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "try-consider-else",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "empty-initializer": {
+              "kind": "call",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "identifier",
+                "resolves": {
+                  "global": [
+                    "set",
+                    "list",
+                    "tuple",
+                    "dict",
+                    "frozenset"
+                  ]
+                },
+                "precedes": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "regex": "^\\(\\s*(?:#[^\\n]*\\s*)*\\)$"
+                }
+              }
+            },
+            "literalish": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                },
+                {
+                  "kind": "integer"
+                },
+                {
+                  "kind": "float"
+                },
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "false"
+                },
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "ellipsis"
+                },
+                {
+                  "kind": "list"
+                },
+                {
+                  "kind": "tuple"
+                },
+                {
+                  "kind": "set"
+                },
+                {
+                  "kind": "dictionary"
+                },
+                {
+                  "kind": "list_comprehension"
+                },
+                {
+                  "kind": "set_comprehension"
+                },
+                {
+                  "kind": "dictionary_comprehension"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "literalish"
+                  }
+                }
+              ]
+            },
+            "effect-node": {
+              "any": [
+                {
+                  "kind": "call",
+                  "not": {
+                    "matches": "empty-initializer"
+                  }
+                },
+                {
+                  "kind": "await"
+                },
+                {
+                  "kind": "list_comprehension"
+                },
+                {
+                  "kind": "set_comprehension"
+                },
+                {
+                  "kind": "dictionary_comprehension"
+                },
+                {
+                  "kind": "generator_expression"
+                },
+                {
+                  "kind": "subscript"
+                },
+                {
+                  "kind": "yield"
+                },
+                {
+                  "kind": "named_expression"
+                },
+                {
+                  "kind": "binary_operator",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "matches": "literalish"
+                        },
+                        {
+                          "regex": "^(\\+|-|\\*|/|//|%|\\*\\*|@|<<|>>|&|\\||\\^)$"
+                        },
+                        {
+                          "kind": "comment"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "return_statement",
+            "not": {
+              "has": {
+                "stopBy": "end",
+                "matches": "effect-node"
+              }
+            },
+            "follows": {
+              "stopBy": "end",
+              "not": {
+                "kind": "comment"
+              }
+            },
+            "all": [
+              {
+                "not": {
+                  "precedes": {
+                    "stopBy": "end",
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "regex": "^;$"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "block",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "try_statement",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "except_clause"
+                    },
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "else_clause"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "TRY300",
+        "message": "Move this `return` into an `else` clause after the handlers so the `try` body holds only the code the handlers guard.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "TRY300"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

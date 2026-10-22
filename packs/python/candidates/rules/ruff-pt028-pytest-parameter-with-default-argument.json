@@ -1,0 +1,154 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pt028-pytest-parameter-with-default-argument",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't give pytest test function parameters default values; the default always wins, so a fixture of the same name is never injected.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "test-parameter-default",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "test-fn": {
+              "kind": "function_definition",
+              "has": {
+                "field": "name",
+                "regex": "^test"
+              },
+              "any": [
+                {
+                  "not": {
+                    "inside": {
+                      "stopBy": "end",
+                      "any": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "kind": "class_definition"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "class_definition",
+                    "stopBy": {
+                      "any": [
+                        {
+                          "kind": "class_definition"
+                        },
+                        {
+                          "kind": "function_definition"
+                        }
+                      ]
+                    },
+                    "has": {
+                      "field": "name",
+                      "regex": "^Test"
+                    },
+                    "not": {
+                      "has": {
+                        "field": "body",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "function_definition",
+                              "has": {
+                                "field": "name",
+                                "regex": "^__init__$"
+                              }
+                            },
+                            {
+                              "kind": "decorated_definition",
+                              "has": {
+                                "field": "definition",
+                                "kind": "function_definition",
+                                "has": {
+                                  "field": "name",
+                                  "regex": "^__init__$"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "default-value": {
+              "any": [
+                {
+                  "inside": {
+                    "field": "value",
+                    "any": [
+                      {
+                        "kind": "default_parameter"
+                      },
+                      {
+                        "kind": "typed_default_parameter"
+                      }
+                    ],
+                    "inside": {
+                      "kind": "parameters",
+                      "inside": {
+                        "kind": "function_definition",
+                        "matches": "test-fn"
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "parenthesized_expression",
+                    "matches": "default-value"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "matches": "default-value",
+            "not": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression"
+                },
+                {
+                  "kind": "comment"
+                },
+                {
+                  "regex": "^[()]$"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PT028",
+        "message": "Remove this default: pytest never injects a fixture for a parameter that has one, so the test always gets it. Set fixed values in the body, or leave it if pytest does not collect this function.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT028"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

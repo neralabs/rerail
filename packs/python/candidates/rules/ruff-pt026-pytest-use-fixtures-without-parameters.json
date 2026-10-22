@@ -1,0 +1,187 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pt026-pytest-use-fixtures-without-parameters",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove usefixtures markers that name no fixtures, or pass them the fixtures to apply; a marker without arguments does nothing.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "usefixtures-without-fixtures",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "uf-ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "pytest.mark.usefixtures"
+                ]
+              }
+            },
+            "uf-callee": {
+              "any": [
+                {
+                  "matches": "uf-ref"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "uf-callee"
+                  }
+                }
+              ]
+            },
+            "bare-ref": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "resolves": {
+                    "import": [
+                      "pytest.mark.usefixtures"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "bare-ref"
+                  }
+                }
+              ]
+            },
+            "empty-call": {
+              "any": [
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "matches": "uf-callee"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "field": "arguments",
+                        "kind": "argument_list",
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "comment"
+                                },
+                                {
+                                  "kind": "line_continuation"
+                                },
+                                {
+                                  "regex": "^[()]$"
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "empty-call"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "decorator",
+            "has": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "matches": "bare-ref"
+                },
+                {
+                  "matches": "empty-call"
+                }
+              ]
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "decorated_definition",
+              "has": {
+                "field": "definition",
+                "kind": "function_definition"
+              }
+            },
+            "any": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "comment"
+                    },
+                    {
+                      "kind": "line_continuation"
+                    }
+                  ]
+                },
+                "regex": "^(?P<span>(?:\"\"\"(?:[^\\\\]|\\\\[\\s\\S])*?\"\"\"|'''(?:[^\\\\]|\\\\[\\s\\S])*?'''|\"(?:[^\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^'\\\\]|\\\\[\\s\\S])*'|#[^\\n]*\\n|[^#'\"])*?)(?:\\s|\\\\\\r?\\n|#[^\\n]*)*$"
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "comment"
+                      },
+                      {
+                        "kind": "line_continuation"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "regex": "^(?P<span>(?:\"\"\"(?:[^\\\\]|\\\\[\\s\\S])*?\"\"\"|'''(?:[^\\\\]|\\\\[\\s\\S])*?'''|\"(?:[^\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^'\\\\]|\\\\[\\s\\S])*'|#[^\\n]*\\n|[^#'\"])*?)(?:\\s|\\\\\\r?\\n|#[^\\n]*)*$"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.span",
+        "code": "PT026",
+        "message": "Remove this `usefixtures` decorator, or pass it the names of the fixtures to apply; without arguments it does nothing.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT026"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

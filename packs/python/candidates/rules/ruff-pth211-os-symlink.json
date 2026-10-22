@@ -1,0 +1,116 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pth211-os-symlink",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use Path.symlink_to() instead of os.symlink(); path objects read better than string-based os calls.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "os-symlink",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "os.symlink"
+                    ]
+                  },
+                  "pattern": "$F"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            },
+            "none-literal": {
+              "any": [
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "none-literal"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "has": {
+              "field": "function",
+              "matches": "callee"
+            },
+            "any": [
+              {
+                "arguments": {
+                  "signature": [
+                    "*",
+                    "dir_fd"
+                  ],
+                  "mode": "syntactic",
+                  "absent": [
+                    "dir_fd"
+                  ]
+                }
+              },
+              {
+                "arguments": {
+                  "signature": [
+                    "*",
+                    "dir_fd"
+                  ],
+                  "mode": "syntactic",
+                  "bind": {
+                    "D": "dir_fd"
+                  }
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "D": {
+              "matches": "none-literal"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.F",
+        "code": "PTH211",
+        "message": "Use `Path(dst).symlink_to(src)` instead of `os.symlink(src, dst)`, passing `target_is_directory` through; leave it where the paths are bytes.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PTH211"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

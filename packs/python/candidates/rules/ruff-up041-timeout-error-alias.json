@@ -3,7 +3,7 @@
   "id": "ruff-up041-timeout-error-alias",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's UP041 (timeout-error-alias), which runs at a target version of 3.10 or later: an alias of `TimeoutError` (a name or attribute resolving to `socket.timeout` and, from 3.11, `asyncio.TimeoutError`) used as an `except` clause's exception type, as the exception a `raise` raises (not its `from` cause), or as a called function, parentheses transparent; reported on the name or attribute. An `except` clause whose type is a tuple with such an element (parentheses transparent) is reported once, on the tuple.",
+  "description": "Use the builtin TimeoutError instead of socket.timeout or asyncio.TimeoutError; since Python 3.10 and 3.11 they are plain aliases of it.",
   "scope": {
     "include": ["**/*"],
     "exclude": []
@@ -76,7 +76,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "UP041",
-        "message": "Replace aliased errors with `TimeoutError`",
+        "message": "Use the builtin `TimeoutError` instead of `socket.timeout`, the same class since Python 3.10; in an except tuple, name `TimeoutError` once. Skip it if this file defines its own `TimeoutError`.",
         "suppress": { "noqa": { "codes": ["UP041"] } }
       }
     },
@@ -102,7 +102,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "UP041",
-        "message": "Replace aliased errors with `TimeoutError`",
+        "message": "Use the builtin `TimeoutError` instead of `asyncio.TimeoutError`, the same class since Python 3.11; in an except tuple, name `TimeoutError` once. Skip it if this file defines its own `TimeoutError`.",
         "suppress": { "noqa": { "codes": ["UP041"] } }
       }
     }

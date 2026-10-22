@@ -1,0 +1,105 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up049-private-type-parameter",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid leading underscores in the type parameter names of generic classes and functions; each parameter is already local to its declaration, so the underscore adds nothing.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "private-type-parameter",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "declaration-parameters": {
+              "kind": "type_parameter",
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "kind": "class_definition"
+                  }
+                ]
+              }
+            },
+            "parameter-slot": {
+              "kind": "type",
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "declaration-parameters"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "type_default",
+                    "field": "name",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "declaration-parameters"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$NAME",
+            "regex": "^_.*[^_]$",
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "matches": "parameter-slot"
+                },
+                {
+                  "kind": "splat_type",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "parameter-slot"
+                  }
+                },
+                {
+                  "kind": "type",
+                  "nthChild": 1,
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "constrained_type",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "parameter-slot"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP049",
+        "message": "Drop the leading underscore from type parameter `$NAME` in its declaration and every use; if the bare name would clash with another name or is not a valid identifier, pick a different one.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP049"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

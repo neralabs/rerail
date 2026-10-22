@@ -1,0 +1,102 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-n812-lowercase-imported-as-non-lowercase",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Keep the alias of an imported lowercase name lowercase; an uppercase alias makes readers mistake a function or module for a class or constant.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "lowercase-imported-as-non-lowercase",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "has-upper": {
+              "regex": "[\\p{Uppercase}\\x{1C5}\\x{1C8}\\x{1CB}\\x{1F2}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}]"
+            },
+            "cased-lower": {
+              "all": [
+                {
+                  "regex": "\\p{Lowercase}"
+                },
+                {
+                  "not": {
+                    "matches": "has-upper"
+                  }
+                }
+              ]
+            },
+            "not-lower": {
+              "any": [
+                {
+                  "matches": "has-upper"
+                },
+                {
+                  "regex": "[\\p{Alphabetic}--\\p{Lowercase}]"
+                },
+                {
+                  "regex": "[\\x{149}\\x{1E9A}\\x{2E4}\\x{107B6}-\\x{107B9}]"
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "aliased_import",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "kind": "dotted_name",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "nthChild": {
+                      "position": 1,
+                      "reverse": true,
+                      "ofRule": {
+                        "kind": "identifier"
+                      }
+                    },
+                    "pattern": "$NAME",
+                    "matches": "cased-lower"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "alias",
+                  "kind": "identifier",
+                  "pattern": "$ASNAME",
+                  "not": {
+                    "regex": "^(?:setUp|tearDown|setUpClass|tearDownClass|setUpModule|tearDownModule|asyncSetUp|asyncTearDown|setUpTestData|failureException|longMessage|maxDiff)$"
+                  },
+                  "matches": "not-lower"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "N812",
+        "message": "Import `$NAME` without `as $ASNAME`, or use a lowercase alias, and update its uses; keep the alias if `$NAME` is really a class or constant.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "N812"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

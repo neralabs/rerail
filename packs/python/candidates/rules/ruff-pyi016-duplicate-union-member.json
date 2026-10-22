@@ -1,0 +1,1140 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi016-duplicate-union-member",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove duplicate members from a union type; repeating a type adds nothing.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "trivia": {
+            "any": [
+              {
+                "kind": "comment"
+              },
+              {
+                "kind": "line_continuation"
+              },
+              {
+                "regex": "^[,\\[\\]()|]$"
+              }
+            ]
+          },
+          "union-name": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "typing.Union",
+                "_typeshed.Union",
+                "typing_extensions.Union"
+              ]
+            }
+          },
+          "optional-name": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "typing.Optional",
+                "_typeshed.Optional",
+                "typing_extensions.Optional"
+              ]
+            }
+          },
+          "pipe": {
+            "any": [
+              {
+                "kind": "binary_operator",
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^\\|$"
+                }
+              },
+              {
+                "kind": "union_type"
+              }
+            ]
+          },
+          "union-sub": {
+            "any": [
+              {
+                "kind": "subscript"
+              },
+              {
+                "kind": "generic_type"
+              }
+            ],
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "union-name",
+              "any": [
+                {
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "regex": "^\\[$"
+                  }
+                },
+                {
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "kind": "type_parameter"
+                  }
+                }
+              ]
+            }
+          },
+          "optional-sub": {
+            "any": [
+              {
+                "kind": "subscript"
+              },
+              {
+                "kind": "generic_type"
+              }
+            ],
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "optional-name",
+              "any": [
+                {
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "regex": "^\\[$"
+                  }
+                },
+                {
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "kind": "type_parameter"
+                  }
+                }
+              ]
+            }
+          },
+          "chain-sub": {
+            "any": [
+              {
+                "matches": "union-sub"
+              },
+              {
+                "matches": "optional-sub"
+              }
+            ]
+          },
+          "chain-node": {
+            "any": [
+              {
+                "matches": "pipe"
+              },
+              {
+                "matches": "chain-sub"
+              }
+            ]
+          },
+          "wrapper": {
+            "any": [
+              {
+                "kind": "type"
+              },
+              {
+                "kind": "parenthesized_expression"
+              }
+            ]
+          },
+          "link": {
+            "any": [
+              {
+                "matches": "chain-node"
+              },
+              {
+                "matches": "wrapper"
+              },
+              {
+                "kind": "type_parameter"
+              }
+            ]
+          },
+          "slot": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "pipe"
+                },
+                "not": {
+                  "matches": "trivia"
+                }
+              },
+              {
+                "all": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "chain-sub"
+                    }
+                  },
+                  {
+                    "follows": {
+                      "stopBy": "end",
+                      "regex": "^\\[$"
+                    }
+                  },
+                  {
+                    "not": {
+                      "matches": "trivia"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "type",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "type_parameter",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "chain-sub"
+                  }
+                }
+              },
+              {
+                "all": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "wrapper",
+                      "all": [
+                        {
+                          "matches": "slot"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "not": {
+                      "matches": "trivia"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "leaf": {
+            "matches": "slot",
+            "not": {
+              "any": [
+                {
+                  "matches": "wrapper"
+                },
+                {
+                  "matches": "chain-node"
+                }
+              ]
+            }
+          },
+          "optional-head": {
+            "matches": "optional-name",
+            "any": [
+              {
+                "precedes": {
+                  "stopBy": "neighbor",
+                  "regex": "^\\[$"
+                }
+              },
+              {
+                "precedes": {
+                  "stopBy": "neighbor",
+                  "kind": "type_parameter"
+                }
+              }
+            ],
+            "inside": {
+              "stopBy": "neighbor",
+              "matches": "optional-sub"
+            }
+          },
+          "none-leaf": {
+            "matches": "leaf",
+            "kind": "none"
+          },
+          "through": {
+            "matches": "slot",
+            "any": [
+              {
+                "matches": "wrapper"
+              },
+              {
+                "matches": "chain-node"
+              }
+            ]
+          },
+          "tparam": {
+            "kind": "type_parameter",
+            "inside": {
+              "stopBy": "neighbor",
+              "matches": "chain-sub"
+            }
+          },
+          "contains-eq": {
+            "any": [
+              {
+                "matches": "leaf",
+                "pattern": "$F",
+                "compare": {
+                  "left": "F",
+                  "op": "eq",
+                  "right": "DUP",
+                  "text": "structure"
+                }
+              },
+              {
+                "matches": "through",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "contains-eq"
+                }
+              },
+              {
+                "matches": "tparam",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "contains-eq"
+                }
+              }
+            ]
+          },
+          "contains-none": {
+            "any": [
+              {
+                "matches": "none-leaf"
+              },
+              {
+                "matches": "optional-head"
+              },
+              {
+                "matches": "through",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "contains-none"
+                }
+              },
+              {
+                "matches": "tparam",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "contains-none"
+                }
+              }
+            ]
+          },
+          "level": {
+            "any": [
+              {
+                "matches": "slot"
+              },
+              {
+                "matches": "tparam"
+              }
+            ]
+          },
+          "earlier-eq": {
+            "any": [
+              {
+                "follows": {
+                  "stopBy": "end",
+                  "matches": "contains-eq"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "matches": "link"
+                    }
+                  },
+                  "matches": "level",
+                  "follows": {
+                    "stopBy": "end",
+                    "matches": "contains-eq"
+                  }
+                }
+              }
+            ]
+          },
+          "earlier-none": {
+            "any": [
+              {
+                "follows": {
+                  "stopBy": "end",
+                  "matches": "contains-none"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "matches": "link"
+                    }
+                  },
+                  "matches": "level",
+                  "follows": {
+                    "stopBy": "end",
+                    "matches": "contains-none"
+                  }
+                }
+              }
+            ]
+          },
+          "generic-head": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "dict",
+                    "frozendict",
+                    "frozenset",
+                    "list",
+                    "set",
+                    "slice",
+                    "tuple",
+                    "type"
+                  ],
+                  "import": [
+                    "builtins.dict",
+                    "builtins.frozendict",
+                    "builtins.frozenset",
+                    "builtins.list",
+                    "builtins.set",
+                    "builtins.slice",
+                    "builtins.tuple",
+                    "builtins.type",
+                    "typing.AbstractSet",
+                    "typing.AsyncContextManager",
+                    "typing.AsyncGenerator",
+                    "typing.AsyncIterator",
+                    "typing.Awaitable",
+                    "typing.BinaryIO",
+                    "typing.ByteString",
+                    "typing.Callable",
+                    "typing.ClassVar",
+                    "typing.Collection",
+                    "typing.Concatenate",
+                    "typing.Container",
+                    "typing.ContextManager",
+                    "typing.Coroutine",
+                    "typing.DefaultDict",
+                    "typing.Deque",
+                    "typing.Dict",
+                    "typing.Final",
+                    "typing.FrozenSet",
+                    "typing.Generator",
+                    "typing.Generic",
+                    "typing.IO",
+                    "typing.ItemsView",
+                    "typing.Iterable",
+                    "typing.Iterator",
+                    "typing.KeysView",
+                    "typing.List",
+                    "typing.Mapping",
+                    "typing.MutableMapping",
+                    "typing.MutableSequence",
+                    "typing.MutableSet",
+                    "typing.Optional",
+                    "typing.Reversible",
+                    "typing.Sequence",
+                    "typing.Set",
+                    "typing.TextIO",
+                    "typing.Tuple",
+                    "typing.Type",
+                    "typing.TypeForm",
+                    "typing.TypeGuard",
+                    "typing.TypeIs",
+                    "typing.Union",
+                    "typing.Unpack",
+                    "typing.ValuesView",
+                    "typing.ChainMap",
+                    "typing.Counter",
+                    "typing.OrderedDict",
+                    "typing.Match",
+                    "typing.Pattern",
+                    "typing_extensions.AsyncContextManager",
+                    "typing_extensions.AsyncGenerator",
+                    "typing_extensions.AsyncIterable",
+                    "typing_extensions.AsyncIterator",
+                    "typing_extensions.Awaitable",
+                    "typing_extensions.ClassVar",
+                    "typing_extensions.Concatenate",
+                    "typing_extensions.ContextManager",
+                    "typing_extensions.Coroutine",
+                    "typing_extensions.DefaultDict",
+                    "typing_extensions.Deque",
+                    "typing_extensions.Type",
+                    "typing_extensions.TypeForm",
+                    "typing_extensions.TypeGuard",
+                    "typing_extensions.TypeIs",
+                    "typing_extensions.ChainMap",
+                    "typing_extensions.Counter",
+                    "collections.ChainMap",
+                    "collections.Counter",
+                    "collections.OrderedDict",
+                    "collections.defaultdict",
+                    "collections.deque",
+                    "collections.abc.AsyncGenerator",
+                    "collections.abc.AsyncIterable",
+                    "collections.abc.AsyncIterator",
+                    "collections.abc.Awaitable",
+                    "collections.abc.ByteString",
+                    "collections.abc.Callable",
+                    "collections.abc.Collection",
+                    "collections.abc.Container",
+                    "collections.abc.Coroutine",
+                    "collections.abc.Generator",
+                    "collections.abc.ItemsView",
+                    "collections.abc.Iterable",
+                    "collections.abc.Iterator",
+                    "collections.abc.KeysView",
+                    "collections.abc.Mapping",
+                    "collections.abc.MappingView",
+                    "collections.abc.MutableMapping",
+                    "collections.abc.MutableSequence",
+                    "collections.abc.MutableSet",
+                    "collections.abc.Reversible",
+                    "collections.abc.Sequence",
+                    "collections.abc.Set",
+                    "collections.abc.ValuesView",
+                    "contextlib.AbstractAsyncContextManager",
+                    "contextlib.AbstractContextManager",
+                    "re.Match",
+                    "re.Pattern",
+                    "typing.io.BinaryIO",
+                    "typing.io.IO",
+                    "typing.io.TextIO",
+                    "typing.re.Match",
+                    "typing.re.Pattern",
+                    "weakref.WeakKeyDictionary",
+                    "weakref.WeakSet",
+                    "weakref.WeakValueDictionary"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "generic-head"
+                }
+              }
+            ]
+          },
+          "annotated-head": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "typing.Annotated",
+                    "typing_extensions.Annotated"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "annotated-head"
+                }
+              }
+            ]
+          },
+          "annotated-tail": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "subscript",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "annotated-head"
+                  }
+                },
+                "follows": {
+                  "stopBy": "end",
+                  "regex": "^,$"
+                }
+              },
+              {
+                "kind": "type",
+                "follows": {
+                  "stopBy": "end",
+                  "regex": "^,$"
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "type_parameter",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "generic_type",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "annotated-head"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "boundary": {
+            "any": [
+              {
+                "kind": "call"
+              },
+              {
+                "matches": "annotated-tail"
+              }
+            ]
+          },
+          "typedef": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "boundary"
+                  },
+                  "kind": "type",
+                  "not": {
+                    "matches": "annotated-tail"
+                  }
+                }
+              },
+              {
+                "matches": "slot-context"
+              },
+              {
+                "matches": "call-type-argument"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "boundary"
+                  },
+                  "matches": "call-type-argument"
+                }
+              }
+            ]
+          },
+          "newtype-head": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "typing.NewType",
+                    "typing_extensions.NewType",
+                    "_typeshed.NewType"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "newtype-head"
+                }
+              }
+            ]
+          },
+          "typevar-head": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "typing.TypeVar",
+                    "typing_extensions.TypeVar",
+                    "_typeshed.TypeVar"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "typevar-head"
+                }
+              }
+            ]
+          },
+          "positional": {
+            "not": {
+              "any": [
+                {
+                  "kind": "keyword_argument"
+                },
+                {
+                  "kind": "list_splat"
+                },
+                {
+                  "kind": "dictionary_splat"
+                },
+                {
+                  "matches": "trivia"
+                }
+              ]
+            }
+          },
+          "slot-context": {
+            "inside": {
+              "stopBy": {
+                "matches": "boundary"
+              },
+              "kind": "subscript",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "value",
+                "any": [
+                  {
+                    "matches": "generic-head"
+                  },
+                  {
+                    "matches": "annotated-head"
+                  }
+                ]
+              }
+            }
+          },
+          "call-type-argument": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "argument_list",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "call",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "function",
+                          "matches": "newtype-head"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "matches": "positional"
+                  },
+                  {
+                    "nthChild": {
+                      "position": 2,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "argument_list",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "call",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "function",
+                          "matches": "newtype-head"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "kind": "keyword_argument",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "name",
+                      "regex": "^(tp)$"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "argument_list",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "call",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "function",
+                          "matches": "typevar-head"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "matches": "positional"
+                  },
+                  {
+                    "nthChild": {
+                      "position": "n+2",
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "argument_list",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "call",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "function",
+                          "matches": "typevar-head"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "kind": "keyword_argument"
+                  }
+                ]
+              }
+            ]
+          },
+          "string-typedef": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "boundary"
+                  },
+                  "kind": "expression_statement"
+                }
+              },
+              {
+                "matches": "slot-context"
+              }
+            ]
+          },
+          "typedef-or-parsed": {
+            "any": [
+              {
+                "matches": "typedef"
+              },
+              {
+                "all": [
+                  {
+                    "not": {
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "module"
+                      }
+                    }
+                  },
+                  {
+                    "matches": "string-typedef"
+                  }
+                ]
+              }
+            ]
+          },
+          "root": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "matches": "pipe"
+                  },
+                  {
+                    "matches": "chain-sub"
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "matches": "slot"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "not": {
+                      "matches": "pipe"
+                    }
+                  },
+                  {
+                    "all": [
+                      {
+                        "matches": "typedef-or-parsed"
+                      },
+                      {
+                        "not": {
+                          "matches": "annotated-tail"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "in-root": {
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "matches": "link"
+                }
+              },
+              "matches": "root"
+            }
+          },
+          "dup-struct": {
+            "all": [
+              {
+                "matches": "leaf"
+              },
+              {
+                "not": {
+                  "kind": "none"
+                }
+              },
+              {
+                "pattern": "$DUP"
+              },
+              {
+                "matches": "earlier-eq"
+              },
+              {
+                "matches": "in-root"
+              }
+            ]
+          },
+          "dup-none": {
+            "all": [
+              {
+                "matches": "none-leaf"
+              },
+              {
+                "pattern": "$DUP"
+              },
+              {
+                "matches": "earlier-none"
+              },
+              {
+                "matches": "in-root"
+              }
+            ]
+          },
+          "dup-optional": {
+            "all": [
+              {
+                "matches": "optional-head"
+              },
+              {
+                "pattern": "$DUP"
+              },
+              {
+                "matches": "earlier-none"
+              },
+              {
+                "matches": "in-root"
+              }
+            ]
+          },
+          "ann-struct": {
+            "kind": "string",
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "dup-struct",
+                    "capture": "DUP"
+                  },
+                  {
+                    "matches": "ann-struct"
+                  }
+                ]
+              }
+            }
+          },
+          "ann-none": {
+            "kind": "string",
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "dup-none",
+                    "capture": "DUP"
+                  },
+                  {
+                    "matches": "ann-none"
+                  }
+                ]
+              }
+            }
+          },
+          "ann-optional": {
+            "kind": "string",
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "dup-optional",
+                    "capture": "DUP"
+                  },
+                  {
+                    "matches": "ann-optional"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "duplicate-union-member",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "matches": "dup-struct"
+              },
+              {
+                "matches": "dup-none"
+              },
+              {
+                "matches": "ann-struct"
+              },
+              {
+                "matches": "ann-none"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.DUP",
+        "code": "PYI016",
+        "each": "DUP",
+        "message": "Remove the repeated member `$DUP` from this union; an earlier member already covers it.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI016"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "repeated-optional",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "matches": "dup-optional"
+              },
+              {
+                "matches": "ann-optional"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.DUP",
+        "code": "PYI016",
+        "each": "DUP",
+        "message": "Replace this `Optional[...]` with its inner type; the union already includes None through an earlier member.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI016"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,408 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pt021-pytest-fixture-finalizer-callback",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Prefer a yield with the cleanup after it over a finalizer callback in a pytest fixture; reserve the callback for fixtures that build resources on demand.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "fixture-finalizer-callback",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "fixture-ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "pytest.fixture",
+                  "pytest.yield_fixture"
+                ]
+              }
+            },
+            "fixture-callee": {
+              "any": [
+                {
+                  "matches": "fixture-ref"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "fixture-callee"
+                  }
+                }
+              ]
+            },
+            "fixture-expr": {
+              "any": [
+                {
+                  "matches": "fixture-callee"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "matches": "fixture-callee"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "fixture-expr"
+                  }
+                }
+              ]
+            },
+            "request-name": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^request$"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "request-name"
+                  }
+                }
+              ]
+            },
+            "finalizer-attr": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "object",
+                    "matches": "request-name"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "field": "attribute",
+                        "regex": "^addfinalizer$"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "finalizer-attr"
+                  }
+                }
+              ]
+            },
+            "request-param": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^request$"
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "default_parameter"
+                    },
+                    {
+                      "kind": "typed_default_parameter"
+                    }
+                  ],
+                  "has": {
+                    "field": "name",
+                    "regex": "^request$"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "list_splat_pattern"
+                    },
+                    {
+                      "kind": "dictionary_splat_pattern"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "regex": "^request$"
+                  }
+                },
+                {
+                  "kind": "typed_parameter",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "identifier",
+                        "regex": "^request$"
+                      },
+                      {
+                        "any": [
+                          {
+                            "kind": "list_splat_pattern"
+                          },
+                          {
+                            "kind": "dictionary_splat_pattern"
+                          }
+                        ],
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "identifier",
+                          "regex": "^request$"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "fixture-with-request": {
+              "kind": "function_definition",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "decorated_definition",
+                "has": {
+                  "kind": "decorator",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "fixture-expr"
+                  }
+                }
+              },
+              "has": {
+                "field": "parameters",
+                "kind": "parameters",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "request-param"
+                }
+              }
+            },
+            "opaque": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "lambda"
+                    },
+                    {
+                      "kind": "await"
+                    },
+                    {
+                      "kind": "binary_operator"
+                    },
+                    {
+                      "kind": "boolean_operator"
+                    },
+                    {
+                      "kind": "not_operator"
+                    },
+                    {
+                      "kind": "unary_operator"
+                    },
+                    {
+                      "kind": "comparison_operator"
+                    },
+                    {
+                      "kind": "conditional_expression"
+                    },
+                    {
+                      "kind": "attribute"
+                    },
+                    {
+                      "kind": "subscript"
+                    },
+                    {
+                      "kind": "list"
+                    },
+                    {
+                      "kind": "tuple"
+                    },
+                    {
+                      "kind": "set"
+                    },
+                    {
+                      "kind": "dictionary"
+                    },
+                    {
+                      "kind": "pair"
+                    },
+                    {
+                      "kind": "list_comprehension"
+                    },
+                    {
+                      "kind": "set_comprehension"
+                    },
+                    {
+                      "kind": "dictionary_comprehension"
+                    },
+                    {
+                      "kind": "generator_expression"
+                    },
+                    {
+                      "kind": "named_expression"
+                    },
+                    {
+                      "kind": "yield"
+                    },
+                    {
+                      "kind": "interpolation"
+                    },
+                    {
+                      "kind": "list_splat"
+                    },
+                    {
+                      "kind": "slice"
+                    },
+                    {
+                      "kind": "expression_list"
+                    },
+                    {
+                      "kind": "return_statement"
+                    }
+                  ]
+                },
+                {
+                  "kind": "decorator",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "decorated_definition",
+                    "has": {
+                      "field": "definition",
+                      "kind": "function_definition"
+                    }
+                  }
+                }
+              ]
+            },
+            "walked-call": {
+              "kind": "call",
+              "has": {
+                "field": "function",
+                "matches": "finalizer-attr"
+              },
+              "all": [
+                {
+                  "not": {
+                    "inside": {
+                      "stopBy": {
+                        "kind": "block"
+                      },
+                      "matches": "opaque"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "block",
+                    "stopBy": {
+                      "kind": "function_definition"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": {
+                      "kind": "function_definition"
+                    },
+                    "kind": "function_definition",
+                    "matches": "fixture-with-request"
+                  }
+                }
+              ]
+            },
+            "later-call": {
+              "any": [
+                {
+                  "matches": "walked-call"
+                },
+                {
+                  "has": {
+                    "stopBy": {
+                      "kind": "function_definition"
+                    },
+                    "matches": "walked-call"
+                  }
+                }
+              ],
+              "not": {
+                "kind": "function_definition"
+              }
+            },
+            "not-last": {
+              "any": [
+                {
+                  "has": {
+                    "stopBy": "end",
+                    "matches": "walked-call"
+                  }
+                },
+                {
+                  "precedes": {
+                    "stopBy": "end",
+                    "matches": "later-call"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": {
+                      "kind": "function_definition"
+                    },
+                    "not": {
+                      "kind": "function_definition"
+                    },
+                    "precedes": {
+                      "stopBy": "end",
+                      "matches": "later-call"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "matches": "walked-call"
+              },
+              {
+                "not": {
+                  "matches": "not-last"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PT021",
+        "message": "Replace this finalizer registration with a `yield` of the fixture value and run the cleanup after it. Keep it only if cleanup must still run when later setup code raises.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT021"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,80 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-n818-error-suffix-on-exception-name",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Name custom exception classes with an Error suffix, as PEP 8 recommends, unless the exception does not signal an error.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "error-suffix-on-exception-name",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "exception-base": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^(?:Exception|.*Error)$"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "exception-base"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$NAME",
+            "inside": {
+              "stopBy": "neighbor",
+              "field": "name",
+              "kind": "class_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "superclasses",
+                "kind": "argument_list",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "exception-base"
+                }
+              }
+            },
+            "not": {
+              "any": [
+                {
+                  "regex": "Error$"
+                },
+                {
+                  "regex": "^(?:setUp|tearDown|setUpClass|tearDownClass|setUpModule|tearDownModule|asyncSetUp|asyncTearDown|setUpTestData|failureException|longMessage|maxDiff)$"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "N818",
+        "message": "Rename the exception class `$NAME` to end in `Error`, such as `${NAME}Error`, and update its references; keep the name if it is a control-flow signal rather than an error.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "N818"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

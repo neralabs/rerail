@@ -1,0 +1,335 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi063-pep484-style-positional-only-parameter",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Mark positional-only parameters with a slash in the signature instead of a double-underscore name prefix; the slash is enforced at runtime, the prefix only by type checkers.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "pep484-style-positional-only-parameter",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "static-name": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "staticmethod"
+                    ],
+                    "import": [
+                      "builtins.staticmethod",
+                      "abc.abstractstaticmethod"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "static-name"
+                  }
+                }
+              ]
+            },
+            "static-ref": {
+              "any": [
+                {
+                  "matches": "static-name"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "matches": "static-name"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "static-ref"
+                  }
+                }
+              ]
+            },
+            "class-name": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "classmethod"
+                    ],
+                    "import": [
+                      "builtins.classmethod",
+                      "abc.abstractclassmethod"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "class-name"
+                  }
+                }
+              ]
+            },
+            "class-ref": {
+              "any": [
+                {
+                  "matches": "class-name"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "matches": "class-name"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "class-ref"
+                  }
+                }
+              ]
+            },
+            "skips-first": {
+              "kind": "function_definition",
+              "inside": {
+                "stopBy": {
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "class_definition"
+                    }
+                  ]
+                },
+                "kind": "class_definition"
+              },
+              "not": {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "decorated_definition",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "decorator",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "static-ref"
+                    }
+                  }
+                }
+              },
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "decorated_definition",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "decorator",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "class-ref"
+                      }
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "name",
+                      "regex": "^__new__$"
+                    }
+                  }
+                }
+              ]
+            },
+            "positional": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "default_parameter"
+                },
+                {
+                  "kind": "typed_default_parameter"
+                },
+                {
+                  "kind": "typed_parameter",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "list_splat_pattern"
+                        },
+                        {
+                          "kind": "dictionary_splat_pattern"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ],
+              "not": {
+                "follows": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "kind": "keyword_separator"
+                    },
+                    {
+                      "kind": "list_splat_pattern"
+                    },
+                    {
+                      "kind": "typed_parameter",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "list_splat_pattern"
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "target-param": {
+              "matches": "positional",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "parameters",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "positional_separator"
+                  }
+                }
+              },
+              "any": [
+                {
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "matches": "positional"
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parameters",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "function_definition",
+                      "not": {
+                        "matches": "skips-first"
+                      }
+                    }
+                  }
+                },
+                {
+                  "nthChild": {
+                    "position": 2,
+                    "ofRule": {
+                      "matches": "positional"
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parameters",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "function_definition",
+                      "matches": "skips-first"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$NAME",
+            "regex": "^_[_\uff3f\ufe33\ufe34\ufe4d-\ufe4f]",
+            "not": {
+              "regex": "[_\uff3f\ufe33\ufe34\ufe4d-\ufe4f][_\uff3f\ufe33\ufe34\ufe4d-\ufe4f]$"
+            },
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parameters"
+                },
+                "matches": "target-param"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "typed_parameter",
+                  "matches": "target-param"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "any": [
+                    {
+                      "kind": "default_parameter"
+                    },
+                    {
+                      "kind": "typed_default_parameter"
+                    }
+                  ],
+                  "matches": "target-param"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI063",
+        "message": "Drop the `__` prefix from `$NAME` and from the `__`-prefixed parameters right after it (renaming their uses), then add `/` after the last one; skip this if the code supports Python before 3.8.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI063"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -3,7 +3,7 @@
  "id": "ruff-log001-direct-logger-instantiation",
  "revision": 1,
  "mode": "steer",
- "description": "Port of Ruff's LOG001 (direct-logger-instantiation): the callee of a call (parentheses transparent) that is a name or attribute resolving to `logging.Logger` through the file's imports (Ruff's `resolve_qualified_name`), reported on the callee expression itself (`call.func`, inside any parentheses).",
+ "description": "Use logging.getLogger() instead of instantiating Logger directly; a directly created logger is not part of the logger tree and bypasses logging configuration.",
  "scope": {
   "include": [
    "**/*"
@@ -44,7 +44,7 @@
    "violation": {
     "anchor": "witness.span",
     "code": "LOG001",
-    "message": "Use `logging.getLogger()` to instantiate loggers",
+    "message": "Use `logging.getLogger(name)` instead of `Logger(...)`; a direct instance skips the logger tree and its configuration. Keep it only if a detached logger is intended.",
     "suppress": {
      "noqa": {
       "codes": [

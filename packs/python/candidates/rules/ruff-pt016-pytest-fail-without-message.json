@@ -3,7 +3,7 @@
   "id": "ruff-pt016-pytest-fail-without-message",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's PT016 (pytest-fail-without-message), `fail_call` in flake8_pytest_style/rules/fail.rs: a call whose callee (parentheses transparent) resolves to `pytest.fail` (through any import form or alias, with `resolves`), whose message, read as Ruff's `find_argument_value(\"reason\", 0)` or else `find_argument_value(\"msg\", 0)` (the `reason=` keyword, else the first positional argument before any starred one, else the `msg=` keyword), is missing or is an empty or null string as `is_empty_or_null_string` reads it: `None`, an empty str literal (implicit concatenations joined; not bytes, not a t-string), or an f-string whose literal parts are empty and whose interpolations each hold (parentheses transparent) such an empty or null string, whatever their conversion, format spec or `=`. Reported on the callee.",
+  "description": "Pass a non-empty message to pytest.fail calls; a bare failure gives no hint why the test failed.",
   "scope": {
     "include": [
       "**/*"
@@ -182,7 +182,7 @@
       "violation": {
         "anchor": "capture.F",
         "code": "PT016",
-        "message": "No message passed to `pytest.fail()`",
+        "message": "Add a message to `$F(...)` that says why the test is failing, so the failure report explains itself.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -219,7 +219,7 @@
       "violation": {
         "anchor": "capture.F",
         "code": "PT016",
-        "message": "No message passed to `pytest.fail()`",
+        "message": "Give `$F(...)` a message that is not empty or `None`, saying why the test is failing.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -270,7 +270,7 @@
       "violation": {
         "anchor": "capture.F",
         "code": "PT016",
-        "message": "No message passed to `pytest.fail()`",
+        "message": "Give `$F(...)` a `msg=` value that is not empty or `None`, saying why the test is failing.",
         "suppress": {
           "noqa": {
             "codes": [

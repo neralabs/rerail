@@ -1,0 +1,90 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf034-useless-if-else",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid a conditional expression whose two branches are identical; use the value directly, since the condition changes nothing.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "useless-if-else",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "conditional_expression",
+            "pattern": "$A if $C else $B",
+            "compare": {
+              "left": "A",
+              "op": "eq",
+              "right": "B",
+              "text": "structure"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RUF034",
+        "message": "Both branches are identical, so the condition changes nothing: use the branch value alone, or fix the branch that should differ. Keep the test only if evaluating it has side effects.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF034"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "useless-if-else-in-string-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "kind": "conditional_expression",
+                "capture": "COND",
+                "pattern": "$A if $C else $B",
+                "compare": {
+                  "left": "A",
+                  "op": "eq",
+                  "right": "B",
+                  "text": "structure"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.COND",
+        "code": "RUF034",
+        "message": "Both branches are identical, so the condition changes nothing: use the branch value alone, or fix the branch that should differ. Keep the test only if evaluating it has side effects.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF034"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

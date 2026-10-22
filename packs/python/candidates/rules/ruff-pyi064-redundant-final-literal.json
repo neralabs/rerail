@@ -1,0 +1,369 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi064-redundant-final-literal",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use a bare Final annotation for constants instead of wrapping a single literal type in Final; type checkers already infer the literal type from the value.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "final-ref": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              },
+              {
+                "kind": "parenthesized_expression"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "typing.Final",
+                "typing_extensions.Final",
+                "_typeshed.Final"
+              ]
+            }
+          },
+          "literal-ref": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              },
+              {
+                "kind": "parenthesized_expression"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "typing.Literal",
+                "typing_extensions.Literal",
+                "_typeshed.Literal"
+              ]
+            }
+          },
+          "single": {
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "regex": "^,$"
+              }
+            }
+          },
+          "plain-literal": {
+            "any": [
+              {
+                "kind": "integer"
+              },
+              {
+                "kind": "float"
+              },
+              {
+                "kind": "true"
+              },
+              {
+                "kind": "false"
+              },
+              {
+                "kind": "none"
+              },
+              {
+                "kind": "ellipsis"
+              },
+              {
+                "kind": "string",
+                "regex": "^[rRbBuU]*['\"]"
+              },
+              {
+                "kind": "concatenated_string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "not": {
+                      "regex": "^[rRbBuU]*['\"]"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "plain-literal"
+                }
+              }
+            ]
+          },
+          "literal-of-plain": {
+            "any": [
+              {
+                "kind": "generic_type",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "literal-ref"
+                },
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "type_parameter",
+                      "matches": "single",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "type",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "plain-literal",
+                          "pattern": "$LIT"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "subscript",
+                "matches": "single",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "value",
+                      "matches": "literal-ref"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "subscript",
+                      "matches": "plain-literal",
+                      "pattern": "$LIT"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "literal-of-plain"
+                }
+              }
+            ]
+          },
+          "final-of-literal": {
+            "any": [
+              {
+                "kind": "generic_type",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "final-ref"
+                },
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "type_parameter",
+                      "matches": "single",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "type",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "literal-of-plain"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "subscript",
+                "matches": "single",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "value",
+                      "matches": "final-ref"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "subscript",
+                      "matches": "literal-of-plain"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "final-of-literal"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "redundant-final-literal",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "assignment",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "type",
+                  "kind": "type",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "final-of-literal"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "right",
+                  "pattern": "$VAL"
+                }
+              }
+            ],
+            "compare": {
+              "left": "LIT",
+              "op": "eq",
+              "right": "VAL",
+              "text": "structure"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI064",
+        "message": "Drop the `Literal[...]` and annotate with a bare `Final`; the type checker infers the literal type from the assigned value.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI064"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "redundant-final-literal-unassigned",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "assignment",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "type",
+                  "kind": "type",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "final-of-literal"
+                  }
+                }
+              }
+            ],
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "field": "right",
+                "regex": "(?s)."
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI064",
+        "message": "Annotate with a bare `Final` and assign `$LIT` as the value instead of writing `Final[Literal[$LIT]]`; leave it if `__init__` assigns this attribute instead.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI064"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "redundant-final-literal-mismatch",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "assignment",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "type",
+                  "kind": "type",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "final-of-literal"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "right",
+                  "pattern": "$VAL"
+                }
+              }
+            ],
+            "compare": {
+              "left": "LIT",
+              "op": "ne",
+              "right": "VAL",
+              "text": "structure"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI064",
+        "message": "The value is not the literal `$LIT`: if it should be, assign `$LIT` and annotate with a bare `Final`; otherwise fix the `Literal[...]` type to match the value.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI064"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

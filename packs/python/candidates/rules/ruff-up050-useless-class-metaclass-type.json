@@ -3,7 +3,7 @@
   "id": "ruff-up050-useless-class-metaclass-type",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's UP050 (useless-class-metaclass-type): a `metaclass=` keyword argument in a class definition's base-class list whose value (parentheses transparent) resolves to the builtin `type` (Ruff's `match_builtin_expr`: the unshadowed name `type`, or `type` of the `builtins` module through the file's imports). Reported on the keyword argument, from `metaclass` to the end of its value; every such keyword of a class is reported.",
+  "description": "Remove an explicit type metaclass from a class definition; it is already the default metaclass.",
   "scope": {
     "include": ["**/*"],
     "exclude": []
@@ -52,7 +52,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "UP050",
-        "message": "Class `$NAME` uses `metaclass=type`, which is redundant",
+        "message": "Remove `metaclass=type` from class `$NAME`; `type` is already the default metaclass. If it is the only argument, drop the parentheses too.",
         "suppress": { "noqa": { "codes": ["UP050"] } }
       }
     }

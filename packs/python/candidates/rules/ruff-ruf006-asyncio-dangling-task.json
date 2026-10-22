@@ -1,0 +1,350 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf006-asyncio-dangling-task",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Keep a reference to every task created with asyncio, such as in a variable or collection; the event loop holds tasks only weakly, so they can be dropped before they finish.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "create-fn": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "asyncio.create_task",
+                    "asyncio.ensure_future"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "create-fn"
+                }
+              }
+            ]
+          },
+          "loop-getter": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "asyncio.get_event_loop",
+                    "asyncio.get_running_loop",
+                    "asyncio.new_event_loop"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "loop-getter"
+                }
+              }
+            ]
+          },
+          "loop-call": {
+            "any": [
+              {
+                "kind": "call",
+                "has": {
+                  "field": "function",
+                  "matches": "loop-getter"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "loop-call"
+                }
+              }
+            ]
+          },
+          "loop-assign": {
+            "kind": "assignment",
+            "has": {
+              "field": "right",
+              "any": [
+                {
+                  "matches": "loop-call"
+                },
+                {
+                  "matches": "loop-assign"
+                }
+              ]
+            }
+          },
+          "loop-ref": {
+            "any": [
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "matches": "loop-assign"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "loop-ref"
+                }
+              }
+            ]
+          },
+          "loop-create": {
+            "any": [
+              {
+                "kind": "attribute",
+                "all": [
+                  {
+                    "has": {
+                      "field": "attribute",
+                      "regex": "^create_task$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "loop-ref"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "loop-create"
+                }
+              }
+            ]
+          },
+          "task-callee": {
+            "any": [
+              {
+                "matches": "create-fn"
+              },
+              {
+                "matches": "loop-create"
+              }
+            ]
+          },
+          "task-call": {
+            "kind": "call",
+            "has": {
+              "field": "function",
+              "matches": "task-callee"
+            }
+          },
+          "scope": {
+            "any": [
+              {
+                "kind": "function_definition"
+              },
+              {
+                "kind": "class_definition"
+              },
+              {
+                "kind": "module"
+              }
+            ]
+          },
+          "live-unused": {
+            "params": [
+              "N"
+            ],
+            "rule": {
+              "pattern": "$N",
+              "inside": {
+                "stopBy": {
+                  "matches": "scope"
+                },
+                "matches": "scope",
+                "has": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "class_definition"
+                      }
+                    ]
+                  },
+                  "kind": "identifier",
+                  "pattern": "$M",
+                  "binds": {
+                    "latest": true,
+                    "used": false,
+                    "outer": false,
+                    "form": [
+                      "assignment",
+                      "annotated",
+                      "augmented",
+                      "match",
+                      "typeAlias"
+                    ]
+                  },
+                  "compare": {
+                    "left": "M",
+                    "op": "eq",
+                    "right": "N"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "dangling-task",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "matches": "task-call",
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              "kind": "expression_statement",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^,$"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RUF006",
+        "message": "Keep a reference to this task: add it to a set and discard it in `add_done_callback`, or await it. Otherwise it can be garbage collected before it finishes.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF006"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "unread-task-variable",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "matches": "task-call",
+            "inside": {
+              "field": "right",
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              "kind": "assignment",
+              "not": {
+                "inside": {
+                  "field": "right",
+                  "stopBy": "neighbor",
+                  "kind": "assignment"
+                }
+              },
+              "has": {
+                "field": "left",
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "pattern": "$N",
+                    "matches": {
+                      "live-unused": {
+                        "N": "$N"
+                      }
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "tuple_pattern"
+                      },
+                      {
+                        "kind": "list_pattern"
+                      },
+                      {
+                        "kind": "pattern_list"
+                      }
+                    ],
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "identifier",
+                      "pattern": "$N",
+                      "matches": {
+                        "live-unused": {
+                          "N": "$N"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RUF006",
+        "message": "`$N` is never read, so the task is only weakly referenced. Add it to a set and discard it in `add_done_callback`, or await it.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF006"
+            ]
+          }
+        },
+        "each": "N"
+      }
+    }
+  ]
+}

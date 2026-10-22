@@ -1,0 +1,663 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up043-unnecessary-default-type-args",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Omit the trailing None type arguments from Generator and AsyncGenerator annotations; they are the defaults since Python 3.13.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "none": {
+            "any": [
+              {
+                "kind": "none"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "none"
+                }
+              },
+              {
+                "kind": "type",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "none"
+                }
+              }
+            ]
+          },
+          "generator": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "collections.abc.Generator",
+                    "typing.Generator",
+                    "_typeshed.Generator",
+                    "typing_extensions.Generator"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "generator"
+                }
+              }
+            ]
+          },
+          "async-generator": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "collections.abc.AsyncGenerator",
+                    "typing.AsyncGenerator",
+                    "_typeshed.AsyncGenerator",
+                    "typing_extensions.AsyncGenerator"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "async-generator"
+                }
+              }
+            ]
+          },
+          "tuple-generator": {
+            "any": [
+              {
+                "kind": "tuple",
+                "matches": "tuple-generator-elements"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "kind": "tuple",
+                  "matches": "tuple-generator-elements"
+                }
+              }
+            ]
+          },
+          "tuple-generator-elements": {
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "none",
+              "all": [
+                {
+                  "nthChild": {
+                    "position": 1,
+                    "reverse": true,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "nthChild": {
+                        "position": 2,
+                        "ofRule": {
+                          "not": {
+                            "kind": "comment"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "nthChild": {
+                        "position": 3,
+                        "ofRule": {
+                          "not": {
+                            "kind": "comment"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "tuple-async-generator": {
+            "any": [
+              {
+                "kind": "tuple",
+                "matches": "tuple-async-generator-elements"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "kind": "tuple",
+                  "matches": "tuple-async-generator-elements"
+                }
+              }
+            ]
+          },
+          "tuple-async-generator-elements": {
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "none",
+              "all": [
+                {
+                  "nthChild": {
+                    "position": 1,
+                    "reverse": true,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                },
+                {
+                  "nthChild": {
+                    "position": 2,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "unnecessary-default": {
+            "any": [
+              {
+                "kind": "subscript",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "value",
+                      "matches": "generator"
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "none",
+                          "all": [
+                            {
+                              "nthChild": {
+                                "position": 1,
+                                "reverse": true,
+                                "ofRule": {
+                                  "not": {
+                                    "kind": "comment"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "any": [
+                                {
+                                  "nthChild": {
+                                    "position": 3,
+                                    "ofRule": {
+                                      "not": {
+                                        "kind": "comment"
+                                      }
+                                    }
+                                  }
+                                },
+                                {
+                                  "nthChild": {
+                                    "position": 4,
+                                    "ofRule": {
+                                      "not": {
+                                        "kind": "comment"
+                                      }
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "tuple-generator",
+                          "all": [
+                            {
+                              "nthChild": {
+                                "position": 1,
+                                "reverse": true,
+                                "ofRule": {
+                                  "not": {
+                                    "kind": "comment"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "nthChild": {
+                                "position": 2,
+                                "ofRule": {
+                                  "not": {
+                                    "kind": "comment"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "not": {
+                                "precedes": {
+                                  "stopBy": {
+                                    "not": {
+                                      "kind": "comment"
+                                    }
+                                  },
+                                  "regex": "^,$"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "generic_type",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "generator"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "type_parameter",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "type",
+                        "any": [
+                          {
+                            "matches": "none",
+                            "all": [
+                              {
+                                "nthChild": {
+                                  "position": 1,
+                                  "reverse": true,
+                                  "ofRule": {
+                                    "not": {
+                                      "kind": "comment"
+                                    }
+                                  }
+                                }
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "nthChild": {
+                                      "position": 2,
+                                      "ofRule": {
+                                        "not": {
+                                          "kind": "comment"
+                                        }
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "nthChild": {
+                                      "position": 3,
+                                      "ofRule": {
+                                        "not": {
+                                          "kind": "comment"
+                                        }
+                                      }
+                                    }
+                                  }
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "all": [
+                              {
+                                "nthChild": {
+                                  "position": 1,
+                                  "reverse": true,
+                                  "ofRule": {
+                                    "not": {
+                                      "kind": "comment"
+                                    }
+                                  }
+                                }
+                              },
+                              {
+                                "nthChild": {
+                                  "position": 1,
+                                  "ofRule": {
+                                    "not": {
+                                      "kind": "comment"
+                                    }
+                                  }
+                                }
+                              },
+                              {
+                                "not": {
+                                  "precedes": {
+                                    "stopBy": {
+                                      "not": {
+                                        "kind": "comment"
+                                      }
+                                    },
+                                    "regex": "^,$"
+                                  }
+                                }
+                              },
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "matches": "tuple-generator"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "subscript",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "value",
+                      "matches": "async-generator"
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "none",
+                          "all": [
+                            {
+                              "nthChild": {
+                                "position": 1,
+                                "reverse": true,
+                                "ofRule": {
+                                  "not": {
+                                    "kind": "comment"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "nthChild": {
+                                "position": 3,
+                                "ofRule": {
+                                  "not": {
+                                    "kind": "comment"
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "tuple-async-generator",
+                          "all": [
+                            {
+                              "nthChild": {
+                                "position": 1,
+                                "reverse": true,
+                                "ofRule": {
+                                  "not": {
+                                    "kind": "comment"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "nthChild": {
+                                "position": 2,
+                                "ofRule": {
+                                  "not": {
+                                    "kind": "comment"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "not": {
+                                "precedes": {
+                                  "stopBy": {
+                                    "not": {
+                                      "kind": "comment"
+                                    }
+                                  },
+                                  "regex": "^,$"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "generic_type",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "async-generator"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "type_parameter",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "type",
+                        "any": [
+                          {
+                            "matches": "none",
+                            "all": [
+                              {
+                                "nthChild": {
+                                  "position": 1,
+                                  "reverse": true,
+                                  "ofRule": {
+                                    "not": {
+                                      "kind": "comment"
+                                    }
+                                  }
+                                }
+                              },
+                              {
+                                "nthChild": {
+                                  "position": 2,
+                                  "ofRule": {
+                                    "not": {
+                                      "kind": "comment"
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "all": [
+                              {
+                                "nthChild": {
+                                  "position": 1,
+                                  "reverse": true,
+                                  "ofRule": {
+                                    "not": {
+                                      "kind": "comment"
+                                    }
+                                  }
+                                }
+                              },
+                              {
+                                "nthChild": {
+                                  "position": 1,
+                                  "ofRule": {
+                                    "not": {
+                                      "kind": "comment"
+                                    }
+                                  }
+                                }
+                              },
+                              {
+                                "not": {
+                                  "precedes": {
+                                    "stopBy": {
+                                      "not": {
+                                        "kind": "comment"
+                                      }
+                                    },
+                                    "regex": "^,$"
+                                  }
+                                }
+                              },
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "matches": "tuple-async-generator"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "default-type-args-in-stub",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          },
+          "rule": {
+            "matches": "unnecessary-default"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP043",
+        "message": "Omit the trailing `None` type arguments of this generator annotation (`Generator[int]` for `Generator[int, None, None]`); they are the defaults.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP043"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "default-type-args",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "min": "3.13"
+            }
+          },
+          "file": {
+            "path": {
+              "notRegex": "\\.pyi$"
+            }
+          },
+          "rule": {
+            "matches": "unnecessary-default"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP043",
+        "message": "Omit the trailing `None` type arguments of this generator annotation (`Generator[int]` for `Generator[int, None, None]`); Python 3.13 made them the defaults.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP043"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,168 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up015-redundant-open-modes",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Drop redundant flags from the mode passed to open(); text reading is the default, so t, U and a bare r add nothing.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "callee": {
+            "any": [
+              {
+                "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                "resolves": { "global": ["open"], "import": ["builtins.open", "aiofiles.open"] }
+              },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "callee" } }
+            ]
+          },
+          "plain-string": {
+            "any": [
+              { "kind": "string", "not": { "regex": "^[A-Za-z]*[fFtT]" } },
+              { "kind": "concatenated_string", "not": { "has": { "stopBy": "neighbor", "kind": "string", "regex": "^[A-Za-z]*[fFtT]" } } }
+            ]
+          },
+          "open-call": {
+            "kind": "call",
+            "has": { "stopBy": "neighbor", "field": "function", "matches": "callee" },
+            "arguments": { "signature": ["file", "mode"], "bind": { "M": "mode" }, "mode": "syntactic" }
+          },
+          "redundant-mode": {
+            "matches": "plain-string",
+            "all": [
+              { "value": { "type": "str", "regex": "^[rwaxbtU+]+$" } },
+              { "value": { "regex": "[rUwax]" } },
+              { "not": { "value": { "regex": "(.).*\\1" } } },
+              { "not": { "value": { "regex": "t.*b|b.*t|[rU].*[wax]|[wax].*[rU]|[wax].*[wax]" } } },
+              { "any": [{ "value": { "regex": "[tU]" } }, { "all": [{ "value": { "regex": "r" } }, { "not": { "value": { "regex": "[b+]" } } }] }] }
+            ]
+          },
+          "empty-mode": { "all": [{ "matches": "redundant-mode" }, { "value": { "regex": "^[rtU]+$" } }] },
+          "flags-mode": { "all": [{ "matches": "redundant-mode" }, { "value": { "regex": "[bwax+]" } }] }
+        }
+      }
+    },
+    {
+      "id": "mode-only-redundant",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "mode-only-redundant-site": {
+              "any": [
+                { "matches": "empty-mode", "pattern": "$S" },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "mode-only-redundant-site" } }
+              ]
+            },
+            "mode-only-redundant-slot": {
+              "matches": "empty-mode",
+              "pattern": "$L",
+              "any": [
+                { "inside": { "stopBy": "end", "matches": "open-call", "compare": { "left": "L", "op": "eq", "right": "M", "text": "node" } } },
+                {
+                  "inside": {
+                    "stopBy": { "not": { "kind": "parenthesized_expression" } },
+                    "kind": "parenthesized_expression",
+                    "pattern": "$P",
+                    "inside": { "stopBy": "end", "matches": "open-call", "compare": { "left": "P", "op": "eq", "right": "M", "text": "node" } }
+                  }
+                }
+              ]
+            },
+            "mode-only-redundant-in-string": {
+              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [{ "matches": "mode-only-redundant-slot", "capture": "S" }, { "matches": "mode-only-redundant-in-string" }]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "call",
+                "has": { "stopBy": "neighbor", "field": "function", "matches": "callee" },
+                "arguments": { "signature": ["file", "mode"], "bind": { "M": "mode" }, "mode": "syntactic" }
+              },
+              { "matches": "mode-only-redundant-in-string" }
+            ]
+          },
+          "constraints": { "M": { "matches": "mode-only-redundant-site" } }
+        }
+      },
+      "violation": {
+        "anchor": "capture.S",
+        "code": "UP015",
+        "message": "Remove this mode argument; open() reads text by default, so `r`, `t` and `U` add nothing.",
+        "each": "S",
+        "suppress": { "noqa": { "codes": ["UP015"] } }
+      }
+    },
+    {
+      "id": "mode-has-redundant-flags",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "mode-has-redundant-flags-site": {
+              "any": [
+                { "matches": "flags-mode", "pattern": "$S" },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "mode-has-redundant-flags-site" } }
+              ]
+            },
+            "mode-has-redundant-flags-slot": {
+              "matches": "flags-mode",
+              "pattern": "$L",
+              "any": [
+                { "inside": { "stopBy": "end", "matches": "open-call", "compare": { "left": "L", "op": "eq", "right": "M", "text": "node" } } },
+                {
+                  "inside": {
+                    "stopBy": { "not": { "kind": "parenthesized_expression" } },
+                    "kind": "parenthesized_expression",
+                    "pattern": "$P",
+                    "inside": { "stopBy": "end", "matches": "open-call", "compare": { "left": "P", "op": "eq", "right": "M", "text": "node" } }
+                  }
+                }
+              ]
+            },
+            "mode-has-redundant-flags-in-string": {
+              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [{ "matches": "mode-has-redundant-flags-slot", "capture": "S" }, { "matches": "mode-has-redundant-flags-in-string" }]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "call",
+                "has": { "stopBy": "neighbor", "field": "function", "matches": "callee" },
+                "arguments": { "signature": ["file", "mode"], "bind": { "M": "mode" }, "mode": "syntactic" }
+              },
+              { "matches": "mode-has-redundant-flags-in-string" }
+            ]
+          },
+          "constraints": { "M": { "matches": "mode-has-redundant-flags-site" } }
+        }
+      },
+      "violation": {
+        "anchor": "capture.S",
+        "code": "UP015",
+        "message": "Drop the redundant flags from this mode: `t` and `U` always, and `r` unless `b` or `+` is also there (`Ub` becomes `rb`, `wt` becomes `w`).",
+        "each": "S",
+        "suppress": { "noqa": { "codes": ["UP015"] } }
+      }
+    }
+  ]
+}

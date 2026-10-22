@@ -1,0 +1,242 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pth201-path-constructor-current-directory",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Call Path() without arguments instead of passing the current directory explicitly; the constructor already defaults to it.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "ref": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "pathlib.Path",
+                "pathlib.PurePath"
+              ]
+            }
+          },
+          "dot-str": {
+            "any": [
+              {
+                "kind": "string",
+                "regex": "^[rRuU]{0,2}['\"]"
+              },
+              {
+                "kind": "concatenated_string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "not": {
+                      "regex": "^[rRuU]{0,2}['\"]"
+                    }
+                  }
+                }
+              }
+            ],
+            "value": {
+              "regex": "^\\.?$"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "path-current-directory",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "callee": {
+              "any": [
+                {
+                  "matches": "ref",
+                  "pattern": "$F"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            },
+            "dot": {
+              "any": [
+                {
+                  "matches": "dot-str",
+                  "pattern": "$ARG"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "dot"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "has": {
+              "field": "function",
+              "matches": "callee"
+            },
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "arguments",
+                  "kind": "argument_list",
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "regex": "^[(),]$"
+                          },
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "line_continuation"
+                          }
+                        ]
+                      }
+                    },
+                    "min": 1,
+                    "max": 1
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "dot"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.ARG",
+        "code": "PTH201",
+        "message": "Call `$F()` with no argument instead of `$F($ARG)`; the constructor already defaults to the current directory.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PTH201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "path-current-directory-in-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "ref",
+                  "capture": "F"
+                },
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "argument_list",
+                      "count": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "any": [
+                              {
+                                "regex": "^[(),]$"
+                              },
+                              {
+                                "kind": "comment"
+                              },
+                              {
+                                "kind": "line_continuation"
+                              }
+                            ]
+                          }
+                        },
+                        "min": 1,
+                        "max": 1
+                      },
+                      "has": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "matches": "dot-str",
+                            "capture": "ARG"
+                          },
+                          {
+                            "kind": "parenthesized_expression",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "dot-str",
+                              "capture": "ARG"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.ARG",
+        "each": "ARG",
+        "code": "PTH201",
+        "message": "Call `$F()` with no argument instead of `$F($ARG)`; the constructor already defaults to the current directory.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PTH201"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

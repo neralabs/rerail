@@ -1,0 +1,377 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf058-starmap-zip",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use map instead of itertools.starmap over zip; zipping only to unpack the tuples again is unnecessary.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "starmap-ref": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "itertools.starmap"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "starmap-ref"
+                }
+              }
+            ]
+          },
+          "zip-ref": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "zip"
+                  ],
+                  "import": [
+                    "builtins.zip"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "zip-ref"
+                }
+              }
+            ]
+          },
+          "argn": {
+            "not": {
+              "any": [
+                {
+                  "regex": "^[(),]$"
+                },
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                }
+              ]
+            }
+          },
+          "pos-arg": {
+            "matches": "argn",
+            "not": {
+              "kind": "keyword_argument"
+            }
+          },
+          "arg2": {
+            "matches": "argn",
+            "nthChild": {
+              "position": 2,
+              "ofRule": {
+                "matches": "argn"
+              }
+            }
+          },
+          "args2": {
+            "kind": "argument_list",
+            "all": [
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "keyword_argument"
+                      },
+                      {
+                        "kind": "dictionary_splat"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "argn"
+                  },
+                  "min": 2,
+                  "max": 2
+                }
+              }
+            ]
+          },
+          "zip-positionals": {
+            "kind": "argument_list",
+            "not": {
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "pos-arg"
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "pos-arg",
+                      "not": {
+                        "kind": "list_splat"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "zip-plain": {
+            "any": [
+              {
+                "kind": "call",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "function",
+                      "matches": "zip-ref"
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "arguments",
+                          "kind": "generator_expression"
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "arguments",
+                          "matches": "zip-positionals",
+                          "not": {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "any": [
+                                {
+                                  "kind": "keyword_argument"
+                                },
+                                {
+                                  "kind": "dictionary_splat"
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "zip-plain"
+                }
+              }
+            ]
+          },
+          "zip-strict": {
+            "any": [
+              {
+                "kind": "call",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "function",
+                      "matches": "zip-ref"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "arguments",
+                      "matches": "zip-positionals",
+                      "all": [
+                        {
+                          "count": {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "any": [
+                                {
+                                  "kind": "keyword_argument"
+                                },
+                                {
+                                  "kind": "dictionary_splat"
+                                }
+                              ]
+                            },
+                            "min": 1,
+                            "max": 1
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "keyword_argument",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "field": "name",
+                              "regex": "^strict$"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "zip-strict"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "starmap-of-zip",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "starmap-ref"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "arguments",
+                  "matches": "args2",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "arg2",
+                    "all": [
+                      {
+                        "matches": "zip-plain"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "RUF058",
+        "anchor": "witness.span",
+        "message": "Replace `starmap(f, zip(a, b))` with `map(f, a, b)`, passing the zipped iterables straight to `map`. Keep it if `map` is shadowed in this scope.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF058"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "starmap-of-zip-strict",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "min": "3.14"
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "starmap-ref"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "arguments",
+                  "matches": "args2",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "arg2",
+                    "all": [
+                      {
+                        "matches": "zip-strict"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "RUF058",
+        "anchor": "witness.span",
+        "message": "Replace `starmap(f, zip(a, b, strict=...))` with `map(f, a, b, strict=...)`; `map` accepts `strict=` on Python 3.14+. Keep it if `map` is shadowed in this scope.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF058"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
