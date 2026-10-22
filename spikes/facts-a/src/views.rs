@@ -4,7 +4,7 @@
 //! Phase 2 compiler run. Views are evaluated per content, in document order.
 use crate::facts::{self, Facts, NONE};
 use crate::sql::engine::{self, Catalog, Db, Schema, Statement, Table};
-use crate::sql::value::{self as sv, Aff, V};
+use crate::sql::value::{Aff, V};
 use std::rc::Rc;
 use std::sync::LazyLock;
 
@@ -112,7 +112,7 @@ pub fn core_tables(f: &Facts) -> Vec<(&'static str, Table)> {
             vec![V::Int(l as i64 + 1), V::Int(a as i64), V::Int(b as i64), V::Int(indent as i64)].into_boxed_slice()
         })
         .collect();
-    let t = |name: &'static str, rows: Vec<Box<[V]>>| (name, Table { schema: cat[name].clone(), rows });
+    let t = |name: &'static str, rows: Vec<Box<[V]>>| (name, Table::from_rows(cat[name].clone(), rows));
     vec![t("node", node), t("child", child), t("field", field), t("identifier", identifier), t("line", line)]
 }
 
@@ -136,19 +136,17 @@ mod smallvec_ranks {
     }
 }
 
-/// CTAS storage: each column converted by its declared affinity (`rel::store`).
+/// CTAS storage: each column converted by its declared affinity on read (`rel::store`).
 pub fn store(t: Table, schema: &Schema) -> Table {
-    if schema.affs.iter().all(|a| *a == Aff::None) {
-        return Table { schema: schema.clone(), rows: t.rows };
-    }
-    let rows = t.rows.into_iter().map(|r| r.iter().zip(&schema.affs).map(|(v, a)| sv::apply_affinity(v.clone(), *a)).collect::<Vec<_>>().into_boxed_slice()).collect();
-    Table { schema: schema.clone(), rows }
+    let len = t.len();
+    let cols = t.cols.iter().take(schema.cols.len()).zip(&schema.affs).map(|(c, a)| engine::Column::with_aff(c, *a)).collect();
+    Table::new(schema.clone(), cols, len)
 }
 
 /// Every view of one content: the core tables and the views, by name, in a database whose path
 /// is `""` (content-level, path-free; `source_text('', s, e)` reads the content).
 pub fn evaluate<'s>(views: &Views, f: &'s Facts, ns: &mut Vec<u64>) -> Result<Db<'s>, String> {
-    let mut db = Db { tables: Default::default(), source: f.source.as_str(), path: "" };
+    let mut db = Db::new(f.source.as_str(), "");
     for (name, t) in core_tables(f) {
         db.tables.insert(name.to_owned(), Rc::new(t));
     }

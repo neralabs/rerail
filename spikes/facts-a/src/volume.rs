@@ -98,13 +98,15 @@ pub fn run(args: &[String]) {
                             let source = Arc::new(source);
                             let Ok(facts::Built::Facts(f)) = facts::build(path, source.clone()) else { continue };
                             let ctx = eval::FileCtx { f: &f, path, source: &source };
+                            let memo = crate::ast::FileMemo::default();
+                            let text: std::rc::Rc<str> = std::rc::Rc::from(source.as_str());
                             for &w in &wanted {
                                 let input = &spike.inputs[spike_index[&w] as usize];
                                 if input.paths.as_ref().is_some_and(|p| !p.matches(path)) {
                                     continue;
                                 }
-                                let rows = input.rows(&ctx, &crate::rel::input_schema(&input.fields));
-                                *counts.entry(w).or_default() += rows.table.rows.len() as u64;
+                                let rows = input.rows(&ctx, &crate::rel::input_schema(&input.fields), &memo, &text);
+                                *counts.entry(w).or_default() += rows.table.len() as u64;
                             }
                         }
                         counts

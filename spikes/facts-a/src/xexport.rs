@@ -156,13 +156,15 @@ impl Exporter {
             facts::Built::Unparsed => return Err("unparsed".into()),
         };
         let ctx = eval::FileCtx { f: &f, path, source: &source };
+        let memo = crate::ast::FileMemo::default();
+        let text: std::rc::Rc<str> = std::rc::Rc::from(source.as_str());
         let mut rows: BTreeMap<u32, Vec<Vec<V>>> = BTreeMap::new();
         for (id, (idx, schema)) in &self.inputs {
-            let r = self.rule.inputs[*idx].rows(&ctx, schema);
+            let r = self.rule.inputs[*idx].rows(&ctx, schema, &memo, &text);
             if let Some(u) = r.unsupported {
                 return Err(format!("input {id}: {u}"));
             }
-            rows.insert(*id, r.table.rows.iter().map(|x| x.to_vec()).collect());
+            rows.insert(*id, (0..r.table.len()).map(|i| r.table.row(i)).collect());
         }
         for (eid, p) in &self.exports {
             let plan = &self.program.per_file[*p];

@@ -218,7 +218,7 @@ impl Render<'_> {
     fn row(&self, x: u32) -> Vec<V> {
         let r = self.rank[x as usize];
         assert!(r != NONE, "node {x} not in nodes");
-        self.nodes.rows[r as usize].to_vec()
+        self.nodes.row(r as usize)
     }
     fn rank(&self, x: u32) -> u32 {
         if x == NONE { 0 } else { self.rank[x as usize] }
@@ -239,7 +239,7 @@ fn render(stage: &str, vdb: &Db<'_>, r: &Render<'_>) -> Vec<(Vec<u32>, Vec<V>)> 
     let mut out = Vec::new();
     let fname: BTreeMap<u32, u32> = {
         let fv = t("py_function");
-        fv.rows.iter().map(|x| (int(&x[0]), int(&x[1]))).collect()
+        (0..fv.len()).map(|i| (int(&fv.value(i, 0)), int(&fv.value(i, 1)))).collect()
     };
     let func_row = |x: u32| {
         let mut row = r.row(x);
@@ -249,14 +249,16 @@ fn render(stage: &str, vdb: &Db<'_>, r: &Render<'_>) -> Vec<(Vec<u32>, Vec<V>)> 
     match stage {
         "ownership" | "ownership_named" => {
             let v = t(if stage == "ownership" { "py_owner" } else { "py_owner_named" });
-            for x in &v.rows {
+            for i in 0..v.len() {
+                let x = v.row(i);
                 let id = int(&x[0]);
                 out.push((vec![r.rank(id)], vec![V::Text(r.path.clone()), r.id(id), r.id(int(&x[1])), r.id(int(&x[2])), r.id(int(&x[3]))]));
             }
         }
         "functions" | "classes" => {
             let v = t(if stage == "functions" { "py_function" } else { "py_class" });
-            for x in &v.rows {
+            for i in 0..v.len() {
+                let x = v.row(i);
                 let id = int(&x[0]);
                 let mut row = r.row(id);
                 row.push(r.text(int(&x[1])));
@@ -265,9 +267,10 @@ fn render(stage: &str, vdb: &Db<'_>, r: &Render<'_>) -> Vec<(Vec<u32>, Vec<V>)> 
         }
         "methods" => {
             let v = t("py_method");
-            let cname: BTreeMap<u32, u32> = t("py_class").rows.iter().map(|x| (int(&x[0]), int(&x[1]))).collect();
-            for x in &v.rows {
-                let (fid, cid) = (int(&x[0]), int(&x[1]));
+            let cv = t("py_class");
+            let cname: BTreeMap<u32, u32> = (0..cv.len()).map(|i| (int(&cv.value(i, 0)), int(&cv.value(i, 1)))).collect();
+            for i in 0..v.len() {
+                let (fid, cid) = (int(&v.value(i, 0)), int(&v.value(i, 1)));
                 let mut row = func_row(fid);
                 row.push(r.id(cid));
                 row.push(r.text(cname[&cid]));
@@ -275,7 +278,9 @@ fn render(stage: &str, vdb: &Db<'_>, r: &Render<'_>) -> Vec<(Vec<u32>, Vec<V>)> 
             }
         }
         "attributes" => {
-            for x in &t("py_attribute").rows {
+            let v = t("py_attribute");
+            for i in 0..v.len() {
+                let x = v.row(i);
                 let (id, attr, obj) = (int(&x[0]), int(&x[1]), int(&x[2]));
                 let mut row = r.row(id);
                 row.extend([r.text(attr), r.id(obj), r.text(obj)]);
@@ -283,7 +288,9 @@ fn render(stage: &str, vdb: &Db<'_>, r: &Render<'_>) -> Vec<(Vec<u32>, Vec<V>)> 
             }
         }
         "calls" => {
-            for x in &t("py_call").rows {
+            let v = t("py_call");
+            for i in 0..v.len() {
+                let x = v.row(i);
                 let (id, func, callee, recv) = (int(&x[0]), int(&x[1]), int(&x[2]), int(&x[3]));
                 let mut row = r.row(id);
                 row.extend([r.id(func), r.kind(func), r.text(func), r.text(callee), r.id(recv)]);
@@ -291,14 +298,18 @@ fn render(stage: &str, vdb: &Db<'_>, r: &Render<'_>) -> Vec<(Vec<u32>, Vec<V>)> 
             }
         }
         "parameters" => {
-            for x in &t("py_parameter").rows {
+            let v = t("py_parameter");
+            for i in 0..v.len() {
+                let x = v.row(i);
                 let (fid, p, name, ann) = (int(&x[0]), int(&x[1]), int(&x[2]), int(&x[3]));
                 let row = vec![V::Text(r.path.clone()), r.id(fid), r.id(p), r.kind(p), r.text(p), r.text(name), r.id(ann), x[4].clone()];
                 out.push((vec![r.rank(fid), r.rank(p)], row));
             }
         }
         "assignments" => {
-            for x in &t("py_assignment").rows {
+            let v = t("py_assignment");
+            for i in 0..v.len() {
+                let x = v.row(i);
                 let (id, tg, val, fid) = (int(&x[0]), int(&x[1]), int(&x[2]), int(&x[3]));
                 let mut row = r.row(id);
                 row.extend([r.id(tg), r.kind(tg), r.text(tg), r.id(val), r.kind(val), r.text(val), r.id(fid)]);
@@ -306,14 +317,17 @@ fn render(stage: &str, vdb: &Db<'_>, r: &Render<'_>) -> Vec<(Vec<u32>, Vec<V>)> 
             }
         }
         "decorators" => {
-            for x in &t("py_decorator").rows {
+            let v = t("py_decorator");
+            for i in 0..v.len() {
+                let x = v.row(i);
                 let (fid, d, child, name) = (int(&x[0]), int(&x[1]), int(&x[2]), int(&x[3]));
                 out.push((vec![r.rank(fid), r.rank(d), r.rank(child)], vec![V::Text(r.path.clone()), r.id(fid), r.id(d), r.text(name)]));
             }
         }
         "import_identifiers" => {
-            for x in &t("py_import_identifier").rows {
-                let (id, imp) = (int(&x[0]), int(&x[1]));
+            let v = t("py_import_identifier");
+            for i in 0..v.len() {
+                let (id, imp) = (int(&v.value(i, 0)), int(&v.value(i, 1)));
                 out.push((vec![r.rank(imp), r.rank(id)], vec![V::Text(r.path.clone()), r.id(id)]));
             }
         }
@@ -321,7 +335,8 @@ fn render(stage: &str, vdb: &Db<'_>, r: &Render<'_>) -> Vec<(Vec<u32>, Vec<V>)> 
             let v = t("py_context");
             let c = |n: &str| col(&v, n);
             let (cn, pl, pp, ch, ph, ma) = (c("class_name"), c("planning"), c("preprocess"), c("ctx_helper"), c("provider_helper_name"), c("materializer"));
-            for x in &v.rows {
+            for i in 0..v.len() {
+                let x = v.row(i);
                 let fid = int(&x[0]);
                 let mut row = func_row(fid);
                 let provider = tri_and(&V::bool(&*r.path == PROVIDER_PATH), &x[ph]);
@@ -355,7 +370,7 @@ fn check_file(rules: &[Rule], targets: &[Target], views_c: &Views, f: &Facts, pa
     }
     for (i, (name, _)) in views_c.stmts.iter().enumerate() {
         out.view_ns[i] += vns[i];
-        out.view_rows[i] += vdb.tables[name].rows.len() as u64;
+        out.view_rows[i] += vdb.tables[name].len() as u64;
     }
     if !check {
         return views_ns;
@@ -368,8 +383,8 @@ fn check_file(rules: &[Rule], targets: &[Target], views_c: &Views, f: &Facts, pa
     let py_node = vdb.tables["py_node"].clone();
     {
         let mut seen = rustc_hash::FxHashSet::default();
-        for x in &py_node.rows {
-            let id = int(&x[0]) as usize;
+        for i in 0..py_node.len() {
+            let id = int(&py_node.value(i, 0)) as usize;
             if !seen.insert((f.kind[id], f.start[id], f.end[id])) {
                 out.key_collisions += 1;
             }
@@ -379,7 +394,7 @@ fn check_file(rules: &[Rule], targets: &[Target], views_c: &Views, f: &Facts, pa
     for tg in targets {
         let rule = &rules[tg.rule];
         let Kind::Relational(plan) = &rule.clauses[tg.clause].kind else { unreachable!() };
-        let mut db = Db { tables: Default::default(), source, path };
+        let mut db = Db::new(source, path);
         let dump = plan.dump.is_some();
         if let Some(g) = &plan.dump {
             let ctx = eval::FileCtx { f, path, source };
@@ -417,9 +432,9 @@ fn check_file(rules: &[Rule], targets: &[Target], views_c: &Views, f: &Facts, pa
         let idc = col(&nodes, "id");
         let mut rank = vec![NONE; f.len()];
         let mut by_key: rustc_hash::FxHashMap<String, u32> = Default::default();
-        for (i, row) in nodes.rows.iter().enumerate() {
-            match &row[idc] {
-                V::Int(x) => rank[*x as usize] = i as u32,
+        for i in 0..nodes.len() {
+            match nodes.value(i, idc) {
+                V::Int(x) => rank[x as usize] = i as u32,
                 V::Text(s) => {
                     by_key.insert(s.to_string(), i as u32);
                 }
@@ -429,11 +444,11 @@ fn check_file(rules: &[Rule], targets: &[Target], views_c: &Views, f: &Facts, pa
         let r0 = Render { f, path: pathrc.clone(), dump, nodes: nodes.clone(), rank: Vec::new() };
         // The clause's gate-true node set is N (`py_node`) or all named nodes (`py_named`).
         let py_named = vdb.tables["py_named"].clone();
-        let all_named = nodes.rows.len() != py_node.rows.len();
+        let all_named = nodes.len() != py_node.len();
         let set = if all_named { &py_named } else { &py_node };
         if dump {
-            for x in &set.rows {
-                let id = int(&x[0]);
+            for i in 0..set.len() {
+                let id = int(&set.value(i, 0));
                 if let V::Text(k) = r0.id(id) {
                     if let Some(&i) = by_key.get(&*k) {
                         rank[id as usize] = i;
@@ -441,13 +456,13 @@ fn check_file(rules: &[Rule], targets: &[Target], views_c: &Views, f: &Facts, pa
                 }
             }
         }
-        let missing = set.rows.iter().filter(|x| rank[int(&x[0]) as usize] == NONE).count();
-        if missing > 0 || nodes.rows.len() != set.rows.len() {
-            out.nodes_mismatch.push(format!("{path}: {}: nodes {} vs N {} / named {} ({missing} missing)", tg.clause_id, nodes.rows.len(), py_node.rows.len(), py_named.rows.len()));
+        let missing = (0..set.len()).filter(|&i| rank[int(&set.value(i, 0)) as usize] == NONE).count();
+        if missing > 0 || nodes.len() != set.len() {
+            out.nodes_mismatch.push(format!("{path}: {}: nodes {} vs N {} / named {} ({missing} missing)", tg.clause_id, nodes.len(), py_node.len(), py_named.len()));
             continue;
         }
         if all_named {
-            *out.extra_nodes.entry(tg.clause_id.clone()).or_default() += (nodes.rows.len() - py_node.rows.len()) as u64;
+            *out.extra_nodes.entry(tg.clause_id.clone()).or_default() += (nodes.len() - py_node.len()) as u64;
         }
         let r = Render { rank, ..r0 };
         for (si, sname) in &tg.stages {
@@ -457,12 +472,21 @@ fn check_file(rules: &[Rule], targets: &[Target], views_c: &Views, f: &Facts, pa
             let mut rows = render(view_stage, &vdb, &r);
             rows.sort_by(|a, b| a.0.cmp(&b.0));
             let expected: Vec<Box<[V]>> = rows.into_iter().map(|(_, row)| row.into_boxed_slice()).collect();
-            let expected = views::store(Table { schema: stmt.schema().clone(), rows: expected }, stmt.schema()).rows;
             let st = out.stats.entry((sname.clone(), tg.clause_id.clone())).or_default();
             st.files += 1;
-            st.rows += reference.rows.len() as u64;
-            let mut a: Vec<String> = expected.iter().map(|x| key(x)).collect();
-            let mut b: Vec<String> = reference.rows.iter().map(|x| key(x)).collect();
+            st.rows += reference.len() as u64;
+            // A rendered row of the wrong width would be cut (or misaligned) by the columnar store.
+            let width = stmt.schema().cols.len();
+            if let Some(x) = expected.iter().find(|x| x.len() != width) {
+                st.bag_mismatch += 1;
+                if st.bag_examples.len() < 3 {
+                    st.bag_examples.push(format!("{path}: view row width {} vs stage {width}: {}", x.len(), key(x)));
+                }
+                continue;
+            }
+            let expected = views::store(Table::from_rows(stmt.schema().clone(), expected), stmt.schema());
+            let mut a: Vec<String> = (0..expected.len()).map(|i| key(&expected.row(i))).collect();
+            let mut b: Vec<String> = (0..reference.len()).map(|i| key(&reference.row(i))).collect();
             let ordered = a == b;
             a.sort();
             b.sort();
