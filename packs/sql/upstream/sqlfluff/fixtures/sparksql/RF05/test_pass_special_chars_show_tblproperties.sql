@@ -1,0 +1,1 @@
+SHOW TBLPROPERTIES customer ('created.date');

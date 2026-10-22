@@ -66,6 +66,9 @@ test("a pinned corpus gives the files goldens name under its paths, of the linte
     const none = await buildRerailCorpora([{ ...corpus, name: "unnamed" }], join(scratch, "cache"), inCorpus, new ProcessCommandRunner(), wanted);
     assert.deepEqual(none.tasks.map((task) => [task.task, task.status, task.reason]), [["rerail:unnamed", "skipped", "no golden names a file of it"]]);
     assert.equal(existsSync(join(scratch, "cache", "corpus", "rerail", "unnamed")), false);
+    // `.` pins the whole repository: every named file of the linted type, at its repository path.
+    const whole = await buildRerailCorpora([{ ...corpus, name: "whole", paths: ["."], exclude: [] }], join(scratch, "cache"), inCorpus, new ProcessCommandRunner(), wantedPlaces(["django/sub/skip.py", "other/c.py"].map((path) => ({ task: "rerail:whole", path }))));
+    assert.deepEqual(whole.files.map((file) => file.path), ["django/sub/skip.py", "other/c.py"]);
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }

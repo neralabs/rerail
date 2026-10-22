@@ -294,8 +294,9 @@ export const gatesRecordingSchema = z.strictObject({
   }),
   /**
    * Every runtime the recorder ran (upstream's, an ESLint environment's, the independent parsers', the Python
-   * toolkit's), by its directory under conformance/recorders/port-readiness/runtimes/: each pin file's sha256 by file name
-   * (package.json; pyproject.toml and .python-version; composer.json and .php-version, and runtimes/php's extensions.txt). The runtime-pins check compares them with the committed files.
+   * toolkit's, a Rust toolchain), by its directory under conformance/recorders/port-readiness/runtimes/: each pin file's
+   * sha256 by file name (package.json; pyproject.toml and .python-version; composer.json and .php-version, and
+   * runtimes/php's extensions.txt; rust-toolchain.toml). The runtime-pins check compares them with the committed files.
    */
   runtimes: z.record(z.string().regex(/^[a-z0-9._-]+$/u), z.record(z.string().regex(/^[A-Za-z0-9._-]+$/u), sha256)),
   /**
