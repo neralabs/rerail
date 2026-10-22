@@ -538,7 +538,8 @@ pub struct Output {
     pub clause_ns: BTreeMap<(usize, usize), (u64, u64)>,
     /// One sample per (clause, file) evaluation: ((rule index, clause index), nanoseconds).
     pub clause_samples: Vec<((u16, u16), u64)>,
-    pub input_ns: u64,
+    /// (rule index, input index) -> (row builds, nanoseconds): AST input evaluation.
+    pub input_ns: BTreeMap<(usize, usize), (u64, u64)>,
     /// SQL stage name -> (executions, nanoseconds), over every relational clause.
     pub stage_ns: BTreeMap<String, (u64, u64)>,
 }
@@ -561,7 +562,11 @@ impl Output {
             e.1 += ns;
         }
         self.clause_samples.extend(other.clause_samples);
-        self.input_ns += other.input_ns;
+        for (k, (n, ns)) in other.input_ns {
+            let e = self.input_ns.entry(k).or_default();
+            e.0 += n;
+            e.1 += ns;
+        }
         for (k, (n, ns)) in other.stage_ns {
             let e = self.stage_ns.entry(k).or_default();
             e.0 += n;
@@ -682,7 +687,9 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
             let t0 = Instant::now();
             let schema = rel::input_schema(&inp.fields);
             let r = Rc::new(inp.rows(ctx, &schema));
-            out.input_ns += t0.elapsed().as_nanos() as u64;
+            let e = out.input_ns.entry((ri, i)).or_default();
+            e.0 += 1;
+            e.1 += t0.elapsed().as_nanos() as u64;
             cache.insert(i, r.clone());
             Some(r)
         };

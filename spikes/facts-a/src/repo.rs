@@ -232,8 +232,17 @@ pub fn repo(args: &[String]) {
             "parse": sum(|f| f.parse_ns),
             "extract": sum(|f| f.extract_ns),
             "eval": sum(|f| f.eval_ns),
-            "input_rows": out.input_ns,
+            "input_rows": out.input_ns.values().map(|v| v.1).sum::<u64>(),
         },
+        "input_ns": out.input_ns.iter().map(|((ri, ii), (n, ns))| {
+            let rule = &rules[*ri];
+            let names: Vec<String> = rule.clauses.iter().filter_map(|c| match &c.kind {
+                eval::Kind::Relational(p) => p.inputs.iter().find(|(_, idx)| idx == ii).map(|(name, _)| format!("{}/{name}", c.id)),
+                eval::Kind::ForbidAst { input } | eval::Kind::Budget { input, .. } if input == ii => Some(c.id.clone()),
+                _ => None,
+            }).collect();
+            json!({"check": rule.check, "input": ii, "used_by": names, "builds": n, "ns": ns})
+        }).collect::<Vec<Json>>(),
         "a3_clause_file_ns": summary(out.clause_samples.iter().map(|(_, ns)| *ns).collect()),
         "a4": {
             "parse_ns": summary(parsed.iter().map(|f| f.parse_ns).collect()),
@@ -256,6 +265,7 @@ pub fn repo(args: &[String]) {
     o.remove("failures");
     o.remove("rules");
     o.remove("sql_stage_ns");
+    o.remove("input_ns");
     println!("{}", serde_json::to_string_pretty(&brief).unwrap());
 }
 

@@ -149,6 +149,8 @@ struct WinSpec {
 struct PSelect {
     items: Vec<PItem>,
     probes: Vec<Option<Probe>>,
+    /// Per item, the branch probes of an OR conjunct (candidates = union of the lookups).
+    or_probes: Vec<Option<Vec<Probe>>>,
     /// Conjuncts tested once all of items[..=i] are bound (inner items; ON of left items).
     level: Vec<Vec<PE>>,
     /// WHERE conjuncts whose last item is a left-joined item i (after null extension).
@@ -265,6 +267,55 @@ fn conjuncts(e: Expr, out: &mut Vec<Expr>) {
     }
 }
 
+fn disjuncts<'e>(e: &'e PE, out: &mut Vec<&'e PE>) {
+    match e {
+        PE::Or(l, r) => {
+            disjuncts(l, out);
+            disjuncts(r, out);
+        }
+        o => out.push(o),
+    }
+}
+
+fn pe_conjuncts<'e>(e: &'e PE, out: &mut Vec<&'e PE>) {
+    match e {
+        PE::And(l, r) => {
+            pe_conjuncts(l, out);
+            pe_conjuncts(r, out);
+        }
+        o => out.push(o),
+    }
+}
+
+/// Adds `c` to `probe` when it is an equality between a column of item `i` and an expression
+/// over earlier items, outer rows or constants.
+fn probe_eq(c: &PE, i: usize, probe: &mut Probe) -> bool {
+    let PE::Cmp(Cmp::Eq, l, r, (al, ar)) = c else { return false };
+    let pick = |a: &PE, b: &PE| -> Option<u16> {
+        if let PE::Col { depth: 0, item, col } = a {
+            if *item as usize == i && max_item(b).is_none_or(|m| m < i) && !refs_item(b, i) && !has_agg(b) {
+                return Some(*col);
+            }
+        }
+        None
+    };
+    if let Some(col) = pick(l, r) {
+        probe.cols.push(col);
+        probe.col_affs.push(*al);
+        probe.exprs.push((**r).clone());
+        probe.expr_affs.push(*ar);
+        return true;
+    }
+    if let Some(col) = pick(r, l) {
+        probe.cols.push(col);
+        probe.col_affs.push(*ar);
+        probe.exprs.push((**l).clone());
+        probe.expr_affs.push(*al);
+        return true;
+    }
+    false
+}
+
 pub fn plan(sql: &str, catalog: &Catalog) -> Result<Statement, String> {
     let q = parse::parse_query(sql)?;
     let mut p = Planner { catalog, scopes: Vec::new(), ctes: Vec::new(), subs: Vec::new(), n_slots: 0, bounds: Vec::new(), reads: Vec::new() };
@@ -286,7 +337,7 @@ pub fn plan_scalar(sql: &str, schema: &Schema) -> Result<(PE, Statement), String
 }
 
 fn empty_select() -> PSelect {
-    PSelect { items: vec![], probes: vec![], level: vec![], post: vec![], konst: vec![], grouped: false, group_by: vec![], aggs: vec![], having: None, wins: vec![], proj: vec![], order_keys: vec![], distinct: false, out: Schema::default() }
+    PSelect { items: vec![], probes: vec![], or_probes: vec![], level: vec![], post: vec![], konst: vec![], grouped: false, group_by: vec![], aggs: vec![], having: None, wins: vec![], proj: vec![], order_keys: vec![], distinct: false, out: Schema::default() }
 }
 
 impl<'c> Planner<'c> {
@@ -489,6 +540,7 @@ impl<'c> Planner<'c> {
         let mut post: Vec<Vec<PE>> = vec![Vec::new(); n];
         let mut konst = Vec::new();
         let mut probes: Vec<Option<Probe>> = vec![None; n];
+        let mut or_probes: Vec<Option<Vec<Probe>>> = vec![None; n];
         // Conjunct placement.
         let mut placed: Vec<(PE, Option<usize>, bool)> = Vec::new(); // (expr, max item, from ON of a left item)
         for (i, fi) in s.from.iter().enumerate() {
@@ -534,32 +586,31 @@ impl<'c> Planner<'c> {
             let mut probe = Probe { cols: vec![], col_affs: vec![], exprs: vec![], expr_affs: vec![] };
             let mut rest = Vec::new();
             for c in std::mem::take(&mut level[i]) {
-                if let PE::Cmp(Cmp::Eq, l, r, (al, ar)) = &c {
-                    let pick = |a: &PE, b: &PE| -> Option<u16> {
-                        if let PE::Col { depth: 0, item, col } = a {
-                            if *item as usize == i && max_item(b).is_none_or(|m| m < i) && !refs_item(b, i) && !has_agg(b) {
-                                return Some(*col);
-                            }
-                        }
-                        None
-                    };
-                    if let Some(col) = pick(l, r) {
-                        probe.cols.push(col);
-                        probe.col_affs.push(*al);
-                        probe.exprs.push((**r).clone());
-                        probe.expr_affs.push(*ar);
-                        continue;
-                    }
-                    if let Some(col) = pick(r, l) {
-                        probe.cols.push(col);
-                        probe.col_affs.push(*ar);
-                        probe.exprs.push((**l).clone());
-                        probe.expr_affs.push(*al);
-                        continue;
-                    }
+                if !probe_eq(&c, i, &mut probe) {
+                    rest.push(c);
                 }
-                rest.push(c);
             }
+            // OR probes (SQLite's OR optimisation): a conjunct `b1 OR b2 OR ...` whose every
+            // branch holds such an equality. Candidates are the union of the branches' lookups,
+            // each with the plain equalities above too, in table order; the OR conjunct stays in
+            // `level[i]` and is re-checked, so the rows are exactly the filtered scan's.
+            or_probes[i] = rest.iter().find_map(|c| {
+                let mut branches = Vec::new();
+                disjuncts(c, &mut branches);
+                if branches.len() < 2 {
+                    return None;
+                }
+                branches
+                    .into_iter()
+                    .map(|b| {
+                        let mut cs = Vec::new();
+                        pe_conjuncts(b, &mut cs);
+                        let mut bp = probe.clone();
+                        let found = cs.into_iter().fold(false, |found, c| probe_eq(c, i, &mut bp) || found);
+                        found.then_some(bp)
+                    })
+                    .collect::<Option<Vec<Probe>>>()
+            });
             level[i] = rest;
             if !probe.cols.is_empty() {
                 probes[i] = Some(probe);
@@ -625,7 +676,7 @@ impl<'c> Planner<'c> {
         }
         let scope = self.scopes.pop().unwrap();
         let grouped = !group_by.is_empty() || !scope.aggs.is_empty();
-        Ok(PSelect { items, probes, level, post, konst, grouped, group_by, aggs: scope.aggs, having, wins: scope.wins, proj, order_keys, distinct: s.distinct, out })
+        Ok(PSelect { items, probes, or_probes, level, post, konst, grouped, group_by, aggs: scope.aggs, having, wins: scope.wins, proj, order_keys, distinct: s.distinct, out })
     }
 
     fn col_name(&self, depth: u16, item: u16, col: u16) -> Option<String> {
@@ -1001,6 +1052,12 @@ pub struct Db<'a> {
 
 type Index = FxHashMap<Vec<Key>, Vec<u32>>;
 
+/// A join's hash indexes per item: the plain equality probe's, and each OR branch's.
+struct Indexes {
+    plain: Vec<Option<Rc<Index>>>,
+    or: Vec<Option<Vec<Rc<Index>>>>,
+}
+
 pub struct Exec<'d, 'a> {
     db: &'d Db<'a>,
     stmt: &'d Statement,
@@ -1319,13 +1376,16 @@ impl<'d, 'a> Exec<'d, 'a> {
                 }
             }
         }
-        let indexes: Vec<Option<Rc<Index>>> = s
-            .probes
-            .iter()
-            .zip(&tables)
-            .map(|(p, t)| p.as_ref().map(|p| self.index(t, &p.cols, &p.col_affs)))
-            .collect();
+        let indexes = Indexes {
+            plain: s.probes.iter().zip(&tables).map(|(p, t)| p.as_ref().map(|p| self.index(t, &p.cols, &p.col_affs))).collect(),
+            or: s.or_probes.iter().zip(&tables).map(|(b, t)| b.as_ref().map(|b| b.iter().map(|p| self.index(t, &p.cols, &p.col_affs)).collect())).collect(),
+        };
         let _ = self.level(s, 0, &tables, &nulls, &indexes, &mut rows, outer, sink);
+    }
+
+    /// The probe's key for the current binding; `None` when a key part is NULL (no row equals).
+    fn probe_key(&self, p: &Probe, ctx: &EvalCtx<'_>) -> Option<Vec<Key>> {
+        p.exprs.iter().zip(&p.expr_affs).map(|(e, a)| sv::key(&sv::compare_affinity(&self.eval(e, ctx), *a))).collect()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1335,7 +1395,7 @@ impl<'d, 'a> Exec<'d, 'a> {
         i: usize,
         tables: &'t [Rc<Table>],
         nulls: &'t [Box<[V]>],
-        indexes: &[Option<Rc<Index>>],
+        indexes: &Indexes,
         rows: &mut Vec<&'t [V]>,
         outer: Option<&Frame<'_>>,
         sink: &mut dyn FnMut(&Frame<'_>) -> ControlFlow<()>,
@@ -1363,24 +1423,24 @@ impl<'d, 'a> Exec<'d, 'a> {
         } else {
             &tables[i]
         };
-        // Candidate rows.
-        let cands: Option<Vec<u32>> = match (&s.probes[i], &indexes[i]) {
-            (Some(p), Some(ix)) => {
-                let ctx = EvalCtx { frame: Frame { rows: rows.as_slice(), parent: outer }, aggs: None, wins: None };
-                let mut key = Vec::with_capacity(p.exprs.len());
-                let mut null = false;
-                for (e, a) in p.exprs.iter().zip(&p.expr_affs) {
-                    match sv::key(&sv::compare_affinity(&self.eval(e, &ctx), *a)) {
-                        Some(k) => key.push(k),
-                        None => {
-                            null = true;
-                            break;
+        // Candidate rows, in table order.
+        let cands: Option<Vec<u32>> = {
+            let ctx = EvalCtx { frame: Frame { rows: rows.as_slice(), parent: outer }, aggs: None, wins: None };
+            match (&s.or_probes[i], &indexes.or[i], &s.probes[i], &indexes.plain[i]) {
+                (Some(branches), Some(ixs), _, _) => {
+                    let mut c: Vec<u32> = Vec::new();
+                    for (p, ix) in branches.iter().zip(ixs) {
+                        if let Some(hits) = self.probe_key(p, &ctx).and_then(|k| ix.get(&k)) {
+                            c.extend_from_slice(hits);
                         }
                     }
+                    c.sort_unstable();
+                    c.dedup();
+                    Some(c)
                 }
-                Some(if null { Vec::new() } else { ix.get(&key).cloned().unwrap_or_default() })
+                (_, _, Some(p), Some(ix)) => Some(self.probe_key(p, &ctx).and_then(|k| ix.get(&k).cloned()).unwrap_or_default()),
+                _ => None,
             }
-            _ => None,
         };
         let n = cands.as_ref().map_or(t.rows.len(), |c| c.len());
         let mut matched = false;
