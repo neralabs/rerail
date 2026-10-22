@@ -511,6 +511,34 @@ fn col_of<S>(e: &Expr<S>) -> Option<u16> {
     }
 }
 
+/// Candidate keys of a source relation.
+trait KeySource {
+    fn keys(&self, schema: &[crate::ir::Column], stages: &[Keys], exports: &[Keys]) -> Keys;
+}
+
+impl KeySource for RepoSource {
+    fn keys(&self, _: &[crate::ir::Column], stages: &[Keys], exports: &[Keys]) -> Keys {
+        match self {
+            RepoSource::Exported(e) => exports[*e as usize].clone(),
+            RepoSource::Stage(s) => stages[*s as usize].clone(),
+        }
+    }
+}
+
+impl KeySource for FileSource {
+    /// Declared structure of one content's syntax tables (spec-rel § 2.3–2.6): one row per kept
+    /// node keyed by `id` (nodes, ownership), one per edge keyed by `dst`. Inputs are bags.
+    fn keys(&self, schema: &[crate::ir::Column], stages: &[Keys], _: &[Keys]) -> Keys {
+        let col = |n: &str| schema.iter().position(|c| c.name == n).map(|i| i as u16);
+        match self {
+            FileSource::Syntax(crate::ir::SyntaxTable::Nodes | crate::ir::SyntaxTable::Ownership) => col("id").map(|c| vec![BTreeSet::from([c])]).unwrap_or_default(),
+            FileSource::Syntax(crate::ir::SyntaxTable::Edges) => col("dst").map(|c| vec![BTreeSet::from([c])]).unwrap_or_default(),
+            FileSource::Stage(s) => stages[*s as usize].clone(),
+            FileSource::Input(_) => vec![],
+        }
+    }
+}
+
 struct KeyEnv {
     stages: Vec<Keys>,
     locals: HashMap<LocalId, Keys>,
@@ -518,11 +546,10 @@ struct KeyEnv {
 }
 
 impl KeyEnv {
-    fn keys(&mut self, r: &Rel<RepoSource>) -> Keys {
+    fn keys<S: KeySource>(&mut self, r: &Rel<S>) -> Keys {
         let all = |w: usize| vec![(0..w as u16).collect::<BTreeSet<u16>>()];
         match r {
-            Rel::Scan { src: RepoSource::Exported(e), .. } => self.exports[*e as usize].clone(),
-            Rel::Scan { src: RepoSource::Stage(s), .. } => self.stages[*s as usize].clone(),
+            Rel::Scan { src, schema } => src.keys(schema, &self.stages, &self.exports),
             Rel::Local { id, .. } => self.locals.get(id).cloned().unwrap_or_default(),
             Rel::Unit => all(0),
             Rel::Filter { input, .. } | Rel::Sort { input, .. } => self.keys(input),
@@ -650,7 +677,8 @@ struct Cut<'a> {
     file_index: &'a BTreeMap<u32, u32>,
     /// Repository stage index of each original stage (repository side).
     repo_index: &'a BTreeMap<u32, u32>,
-    exports: Vec<(Rel<FileSource>, bool, bool)>,
+    /// Per export: its per-content definition, distinct, ordered, and its path columns.
+    exports: Vec<(Rel<FileSource>, bool, bool, Vec<u16>)>,
     digests: HashMap<String, ExportId>,
     refusals: Vec<String>,
 }
@@ -665,7 +693,7 @@ struct Ctx {
 }
 
 impl Cut<'_> {
-    fn export(&mut self, r: Rel<AnySource>, needed: Option<&BTreeSet<u16>>, ctx: Ctx) -> Rel<RepoSource> {
+    fn export(&mut self, r: Rel<AnySource>, needed: Option<&BTreeSet<u16>>, ctx: Ctx, path: &[u16]) -> Rel<RepoSource> {
         let schema = r.schema();
         let file_index = self.file_index;
         let def = match to_file(r, self.cross, &|s| file_index[&s]) {
@@ -690,6 +718,7 @@ impl Cut<'_> {
         if distinct {
             def = Rel::Distinct { input: Box::new(def), prefix: narrow.len() as u16 };
         }
+        let pcols: Vec<u16> = path.iter().filter_map(|p| keep.iter().position(|k| k == p).map(|j| j as u16)).collect();
         let digest = format!("{def:?}");
         let id = match self.digests.get(&digest) {
             Some(id) => {
@@ -697,7 +726,7 @@ impl Cut<'_> {
                 *id
             }
             None => {
-                self.exports.push((def, distinct, ctx.ordered));
+                self.exports.push((def, distinct, ctx.ordered, pcols));
                 let id = (self.exports.len() - 1) as ExportId;
                 self.digests.insert(digest, id);
                 id
@@ -717,8 +746,10 @@ impl Cut<'_> {
 
     /// The repository side of `r`: maximal file-local subtrees become exports.
     fn rel(&mut self, env: &mut Env<'_>, r: Rel<AnySource>, needed: Option<BTreeSet<u16>>, ctx: Ctx, outer: Option<&[u16]>) -> Rel<RepoSource> {
-        if matches!(env.loc(&r, outer), Loc::Local(_)) && !has_free_outer(&r) && self_contained(&r) {
-            return self.export(r, needed.as_ref(), ctx);
+        if let Loc::Local(path) = env.loc(&r, outer) {
+            if !has_free_outer(&r) && self_contained(&r) {
+                return self.export(r, needed.as_ref(), ctx, &path);
+            }
         }
         let w = width(&r);
         let all = || (0..w as u16).collect::<BTreeSet<u16>>();
@@ -1183,7 +1214,7 @@ fn split(
     // Prune file-side stages no export reads (transitively), and renumber.
     let fpick = |s: &FileSource| if let FileSource::Stage(i) = s { Some(*i) } else { None };
     let mut live: BTreeSet<u32> = BTreeSet::new();
-    for (def, _, _) in &cut.exports {
+    for (def, ..) in &cut.exports {
         let probe = Stage { name: String::new(), schema: vec![], def: StageDef::Query { rel: def.clone() } };
         stage_reads(&probe, &mut live, &fpick);
     }
@@ -1209,12 +1240,35 @@ fn split(
             },
         })
         .collect();
-    cut.exports = std::mem::take(&mut cut.exports).into_iter().map(|(d, a, b)| (refile(d), a, b)).collect();
+    cut.exports = std::mem::take(&mut cut.exports).into_iter().map(|(d, a, b, p)| (refile(d), a, b, p)).collect();
+    // Candidate keys of each export over the union of contents: a per-content key plus a path
+    // column (rows of different contents differ there); without a path column, none.
+    let mut fkeys = KeyEnv { stages: vec![], locals: HashMap::new(), exports: vec![] };
+    for st in &fstages {
+        let k = match &st.def {
+            StageDef::Query { rel } => fkeys.keys(rel),
+            StageDef::Reach { .. } => vec![(0..3).collect()],
+        };
+        fkeys.stages.push(k);
+    }
+    let export_keys: Vec<Keys> = cut
+        .exports
+        .iter()
+        .map(|(def, _, _, pcols)| match pcols.first() {
+            None => vec![],
+            Some(p) => fkeys.keys(def).into_iter().map(|mut k| {
+                k.insert(*p);
+                k
+            }).collect(),
+        })
+        .collect();
     let producer = out.per_file.len();
     let base = out.exported.len() as ExportId;
     let mut export_ids = Vec::new();
     let mut sinks = Vec::new();
-    for (k, (def, distinct, ordered)) in cut.exports.into_iter().enumerate() {
+    let mut all_export_keys: Vec<Keys> = out.exported.iter().map(|_| vec![]).collect();
+    for (k, (def, distinct, ordered, _)) in cut.exports.into_iter().enumerate() {
+        all_export_keys.push(export_keys[k].clone());
         let id = base + k as ExportId;
         out.exported.push(ExportedRelation { id, name: format!("{clause}/export_{k}"), schema: def.schema(), distinct, ordered, producer });
         export_ids.push(id);
@@ -1235,7 +1289,7 @@ fn split(
         .collect();
     let fin = renumber(fin);
     // Order audit over the repository side.
-    let mut kenv = KeyEnv { stages: vec![], locals: HashMap::new(), exports: out.exported.iter().map(|e| if e.distinct { vec![(0..e.schema.len() as u16).collect()] } else { vec![] }).collect() };
+    let mut kenv = KeyEnv { stages: vec![], locals: HashMap::new(), exports: all_export_keys };
     let mut audit = Vec::new();
     for st in &rstages {
         match &st.def {
