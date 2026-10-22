@@ -148,7 +148,7 @@ pub fn store(t: Table, schema: &Schema) -> Table {
 /// Every view of one content: the core tables and the views, by name, in a database whose path
 /// is `""` (content-level, path-free; `source_text('', s, e)` reads the content).
 pub fn evaluate<'s>(views: &Views, f: &'s Facts, ns: &mut Vec<u64>) -> Result<Db<'s>, String> {
-    let mut db = Db { tables: Default::default(), source: f.source.as_str(), path: "", regexes: Default::default() };
+    let mut db = Db { tables: Default::default(), source: f.source.as_str(), path: "" };
     for (name, t) in core_tables(f) {
         db.tables.insert(name.to_owned(), Rc::new(t));
     }

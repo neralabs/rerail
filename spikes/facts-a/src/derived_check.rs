@@ -378,7 +378,7 @@ fn check_file(rules: &[Rule], targets: &[Target], views_c: &Views, f: &Facts, pa
     for tg in targets {
         let rule = &rules[tg.rule];
         let Kind::Relational(plan) = &rule.clauses[tg.clause].kind else { unreachable!() };
-        let mut db = Db { tables: Default::default(), source, path, regexes: Default::default() };
+        let mut db = Db { tables: Default::default(), source, path };
         let dump = plan.dump.is_some();
         if let Some(g) = &plan.dump {
             let ctx = eval::FileCtx { f, path, source };

@@ -1,27 +1,36 @@
 #!/usr/bin/env python3
 """The facts engine's gate (Phase 2 deliverable 5, G2.6); run it through `facts-gate.sh` / `just facts-gate`.
 
-Checks (clean build, `FACTS_MUTANT` unset):
+Checks (clean build, `FACTS_MUTANT` unset), in four concurrent lanes:
 
-  a-replay        facts-a replay of batch 6's recordings (1,259 calls): 0 FP, every miss and failure is
-                  accepted residue (RESIDUE below), every call replayed.
-  a-repo          facts-a repo over the 9,010-file corpus + repo-compare against the suite oracle: 0 FP,
-                  0 FN, the oracle's file set, every failure accepted residue.
-  a3-check        FACTS_A3_CHECK=1 facts-a repo over the subset: every substitution view, kernel and
-                  relation memo equals the unsubstituted path, row for row (a difference panics).
-  a-subset        facts-a repo over the subset (the compiled per-file path, no checking).
-  a-reference     FACTS_A3_OFF=1 facts-a repo over the subset (the per-file reference: the unsubstituted
-                  SQL path); its findings and failures must equal a-subset's as multisets.
-  b-exactness     facts-b replay of Spike B's edit script: the dataflow against the from-scratch reference
-                  after every event and on every worktree every 100 edits; 0 differences.
-  classifier-leak cargo test -p rerail-facts leak: a per-file plan reading cross-file state fails to compile.
+  a  a-replay         facts-a replay of batch 6's recordings (1,259 calls): 0 FP, every call replayed, every
+                      miss or failure accepted residue (RESIDUE, empty now).
+     a-repo           facts-a repo over the 9,010-file corpus + repo-compare against the suite oracle.
+     a-subset         facts-a repo over the subset (the rewritten per-file path).
+     a3-check         FACTS_A3_CHECK=1 over the subset: every rewritten relation equals the unrewritten one,
+                      row for row (a difference panics).
+     a-reference      FACTS_A3_OFF=1 over the subset (the unrewritten plan); findings and failures equal
+                      a-subset's as multisets.
+  b  b-exactness      facts-b replay: Spike B's hand-written delta rules (the generator's test vectors)
+                      against their from-scratch oracle over the 1,111-event edit script.
+  g  b-generated      facts-b greplay: the delta-plan generator over IR plans against
+                      rerail_facts::reference, same events.
+  c  rerail-facts-lib cargo test -p rerail-facts --lib (rewrite differential tests, classifier, audit,
+                      reference evaluator).
+     classifier-leak  cargo test -p rerail-facts leak: a per-file plan reading cross-file state is refused.
+     planner-audit    cargo test -p rerail-facts phys::tests::audit: an inner scan is refused.
+     explain-stable   facts-a explain over the pack: byte-identical across two runs and per-rule processes.
+     harness-replay   Jeremy's replay.ts --engine facts: same acceptance as a-replay.
+     views-derived    S4's facts-a derived-check --shard 0/4: schema views equal the policies' stage texts.
 
 The subset is deterministic: every corpus file whose sha256(relative path)[0] % 8 == 0, plus every file
-holding an oracle finding (about 1,150 files of 9,010). It is hard-linked under SUBSET.
+holding an oracle finding (1,150 files of 9,010). It is hard-linked under SUBSET.
 
-Mutants (`--mutants`): each seeded mutant runs the checks of its family with `FACTS_MUTANT=<n>`; it is
-killed when at least one of them detects it (a3-check: the FACTS_A3_CHECK panic; a-reference: findings
-differ from the clean reference; b-exactness: a difference; classifier-leak: the leak test fails).
+Mutants (`--mutants`): MUTANTS (1-3 S2's interim A3 views, 4-6 S3's delta generator, 7 the classifier,
+8 the plan audit) plus one per rewrite registered in docs/facts/REWRITES.md; each runs the checks of its
+family with `FACTS_MUTANT=<n>` and is killed when one of them detects it (a3-check: the FACTS_A3_CHECK
+panic; a-reference: findings differ from the clean reference; b-*: an exactness difference; cargo
+checks: a failing test, named in failed-tests.txt). A registered rewrite without a mutant fails the gate.
 
 Output (stdout), one line per event, every line prefixed `facts-gate: `:
 
@@ -118,7 +127,7 @@ def rewrite_mutants() -> tuple[list[tuple], list[str]]:
 
 
 LANES = {"a": ["a-replay", "a-repo", "a-subset", "a3-check", "a-reference"], "b": ["b-exactness"], "g": ["b-generated"],
-         "c": ["rerail-facts-lib", "classifier-leak", "planner-audit", "explain-stable", "harness-replay"]}
+         "c": ["rerail-facts-lib", "classifier-leak", "planner-audit", "explain-stable", "harness-replay", "views-derived"]}
 PACKAGES = ["facts-a", "facts-b", "rerail-facts"]
 
 print_lock = threading.Lock()
@@ -407,6 +416,18 @@ def check_explain(d: Path, env: dict) -> tuple[bool, str, dict]:
                                         + ("identical across 2 runs and per-rule processes" if same else "TEXT DIFFERS")), {}
 
 
+def check_views(d: Path, env: dict) -> tuple[bool, str, dict]:
+    """S4's views differential (`facts-a derived-check`): the schema's SQL views over the syntactic core
+    against the policies' own stage texts, shard 0 of 4 (2,253 files, every stage text and clause)."""
+    status, _ = run([binary("facts-a"), "derived-check", "--root", str(CORPUS), "--threads", THREADS, "--shard", "0/4", "--out-dir", str(d)], d, env)
+    if status != 0 or not (d / "results.json").exists():
+        return False, f"exit {status}", {}
+    r = json.loads((d / "results.json").read_text())
+    ok = r.get("bag_mismatch_total") == 0 and not r.get("nodes_mismatch") and not r.get("failures")
+    return ok, (f"bag mismatches {r.get('bag_mismatch_total')}, nodes mismatches {len(r.get('nodes_mismatch') or [])}, "
+                f"failures {len(r.get('failures') or [])}, order mismatches {r.get('order_mismatch_total')} (informational)"), {}
+
+
 def check_harness_replay(d: Path, env: dict) -> tuple[bool, str, dict]:
     """Jeremy's harness (`replay.ts --engine facts`) over the same recordings: the same acceptance as a-replay."""
     if not (ROOT / "node_modules" / "tsx").exists():
@@ -458,6 +479,8 @@ def run_check(cid: str, gate_dir: Path, env: dict) -> tuple[bool, str, dict]:
         return check_explain(d, env)
     if cid == "harness-replay":
         return check_harness_replay(d, env)
+    if cid == "views-derived":
+        return check_views(d, env)
     raise ValueError(cid)
 
 
