@@ -36,6 +36,8 @@ function tree(): string {
 }
 
 describe("the conformance gates", () => {
+  // Alone it takes under a second, but as the file's first case, with the whole suite sharing the machine, it has taken
+  // 14 s, past vitest's 5 s default.
   it("judge the rules no gated tool-pack judges, and leave the gated tool-pack's to its own run", async () => {
     const root = tree();
     const report = await runConformanceGates(root, { engine: loadEngine(), cacheRoot: join(root, ".cache") });
@@ -45,7 +47,7 @@ describe("the conformance gates", () => {
     ]);
     assert.deepEqual(report.packs.map((entry) => [entry.pack, entry.checks.pass, entry.judgedByToolPacks]), [["demo", true, 0], ["ported", true, 1]]);
     assert.equal(conformanceBlockingFailures(report), 0);
-  });
+  }, 30_000);
 
   it("make no in-scope check, and say passes-conformance does not apply to a pack with no conformance.json", async () => {
     const root = tree();

@@ -28,20 +28,33 @@ packs whose tools have no `gates.yaml` yet. The **port** gates (`not-overfit`, `
 `upstream-status`, which decides only `on`) judge a port against the upstream linter it ports, so only a gated
 tool-pack's rules meet them.
 
-A rule's verdict is the first blocking gate it fails, in this order. Every gate still runs on every rule it applies
-to, so the report shows every failure, not only the first.
+A rule's verdict is the first blocking gate it fails, in this order: the conformance gates first, then the port gates.
+Every gate still runs on every rule it applies to, so the report shows every failure, not only the first.
+
+The summary and the pull request comment hold one verdict per rule document, the first step of this funnel it fails
+(`STEPS` in `conformance/port-readiness/summary.ts`), so each rule is counted once:
+
+1. The conformance gates, on every rule: `loads` (but its `in-scope` check), `compact`, `passes-conformance`.
+2. For a document of a pack with a gated tool-pack, being mapped to an upstream rule: a document no `conformance.json`
+   entry maps is judged on the conformance gates alone and stops here, since no port gate can run on it.
+3. The port steps, on a gated tool-pack's rules: the tool-pack checks (below), `in-scope`, `not-overfit`,
+   `matches-upstream-tests`.
+
+A rule no gated tool-pack judges (complexity's, those of a tool with no `gates.yaml` yet) meets the conformance gates
+only: passing them is its whole verdict, and it is never ready to promote.
 
 | Gate | Section | What it checks | Blocks |
 | --- | --- | --- | --- |
-| `loads` | conformance | The document is written for the current rule contract (`rerail.policy/v1`, one `mode`, no severity), passes the duplicate-key check, the policy schema and the engine compile (as written and as stable JSON), loads through the bundled-rule loader, has no `llm` clause, and, for a ported rule, its scope covers every file type upstream lints (`in-scope`, which judges the port, so the summary and the comment report it under port readiness; a rule no gated tool-pack judges has no upstream to say which, so the check is not made), or the ones the tool-pack's `gates.yaml` narrows it to (`rerail.in_scope`: typescript-eslint's ports cover TypeScript files only, since JavaScript files are the javascript pack's). | yes |
-| `not-overfit` | port | No word the rule hardcodes (patterns, fixes, regexes, names, static values) appears in upstream's tests unless upstream's own code explains it (the rule's implementation, its imports and helpers, the names upstream's regexes match) or it is a language keyword. Catches ports that pass upstream's tests by naming their fixtures. The regexes are not run over stress tests of upstream's own engine (a test text over 20,000 characters with fewer than one identifier per 1,000, such as ESLint's 1,000,000-backslash strings), which Rerail does not run. | yes |
+| `loads` | conformance | The document is written for the current rule contract (`rerail.policy/v1`, one `mode`, no severity), passes the duplicate-key check, the policy schema and the engine compile (as written and as stable JSON), loads through the bundled-rule loader, has no `llm` clause, and, for a ported rule, its scope covers every file type upstream lints (`in-scope`, which judges the port, so the summary and the comment count it as a port step; a rule no gated tool-pack judges has no upstream to say which, so the check is not made), or the ones the tool-pack's `gates.yaml` narrows it to (`rerail.in_scope`: typescript-eslint's ports cover TypeScript files only, since JavaScript files are the javascript pack's). | yes |
 | `compact` | conformance | A document over 15 KiB is inspected: it fails when a third or more of its clauses is the same structure written out over and over, or one node kind nests three or more times along one path. Catches rules that list cases instead of expressing the logic. | yes |
+| `passes-conformance` | conformance | The pack's own conformance check (`test:conformance`), which already blocks every shipped rule: on the pack's fixtures (upstream's cases and Rerail's probes, after `divergences.json`) the rule has no unexplained false positive or miss, catches something (or `pack.json` gives it examples), runs without engine failures and has no stale divergence; when the pack pins corpora, their recordings cover it. Candidates are held to the same bar, so the gates are a superset of the check and "ready to promote" means CI accepts the rule once it ships. It runs with the other conformance gates, before the port gates, so a rule that fails a conformance gate stops there whatever the port gates say. It does not apply to a rule no `conformance.json` entry maps, since the check has nothing to score it against: complexity has no `conformance.json` at all. | yes |
+| `not-overfit` | port | No word the rule hardcodes (patterns, fixes, regexes, names, static values) appears in upstream's tests unless upstream's own code explains it (the rule's implementation, its imports and helpers, the names upstream's regexes match) or it is a language keyword. Catches ports that pass upstream's tests by naming their fixtures. The regexes are not run over stress tests of upstream's own engine (a test text over 20,000 characters with fewer than one identifier per 1,000, such as ESLint's 1,000,000-backslash strings), which Rerail does not run. | yes |
 | `matches-upstream-tests` | port | Upstream, configured as upstream recommends, is the expected answer on its own tests for the rule. The rule must report the same findings at the same start and end positions, in both directions (`identical-results`), leaving out only an end part upstream does not report on every finding of the rule (when any finding of an ESLint rule on its own tests has no end, the rule is compared on starts alone; the report lists every rule compared without an end); reproduce at least one upstream finding (`fires`); agree on at least one case where upstream reports nothing, in its tests or its goldens (`stays-silent`); agree with upstream on every golden (`identical-on-goldens`, `engine-reads-goldens`); and not be listed as a real-code gap (`no-real-code-gap`). See "Goldens" below. | yes |
-| `passes-conformance` | conformance | The pack's own conformance check (`test:conformance`), which already blocks every shipped rule: on the pack's fixtures (upstream's cases and Rerail's probes, after `divergences.json`) the rule has no unexplained false positive or miss, catches something (or `pack.json` gives it examples), runs without engine failures and has no stale divergence; when the pack pins corpora, their recordings cover it. Candidates are held to the same bar, so the gates are a superset of the check and "ready to promote" means CI accepts the rule once it ships. It comes after V1's gates, so V1's verdicts read the same. It does not apply to a rule no `conformance.json` entry maps, since the check has nothing to score it against: complexity has no `conformance.json` at all. | yes |
 | `upstream-status` | port | The rule exists upstream with an implementation and tests, is not deprecated, and one of upstream's recommended configurations turns it on. It decides only whether a shipped rule starts on; the report flags a pack.json `on` that disagrees. | no |
 
-Tool-pack checks come before any gate. When one fails, every rule of the tool-pack fails with it: a shipped rule blocks
-and a candidate is not ready to promote. They fail when the recording is stale (`corpus-pins` and the recording checks),
+Tool-pack checks judge the tool-pack, not a rule. When one fails, every rule of the tool-pack fails with it: a shipped
+rule blocks and a candidate is not ready to promote. In a verdict they come after the conformance gates and before the
+port gates. They fail when the recording is stale (`corpus-pins` and the recording checks),
 when a committed case source is not the bytes upstream's answers were recorded on (`case-sources`), when a task or
 corpus a golden names could not be fetched (`corpus-complete`, usually a failed download: run again), or when the pack's shipped rules do not load together through rerail's bundled-rule
 loader (`bundled-load`, for example two documents with one id).
@@ -55,7 +68,8 @@ Each check's detail says why it failed, in a sentence: the first differing upstr
 `not-overfit` found, the size metrics.
 
 From V1's numbers: Gate 1 is `upstream-status`, 2 `loads`, 3 `not-overfit`, 4 `compact`, 5 `matches-upstream-tests`.
-Gate 6, real code, runs in NRV only; rerail judges the goldens it found, in `matches-upstream-tests`.
+Gate 6, real code, runs in NRV only; rerail judges the goldens it found, in `matches-upstream-tests`. V1 ran `not-overfit`
+before `compact`; here every conformance gate comes first, so a rule that fails both stops at `compact`.
 
 ### Goldens
 
@@ -195,32 +209,35 @@ hand itself verdicts its own code computed, which it could already do by editing
 
 ## Read the report
 
-On a pull request, CI posts the results as one comment in two sections. **Conformance** covers every pack: each pack's
-shipped and candidate counts on the conformance gates, every shipped rule that fails one and why, the rules
-`passes-conformance` does not apply to, and the candidates that fail one, grouped by pack and gate, collapsed. **Port
-readiness** covers the gated tool-packs: each tool-pack's shipped counts on the port gates and its candidates ready to
-promote, every shipped port that fails a port gate or its tool-pack's checks and why, the candidates **ready to
-promote** (they pass every gate, conformance and port: the signal to move them into `rules/`, with the `on` that
-upstream-status sets), and the other candidates grouped by the port gate they stop at, collapsed. A rule that does
-not load is listed under conformance only, since no port gate can judge it; one that fails a gate of each section is
-listed in both. A new run collapses the earlier comments as outdated, so the pull request keeps its history. The comment stays under GitHub's size limit by
-shortening long lists; the job summary and the uploaded reports have everything. When the pull request judged only some
-tool-packs, the comment and the job summary say how many of them the counts cover, and a line names the rest: "Not
-judged on this change", with main's verdict standing for them, in both sections. A pull request that judged no
-tool-pack and touched nothing the conformance gates read gets no new comment unless a check fails, but its earlier
-comments are still collapsed as outdated. The job summary reads top to bottom:
+On a pull request, CI posts the results as one comment, decisions first:
 
-1. **Conformance:** shipped rules passing per pack, blocking failures, the candidates that fail a conformance gate, and
-   the rules `passes-conformance` does not apply to.
-2. The port readiness headline: shipped ports passing, blocking failures, candidates ready to promote.
-3. **Blocking failures:** each shipped rule that fails, the gate it stopped at, the check and why, and each listed
-   known parser gap that does not hold or excuses nothing.
-4. **Blocked by engine gaps:** shipped rules that fail only because the engine could not read a golden.
-5. **Not gated and pending** packs, and any new or stale entry.
-6. **Candidates:** where candidates stop, port gate by port gate, and why each one stopped. Candidates that pass every gate are
-   listed as promotable: passing the gates is necessary to ship, not sufficient; reviewers still decide.
-7. **On or off:** shipped rules whose `on` in pack.json disagrees with `upstream-status`.
-8. Per tool-pack details: each gate on its own, run integrity notes.
+1. **The verdict**, in the heading: every shipped rule passes, or how many blocking failures there are, and how many
+   candidates are ready to promote. Under it, the gate order the counts follow.
+2. **Blocking failures**, only when there are any: each shipped rule that fails, the step it stopped at, the check and
+   why, then the failures no rule owns (a known parser gap that does not hold or excuses nothing, a pack check, a
+   missing report). Shipped rules blocked only by engine gaps are listed apart, collapsed.
+3. **Rules this pull request changes:** every rule document the diff against the base touches, with its verdict, and
+   the ones no report judged or the pull request removed.
+4. **Ready to promote**, only when some candidate is: the candidates that pass every gate, conformance and port, the
+   signal to move them into `rules/`, with the `on` that upstream-status sets. Passing the gates is necessary to ship,
+   not sufficient; a reviewer still decides.
+5. **Where all the candidates stand**, collapsed: the funnel as one table, its steps as rows and two columns that add
+   up to every candidate, those of gated tool-packs (which can be ready to promote) and those no gated tool-pack
+   judges (which pass at most the conformance gates); then the same counts per tool-pack and per pack, the rules
+   `passes-conformance` does not apply to, and each candidate that stops, grouped by source and step.
+
+A new run collapses the earlier comments as outdated, so the pull request keeps its history. The comment stays under
+GitHub's size limit by shortening long lists, the per-candidate lists first; the job summary and the uploaded reports
+have everything. When the pull request judged only some tool-packs, a line names the rest: "Not judged on this
+change", with main's verdict standing for them; the counts leave them out. A pull request that judged no tool-pack and
+touched nothing the conformance gates read gets no new comment unless a check fails, but its earlier comments are still
+collapsed as outdated.
+
+The job summary has the comment's sections in the same order, every list in full and each candidate's verdict, then:
+
+- **Not gated and pending** packs, and any new or stale entry.
+- **On or off:** shipped rules whose `on` in pack.json disagrees with `upstream-status`.
+- Per tool-pack details: each gate on its own, run integrity notes.
 
 A rule that fails: fix the rule (the check's detail names the first difference), or move it to `candidates/` (out of
 `pack.json`, its `conformance.json` path updated).

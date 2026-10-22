@@ -42,9 +42,10 @@ test("a stale divergence, an uncovered corpus recording or a missing row fails i
   assert.deepEqual(failing(passesConformanceChecks(conformance([]), "missing")), ["fixtures-row"]);
 });
 
-test("it blocks like any gate, after the V1 gates: a rule that passes them but not the pack's check stops there", () => {
+test("it blocks like any gate, among the conformance gates: a rule that fails it stops there, before any port gate", () => {
   const pass = { pass: true };
   const fail = { pass: false };
   assert.deepEqual(verdict({ loads: pass, "not-overfit": pass, compact: pass, "matches-upstream-tests": pass, "passes-conformance": fail }), { pass: false, stoppedAt: "passes-conformance" });
-  assert.deepEqual(verdict({ loads: pass, "not-overfit": fail, compact: pass, "matches-upstream-tests": pass, "passes-conformance": fail }), { pass: false, stoppedAt: "not-overfit" });
+  assert.deepEqual(verdict({ loads: pass, "not-overfit": fail, compact: pass, "matches-upstream-tests": pass, "passes-conformance": fail }), { pass: false, stoppedAt: "passes-conformance" });
+  assert.deepEqual(verdict({ loads: pass, "not-overfit": fail, compact: pass, "matches-upstream-tests": pass, "passes-conformance": pass }), { pass: false, stoppedAt: "not-overfit" });
 });

@@ -150,7 +150,7 @@ async function summary(args: string[]): Promise<number> {
   // --planned: the tool-packs CI's plan judged; without it every gated tool-pack needs a report. Bad JSON exits 2.
   const planned = typeof flags["--planned"] === "string" ? parsePlanned(flags["--planned"]) : undefined;
   const result = await writeSummary(PACKAGE_ROOT, resolve(directory), typeof flags["--base"] === "string" ? flags["--base"] : undefined, new ProcessCommandRunner(), planned);
-  console.log(`conformance: ${result.conformance.shipped.pass}/${result.conformance.shipped.rules} shipped rules pass, ${result.conformance.blocking.length} blocking failure(s); port readiness: ${result.shipped.pass}/${result.shipped.rules} shipped ported rules pass, ${result.blocking.length} blocking failure(s); wrote summary.md and summary.json to ${resolve(directory)}`);
+  console.log(`${result.shipped.pass}/${result.shipped.rules} shipped rules pass; ${result.blocking.length} blocking failure(s); ${result.promotable.length} candidate(s) ready to promote; wrote summary.md and summary.json to ${resolve(directory)}`);
   return result.pass ? 0 : 1;
 }
 

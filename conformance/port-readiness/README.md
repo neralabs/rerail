@@ -11,21 +11,25 @@ gates and are only reported.
 Each gate has a section (`GATES` in types.ts). The conformance gates hold for every rule document of every pack: a
 tool-pack's run judges its own rules on them, and `conformance-gates.ts` (`npm run port-readiness -- conformance`, its
 own CI job) judges every rule no gated tool-pack does, with no recording and no cache. The port gates judge a port
-against its upstream, so only a gated tool-pack's rules meet them. The summary and the pull request comment report the
-two sections apart (summary.ts, comment.ts); `loads`'s `in-scope` check compares a rule with the files upstream lints, so they report it
-under port readiness.
+against its upstream, so only a gated tool-pack's rules meet them. The gates run in `GATES` order, the conformance gates
+first:
 
 | V1 gate | Gate id | Section | Blocking |
 | --- | --- | --- | --- |
 | 1 | `upstream-status` (decides on or off) | port | no |
 | 2 | `loads` | conformance | yes |
-| 3 | `not-overfit` | port | yes |
 | 4 | `compact` | conformance | yes |
+| — | `passes-conformance` (the pack's `test:conformance` verdict on the rule; never cached; not applicable to a rule conformance.json does not map) | conformance | yes |
+| 3 | `not-overfit` | port | yes |
 | 5 | `matches-upstream-tests` | port | yes |
 | 6 | none: real code runs in NRV only; `matches-upstream-tests` judges the goldens imported from it | — | — |
-| — | `passes-conformance` (the pack's `test:conformance` verdict on the rule, judged after V1's gates; never cached; not applicable to a rule conformance.json does not map) | conformance | yes |
 
-A rule's verdict is the first blocking gate it fails. `matches-upstream-tests` includes `engine-reads-goldens`: a golden
+A rule's verdict is the first blocking gate it fails. The summary (summary.ts) holds one verdict per rule document, the
+first step of its funnel (`STEPS`) the rule fails, and every count it and the pull request comment (comment.ts) show
+comes from those verdicts, so each rule is counted once. The funnel is the conformance gates, then, for a gated
+tool-pack's rules, the port steps: the tool-pack checks, `loads`'s `in-scope` check (it compares a rule with the files
+upstream lints, so it judges the port), `not-overfit` and `matches-upstream-tests`. A document of a pack with a gated
+tool-pack that no conformance.json entry maps stops at `mapping`, after the conformance gates. `matches-upstream-tests` includes `engine-reads-goldens`: a golden
 that differs where the engine reported `source-partial`, `source-incomplete` or `budget-exceeded` fails the rule; the
 fix belongs in the engine (NER-1764). It also includes `no-real-code-gap`: a rule `gates.yaml` lists under
 `real_code_gaps` fails. The goldens and real-code gaps are reviewed data, imported from NRV's goldens and never written by

@@ -52,9 +52,10 @@ export interface ConformanceReport {
   engine: Pick<EngineIdentity, "sha256">;
   /**
    * Per pack: its checks (`bundled-load`: every shipped document loads together; `conformance-runs` when the pack's
-   * conformance check ran here) and how many of its documents a gated tool-pack judges instead.
+   * conformance check ran here), how many of its documents a gated tool-pack judges instead, and whether it has a
+   * conformance.json at all (complexity has none: its rules port no upstream).
    */
-  packs: { pack: string; checks: GateReport; judgedByToolPacks: number }[];
+  packs: { pack: string; checks: GateReport; judgedByToolPacks: number; hasConformanceJson: boolean }[];
   rules: ConformanceRuleReport[];
 }
 
@@ -114,7 +115,7 @@ export async function runConformanceGates(root: string, options: { cacheRoot?: s
       if (conformance !== undefined) {
         checks.push({ id: "conformance-runs", ok: conformance.errors.length === 0, detail: conformance.errors.length === 0 ? "the pack's conformance check runs without errors" : conformance.errors.slice(0, 3).join("; ") });
       }
-      packs.push({ pack, checks: gate(checks), judgedByToolPacks: documents.length - mine.length });
+      packs.push({ pack, checks: gate(checks), judgedByToolPacks: documents.length - mine.length, hasConformanceJson: hasManifest });
       for (const document of mine) {
         const entry = entries.get(document.path);
         rules.push(judgeRule(root, engine, scratch, pack, document.path, document.location, entry === undefined ? null : { tool: entry.upstream.tool, rule: entry.upstream.rule }, conformance, hasManifest));
