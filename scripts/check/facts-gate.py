@@ -75,11 +75,12 @@ MUTANTS = [
     (5, "delta-count-retraction", "facts-b", "delta generator: count/presence", "counts ignore retractions (negative deltas)", ["b-exactness"]),
     (6, "delta-fixpoint-early", "facts-b", "delta generator: recursion", "the fixpoint stops one round early", ["b-exactness"]),
     (7, "classifier-membership", "rerail-facts", "classify::file_source", "a per-content plan reaching a membership/exported relation is accepted", ["classifier-leak"]),
+    (8, "planner-inner-scan", "rerail-facts", "plan audit", "the plan audit admits an inner scan", ["planner-audit"]),
 ]
 INTERIM_REWRITES = [
     (1, "rewrite-dropped-side-condition", "facts-a", "subst.rs::edges (A3 view)", "dropped side condition: edges keeps rows whose edge_parent is NULL", ["a3-check", "a-reference"]),
     (2, "rewrite-lost-union-arm", "facts-a", "subst.rs::nodes (A3 view)", "lost union arm: nodes drops the last arm of its source union", ["a3-check", "a-reference"]),
-    (3, "rewrite-interval-bound", "facts-a", "ast.rs::has_end_memo (A3 memo)", "wrong interval bound: the descendant range ends at subtree_end + 1", ["a3-check", "a-reference"]),
+    (3, "rewrite-interval-bound", "facts-a", "ast.rs::has_end_memo (A3 memo)", "wrong interval bound: the descendant range starts at id + 2 (first descendant skipped)", ["a3-check", "a-reference"]),
 ]
 REWRITES = ROOT / "docs/facts/REWRITES.md"
 REWRITE_KINDS = ("dropped side condition", "wrong interval bound", "lost union arm")
@@ -110,7 +111,8 @@ def rewrite_mutants() -> tuple[list[tuple], list[str]]:
     return out, problems
 
 
-LANES = {"a": ["a-replay", "a-repo", "a-subset", "a3-check", "a-reference"], "b": ["b-exactness"], "c": ["classifier-leak"]}
+LANES = {"a": ["a-replay", "a-repo", "a-subset", "a3-check", "a-reference"], "b": ["b-exactness"],
+         "c": ["reference-selftest", "classifier-leak", "harness-replay", "explain-stable", "planner-audit"]}
 PACKAGES = ["facts-a", "facts-b", "rerail-facts"]
 
 print_lock = threading.Lock()
@@ -347,17 +349,55 @@ def check_b(d: Path, env: dict, fail_fast: bool = False) -> tuple[bool, str, dic
                 f"{events}/{want} events"), {"exactness": x, "detected": x["differences"] > 0}
 
 
-def check_classifier(d: Path, env: dict) -> tuple[bool, str, dict]:
+def cargo_test(d: Path, env: dict, name: str) -> tuple[int, int]:
+    """`cargo test --release -p rerail-facts [--features mutants] <name>`: (exit status, tests run)."""
     pkgs = workspace_packages()
-    if "rerail-facts" not in pkgs:
-        return False, "package rerail-facts (S1's classifier) is not in the workspace yet", {"detected": False, "missing": True}
     f = ["--features", "rerail-facts/mutants"] if "mutants" in pkgs["rerail-facts"].get("features", {}) else []
-    status, _ = run(["cargo", "test", "--release", "-p", "rerail-facts", *f, "leak"], d,
+    status, _ = run(["cargo", "test", "--release", "-p", "rerail-facts", *f, name], d,
                     {**env, "CARGO_TARGET_DIR": os.environ["FACTS_GATE_TARGET"]})
     out = (d / "stdout.txt").read_text(errors="replace")
     ran = sum(int(l.split()[1]) for l in out.splitlines() if l.startswith("running ") and l.split()[1].isdigit())
-    passed = status == 0 and ran > 0
-    return passed, f"{ran} leak tests, exit {status}", {"tests": ran, "detected": status != 0}
+    return status, ran
+
+
+def check_classifier(d: Path, env: dict) -> tuple[bool, str, dict]:
+    if "rerail-facts" not in workspace_packages():
+        return False, "package rerail-facts (S1's classifier) is not in the workspace yet", {"detected": False, "missing": True}
+    status, ran = cargo_test(d, env, "leak")
+    return status == 0 and ran > 0, f"{ran} leak tests, exit {status}", {"tests": ran, "detected": status != 0, "missing": ran == 0}
+
+
+def check_reference(d: Path, env: dict) -> tuple[bool, str, dict]:
+    status, ran = cargo_test(d, env, "reference::")
+    return status == 0 and ran > 0, f"{ran} reference evaluator tests, exit {status}", {"tests": ran}
+
+
+def check_harness_replay(d: Path, env: dict) -> tuple[bool, str, dict]:
+    """Jeremy's harness (`replay.ts --engine facts`) over the same recordings: the same acceptance as a-replay."""
+    if not (ROOT / "node_modules" / "tsx").exists():
+        return False, "node_modules missing in the checkout (npm ci, or link a checkout's node_modules)", {}
+    out = d / "results.json"
+    cmd = ["node", "--import", "tsx", "conformance/data-layer/replay.ts", *sum((["--recording", r] for r in RECORDINGS), []),
+           "--output", str(out), "--engine", "facts"]
+    status, _ = run(cmd, d, {**env, "FACTS_ENGINE_BIN": binary("facts-a")})
+    if not out.exists():
+        return False, f"exit {status}", {}
+    r = json.loads(out.read_text())
+    bad = [f"{row['check']} {row['test']}" for row in r["rows"] if row["falsePositives"] or row["executionPathDifferences"]
+           or ((row["falseNegatives"] or row["engineFailures"]) and not (row["engineFailures"] and all(
+               any(c == row["check"] and f"{c}/{cl}: " in f["message"] and m in f["message"] for c, cl, m in RESIDUE) for f in row["engineFailures"])))]
+    want = recorded_calls()
+    matched = sum(1 for row in r["rows"] if not (row["falsePositives"] or row["falseNegatives"] or row["engineFailures"]))
+    ok = not bad and r["replayedCalls"] == want and r["factsCalls"] == want and not r["missingCoverage"]
+    return ok, (f"{matched}/{r['replayedCalls']} calls, {r['falsePositives']} FP, {r['falseNegatives']} FN, {r['engineFailures']} failures"
+                + (", misses all accepted residue" if not bad else f", unaccepted: {'; '.join(bad[:5])}")), {"unaccepted": bad}
+
+
+# Checks whose command the owning slice has not provided yet: they fail, naming what is missing.
+PENDING = {
+    "explain-stable": "S1's EXPLAIN command (plan text byte-identical across two runs and across files of one rule) is not defined yet",
+    "planner-audit": "S1's plan audit test (an inner scan is rejected) and its mutant 8 are not defined yet",
+}
 
 
 # ---------------------------------------------------------------------------------------------------
@@ -380,6 +420,12 @@ def run_check(cid: str, gate_dir: Path, env: dict) -> tuple[bool, str, dict]:
         return check_b(d, env)
     if cid == "classifier-leak":
         return check_classifier(d, env)
+    if cid == "reference-selftest":
+        return check_reference(d, env)
+    if cid == "harness-replay":
+        return check_harness_replay(d, env)
+    if cid in PENDING:
+        return False, f"pending: {PENDING[cid]}", {}
     raise ValueError(cid)
 
 
@@ -403,6 +449,8 @@ def run_mutant_check(n: int, cid: str, gate_dir: Path) -> str:
     if cid == "b-exactness":
         ok, _, det = check_b(d, env, fail_fast=True)
         return "survived" if ok else ("killed" if det.get("detected") else "error")
+    if cid in PENDING:
+        return "error"
     if cid == "classifier-leak":
         ok, _, det = check_classifier(d, env)
         return "survived" if ok else ("killed" if det.get("detected") and not det.get("missing") else "error")

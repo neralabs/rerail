@@ -6,8 +6,8 @@
 //!
 //! 1. dropped side condition: `subst.rs::edges` keeps rows whose `edge_parent` is NULL.
 //! 2. lost union arm: `subst.rs::nodes` drops the last arm of its source union.
-//! 3. wrong interval bound: `ast.rs::has_end_memo` ends the descendant range at `subtree_end + 1`
-//!    (the node after the subtree is searched too).
+//! 3. wrong interval bound: `ast.rs::has_end_memo` starts the descendant range at `id + 2`
+//!    (the first descendant is skipped).
 
 #[cfg(feature = "mutants")]
 pub fn on(n: u8) -> bool {

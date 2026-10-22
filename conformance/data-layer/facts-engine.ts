@@ -81,6 +81,7 @@ export function runFactsRepository(files: { path: string; source: string }[], po
   const dir = mkdtempSync(join(tmpdir(), "facts-repo-"));
   try {
     const root = join(dir, "root"), out = join(dir, "out");
+    mkdirSync(out);
     for (const file of files) {
       const path = join(root, file.path);
       mkdirSync(dirname(path), { recursive: true });
