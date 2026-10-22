@@ -1,5 +1,5 @@
 adapter: sqlfluff
-# SQLFluff's documents in rerail's sql pack (NER-1940, NER-1886).
+# SQLFluff's documents in rerail's sql pack.
 rerail:
   pack: sql
   project: sqlfluff

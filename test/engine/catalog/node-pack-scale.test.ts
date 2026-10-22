@@ -48,7 +48,7 @@ function largeTestFile(calls: number): { source: string; planted: string[] } {
 
 describe("the node pack's n/prefer-promises ports at scale", () => {
   it("finish on a large test file and report the callback calls planted in it", async () => {
-    // Candidates until eslint-plugin-n is gated (NER-1898).
+    // Candidates until eslint-plugin-n is gated.
     const pack = join("packs", "node", "candidates");
     const rules = await Promise.all(RULES.map(async (id) =>
       codeRuleSchema.parse(JSON.parse(await readFile(join(pack, "rules", `${id}.json`), "utf8")))));

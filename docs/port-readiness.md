@@ -86,8 +86,8 @@ For the NRV-imported tool-packs:
 Run integrity names a golden or `real_code_gaps` entry for a rule the tool-pack does not have, a rule with both, and a
 candidate that differs on more than 500 of its goldens. When the engine could not fully read a golden (a parse
 failure, or its work budget ran out), the difference is an engine gap, not the rule's: the rule still fails, through
-`engine-reads-goldens`, and the report lists it under "Blocked by engine gaps" so the fix goes to the engine
-(NER-1764), not the rule.
+`engine-reads-goldens`, and the report lists it under "Blocked by engine gaps" so the fix goes to the engine,
+not the rule.
 
 **Upstream's answers cover the goldens' files only.** The recorder fetches the files `goldens.tsv` names and asks
 upstream about those alone, and the gates fetch the same files; nothing in rerail reads the rest of the corpus. Where

@@ -86,7 +86,7 @@ Flags comments whose value matches TSLint's enable/disable directive regex; the 
 
 ### `typescript-eslint-class-literal-property-style`
 
-Default option `fields`. Flags getters (not `override`) whose first statement returns a literal, unless the class body has a setter of the same member name (typescript-eslint's getStaticMemberAccessValue: computed keys folded, constant bindings followed, `#a` same as `a`). A getter whose computed name has no static value is reported; a setter with none never pairs. The message tells the agent to check for subclasses that override the getter as an accessor, which a field would break (TS2611); the rule cannot see other classes, so it reports these getters as upstream does (NER-1785).
+Default option `fields`. Flags getters (not `override`) whose first statement returns a literal, unless the class body has a setter of the same member name (typescript-eslint's getStaticMemberAccessValue: computed keys folded, constant bindings followed, `#a` same as `a`). A getter whose computed name has no static value is reported; a setter with none never pairs. The message tells the agent to check for subclasses that override the getter as an accessor, which a field would break (TS2611); the rule cannot see other classes, so it reports these getters as upstream does.
 
 ### `typescript-eslint-class-methods-use-this`
 
@@ -94,7 +94,7 @@ Flags a non-static, non-constructor class method, or a class field initialized w
 
 ### `typescript-eslint-consistent-generic-constructors`
 
-Covers variable declarators, class fields and parameter defaults initialized with `new Name(...)`, default mode `constructor`; typed-array built-ins are excepted. The fix rebuilds the declaration from its parts, so whitespace and comments inside it are not kept, and a declaration with modifiers is not fixed. typescript-eslint skips the constructor-mode report when the `isolatedDeclarations` parser option is set; Rerail has no such fact, so the port reports it and its message says to keep the annotation under isolatedDeclarations (TS9010, NER-1786).
+Covers variable declarators, class fields and parameter defaults initialized with `new Name(...)`, default mode `constructor`; typed-array built-ins are excepted. The fix rebuilds the declaration from its parts, so whitespace and comments inside it are not kept, and a declaration with modifiers is not fixed. typescript-eslint skips the constructor-mode report when the `isolatedDeclarations` parser option is set; Rerail has no such fact, so the port reports it and its message says to keep the annotation under isolatedDeclarations (TS9010).
 
 ### `typescript-eslint-consistent-indexed-object-style`
 

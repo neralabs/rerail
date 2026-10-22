@@ -1,4 +1,4 @@
-/** F707 must tell the agent how to fix a misplaced bare handler, rather than only reporting it (NER-2036). */
+/** F707 must tell the agent how to fix a misplaced bare handler, rather than only reporting it. */
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import { expect, it } from "vitest";

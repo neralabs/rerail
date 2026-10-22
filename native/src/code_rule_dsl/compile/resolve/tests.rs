@@ -3881,7 +3881,7 @@ fn an_editor_edit_of_a_package_json_rederives_the_packages_below_it() {
     }
 }
 
-/// `file.package.serverGraph` reads the module graph of the file set's Next app (NER-1806): a
+/// `file.package.serverGraph` reads the module graph of the file set's Next app: a
 /// module only a `"use client"` module imports is client code. An editor edit of a source the
 /// graph reads gives the same answer as a fresh snapshot; a host's own fact stays.
 #[test]

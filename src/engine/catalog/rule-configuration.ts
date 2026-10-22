@@ -101,11 +101,6 @@ export interface SetUpChoice {
   readonly packs: readonly { readonly packId: string; readonly folder: string }[];
   readonly rules?: readonly { readonly sourceKind: RuleSourceKind; readonly sourceId: string; readonly folder: string }[];
   readonly settings?: readonly RuleSetting[];
-  /**
-   * The person made this choice in the dashboard, where set-up's review happens: an offered review stands, so set-up
-   * carries on at its confirm question. Any other set-up withdraws the offer (`setup-review.ts`).
-   */
-  readonly inDashboard?: boolean;
 }
 
 /** Records the set-up choice in one transaction and marks the repository set up, even when nothing is added. */
@@ -126,7 +121,8 @@ export function recordSetUp(tx: Queries, repositoryKey: RepositoryKey, choice: S
     writeSetting(tx, setting, now);
   }
   tx.update(repositories).set({ configuredAt: now, updatedAt: now }).where(eq(repositories.repositoryKey, repositoryKey)).run();
-  if (choice.inDashboard !== true) clearSetupReview(tx, repositoryKey);
+  // Set up now: an earlier set-up's offer of the review no longer stands (`setup-review.ts`).
+  clearSetupReview(tx, repositoryKey);
 }
 
 /** Everything one load needs, read once. */

@@ -369,7 +369,7 @@ fn the_data_after_halt_compiler_is_no_php() {
     }
 }
 
-/// The minimal templates of NER-1808 and of its review, which the grammar read with errors.
+/// Minimal templates the grammar once read with errors, from a review of the PHP view.
 const TEMPLATES: &[&str] = &[
     INLINE,
     INLINE_REAL_EVAL,
