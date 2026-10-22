@@ -1,7 +1,13 @@
 /**
- * `npm run port-readiness:bump`: move one tool-pack's pins to a newer upstream release. The nightly runs it for every
- * tool-pack `port-readiness:upstream-releases` finds behind, re-records the tool-pack and opens a pull request with the
- * result (port-readiness-nightly.yml); a maintainer can run it the same way.
+ * `npm run port-readiness:bump`: move one tool-pack's pins to a newer upstream release. With every tool-pack
+ * `port-readiness:upstream-releases` finds behind, the nightly (port-readiness-nightly.yml) dispatches
+ * port-readiness-bump.yml once on the work branch auto/bump-run/upstream, whose leg per tool-pack runs it, then on Linux
+ * derives and records again every tool-pack the bump made stale and packs each one's test data into the archive its
+ * test-data.lock names; that upstream code at an unreviewed release runs with no OIDC or write token, and outside main's
+ * cache scope. port-readiness-bump-publish.yml then, on main, runs it again for each leg, composes the verified legs into
+ * a commit per tool-pack carrying its pins, test-data.lock and recording.lock files together, uploads the archives to S3
+ * and opens one pull request, which a maintainer reviews and merges. A maintainer can run it the same way, and
+ * regenerate the rest as the pull request's "Regenerate locally" section says.
  *
  * A gated tool-pack (`packs/<pack>/upstream/<tool>/gates.yaml`) pins its upstream in several places, all moved together:
  * - gates.yaml's `upstream.version` and `upstream.commit`, the commit being the one the release's tag names on GitHub
@@ -17,7 +23,8 @@
  *
  * The Rust pack's Clippy ships with Rust: its pins are packs/rust/upstream/common.py's `TOOLCHAIN`, `RUSTC_VERSION`,
  * `CLIPPY_VERSION` and `CLIPPY_COMMIT` (rust-lang/rust-clippy at tag `rust-<release>`), read from the release's channel
- * manifest, and conformance.json's `tools[clippy].version`.
+ * manifest, conformance.json's `tools[clippy].version`, gates.yaml's `upstream` commit, version and runtime, and the
+ * runtime's `rust-toolchain.toml` (its directory named `clippy-<release>`).
  *
  * How upstream tags a release is learnt from the pin itself: the first of `eslint.release.tag`'s form, `v<version>` and
  * `<version>` whose tag of the pinned release names the pinned commit. Every edit is checked by reading the file back,
@@ -525,6 +532,7 @@ function pythonConstant(text: string, name: string, path: string): string {
 
 /** Plan the bump of the Rust pack's Clippy to Rust `version`; null when it already pins it. */
 export async function planClippyBump(root: string, version: string, sources: Sources): Promise<Bump | null> {
+  const manifest = readGatesManifest(root, "rust", "clippy");
   const pin = clippyPin(root);
   if (pin.disagreements.length > 0) throw new Error(`rust/clippy: the pins disagree before the bump (${pin.disagreements.join("; ")}); line them up by hand first`);
   if (!isNewer(pin.version, version, "rust/clippy")) return null;
@@ -561,13 +569,42 @@ export async function planClippyBump(root: string, version: string, sources: Sou
   const clippyVersion = `0.1.${releaseParts(pinned.toolchain)![1]!}`;
   if (clippyVersion !== fresh.clippyVersion) edits.write(conformancePath, bumpConformanceTool(conformancePath, edits.read(conformancePath), "clippy", clippyVersion, fresh.clippyVersion));
 
+  // gates.yaml (upstream commit, Clippy's version, the runtime it names) and the recorder's runtime, named for the Rust
+  // release whose toolchain it pins (runtimes/clippy-<release>/rust-toolchain.toml).
+  const renames: { from: string; to: string }[] = [];
+  const oldRuntime = manifest.upstream.runtime;
+  const newRuntime = oldRuntime.endsWith(`-${pinned.toolchain}`) ? `${oldRuntime.slice(0, -pinned.toolchain.length)}${version}` : oldRuntime;
+  if (newRuntime !== oldRuntime) {
+    if (existsSync(join(root, RUNTIMES_DIRECTORY, newRuntime))) throw new Error(`${RUNTIMES_DIRECTORY}/${newRuntime} already exists`);
+    renames.push({ from: `${RUNTIMES_DIRECTORY}/${oldRuntime}`, to: `${RUNTIMES_DIRECTORY}/${newRuntime}` });
+  }
+  const gatesPath = "packs/rust/upstream/clippy/gates.yaml";
+  edits.write(gatesPath, withUpstreamBlock(edits.read(gatesPath), gatesPath, (block) => {
+    let edited = block;
+    if (source.commit !== pinned.commit) edited = replaceCounted(edited, yamlScalar("  ", "commit", pinned.commit), (_, head, quote) => `${head}${quote}${source.commit}${quote}`, `${gatesPath} upstream.commit`, 1);
+    if (fresh.clippyVersion !== clippyVersion) edited = replaceCounted(edited, yamlScalar("  ", "version", clippyVersion), (_, head, quote) => `${head}${quote}${fresh.clippyVersion}${quote}`, `${gatesPath} upstream.version`, 1);
+    if (newRuntime !== oldRuntime) edited = replaceCounted(edited, yamlScalar("  ", "runtime", oldRuntime), (_, head, quote) => `${head}${quote}${newRuntime}${quote}`, `${gatesPath} upstream.runtime`, 1);
+    return edited;
+  }));
+  const { id: _id, ...gated } = manifest;
+  verify(gatesPath, parseGatesManifest(edits.read(gatesPath), gatesPath), renamedRuntime({ ...gated, upstream: { ...gated.upstream, commit: source.commit, version: fresh.clippyVersion } }, oldRuntime, newRuntime));
+  const toolchainPath = `${RUNTIMES_DIRECTORY}/${oldRuntime}/rust-toolchain.toml`;
+  const toolchainBefore = edits.read(toolchainPath);
+  const toolchain = replaceCounted(toolchainBefore, new RegExp(`^(channel\\s*=\\s*")${literal(pinned.toolchain)}(")\\s*$`, "gmu"), (_, head, tail) => `${head}${version}${tail}`, `${toolchainPath} channel`, 1);
+  edits.write(toolchainPath, toolchain);
+  // The file reads back as the pinned one with only its channel moved.
+  const toolchainSchema = z.object({ toolchain: z.object({ channel: z.string() }).passthrough() }).passthrough();
+  const original = toolchainSchema.parse(parseToml(toolchainBefore));
+  verify(toolchainPath, toolchainSchema.parse(parseToml(toolchain)), { ...original, toolchain: { ...original.toolchain, channel: version } });
+
   const leftovers = findLeftovers(root, edits, [
     common,
-    ...filesIn(root, "packs/rust/upstream/clippy"),
+    ...filesIn(root, "packs/rust/upstream/clippy").filter((path) => !path.endsWith("/recording.lock") && !path.endsWith(".expected.json")),
     conformancePath,
     "packs/rust/README.md",
     ...(existsSync(join(root, "packs/rust/licenses")) ? readdirSync(join(root, "packs/rust/licenses")).map((project) => `packs/rust/licenses/${project}/UPSTREAM.md`) : []),
-  ], pinned.toolchain, []);
+    ...filesIn(root, `${RUNTIMES_DIRECTORY}/${oldRuntime}`),
+  ], pinned.toolchain, renames);
   return {
     toolPack: "rust/clippy",
     pack: "rust",
@@ -577,10 +614,10 @@ export async function planClippyBump(root: string, version: string, sources: Sou
     repository: "rust-lang/rust-clippy",
     from: { version: pinned.toolchain, tag: oldTag ?? `rust-${pinned.toolchain}`, commit: pinned.commit },
     to: { version, tag: source.tag, commit: source.commit },
-    files: edits.changed([]),
-    renames: [],
-    // Clippy is not gated: nothing is recorded, and CI derives its answers from the pinned toolchain.
-    record: [],
+    files: edits.changed(renames),
+    renames,
+    // Clippy is gated: its tool-pack is recorded again with the new toolchain (on Linux, as CI records it).
+    record: ["rust/clippy"],
     leftovers,
     notes: source.note === null ? [] : [source.note],
   };
@@ -640,7 +677,11 @@ export function releaseLinks(bump: Bump): { release: string; releaseUrl: string;
   };
 }
 
-/** The bump as Markdown, for the pull request's body: the release, the pin diff, what is re-recorded, and what still names the old release. */
+/**
+ * The bump as Markdown, for the pull request's body: the release, the pin diff, what the nightly derived and recorded
+ * again, how to do that locally, and what still names the old release. The nightly adds the test-data.lock files that
+ * changed, which only exist once it has packed the derived data.
+ */
 export function renderBump(bump: Bump): string {
   const links = releaseLinks(bump);
   const name = bump.ecosystem === "rust" ? "Rust" : `\`${bump.package}\``;
@@ -658,9 +699,26 @@ export function renderBump(bump: Bump): string {
     pinDiff(bump),
     "```",
     "",
-    "### Recorded again",
+    "### Derived and recorded again",
     "",
-    bump.record.length === 0 ? "Nothing: this tool-pack is not gated, so it has no recording; CI derives its answers from the new pins." : bump.record.map((id) => `- \`${id}\``).join("\n"),
+    "The nightly derived each tool-pack's test data from the new pins and recorded its upstream answers again, on Linux with the runtimes the port readiness gates install, then packed the test data into the archive its `test-data.lock` names:",
+    "",
+    ...bump.record.map((id) => `- \`${id}\``),
+    "",
+    "### Regenerate locally",
+    "",
+    "From this branch, with the current test data pulled (`npm run fixtures:pull`), for each tool-pack above:",
+    "",
+    "```sh",
+    ...bump.record.map((id) => {
+      const [pack, tool] = id.split("/");
+      const selector = `--pack ${pack!} --tool ${tool!}`;
+      return `npm run fixtures:derive -- ${selector} --update && npm run port-readiness:record -- ${selector} && npm run fixtures:push -- ${selector}`;
+    }),
+    "```",
+    "",
+    "then commit each tool-pack's `test-data.lock` and `recording.lock`.",
+    ...(bump.record.includes("rust/clippy") ? ["", "Derive and record `rust/clippy` on Linux: Clippy's answers on macOS differ from the ones CI checks."] : []),
     "",
     `### Still naming ${bump.from.version}`,
     "",
@@ -691,7 +749,7 @@ GitHub's API.
 
 /** The latest stable release of a tool-pack's package, as port-readiness:upstream-releases reads it. */
 async function latestRelease(root: string, pack: string, tool: string, fetch: Fetch): Promise<string> {
-  const pin = pack === "rust" && tool === "clippy" ? clippyPin(root) : gatedPin(root, pack, tool);
+  const pin = gatedPin(root, pack, tool);
   const source = registry(pin.ecosystem, pin.package);
   const response = await fetch(source.url, { headers: { accept: source.accept }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
   if (!response.ok) throw new Error(`${source.url}: HTTP ${response.status}`);

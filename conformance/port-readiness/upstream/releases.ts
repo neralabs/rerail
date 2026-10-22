@@ -1,18 +1,22 @@
 /**
  * `npm run port-readiness:upstream-releases`: whether every upstream a tool-pack ports is still pinned at its latest
- * stable release. The nightly runs it on main, so a release upstream publishes after the pin shows up as a red job
- * rather than as rules quietly ported from an old version.
+ * stable release. The nightly runs it on main, so a release upstream publishes after the pin shows up in its summary,
+ * and a breaking one as a red job, rather than as rules quietly ported from an old version.
  *
  * Each gated tool-pack (`packs/<pack>/upstream/<tool>/gates.yaml`) pins its upstream twice: `upstream.version` in
  * gates.yaml, and the package its runtime installs (`conformance/recorders/port-readiness/runtimes/<upstream.runtime>/`:
- * package.json, pyproject.toml or composer.json). The two must agree, and the version must be the latest stable release
- * the package's registry (npm, PyPI or Packagist) publishes. The Rust pack's Clippy has no gates.yaml; its pin is the
- * Rust toolchain its generators refuse any other than (`packs/rust/upstream/common.py`), held to the latest stable Rust.
+ * package.json, pyproject.toml or composer.json). The two must agree, and the version is held to the latest stable
+ * release the package's registry (npm, PyPI or Packagist) publishes. The Rust pack's Clippy ships with Rust: its pin is
+ * the Rust toolchain its generators and its recorder's runtime refuse any other than (`packs/rust/upstream/common.py`,
+ * `runtimes/clippy-<release>/rust-toolchain.toml`), held to the latest stable Rust's major.minor (clippyPin, releaseGap).
  *
- * Exit 1 when a tool-pack is behind upstream, its pins disagree, or its registry could not be read (a check that cannot
- * see upstream's releases must not pass), 2 on an exception. With GITHUB_STEP_SUMMARY set, the table is appended to it
- * too; under GitHub Actions each failing tool-pack is also an `::error::` annotation. `--behind <file>` writes the
- * tool-packs behind upstream there as JSON, for the nightly to open a bump pull request for each (upstream/bump.ts).
+ * Each tool-pack's gap to upstream is `current`, `patch`, `minor`, `major` or `breaking-minor` (a minor release of a 0.x
+ * version); `major` and `breaking-minor` are breaking. Exit 1 when a tool-pack's gap is breaking, its pins disagree, or
+ * its registry could not be read (a check that cannot see upstream's releases must not pass); a patch or minor gap is
+ * reported but does not fail. Exit 2 on an exception. With GITHUB_STEP_SUMMARY set, the table is appended to it too;
+ * under GitHub Actions each failing tool-pack is also an `::error::` annotation and each tool-pack behind by a
+ * non-breaking release a `::warning::`. `--behind <file>` writes every tool-pack behind upstream, breaking or not, there
+ * as JSON, for the nightly to bump in its one bump pull request (upstream/bump.ts).
  */
 import { appendFileSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -52,9 +56,10 @@ export interface UpstreamPin {
  * always the name its releases are published under, so the adapter (one per upstream linter) decides. The ESLint
  * adapter serves several upstreams; each names its package in `eslint.release.installed` (eslintPackage).
  */
-const ADAPTER_PACKAGES: Record<Exclude<GatesManifest["adapter"], "eslint">, { ecosystem: PackageEcosystem; package: string }> = {
+const ADAPTER_PACKAGES: Record<Exclude<GatesManifest["adapter"], "eslint" | "clippy">, { ecosystem: PackageEcosystem; package: string }> = {
   ruff: { ecosystem: "pypi", package: "ruff" },
   bandit: { ecosystem: "pypi", package: "bandit" },
+  sqlfluff: { ecosystem: "pypi", package: "sqlfluff" },
   // PHP_CodeSniffer moved to the PHPCSStandards organisation and still publishes under its old name.
   phpcs: { ecosystem: "packagist", package: "squizlabs/php_codesniffer" },
   // phpstan/phpstan-src is the source; phpstan/phpstan is the release Composer installs, tagged with the same versions.
@@ -113,6 +118,7 @@ export const PIN_FILES: Record<PackageEcosystem, string> = { npm: "package.json"
 /** A gated tool-pack's pins: gates.yaml's `upstream.version` and its runtime's pin of the same package. */
 export function gatedPin(root: string, pack: string, tool: string): UpstreamPin {
   const manifest = readGatesManifest(root, pack, tool);
+  if (manifest.adapter === "clippy") return clippyPin(root, pack, tool);
   const { ecosystem, package: name }: { ecosystem: PackageEcosystem; package: string } = manifest.adapter === "eslint" ? { ecosystem: "npm", package: eslintPackage(manifest.eslint!.release.installed) } : ADAPTER_PACKAGES[manifest.adapter];
   const file = `${RUNTIMES_DIRECTORY}/${manifest.upstream.runtime}/${PIN_FILES[ecosystem]}`;
   let pinned: { version: string } | { problem: string };
@@ -137,30 +143,48 @@ export function gatedPin(root: string, pack: string, tool: string): UpstreamPin 
  * Clippy's pin. It ships with the Rust toolchain, so the release to follow is Rust's: `TOOLCHAIN` in
  * packs/rust/upstream/common.py, which the pack's generators refuse any other toolchain than. The repository's own
  * rust-toolchain.toml pins the toolchain Rerail is built with, not the Clippy the pack ports, so it is not read here.
- * conformance.json's `tools[clippy].version` names the same release as Clippy's own version, 0.1.<minor> for Rust
- * 1.<minor>.<patch>, and must agree.
+ * Every other pin must name the same release: the recorder's runtime (`runtimes/<upstream.runtime>/rust-toolchain.toml`,
+ * its channel), gates.yaml's `upstream.version` and conformance.json's `tools[clippy].version` (Clippy's own version,
+ * 0.1.<minor> for Rust 1.<minor>.<patch>), and gates.yaml's `upstream.commit` (common.py's `CLIPPY_COMMIT`).
  */
-export function clippyPin(root: string): UpstreamPin {
-  const common = "packs/rust/upstream/common.py";
-  const conformance = "packs/rust/conformance.json";
-  const version = /^TOOLCHAIN = "([^"]+)"$/mu.exec(readFileSync(join(root, common), "utf8"))?.[1];
+export function clippyPin(root: string, pack = "rust", tool = "clippy"): UpstreamPin {
+  const manifest = readGatesManifest(root, pack, tool);
+  const common = `packs/${pack}/upstream/common.py`;
+  const conformance = `packs/${pack}/conformance.json`;
+  const gates = `packs/${pack}/upstream/${tool}/gates.yaml`;
+  const text = readFileSync(join(root, common), "utf8");
+  const version = /^TOOLCHAIN = "([^"]+)"$/mu.exec(text)?.[1];
   if (version === undefined) throw new Error(`${common} sets no TOOLCHAIN = "<version>"`);
+  const commit = /^CLIPPY_COMMIT = "([^"]+)"$/mu.exec(text)?.[1];
   const conformanceSchema = z.object({ tools: z.array(z.object({ name: z.string(), version: z.string() })) });
   const clippy = conformanceSchema.parse(JSON.parse(readFileSync(join(root, conformance), "utf8"))).tools.find((entry) => entry.name === "clippy")?.version;
   const expected = `0.1.${version.split(".")[1] ?? ""}`;
+  const toolchainFile = `${RUNTIMES_DIRECTORY}/${manifest.upstream.runtime}/rust-toolchain.toml`;
+  let channel: string | undefined;
+  try {
+    channel = z.object({ toolchain: z.object({ channel: z.string() }) }).parse(parseToml(readFileSync(join(root, toolchainFile), "utf8"))).toolchain.channel;
+  } catch {
+    channel = undefined;
+  }
+  const disagreements = [
+    ...(clippy === expected ? [] : [`${common} pins Rust ${version}, whose Clippy is ${expected}, but ${conformance} tools[clippy].version is ${clippy ?? "missing"}`]),
+    ...(manifest.upstream.version === expected ? [] : [`${common} pins Rust ${version}, whose Clippy is ${expected}, but ${gates} upstream.version is ${manifest.upstream.version}`]),
+    ...(manifest.upstream.commit === commit ? [] : [`${gates} upstream.commit is ${manifest.upstream.commit}, but ${common} CLIPPY_COMMIT is ${commit ?? "missing"}`]),
+    ...(channel === version ? [] : [`${common} pins Rust ${version}, but ${toolchainFile} ${channel === undefined ? "names no toolchain channel" : `pins ${channel}`}`]),
+  ];
   return {
-    toolPack: "rust/clippy",
+    toolPack: manifest.id,
     ecosystem: "rust",
     package: "rust",
     version,
-    disagreements: clippy === expected ? [] : [`${common} pins Rust ${version}, whose Clippy is ${expected}, but ${conformance} tools[clippy].version is ${clippy ?? "missing"}`],
-    bump: "npm run port-readiness:bump -- --pack rust --tool clippy (the nightly opens this as a pull request)",
+    disagreements,
+    bump: "npm run port-readiness:bump -- --pack rust --tool clippy, then record it again (the nightly opens this as a pull request)",
   };
 }
 
-/** Every pin this check follows: the gated tool-packs, in pack and tool order, then Clippy. */
+/** Every pin this check follows: the gated tool-packs, in pack and tool order. */
 export function upstreamPins(root: string): UpstreamPin[] {
-  return [...gatedToolPacks(root).map(({ pack, tool }) => gatedPin(root, pack, tool)), clippyPin(root)];
+  return gatedToolPacks(root).map(({ pack, tool }) => gatedPin(root, pack, tool));
 }
 
 /** A version's numeric components (`v9.7.0` is 9, 7, 0), or null when it is not a plain release (`4.0.0-RC1`, `0.17.0rc1`, `dev-main`). */
@@ -258,9 +282,51 @@ const REQUEST_TIMEOUT_MS = 60_000;
 
 export type ReleaseStatus = "current" | "behind" | "pins disagree" | "registry error";
 
-/** One tool-pack's verdict: its pin, upstream's latest stable release (null when the registry could not be read), and what is wrong. */
+/**
+ * How far a pin is behind upstream's latest stable release: the first release component that differs. A `major` gap,
+ * or a `minor` one while the pinned major is 0 (`breaking-minor`), is breaking; a `patch` gap is any later component.
+ */
+export type ReleaseGap = "current" | "patch" | "minor" | "major" | "breaking-minor";
+
+/** Whether each gap fails the check. */
+export const BREAKING_GAPS: Record<ReleaseGap, boolean> = { current: false, patch: false, minor: false, major: true, "breaking-minor": true };
+
+/**
+ * Whether an ecosystem's pins follow upstream's major.minor only. Clippy's version is 0.1.<minor> for every Rust
+ * 1.<minor>.<patch>, so a Rust patch release ships no Clippy to port: it is not behind, and the nightly does not bump it.
+ */
+const FOLLOWS_MINOR: Record<Ecosystem, boolean> = { npm: false, pypi: false, packagist: false, rust: true };
+
+/** The gap from `pinned` to `latest`, both plain releases, in `ecosystem`; `current` when latest is not newer. */
+export function releaseGap(ecosystem: Ecosystem, pinned: number[], latest: number[]): ReleaseGap {
+  const length = FOLLOWS_MINOR[ecosystem] ? 2 : Math.max(pinned.length, latest.length);
+  for (let index = 0; index < length; index += 1) {
+    const difference = (latest[index] ?? 0) - (pinned[index] ?? 0);
+    if (difference < 0) return "current";
+    if (difference === 0) continue;
+    if (index === 0) return "major";
+    if (index === 1) return (pinned[0] ?? 0) === 0 ? "breaking-minor" : "minor";
+    return "patch";
+  }
+  return "current";
+}
+
+/** How a gap reads in a problem: the kind of release the pin is behind by. */
+const GAP_RELEASES: Record<Exclude<ReleaseGap, "current">, string> = {
+  patch: "a patch release",
+  minor: "a minor release",
+  major: "a major release, which is breaking",
+  "breaking-minor": "a minor release of a 0.x version, which is breaking",
+};
+
+/**
+ * One tool-pack's verdict: its pin, upstream's latest stable release (null when the registry could not be read), the gap
+ * between them (null when either is unknown or not a release), whether that gap is breaking, and what is wrong.
+ */
 export interface ReleaseCheck extends UpstreamPin {
   latest: string | null;
+  gap: ReleaseGap | null;
+  breaking: boolean;
   statuses: ReleaseStatus[];
   problems: string[];
 }
@@ -285,53 +351,84 @@ export async function checkUpstreamReleases(pins: UpstreamPin[], fetch: Fetch): 
       problems.push(`${source.url}: ${error instanceof Error ? error.message : String(error)}`);
     }
     const pinned = releaseParts(pin.version);
+    let gap: ReleaseGap | null = null;
     if (pinned === null) {
       statuses.push("pins disagree");
       problems.push(`the pin ${pin.version} is not a release version`);
-    } else if (latest !== null && compareReleases(releaseParts(latest)!, pinned) > 0) {
-      statuses.push("behind");
-      problems.push(`${pin.package} ${pin.version} is pinned and ${ECOSYSTEM_NAMES[pin.ecosystem]}'s latest stable release is ${latest}: ${pin.bump}`);
+    } else if (latest !== null) {
+      gap = releaseGap(pin.ecosystem, pinned, releaseParts(latest)!);
+      if (gap !== "current") {
+        statuses.push("behind");
+        problems.push(`${pin.package} ${pin.version} is pinned and ${ECOSYSTEM_NAMES[pin.ecosystem]}'s latest stable release is ${latest}, ${GAP_RELEASES[gap]}: ${pin.bump}`);
+      }
     }
-    return { ...pin, latest, statuses: statuses.length === 0 ? ["current"] : [...new Set(statuses)], problems };
+    const breaking = gap !== null && BREAKING_GAPS[gap];
+    return { ...pin, latest, gap, breaking, statuses: statuses.length === 0 ? ["current"] : [...new Set(statuses)], problems };
   }));
 }
 
-/** The checks as Markdown: one table row per tool-pack, then each failing tool-pack's problems. */
+/** Whether a check fails the run: its gap is breaking, its pins disagree, or its registry could not be read. */
+export function failsCheck(check: ReleaseCheck): boolean {
+  return check.breaking || check.statuses.some((status) => status === "pins disagree" || status === "registry error");
+}
+
+/** How a check's gap reads in the table: its kind, marked when breaking, or unknown. */
+function gapCell(check: ReleaseCheck): string {
+  if (check.gap === null) return "unknown";
+  return check.breaking ? `${check.gap} (breaking)` : check.gap;
+}
+
+/** The checks as Markdown: one table row per tool-pack, then the failing tool-packs' problems, then the others behind. */
 export function renderMarkdown(checks: ReleaseCheck[]): string {
-  const failing = checks.filter((check) => check.problems.length > 0);
+  const failing = checks.filter(failsCheck);
+  const behind = checks.filter((check) => !failsCheck(check) && check.problems.length > 0);
   const lines = [
     "## Upstream releases",
     "",
-    "| Tool-pack | Ecosystem | Package | Pinned | Latest stable | Status |",
-    "| --- | --- | --- | --- | --- | --- |",
-    ...checks.map((check) => `| \`${check.toolPack}\` | ${ECOSYSTEM_NAMES[check.ecosystem]} | \`${check.package}\` | ${check.version} | ${check.latest ?? "unknown"} | ${check.statuses.join(", ")} |`),
+    "| Tool-pack | Ecosystem | Package | Pinned | Latest stable | Gap | Status |",
+    "| --- | --- | --- | --- | --- | --- | --- |",
+    ...checks.map((check) => `| \`${check.toolPack}\` | ${ECOSYSTEM_NAMES[check.ecosystem]} | \`${check.package}\` | ${check.version} | ${check.latest ?? "unknown"} | ${gapCell(check)} | ${check.statuses.join(", ")} |`),
     "",
-    failing.length === 0 ? `Every one of the ${checks.length} upstreams is pinned at its latest stable release.` : `${failing.length} of ${checks.length} upstreams need attention:`,
-    ...failing.flatMap((check) => check.problems.map((problem) => `- \`${check.toolPack}\`: ${problem}`)),
   ];
+  if (failing.length === 0 && behind.length === 0) lines.push(`Every one of the ${checks.length} upstreams is pinned at its latest stable release.`);
+  if (failing.length > 0) {
+    lines.push(`${failing.length} of ${checks.length} upstreams fail the check (a breaking release, pins that disagree, or a registry that cannot be read):`);
+    lines.push(...failing.flatMap((check) => check.problems.map((problem) => `- \`${check.toolPack}\`: ${problem}`)));
+  }
+  if (behind.length > 0) {
+    if (failing.length > 0) lines.push("");
+    lines.push(`${behind.length} of ${checks.length} upstreams are behind by a release that is not breaking, which does not fail the check:`);
+    lines.push(...behind.flatMap((check) => check.problems.map((problem) => `- \`${check.toolPack}\`: ${problem}`)));
+  }
   return `${lines.join("\n")}\n`;
 }
 
-/** A tool-pack behind its upstream, as the nightly's bump job reads it: one pull request each. */
+/** A tool-pack behind its upstream, as the nightly's bump-dispatch job reads it: one commit each in the nightly's bump pull request. */
 export interface Behind {
   pack: string;
   tool: string;
   toolPack: string;
   pinned: string;
   latest: string;
+  gap: Exclude<ReleaseGap, "current">;
+  breaking: boolean;
 }
 
-/** The tool-packs whose pin is behind upstream's latest stable release, in check order. */
+/** Every tool-pack whose pin is behind upstream's latest stable release, breaking or not, sorted by tool-pack. */
 export function behindToolPacks(checks: ReleaseCheck[]): Behind[] {
-  return checks.filter((check) => check.statuses.includes("behind") && check.latest !== null).map((check) => {
+  const behind: Behind[] = [];
+  for (const check of checks) {
+    if (check.latest === null || check.gap === null || check.gap === "current") continue;
     const [pack, tool] = check.toolPack.split("/");
-    return { pack: pack!, tool: tool!, toolPack: check.toolPack, pinned: check.version, latest: check.latest! };
-  });
+    behind.push({ pack: pack!, tool: tool!, toolPack: check.toolPack, pinned: check.version, latest: check.latest, gap: check.gap, breaking: check.breaking });
+  }
+  return behind.sort((a, b) => (a.toolPack < b.toolPack ? -1 : a.toolPack > b.toolPack ? 1 : 0));
 }
 
 /**
- * Run the check over this checkout and report it; the exit code. With `behind`, the tool-packs behind upstream are
- * written there as JSON (behindToolPacks) before the exit code is returned, so the nightly can bump them.
+ * Run the check over this checkout and report it; the exit code, 1 when any tool-pack fails (failsCheck). With
+ * `behind`, every tool-pack behind upstream is written there as JSON (behindToolPacks) before the exit code is
+ * returned, so the nightly can bump them.
  */
 export async function main(root: string, fetch: Fetch, env: NodeJS.ProcessEnv = process.env, options: { behind?: string } = {}): Promise<number> {
   const checks = await checkUpstreamReleases(upstreamPins(root), fetch);
@@ -340,10 +437,13 @@ export async function main(root: string, fetch: Fetch, env: NodeJS.ProcessEnv = 
   const step = env.GITHUB_STEP_SUMMARY;
   if (step !== undefined && step !== "") appendFileSync(step, markdown);
   if (options.behind !== undefined) writeFileSync(options.behind, `${JSON.stringify(behindToolPacks(checks))}\n`);
-  const failing = checks.filter((check) => check.problems.length > 0);
+  const failing = checks.filter(failsCheck);
   if (env.GITHUB_ACTIONS === "true") {
-    // A workflow command's data escapes `%`, CR and LF.
-    for (const check of failing) process.stdout.write(`::error title=Upstream release (${check.toolPack})::${`${check.toolPack} ${check.statuses.join(", ")}: ${check.problems.join("; ")}`.replace(/%/gu, "%25").replace(/\r/gu, "%0D").replace(/\n/gu, "%0A")}\n`);
+    // A failing tool-pack is an error, one behind by a release that is not breaking a warning. A workflow command's data escapes `%`, CR and LF.
+    for (const check of checks.filter((entry) => entry.problems.length > 0)) {
+      const data = `${check.toolPack} ${check.statuses.join(", ")} (gap: ${gapCell(check)}): ${check.problems.join("; ")}`;
+      process.stdout.write(`::${failsCheck(check) ? "error" : "warning"} title=Upstream release (${check.toolPack})::${data.replace(/%/gu, "%25").replace(/\r/gu, "%0D").replace(/\n/gu, "%0A")}\n`);
+    }
   }
   return failing.length === 0 ? 0 : 1;
 }

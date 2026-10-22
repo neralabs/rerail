@@ -1,1 +1,0 @@
-<template><div><div v-for="({x,y,z},i) in list" v-if="i%2==0"></div></div></template>
