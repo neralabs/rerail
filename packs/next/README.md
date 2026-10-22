@@ -92,7 +92,7 @@ Matches an import from `next/head` in a file whose path, between its first and s
 
 ### `next-no-img-element`
 
-Matches an `<img>` opening element with attributes that is not a direct child of `<picture>`, unless the file is an app-dir metadata image route (path relative to the ESLint cwd matches `^(src/)?app/` and `/opengraph-image|twitter-image|icon.<ext>`). The violation message is upstream's plus Rerail additions (NER-1946): what `<Image />` needs (`width` and `height` or `fill`; a matching `images.remotePatterns` entry for a remote `src`) and the eslint-disable comment that keeps `<img>`.
+Matches an `<img>` opening element with attributes that is not a direct child of `<picture>`, unless the file is an app-dir metadata image route (path relative to the ESLint cwd matches `^(src/)?app/` and `/opengraph-image|twitter-image|icon.<ext>`). The violation message is upstream's plus Rerail additions: what `<Image />` needs (`width` and `height` or `fill`; a matching `images.remotePatterns` entry for a remote `src`) and the eslint-disable comment that keeps `<img>`.
 
 ### `next-no-location-assign-relative-destination`
 

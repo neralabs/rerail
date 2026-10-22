@@ -558,7 +558,7 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
     return readRepositoryLintConfig(root, ruleCatalog, packs);
   }
 
-  // NER-1789's repro, dolanmiu/docx at PR 3716: the option is set in a config object for **/src/**/*.ts, after shared
+  // The repro from dolanmiu/docx at PR 3716: the option is set in a config object for **/src/**/*.ts, after shared
   // configs, in a typed const the file exports.
   it("configures consistent-type-definitions from a docx-shaped eslint.config.ts, naming the shared configs it does not read", async () => {
     const text = [

@@ -166,7 +166,7 @@ through the shell (`sed -i`) is not caught; the read-back said so.
 
 ## Proof: the incident it is for
 
-PR #71 (NER-1834) was blocked in review because its first commit, `afb8e9abfd`, edited `packs/node/rules/*.json` by hand. Its
+PR #71 was blocked in review because its first commit, `afb8e9abfd`, edited `packs/node/rules/*.json` by hand. Its
 second commit, `1ac84f9eae`, moved the change into `scripts/generate/packs/node_policies.py` and regenerated. Each file the two
 commits touched was replayed as the edit call an agent makes, through the same `ConversationRuleRegistry.match` the daemon runs:
 

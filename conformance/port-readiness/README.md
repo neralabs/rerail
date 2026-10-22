@@ -32,7 +32,7 @@ conformance.json entry maps it), `set-up` (its tool has a gates.yaml; a shipped 
 tool-pack checks, `loads`'s `in-scope` check (it compares a rule with the files upstream lints, so it judges the port),
 `not-overfit` and `matches-upstream-tests`. `matches-upstream-tests` includes `engine-reads-goldens`: a golden
 that differs where the engine reported `source-partial`, `source-incomplete` or `budget-exceeded` fails the rule; the
-fix belongs in the engine (NER-1764). It also includes `no-real-code-gap`: a rule `gates.yaml` lists under
+fix belongs in the engine. It also includes `no-real-code-gap`: a rule `gates.yaml` lists under
 `real_code_gaps` fails. The goldens and real-code gaps are reviewed data, imported from NRV's goldens or, where NRV pins no tool, found by
 rerail's own real-code run (each goldens.tsv's source line says which), and never written by the gates (docs/port-readiness.md, "Goldens").
 
@@ -43,8 +43,7 @@ The gates and the recorder's adapters are adapted, not copied, from nera-rule-va
 `e8727c77d0464bd33b1890e56dcf322119911a34`, plus two commits made on its `dbf1a0cdf733b6b6da0ed709b644afbe715ae9b4`,
 `690f7223f7d62d23cb2c1cdfc2e910969b18d1e5` (Gate 6 skips type-checked rules, and a file that changed is a new golden)
 and `77c266a2545c3fb39c4f9707c0c1c95f20d82cf2` (a golden the engine could not fully read is an engine gap; here the
-blocking `engine-reads-goldens`). Both are in NRV's GitHub repository: `690f722` on branch `claude/ner-1762-gate-harness`
-and `77c266a` on branch `ner-1762-engine-gaps`.
+blocking `engine-reads-goldens`). Both commits are in NRV's GitHub repository.
 
 | NRV `src/validation/` | Here |
 | --- | --- |

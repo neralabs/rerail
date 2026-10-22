@@ -1,5 +1,5 @@
 /**
- * typescript-eslint-no-namespace (packs/typescript/) must not report a global augmentation (NER-1875). Inside
+ * typescript-eslint-no-namespace (packs/typescript/) must not report a global augmentation. Inside
  * `declare module 'x' { … }`, TypeScript accepts `global { … }` without `declare`, and the patched grammar reads it as
  * an `internal_module` named `global` (Patch 26 in `native/grammars/tree-sitter-typescript/PATCHES.md`).
  * typescript-eslint's selector, `TSModuleDeclaration[global!=true][id.type!='Literal']`, never reports one, so only an
@@ -40,7 +40,7 @@ function reportedLines(compiled: NativeCompiledCodeRuleDsl, source: string): num
   return result.violations.map(violation => violation.span.startLine + 1);
 }
 
-describe("typescript-eslint-no-namespace and global augmentations (NER-1875)", () => {
+describe("typescript-eslint-no-namespace and global augmentations", () => {
   it.each([
     ["inside declare module", "declare module 'x' {\n  global {\n    interface String {}\n  }\n}\n"],
     ["with declare", "declare global {\n  interface String {}\n}\n"],

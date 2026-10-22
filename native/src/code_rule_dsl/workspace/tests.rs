@@ -1660,7 +1660,7 @@ fn global_regex_leaves_never_mark_a_broken_file_partial() {
 
 #[test]
 fn an_unread_file_reports_its_detail_and_path_on_every_evaluation_path() {
-    // Review findings 2 and 3 on NER-1864: the stateless path reported `query source is
+    // Regression: the stateless path reported `query source is
     // incomplete` for a file the parser did not read, and a global `select_when` reported a
     // pathless `A cross-file query source is incomplete`, so `rules test` could not name the file.
     let clauses = || {

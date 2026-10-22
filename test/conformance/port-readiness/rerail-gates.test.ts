@@ -269,7 +269,7 @@ describe("the report", () => {
 });
 
 describe("engine-reads-goldens", () => {
-  it("fails on any golden the engine could not fully read, naming the files and NER-1764", () => {
+  it("fails on any golden the engine could not fully read, naming the files and sending the fix to the engine", () => {
     const check = engineReadsGoldensCheck([
       { task: "t", path: "a.py", status: "agree" },
       { task: "t", path: "b.py", status: "engine-gap" },
@@ -279,7 +279,7 @@ describe("engine-reads-goldens", () => {
     assert.equal(check.ok, false);
     assert.match(check.detail, /^1 of 3 golden/u);
     assert.match(check.detail, /t\/b\.py/u);
-    assert.match(check.detail, /NER-1764/u);
+    assert.match(check.detail, /the fix belongs in the engine/u);
   });
 
   it("passes when the engine read every golden, and on a rule without goldens", () => {

@@ -1,5 +1,5 @@
 /**
- * next-no-img-element's message must say what switching to `next/image` takes (NER-1946).
+ * next-no-img-element's message must say what switching to `next/image` takes.
  *
  * Upstream's message (@next/eslint-plugin-next no-img-element) only says to consider `<Image />`. For a remote image,
  * such as a GitHub avatar, the switch also needs `width` and `height` (or `fill`) and a matching

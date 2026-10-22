@@ -1,6 +1,6 @@
 /**
  * psalm-forbidden-code (packs/php/) must not steer an agent into removing a var_dump() whose output is the point
- * (NER-1809). Psalm's ForbiddenCode reports every var_dump() call, and the steer reads as "remove this debugging
+ *. Psalm's ForbiddenCode reports every var_dump() call, and the steer reads as "remove this debugging
  * code". Two idioms use var_dump() on purpose:
  * - output buffering captures it: `ob_start(); var_dump($x); $s = ob_get_clean();` builds a string from the dump
  *   (guzzle/guzzle src/functions.php describe_type(), and Symfony tests that assert on what var_dump() prints);
@@ -51,7 +51,7 @@ function reportedLines(source: string): number[] {
 
 const php = (...lines: string[]) => ["<?php", ...lines, ""].join("\n");
 
-/** guzzle/guzzle src/functions.php describe_type(): the dump, captured, is the function's result (NER-1809). */
+/** guzzle/guzzle src/functions.php describe_type(): the dump, captured, is the function's result. */
 const GUZZLE = php(
   "function describe_type($input): string",
   "{",
@@ -68,7 +68,7 @@ const GUZZLE = php(
   "}",
 );
 
-/** The shape of pestphp/pest src/Expectation.php dump() and dd(): var_dump() is the fallback dumper (NER-1809). */
+/** The shape of pestphp/pest src/Expectation.php dump() and dd(): var_dump() is the fallback dumper. */
 const PEST = php(
   "final class Expectation",
   "{",

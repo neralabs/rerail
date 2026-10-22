@@ -1,5 +1,5 @@
 adapter: eslint
-# eslint-plugin-vue's documents in rerail's vue pack (NER-1939).
+# eslint-plugin-vue's documents in rerail's vue pack.
 rerail:
   pack: vue
   project: eslint-plugin-vue

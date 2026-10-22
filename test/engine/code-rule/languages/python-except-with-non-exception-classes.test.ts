@@ -1,6 +1,6 @@
 /**
  * ruff-b030-except-with-non-exception-classes (packs/python/) must not flag every `except T as name`
- * (NER-1816). tree-sitter-python wraps `T as name` in an as_pattern node, which sits right after `except`; the port
+ *. tree-sitter-python wraps `T as name` in an as_pattern node, which sits right after `except`; the port
  * treated that as_pattern as the handler type and reported it as a non-class expression, steering agents to rewrite
  * working error handling. Ruff 0.16.9's B030 reports only handler types that are not a name, attribute, subscript or
  * call (after flattening tuples, `*` unpacking and `+`), whether or not the handler binds a name.

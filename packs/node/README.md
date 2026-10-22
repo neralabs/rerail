@@ -2,7 +2,7 @@
 
 24 ports of eslint-plugin-n 18.4.1 rules with its default options. A port starts in `candidates/rules/` and moves to
 `rules/` and `pack.json` once it passes the port readiness gates ([docs/port-readiness.md](../../docs/port-readiness.md)); eslint-plugin-n
-has no port readiness recording yet (NER-1898), so every port is a candidate today, `pack.json` lists no rules, and the pack ships
+has no port readiness recording yet, so every port is a candidate today, `pack.json` lists no rules, and the pack ships
 none and is never recommended. Each port is scored against the plugin's own findings on its rule tests and on two pinned
 corpora (fastify, prettier), through the engine's production workspace path, with every disagreement declared in
 `divergences.json` (one today: `n-prefer-promises-fs` does not report `fs.watch`). The conformance check (`--check`, run
@@ -72,7 +72,7 @@ Default pattern "err": a function whose first parameter is named `err` and has n
 
 ### `n-no-callback-literal`
 
-Matches calls of an identifier named `callback` or `cb` (name only, no scope) whose first argument cannot be an error per upstream's couldBeError: a non-null literal, array, object or template literal, or an assignment/sequence/logical/conditional whose possible results all are. The message is softened (NER-1834): callbacks named cb/callback need not be error-first (ws verifyClient, ssh2 authHandler), so it tells the agent to check before changing the call.
+Matches calls of an identifier named `callback` or `cb` (name only, no scope) whose first argument cannot be an error per upstream's couldBeError: a non-null literal, array, object or template literal, or an assignment/sequence/logical/conditional whose possible results all are. The message is softened: callbacks named cb/callback need not be error-first (ws verifyClient, ssh2 authHandler), so it tells the agent to check before changing the call.
 
 ### `n-no-exports-assign`
 
