@@ -6,6 +6,7 @@ pub(super) struct Schema {
     pub columns: Vec<String>,
     pub defaults: Vec<String>,
     pub keys: BTreeSet<String>,
+    rowid: Option<String>,
     non_null: BTreeSet<String>,
 }
 impl Schema {
@@ -17,6 +18,7 @@ impl Schema {
         let mut defs = Vec::new();
         let mut keys = BTreeSet::new();
         let mut non_null = BTreeSet::new();
+        let mut rowid = None;
         for def in lex::arguments(&declaration[open + 1..close]) {
             if let Some(key) = def.strip_prefix("PRIMARY KEY") {
                 keys.extend(
@@ -38,6 +40,9 @@ impl Schema {
                 .to_owned();
             if def.contains("PRIMARY KEY") {
                 keys.insert(name.clone());
+            }
+            if def.contains("INTEGER PRIMARY KEY") {
+                rowid = Some(name.clone());
             }
             // A composite PRIMARY KEY alone permits NULL in SQLite rowid tables.
             if def.contains("NOT NULL") || def.contains("INTEGER PRIMARY KEY") {
@@ -62,6 +67,7 @@ impl Schema {
             columns,
             defaults,
             keys,
+            rowid,
             non_null,
         })
     }
@@ -384,6 +390,11 @@ pub(super) fn key_probes(sql: &str, schemas: &BTreeMap<String, Schema>) -> Strin
 
 pub(super) enum Action {
     Clear(String),
+    Patch {
+        target: String,
+        body: String,
+        columns: Vec<usize>,
+    },
     Publish {
         target: String,
         body: String,
@@ -466,6 +477,29 @@ pub(super) fn lower(schemas: &BTreeMap<String, Schema>, sql: &str) -> Result<Act
             .into_iter()
             .map(|s| s.split_once(" = ").ok_or("program assignment"))
             .collect::<Result<HashMap<_, _>, _>>()?;
+        if let Some(key) = &schema.rowid
+            && sets.keys().all(|c| !schema.keys.contains(*c))
+        {
+            let columns = schema
+                .columns
+                .iter()
+                .enumerate()
+                .filter_map(|(i, c)| sets.contains_key(c.as_str()).then_some(i))
+                .collect::<Vec<_>>();
+            if columns.len() != sets.len() {
+                return Err("program update column".into());
+            }
+            let fields = columns
+                .iter()
+                .map(|&i| sets[schema.columns[i].as_str()])
+                .collect::<Vec<_>>()
+                .join(",");
+            return Ok(Action::Patch {
+                target: target.into(),
+                body: format!("SELECT {key},{fields} FROM {target} WHERE {predicate}"),
+                columns,
+            });
+        }
         let fields = schema
             .columns
             .iter()
@@ -503,5 +537,31 @@ pub(super) fn statement(schemas: &BTreeMap<String, Schema>, sql: &str) -> Result
     match lower(schemas, sql)? {
         Action::Clear(name) => Ok(format!("p_clear(driver.tick,'{name}')")),
         Action::Publish { target, body, mode } => publish(schemas, &target, &body, mode),
+        Action::Patch {
+            target,
+            body,
+            columns,
+        } => Ok(patch(schemas, &target, &body, &columns)),
     }
+}
+
+pub(super) fn patch(
+    schemas: &BTreeMap<String, Schema>,
+    target: &str,
+    body: &str,
+    columns: &[usize],
+) -> String {
+    let names = (0..=columns.len())
+        .map(|i| format!("v{i}"))
+        .collect::<Vec<_>>();
+    let fields = columns
+        .iter()
+        .enumerate()
+        .map(|(i, c)| format!(",{c},p.v{}", i + 1))
+        .collect::<String>();
+    let body = correlate(&key_probes(body, schemas), schemas);
+    format!(
+        "(WITH payload({}) AS NOT MATERIALIZED ({body}) SELECT p_patch_{target}(driver.tick,p.v0{fields}) FROM payload p)",
+        names.join(",")
+    )
 }

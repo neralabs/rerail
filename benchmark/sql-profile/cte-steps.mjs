@@ -31,9 +31,10 @@ export async function controlStages(directory, clauseNames = new Map()) {
         stage.wallNs += event.wallNs;
         stage.runs++;
         if (event.frame) {
-          const fields = ["frameScans","frameLookups","frameNext","frameColumns","frameInserts","frameIndexBuilds","frameIndexedRows","frameIndexCpuNs","frameIndexWallNs"];
-          fields.forEach((field,i)=>{stage[field]=(stage[field]??0)+event.frame[i];});
-          stage.publishedRows=(stage.publishedRows??0)+(event.publishedRows??0);
+          const fields = ["frameScans","frameLookups","frameNext","frameColumns","frameInserts","frameIndexBuilds","frameIndexedRows","frameIndexCpuNs","frameIndexWallNs","frameUpdatedCells"];
+          fields.forEach((field,i)=>{stage[field]=(stage[field]??0)+(event.frame[i]??0);});
+          const counter = definition.sql.includes("SELECT p_patch_") ? "updatedRows" : "publishedRows";
+          stage[counter]=(stage[counter]??0)+(event.publishedRows??0);
         }
         active = undefined;
       }

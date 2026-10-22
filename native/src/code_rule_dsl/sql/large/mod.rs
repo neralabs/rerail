@@ -162,6 +162,15 @@ impl<'a> Builder<'a> {
                 self.action(dml::publish(self.schemas, &target, &body, mode)?);
                 self.release(nested);
             }
+            dml::Action::Patch {
+                target,
+                body,
+                columns,
+            } => {
+                let (body, nested) = self.materialized(&body)?;
+                self.action(dml::patch(self.schemas, &target, &body, &columns));
+                self.release(nested);
+            }
         }
         self.release(transient);
         Ok(())

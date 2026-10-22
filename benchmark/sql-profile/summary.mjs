@@ -182,6 +182,7 @@ export function actionableSummary(report) {
       nativeApplyCpuMs: report.workload?.results?.native?.apply?.cpuMs ?? null,
       frameIndexCpuMs: total(sqlQueries, "frameIndexTimedBuilds") ? ms(total(sqlQueries, "frameIndexCpuNs")) : null,
       frameIndexBuilds: total(sqlQueries, "frameIndexBuilds"), frameIndexTimedBuilds: total(sqlQueries, "frameIndexTimedBuilds"),
+      framePublishedRows: total(sqlQueries, "frameInserts"), frameUpdatedCells: total(sqlQueries, "frameUpdatedCells"),
       interpretation: "Recorded spans do not partition apply CPU. Profiling, parsing, preparation outside operators, and report work contribute to the difference. Some setup spans precede apply. These costs are not an unprofiled speedup estimate.",
     },
     rootInput: { ...rootMetrics, publication, mode: publication.executions && !rootMetrics.executions ? "virtual-slices" : rootMetrics.executions ? "per-row-inserts" : "not-observed", prioritized: rootMetrics.cpuMs >= minimumCpuMs && rootMetrics.measuredCpuPercent >= minimumShare, sqlExecutionPercent: percent(rootMetrics.executions, sqlExecutions),
@@ -225,6 +226,7 @@ export function summaryMarkdown(report) {
       ...budget.problems.flatMap(problem => [problem, ""]));
   }
   for (const cost of summary.costBreakdown) lines.push(`| ${cost.label} | ${fmt(cost.cpuMs)} | ${fmt(cost.measuredCpuPercent)}% | ${fmt(cost.executions)} |`);
+  lines.push("", `Frame storage: **${fmt(summary.budget.framePublishedRows)} published rows** and **${fmt(summary.budget.frameUpdatedCells)} updated cells**. Column deltas do not count as complete row publications.`);
   lines.push("", summary.budget.frameIndexCpuMs === null
     ? "Frame index construction was not timed in this capture. Re-run with the current profiler to isolate this cost."
     : `Frame index construction: **${fmt(summary.budget.frameIndexCpuMs)} ms** across ${fmt(summary.budget.frameIndexTimedBuilds)} timed builds (${fmt(summary.budget.frameIndexBuilds)} total). This subcost includes scan-order preparation on lookup cache misses and is already included in SQL CPU.`);
@@ -253,10 +255,10 @@ export function summaryMarkdown(report) {
   if (report.relationalStages?.length) {
     lines.push("", "## Work inside SQL programs", "",
       "These stage times are included in SQL CPU above. Do not add them to the recorded budget.", "",
-      "| Stage | Source | CPU ms | Runs | Columns | Published rows | Frame advances | Incomplete |", "|---|---|---:|---:|---:|---:|---:|---:|");
+      "| Stage | Source | CPU ms | Runs | Columns | Published rows | Updated cells | Frame advances | Incomplete |", "|---|---|---:|---:|---:|---:|---:|---:|---:|");
     for (const [index, stage] of report.relationalStages.slice(0, 10).entries()) {
       const source=stage.source?.ruleId ? `${stage.source.ruleId}/${stage.source.clauseId}` : stage.source ? `${stage.source.scope}:${stage.source.statement}` : "shared relation";
-      lines.push(`| S${index} | ${source.replaceAll("|","\\|").replaceAll("\n"," ")} | ${fmt(stage.cpuNs / 1e6)} | ${stage.runs} | ${stage.columns.length} | ${stage.publishedRows === undefined ? "—" : fmt(stage.publishedRows)} | ${stage.frameNext === undefined ? "—" : fmt(stage.frameNext)} | ${stage.incomplete} |`);
+      lines.push(`| S${index} | ${source.replaceAll("|","\\|").replaceAll("\n"," ")} | ${fmt(stage.cpuNs / 1e6)} | ${stage.runs} | ${stage.columns.length} | ${stage.publishedRows === undefined ? "—" : fmt(stage.publishedRows)} | ${fmt(stage.frameUpdatedCells??0)} | ${stage.frameNext === undefined ? "—" : fmt(stage.frameNext)} | ${stage.incomplete} |`);
     }
     lines.push("", "Inspect the hottest stage bodies in profile.json. Restrict their input grain and capture width before changing materialization boundaries.");
   }

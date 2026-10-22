@@ -847,6 +847,81 @@ impl FrameStore {
         )
     }
 
+    /// Apply completed SQL column deltas. Keys and predicates are evaluated in SQL before
+    /// this storage callback runs, so assignments observe the same original table snapshot.
+    pub(super) fn program_patch(
+        &self,
+        name: &str,
+        columns: &[usize],
+        mut chunks: Vec<Vec<Value>>,
+    ) -> Result<usize> {
+        let shared = self
+            .frames
+            .lock()
+            .get(name)
+            .cloned()
+            .ok_or_else(|| Error::ModuleError(format!("unknown patch relation {name}")))?;
+        let frame = shared.get();
+        let Key::Rowid(key) = frame.key else {
+            return Err(Error::ModuleError(
+                "patch requires integer primary key".into(),
+            ));
+        };
+        if columns.is_empty()
+            || columns
+                .iter()
+                .any(|&c| c >= frame.columns.len() || c == key)
+        {
+            return Err(Error::ModuleError("invalid patch columns".into()));
+        }
+        let width = columns.len() + 1;
+        if chunks.iter().any(|c| c.len() % width != 0) {
+            return Err(Error::ModuleError("invalid patch chunk".into()));
+        }
+        let order = frame.scan_order()?;
+        let mut positions = Vec::new();
+        for row in chunks.iter().flat_map(|c| c.chunks_exact(width)) {
+            let Value::Integer(id) = row[0] else {
+                return Err(Error::ModuleError("invalid patch key".into()));
+            };
+            let position = if frame.ascending && frame.dense && frame.len > 0 {
+                usize::try_from(id.wrapping_sub(frame.columns[key].integer(0)))
+                    .unwrap_or(usize::MAX)
+            } else if let Some(order) = &order {
+                let at = order.partition_point(|&r| frame.columns[key].integer(r as usize) < id);
+                order.get(at).map_or(usize::MAX, |&r| r as usize)
+            } else {
+                partition(frame.len, |r| frame.columns[key].integer(r) < id)
+            };
+            if position >= frame.len || frame.columns[key].integer(position) != id {
+                return Err(Error::ModuleError("missing patch key".into()));
+            }
+            positions.push(position);
+        }
+        // SAFETY: the producer has reached EOF before aggregate finalization. Validation
+        // above owns its ordering vector and leaves no borrowed column values alive.
+        let frame = unsafe { shared.get_mut() };
+        for (row, &position) in chunks
+            .iter_mut()
+            .flat_map(|c| c.chunks_exact_mut(width))
+            .zip(&positions)
+        {
+            for (&column, value) in columns.iter().zip(&row[1..]) {
+                frame.columns[column].set(position, frame.len, value.into());
+            }
+        }
+        frame
+            .lookups
+            .borrow_mut()
+            .retain(|(index, _)| !index.iter().any(|c| columns.contains(c)));
+        #[cfg(any(test, feature = "unbounded-work"))]
+        super::profiling::frame(
+            super::profiling::FrameEvent::Update,
+            positions.len() * columns.len(),
+        );
+        Ok(positions.len())
+    }
+
     /// A publication buffers bounded row-aligned chunks, rather than one allocation per row.
     /// Values still belong to the aggregate until its producer cursors have reached EOF.
     pub(super) fn program_chunks(
@@ -1379,6 +1454,52 @@ fn owned(value: ValueRef<'_>) -> Value {
 }
 
 impl Column {
+    fn set(&mut self, row: usize, len: usize, value: ValueRef<'_>) {
+        if self.data.is_shared() {
+            let mut column = Self::new(self.integer, self.default);
+            for at in 0..len {
+                column.push(at, self.get(at));
+            }
+            *self = column;
+        }
+        let value = match (value, self.default) {
+            (ValueRef::Null, Some(default)) => ValueRef::Integer(default),
+            (value, _) => value,
+        };
+        if let Some(word) = self.nulls.get_mut(row / 64) {
+            *word &= !(1 << (row % 64));
+        }
+        match (value, &mut self.data) {
+            (value, Data::Any(values)) => values[row] = owned(value),
+            (ValueRef::Null, data) => {
+                self.nulls.resize(self.nulls.len().max(row / 64 + 1), 0);
+                self.nulls[row / 64] |= 1 << (row % 64);
+                match data {
+                    Data::Narrow(values) => values[row] = 0,
+                    Data::Wide(values) => values[row] = 0,
+                    _ => unreachable!("shared columns materialized"),
+                }
+            }
+            (ValueRef::Integer(value), Data::Narrow(values)) => {
+                if let Ok(narrow) = i32::try_from(value) {
+                    values[row] = narrow;
+                } else {
+                    let mut wide: Vec<i64> = values.iter().map(|&v| v.into()).collect();
+                    wide[row] = value;
+                    self.data = Data::Wide(wide);
+                }
+            }
+            (ValueRef::Integer(value), Data::Wide(values)) => values[row] = value,
+            (value, _) => {
+                // Preserve other rows when the column changes its storage type.
+                let mut values: Vec<Value> = (0..len).map(|at| owned(self.get(at))).collect();
+                values[row] = owned(value);
+                self.data = Data::Any(values);
+                self.nulls.clear();
+            }
+        }
+    }
+
     fn push(&mut self, row: usize, value: ValueRef<'_>) {
         if self.data.is_shared() {
             let mut owned = Self::new(self.integer, self.default);
@@ -2052,6 +2173,53 @@ unsafe impl VTabCursor for FrameCursor<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn column_deltas_detach_shared_pages_without_changing_other_views() {
+        let (db, store) = connection(
+            "/*FRAME*/a(k INTEGER PRIMARY KEY, x); /*FRAME*/b(k INTEGER PRIMARY KEY, x); INSERT INTO a VALUES (1,NULL),(2,2147483648),(3,'text')",
+        );
+        store
+            .select(&db, "INSERT INTO b SELECT f.k,f.x FROM a f WHERE f.k>=2")
+            .unwrap();
+        let expected = rows(&db, "SELECT * FROM a");
+        store
+            .program_patch(
+                "b",
+                &[1],
+                vec![vec![
+                    Value::Integer(2),
+                    Value::Null,
+                    Value::Integer(3),
+                    Value::Blob(vec![0, 255]),
+                ]],
+            )
+            .unwrap();
+        assert_eq!(rows(&db, "SELECT * FROM a"), expected);
+        assert_eq!(
+            rows(&db, "SELECT * FROM b"),
+            vec![
+                vec![Value::Integer(2), Value::Null],
+                vec![Value::Integer(3), Value::Blob(vec![0, 255])]
+            ]
+        );
+        store
+            .program_patch(
+                "a",
+                &[1],
+                vec![vec![Value::Integer(1), Value::Integer(i64::MAX)]],
+            )
+            .unwrap();
+        assert_eq!(
+            rows(&db, "SELECT x FROM a WHERE k=1"),
+            vec![vec![Value::Integer(i64::MAX)]]
+        );
+        assert_eq!(
+            rows(&db, "SELECT x FROM b WHERE k=2"),
+            vec![vec![Value::Null]]
+        );
+        assert_eq!(store.live.load(Atomic::Relaxed), 5);
+    }
 
     #[test]
     fn selections_share_pages_across_clear_reuse_and_appends() {

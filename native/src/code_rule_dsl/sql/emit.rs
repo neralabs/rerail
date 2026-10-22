@@ -1476,13 +1476,16 @@ impl<'s> Emitter<'s> {
             .collect();
         let key_value = |column: &String| {
             if canonical.contains_key(column) {
-                format!(
-                    "COALESCE((SELECT atom FROM node WHERE file = f.file AND id = f.{column}), f.{column})"
-                )
+                format!("COALESCE(canonical_{column}.atom, f.{column})")
             } else {
                 format!("f.{column}")
             }
         };
+        // One indexed node lookup per input row supplies every use of the canonical key.
+        // A LEFT JOIN preserves NULLs and occurrence keys that have no canonical atom.
+        let key_joins = canonical.keys().map(|column| format!(
+            " LEFT JOIN node canonical_{column} ON canonical_{column}.file=f.file AND canonical_{column}.id=f.{column}"
+        )).collect::<String>();
         self.unit_tables(unit);
         let demand = demand_table(unit);
         let answer = answer_table(unit);
@@ -1508,7 +1511,7 @@ impl<'s> Emitter<'s> {
         self.insert(
             &demand,
             format!(
-                "INSERT INTO {demand}(file, node{columns}) SELECT DISTINCT f.file, f.node{values} FROM {input} f \
+                "INSERT INTO {demand}(file, node{columns}) SELECT DISTINCT f.file, f.node{values} FROM {input} f{key_joins} \
                  WHERE {supported}NOT EXISTS (SELECT 1 FROM {demand} d WHERE d.file = f.file AND d.node = f.node{matched})"
             ),
             Reads::join(&[input]),
@@ -1534,10 +1537,10 @@ impl<'s> Emitter<'s> {
             &demand,
             if !self.evaluating.is_empty() && self.origin.is_some() {
                 format!(
-                    "INSERT OR IGNORE INTO {reads} SELECT {source}, {unit}, d.id FROM {input} f"
+                    "INSERT OR IGNORE INTO {reads} SELECT {source}, {unit}, d.id FROM {input} f{key_joins}"
                 )
             } else {
-                format!("INSERT INTO {reads} SELECT DISTINCT {source}, {unit}, d.id FROM {input} f")
+                format!("INSERT INTO {reads} SELECT DISTINCT {source}, {unit}, d.id FROM {input} f{key_joins}")
             },
             format!(" {join} {demand} d ON d.file = f.file AND d.node = f.node{matched}"),
         );
@@ -1562,7 +1565,7 @@ impl<'s> Emitter<'s> {
         self.frame(
             "x",
             &format!(
-                "SELECT {select} FROM {input} f {join} {demand} d ON d.file = f.file AND d.node = f.node{matched} \
+                "SELECT {select} FROM {input} f{key_joins} {join} {demand} d ON d.file = f.file AND d.node = f.node{matched} \
                  {join} {answer} r ON r.id = d.id"
             ),
             Reads::join(&[input, &demand, &answer]),

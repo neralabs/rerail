@@ -1,0 +1,1408 @@
+{
+  "version": 1,
+  "baseCommit": "42ab496a254fb92e02503483696a0713d4f1e34f",
+  "branch": "jeremy/sql-capture-demand-spikes",
+  "baselineEvidence": {
+    "path": "benchmark/sql-generation-tuning-evidence.json",
+    "sha256": "ac9751c6a0273d788ca2c3a3cb48c4120a01448e805d4eb6c16b5e13df91e01c"
+  },
+  "afterAddonSha256": "36074c14527a8739e6f78f5601ecaa9c5456ece1ae67dbacbb2d413ef8ead61e",
+  "nativeSourceTreeSha256": "de5aac3470ef619e7f1b45f50dd2e780923cb1dcf969fd99137e2fb6cd197d3d",
+  "buildManifest": "/tmp/rerail-frame-publications-20261021/build-verified.json",
+  "buildManifestSha256": "d2605beb2cefa9e0480752acc3739f96b8293fd5252629360fb8243b0868066e",
+  "allocator": "Identical diagnostic JEMALLOC_OVERRIDE=/tmp/librerail_jemalloc_check_shim.dylib across builds; these are not production latency measurements.",
+  "measurement": {
+    "kind": "unprofiled cold apply CPU",
+    "workers": 4,
+    "samplesPerVariantAndCohort": 3,
+    "ordering": "baseline, deltas, verified; reverse order on odd rounds; fresh process per sample",
+    "oracle": "Complete normalized outcomes equal the frozen native oracle on every run; expected digest, failures and blind files checked. Input and addon hashes checked before and after every sample.",
+    "runner": "/tmp/rerail-frame-publications-20261021/repeat.py",
+    "runnerSha256": "384d1bb749c43c0cc95158b57c6507c6fcb8c151d6f6c6ccbba478c9e4734ffc",
+    "sharedHost": "CPU comparisons use paired fresh baseline samples; all raw wall time, CPU, RSS and load values are retained."
+  },
+  "inputSha256": {
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/native/src/code_rule_dsl/capabilities.json": "be95b9318bdbdc202d2bf4936fc1dc6118a0bd5d5e48c526e2bd4024ed933e01",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b101-assert-used.json": "0008185fb9cc9ad277c2c45fa81c864b0653636a93b2599c031feb52b2a38ef2",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b102-exec-used.json": "b59c293b3cf83676d3d744b15b933e60dffcae6e5d9d8edbb181b04652880874",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b110-try-except-pass.json": "d2adf9097b345ffe5243531ad0940c05ad627ffb1ca17a21fe76b8e3396b3373",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b112-try-except-continue.json": "6f602a77362ba5589f78b4d31445a83557a6eba85f604c6e0c4e6c1a094004ee",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b113-request-without-timeout.json": "e97152836def60337b39f76e046af8b44b8ededbb958c0097b7ecb10e44174e4",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b301-pickle.json": "446173448d101b2a4ee57e8fd3c67b7b569aded1317ad278deee6301fd25279b",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b302-marshal.json": "0ce6555b456897c7f91ae208ee5d4600b7416bffdaa6680b71095a8b534ed085",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b303-md5.json": "15378785ddb3c419e8c24f1d9a998b80e6a7ac74b925d42c27f8eabe7a68f699",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b305-cipher-modes.json": "761395d8cb75b1bec95d9cf5f1cd933016db51d6bdbeec38903c05fefe48a4af",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b306-mktemp-q.json": "7c4c3a0054ed4240d76e645956ef4e115346e9020d4f9a17f2652b10886a0159",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b307-eval.json": "aac53f6d16257b7dd2d4c5206349518df572e26530ff9016f0f08806503547fa",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b308-mark-safe.json": "c919b334505f1f8cdb4e6815c3e5d61e247901354f53468b09fa8218a8a5b6dd",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b310-urllib-urlopen.json": "b31a789573b9b055c234d2b4f076045356a7e485edd96c25d23c8116ac26f006",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b311-random.json": "c5831ba3e085bdd66752f34c444e5b27316111ffbc5c62c3e8ac1e1770fab029",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b312-telnetlib.json": "f6abf733517af5f8aa30780bfc0497676f9042f8b9f1558b7f3b8f1b55bddf78",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b313-xml-bad-celementtree.json": "0016f9eef0ada4472ab7d7c594a0a0228950af46f0fc4023989c6ffe28464905",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b314-xml-bad-elementtree.json": "85934e8352375cd3726041e55b7d9348ff9eca56cc524beca640410d668aea59",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b315-xml-bad-expatreader.json": "332f33e61797d517df6b29cd3773d09f283acb8c59ecf59012b114c21ba71b9e",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b316-xml-bad-expatbuilder.json": "8bce87eb48f7efdcb8f4cd579d67d694301f2a16c42acc4f1ec76190e2ae38a3",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b317-xml-bad-sax.json": "708293570c887e0a59814f01dfe034fa185db92858764546f8551592cf69d713",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b318-xml-bad-minidom.json": "5c8d39bfa6cfced842f7bea9310f8a7b0200aa2868e5e5dad9bf35f2b3243f00",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b319-xml-bad-pulldom.json": "4c51250f215f99f231d773d5ee6239a862b25f57a74e2ff7e4e306dbf211030c",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b321-ftplib.json": "cd6f26a7fa5afdcff58c5b1eb8b292938b82f738d1dbdb73c7312b0c4e34e590",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b323-unverified-context.json": "576c4cf9b25e8373392cb3c4c76c9779ef99f28eac156f9b9ef050e824ffe702",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b401-import-telnetlib.json": "9b8a0661c8c7f16a5d038d1a2b05b7a5d6bb510aac4b742b23aa445f1839a751",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b402-import-ftplib.json": "f4090ec70597bd06d0d3122be286db74a8a0f6d0da6e8edd90600a9765e74146",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b405-import-xml-etree.json": "18ca1fc8ac273fcc0a173b7d1ce1c227c6ee0e91dccc322060023d3f0889312b",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b406-import-xml-sax.json": "98f54f833a47f7abf163447b22b39e8030157aed185a52740dffeeace39ee4cf",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b407-import-xml-expat.json": "af117b4944741b2bbb633882375c105eebebc579ef962225a30a8e0aaa64bbcf",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b408-import-xml-minidom.json": "1e16681ddd0d74f30b78e23e28a859b6ea5b8b7ad871b0bf14faa64c0799a8e0",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b409-import-xml-pulldom.json": "949008f290dabfe78638f6e049a0d377296921f1e1fc21410fe160d5796f3fcd",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b411-import-xmlrpclib.json": "82520423fc6b908bea01e1a0debbc2db5c5eca231515a92bce50fbef1cd42442",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b413-import-pycrypto.json": "99d1cebc27d01778e19eaa883ad547b4386072f79e97143d9c6b546d6b0bc3a5",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b415-import-pyghmi.json": "7069c6498f45cbe5ab676598dcfb6386ac9809c52ec8b5d8d9edd0b043081678",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b502-ssl-with-bad-version.json": "38e541291a1c98366a519cad2e1d1ee1301bb49aeb18c7af340c04e8dca9ba24",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b505-weak-cryptographic-key.json": "b24e23134e1f31e254c35df756099d70b2834ff2f85d77fcf6dea227ee0fcd05",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b507-ssh-no-host-key-verification.json": "2a9fb0672c4b5cb7a57997641a6974413824680cfb2370cdb0a32769a2199310",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b606-start-process-with-no-shell.json": "1ed4f808f0483f432e05a2394b827162eacda72cdc3f756c64f744b97b0b3190",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b610-django-extra-used.json": "e1bc70f8337050b10568d81c6ebcd93608b2190a61a593e7aace97f8306a9287",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/bandit-b615-huggingface-unsafe-download.json": "1c062718e4080cf67223025291ee9eb74e77201ee1754aeb087818b9618b6474",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-async100-cancel-scope-no-checkpoint.json": "42c47dfda106afa42d1c11d9439260770335b3ac3c1e2b309804ba8c38d7ed26",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-async105-trio-sync-call.json": "3ae1d0d2662806f266ff50cec80d4f99dd223b2efcee5fbe53ab8f5e5d0129d2",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-async115-async-zero-sleep.json": "99ce91697d6d06be5ee7edaae6e8306412028b37430530658eef2b904203b2bd",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-async116-long-sleep-not-forever.json": "ac83c4140c30e4fea182a3605c02b1aff5ff47f18949fd4d3aa7f7ccb96cfbab",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-async210-blocking-http-call-in-async-function.json": "b60ad380463cbe4e8c21cbc734653dd9d35f8e25d8887d04f06f2bd5ebab2328",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-async221-run-process-in-async-function.json": "fa70a47536d8a7ae3b540270d72b7c18907682a00116993d80f3d1cab572f6b6",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-async222-wait-for-process-in-async-function.json": "a01cfec9f96a9a8be2992836d17326e584a97c9dbea0278c6190536c60d60ff9",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-async230-blocking-open-call-in-async-function.json": "5f4b5d362ab8ac2947fb7b391376657c58d0dc6f3d59f957c092288fbe59cdcf",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-async250-blocking-input-in-async-function.json": "09233b72499aedb1e626a4d0ed9ac689a099045182e8b384d9cf8ef8670b0dc3",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-async251-blocking-sleep-in-async-function.json": "289bb07a85c46c79dcc3d6df91bee3bde7a8b12a7aa4ae73fc52b9922d255686",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-b002-unary-prefix-increment-decrement.json": "08679e12649a5cde0de309fe3f1da0bb91f19d37c27fc8d04c7142fe5c9b66e0",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-b003-assignment-to-os-environ.json": "75a8ad8af589cdbb51342492b2f4d0099f770c0582779b7f10a2ac472a7e7dd6",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-b004-unreliable-callable-check.json": "d1ca00e3989c6bf968e414411d4740421f00927c00f4114e07d8c72513ee32c5",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-b005-strip-with-multi-characters.json": "c3a000c3f921c71f81ea2f56f99a030842f9a69c4fdecbc4834ac1dd4bc400a5",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-b007-unused-loop-control-variable.json": "b2eb3237d4f09664f13cbe54843554410fedc4403b477bb7467ea00d79c508b0",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-b009-get-attr-with-constant.json": "1e2cd05f9f8865284968100c53c05fbf6d43d3cc60a0981d4af9268a8fc7c61d",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-b010-set-attr-with-constant.json": "99e956e85ec7d55a789fb129a6be55270f10b736ba821972ced866b4a09ceb32",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-b011-assert-false.json": "ee0c918071592a81539e8e68c965ffcd2a377ca50fbb24e006c8a7feacb7ff39",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-b013-redundant-tuple-in-exception-handler.json": "ac3ad3f1b37ce0197ba7599a1c3229aeb9f06bb33c467c73e52ff5dd59f99aac",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-b014-duplicate-handler-exception.json": "2b381ef49b04a0feaebeb6abd856e8146fb0280813dedb3e421bab8156d0afb7",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-b016-raise-literal.json": "e2ffb49951d8681d24497efee35c80e47c20aa77a388bf7ad9a293d7cb24d1b8",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-b020-loop-variable-overrides-iterator.json": "172aa99ea3b434dcc4e149c7c193c84e7140e7b2649e46c94797e272bb2de0ac",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-b021-f-string-docstring.json": "4eda3e1076530d35231536a208d4e139ea419e0d1719bc6940f7fa079252aeaf",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-b022-useless-contextlib-suppress.json": "d264c1d62a61da2767e324a5e20c1bff598d490d94204ad7c779e898d72ec8cc",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-b023-function-uses-loop-variable.json": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-b025-duplicate-try-block-exception.json": "e68f5f97d5800876a3a0ff7f505d9d7e6f80207de7e056493aaa7c7df71dc2d0",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-b026-star-arg-unpacking-after-keyword-arg.json": "4ac4d681906ab65ad3c11c22e64ace7b4b1bf79ee130ad429fb4136a7248d97d",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-b028-no-explicit-stacklevel.json": "31a7c0ffdb2015124a5bed8f43c568cc1e054fe15c8bcdb5f6e3a012d38d1f05",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-b029-except-with-empty-tuple.json": "eaa7c67e56f12bf8daf8e338fa25836bd1ab8738fdacf4483e3ba0ed5fd34e7f",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-b032-unintentional-type-annotation.json": "29ed649a3c63fa6d5429d3b12ecd6cf63d4ad1cec8afdf2aea8874da4ebc22a2",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-b033-duplicate-value.json": "d1f1b3cf5a0e1222748958f755c75a8b322e5e439f3dc122a08e490744db2119",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-b034-re-sub-positional-args.json": "d031f3cf590ce31b2dbd2adf212adb137c51e1ecff8c001cff3b34f4dd78b24f",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-b039-mutable-contextvar-default.json": "78c6c5b5822b18e31e01f8e3eedfc8d054341b0d895f1953b79f0842012fa5bc",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-b904-raise-without-from-inside-except.json": "4b3e59d820f045a4e3c6842269bfc09c494d36d01d7e84f280bab8d8d0582a42",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-b905-zip-without-explicit-strict.json": "d5386a34f8f4f07294fff9e8e6529e146f2af6351d48d5f02fceaba4c6924678",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-e711-none-comparison.json": "b6523a3203ebee6f084518d094eba0f525cc4eee592dea9b58a12d15a097975d",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-e721-type-comparison.json": "bff20973880921f0fa3bf26f365d250857be368ed30eb5eee9d6f42706c7844e",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-e722-bare-except.json": "1bc8f7cd461ca608ebe61e610035feadd4f82c3152a430eb2958ab2e8a7852c5",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-e742-ambiguous-class-name.json": "857088945710da336e0ff7d9368a13fdd625019cd7a071f7e4ffb44166c573ad",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-e743-ambiguous-function-name.json": "9065b6365a6a0a863f3698969456d90c366961ac4bc69639c0eb9897441d73f2",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f403-undefined-local-with-import-star.json": "ec4d53056eed9628b2750327a332ebf2c05d98505ade92297f529b63c235e618",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f406-undefined-local-with-nested-import-star-usage.json": "d22ff8fb34f64f9158fc802526d48a3d94d7bb8505bc916b527cfacad6351e75",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f407-future-feature-not-defined.json": "b4e95518c42bfd8411f0ec96de862912083fceb65745a74436de0e93cd1675e8",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f501-percent-format-invalid-format.json": "36a17888dfa42ac62395e74398b73f396ad876e0d1e94ca734356f3af83fff22",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f502-percent-format-expected-mapping.json": "931368b1041df97833e7fe6b5760f6f9b489f56b2315e70ea4bf46ecf9887c85",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f503-percent-format-expected-sequence.json": "4d5108d13694cb82904c432027e154343717f20f9508299a09714ef4fe39b555",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f504-percent-format-extra-named-arguments.json": "6778967aa61dacfd1c63e937bb4a358b770634282761818d3bab22e112a6a257",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f505-percent-format-missing-argument.json": "d824f7a86873f2a84f674e77c95f8e91c6ab9e4ab25fbf33c1c9aa6bc01144ca",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f506-percent-format-mixed-positional-and-named.json": "dfd44058be0259f39866605ed1186c4a206bc0d0ca571fe0902567bb6d71846d",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f507-percent-format-positional-count-mismatch.json": "23d8edc9d28110bfafbde4dfa0470c3a17cd2693c63ae8bedb9ec0eb77775fee",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f508-percent-format-star-requires-sequence.json": "0e49944898eca7eab7e7a4178eabede3830397a3b4ac99ae217196f5e32210f7",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f509-percent-format-unsupported-format-character.json": "7800b0b8e6b6bb172bd69507d01a9337ccbe4e0f519b254a3c5ce967724d9a54",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f521-string-dot-format-invalid-format.json": "6ebd167146f1f5d65c64231fb03ef8be35df5d868d04cd995515a05f048a9125",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f522-string-dot-format-extra-named-arguments.json": "df228bbbd07e25eb35a5b8f3e2e5d12520376f6146af1a9b9b8ada76f0721290",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f523-string-dot-format-extra-positional-arguments.json": "af3dcfec80a2b33aec543c6086fba3adb550525837a1ae3d8acb228378a320a3",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f524-string-dot-format-missing-arguments.json": "a5bc58ba24a484a7dc14bc1715d37c7f6bc092721a2d74d170b8825a6eacce92",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f525-string-dot-format-mixing-automatic.json": "3d9a7b657ebb6a0223a08d35384121ab030ed912cde69cab1eb48a8b428a0641",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f541-f-string-missing-placeholders.json": "60cf5c70449126b8ed06a343809a08b0c1eed2a50c0510a23c1b0b183b790106",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f601-multi-value-repeated-key-literal.json": "178c7da56d2cdb0786cf26b12c8a1bc893e26c3f745a9d97511ba5f9b312f351",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f602-multi-value-repeated-key-variable.json": "2c60dd8f8171f219d7b3c8450b4b057406fb3d0b1ead3714c3752e7e6de99bb1",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f622-multiple-starred-expressions.json": "35c8f575db6d445ff37600889e90badf488d73f80888559f7685d7e30bbd10db",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f633-invalid-print-syntax.json": "81200cd072eea8c33968d6d90d606f511384413454250ee0d535fa35ff3d0551",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f701-break-outside-loop.json": "acb0afd3f904a3711cd63c12b6c2bd8f7b28ea84176ee6647f91df99901c3c0e",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f702-continue-outside-loop.json": "b41c948f44b237ce344d1f2e5a6ec0c7f789e633819f7e404d26f4ae961d731e",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f706-return-outside-function.json": "d4ec62d43f3259d82b98faaae44646c2d7de013faeb44765c91ad450d3ee867f",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f707-default-except-not-last.json": "8fd86c659faa4b68ed2a9b79758aff28416469cce5812e0411564ce442c14e49",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f822-undefined-export.json": "0fef0211d20c8786e1727ba70cf4b3019ec6a19baf7908ddf15fb56bf7fdd42f",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f823-undefined-local.json": "2ee11eef62b3c0cf3abc17e9120ff9a258dccab32f5ed93b2ad8e78b9e445223",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f842-unused-annotation.json": "2f2fe225a3234171f0ec30c979c24b91bf3bb3dd2c40b71c1dd9c1da469f9b70",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-f901-raise-not-implemented.json": "06b21a2b616e236a88eb3eeee0a835bfa6acddf551154c02a58f4a35be49f586",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-pie794-duplicate-class-field-definition.json": "80ffd0698f63bbce8b7f210c7069812ebfc18a7e414acb2bcda2dbec5690b9e9",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-pie796-non-unique-enums.json": "75760dcaffae5173d312f93f46feef3d70d0ce1392a4dc65fbfc5f155cfbe900",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-pie800-unnecessary-spread.json": "635415c5d80e0e89e4e0c169546f167af9ee12c7a2f3ba20bcc5f6f91a7fdb26",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-pie804-unnecessary-dict-kwargs.json": "e4659dc4ded6544e39bb137ba8998f31657a984bffaca8bff75cc0314795d73a",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-pie807-reimplemented-container-builtin.json": "e498ecfd252a1594fafcd406255f11b317cf0942e6aa30e9decf6772af033759",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-pie810-multiple-starts-ends-with.json": "16fb2c732d889f32a93f8f20787a3131fab458c41f2e8067e2efd63ad213723d",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-ret501-unnecessary-return-none.json": "0efd934ca656c5f36449477ed30ff81ad4d7892887ff83937e5db4d3c58370f9",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-ret502-implicit-return-value.json": "556c24c59afa8a3e1a9313267317934ccc0f5206a6d817aeed190cb6d26b6d9d",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-ret505-superfluous-else-return.json": "b51b148205d0d0ed56bb80f18effebea960120148eeed883c94e62e3fe6b63b5",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-ret506-superfluous-else-raise.json": "d5b467d8021db632d9fbd1eefef9dce6fdab4044d00cbf9960e958c95bc3b50e",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-ret507-superfluous-else-continue.json": "80abc141b63165e982293c5ab4063866d7a5d9311e5d41703e50936109df3d4d",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-ret508-superfluous-else-break.json": "233c2d883a5c736ca784a53ebfc1b3dc4eea35f3b095cc05e9f0e209176614e1",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-sim101-duplicate-isinstance-call.json": "1e93714a1d8394dcf999344d4fbf277f95660c20fef3c9e951d6f699a41a639d",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-sim107-return-in-try-except-finally.json": "6d72093a0c2cee8d8dcb11718bb797d5018efbd25d9df519a839d5a9b8daae75",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-sim109-compare-with-tuple.json": "945e659fdadb378003884b6e92bb7c481ec2a1b1ae0a7f9586b836746985d90c",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-sim112-uncapitalized-environment-variables.json": "dca913d473d1dccc784accc3d12e068ebcea7a2bf590ec8de3d9386c5999453c",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-sim113-enumerate-for-loop.json": "4f6f74ac406dadc877698f700cd79615a24d3c6ff85af8ea0c0baa62e5cb25c4",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-sim208-double-negation.json": "f7cb9072e34b023d9ca3f1110e653204c030366430d09eb262ec8ba22675af42",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-sim210-if-expr-with-true-false.json": "f526a30c3594a12c90a39b5b9826904781ac905b8d05cd08bec0f9baf220cf03",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-sim211-if-expr-with-false-true.json": "0a912e039409717e29fb39d3b16a7baa57f045e870dee155065fc02f9ae248d9",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-sim212-if-expr-with-twisted-arms.json": "fc23de3f066b2393074f7178e4d4d72acde632ec277001c6e1d8b65194da1e27",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-sim300-yoda-conditions.json": "7b85205b8554c64f8ac69858ee5743336baec792492b8a107a3768721f117fea",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-sim905-split-static-string.json": "bf92c4f9484878c6f44041bd6879f52dc18ece82cdb1ca9008318bfad286f008",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-sim910-dict-get-with-none-default.json": "3c522503a898d57cb890288b3c05f1b546e11d256eab388eede3f1cb9d374110",
+    "/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition/packs/python/rules/ruff-t100-debugger.json": "ec42c0207b064de49a545b0222cdee766175dd324a2bd58a49a31823fa7403f0",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/benchmarks/tests/test_exact_graph_publication_benchmark_contract.py": "9ecb5bf184bd15c6c1d99bd3ea1978914a694338523d55a5788ae85750e70ee1",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/conform/api_types/__init__.py": "7fd3c3ec43f7456251a503def545385ca36f630a3d670a50bedcf3a9bfcc0a20",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/conform/l6500_evidence/__init__.py": "5c1f593f467c212ae86643c8625ad31e3761ccb2ad9cc2611d429b918e3f8fa8",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/consumer_contracts/landing/test_dependent_read_contract.py": "0caf5ca7ea0285319a756c86591ae7f234631f29af0f75cb19b953c700f1fda9",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/data_layer/_internal.py": "3f90db10d045e816460acda6d89ae7055b9c1f38d493a588b5c991936b8f457e",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/data_layer/batching.py": "a07cc1688a865f15a82e0116087cdc3ab4cf7d5506bd18887101a3ac61c8bace",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/data_layer/binary_diff.py": "3fff293e82c0f2f1a84992af99eef93e7f525d5d4babad9e2ae7817e282adc10",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/data_layer/cache.py": "456b077b8a510a504217bc316d53f131f0567f37ca0f636eb4eca39ce235c796",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/data_layer/credentials.py": "af7c1cc1dec300d18299d75b464319be326982e432c11fb3a12124e1f0886c4c",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/data_layer/llm_cache.py": "32f5c668c3ac42da5fcb6cdc52f4dbf8525fc8853aa6e5b943d9bb4f21871ec2",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/data_layer/transaction.py": "19dd0f6b013e03794d5686491b13ab3219b8d2ad666b0fb51af80b5c2c0f2dac",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/data_layer/versioned_connection.py": "fa99fdf4cc5b507428d5b9ce3b50064cb690611c515b1e803a7d7b9643896c55",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/data_layer_testing/helpers/lazy.py": "8931cfc7a19448119568cd505d38895b73dc7e36bc33ee994140641593f7707f",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/data_layer_testing/utils/versioned_ddl_bypass.py": "463dfe5c29abd0d51c282042acb77e9d8efb2613a83496cb6fdacf16eb21838e",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/examples/fastapi_app/connection_pool.py": "1197dea4694657cb43524af2b3eb575b36f34a42ad944760ef5aa80b6c56d187",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l1000_cache/transaction.py": "5d401005dfdaa08edceba31ad6c48651e45b045808eb1ad36b88c1de451edbe5",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l1400_config/file_loader.py": "a68b377ddbc4e2f81f4904b9b55a771b935494462f380a3535102b27e328c22d",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/backend_profiles.py": "cec69ab5ebc376b290c9462646a8247c899311aaf19e7e5a9621306b88877da3",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/base_server_plan.py": "0d64ef6a42d37dab90d47c88c2cad76ecb8a93bed24078291361cc0ca7a74999",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/intent_vector_index_maintenance.py": "0b175ba8a866f02324a291141a55dd174c04e7789e3ffc44497e257196391762",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/optimizers/staging_bypass.py": "e67da32d24e988a1f89dc55d88625dace89b9b5bd306476a3cc3c8b7aa0bbb00",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/sql_backend_executor.py": "70886ac7a78b623c0a8e366f03ad54320dfcef5cd05ecbcb8329663bcf752480",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/_compile_helpers.py": "b340e7e5cd7c3e3c4d5ffb96d3f583eeab95ee3dc0b1af0fac72ef4fb611d5ce",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/_compile_server_ref.py": "c3baa453bd6f86fafdc8f2c03f24cfd094f6239ef2d5e6b2706c5d1c36057933",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/_conditional_compile.py": "39274a4a5c4dd7a2ef2df11c954c5b88f968d25d50f61f535f60d2198e6fee9e",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/_cte_field_ref.py": "4effb0b63fe28325c11e4a4e0e108ded9b2810741891e3570bfa45e59348c1e3",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/_cte_insert_helper.py": "e73371af80193b6eaf96f2b4739678181288bee2d7f9ff07d6c050b4511fe47f",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/_resolve.py": "658e2fc6f839cc952312f11757518673cf044312dc3e82d87b24dcbc75289e81",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/_runtime_nested_plan.py": "d55a70a841ccbf116dc41abffa569fab54f00cd43ef4f594ac36a550c25198f0",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/_server_ref_identity.py": "2c06ebf0b5884849e835f26402b7727a15c015ae37fc035c5569e9bb84b42390",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/collect_results.py": "7e42f1425cb4169a73e70c2e242e8a3b4b2ab19a17f7b2d868e7d04d453c751b",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/commit_branch_steps.py": "a4b8d25532e172502bca942fef8048ebd91775e3026d8810857c89a1094103fa",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/error_step.py": "164633d7ccca99f42e60164ed39584d060555500c0a05d994a5d518e5dc1ec91",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/fk_cascade_step.py": "9e63c1cb62c0a8916a97b3c73b61ac15c8a4200be29875e93b631ea2d9ff46e5",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/intent_crud.py": "d9bddaf66b9a7e0ff283c4b2b4c2a790065b61492ae638b4b55cc4e1f22d3dd2",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/intent_embedding_runtime_projection.py": "0e6db4af2641bbddf8ab780feb6ca5b179a323f7edf57ab4a22c76fb2cdf3613",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/intent_graph_reads.py": "cf4775ce8c4e242d453f45f9aa6ba43065e489a1b8a5fa57622596f6bf6502de",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/intent_include.py": "7ce914ec420ae173d1f4ac84eb2e1a9c0d0d6569d2cc97f7e24a70aadd0a19c7",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/intent_transaction.py": "2e6445d48c3e66c3e38c3ba15e059966ab6df22ed694a11188e6485a9edb3c24",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/intent_vector_query.py": "124fc264866620ffc082ba7628211f1b17880e44a598c39515e55ccbc7f5227c",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/rebase_steps.py": "d01723ddb4ae5197177bce3375d04afbf92a5c9179c973334fce14feb04f887a",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/session_context_resolution.py": "058977b7e38e1e15772a4621d03944469bf55e4dac2b5d6310e5fa279d429901",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/session_validation.py": "0d12be1fc2fd31de351f6873ea2dd633274df55ef16566ee2adcfff17bb03bdb",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/sql_conditional.py": "571a18be03c93b2a089a9066c731c52092e364583936685189121bc3e1e1d38d",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/squash_steps.py": "87ee6d85af2d572c7eab43c1264fd06b604001cce3618bce0f22eb900a54c30f",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/table_exists.py": "84b7b5a687a9d0dd9e7791e7cc8010a71e94cebd3c8945195321cbeba94a5b6b",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py": "d0d285d910847e6397fd8710b87b87b57f107fdf6885e551dc105b60f6085fed",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/tests/test_query_scalar_variants.py": "7aa8db67845e2cd6b90154b4615ac5528c947769c365e1ef07ad4cca26f59b43",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/upsert_many.py": "b1744cce0a1d93811f6db8be299d9835fc6423cfa0d3f90cc35c51ff86203bf1",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/versioned_hybrid_search.py": "ec238d2bd119dca274c7be3e5cb451163f45f8b5291c22db28561644bdcebd3b",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/versioned_vector_search.py": "a60a328c88f406000e0de49a5e9dc7ef29153325f29e2047562988d9aab87caf",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/steps/versioning_intent_steps.py": "7cd5777a72f35de58aa3e9a15b834f94bc0515c20327f52accc9787c1d0759fd",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/strategies/data_modifying_cte.py": "4e85d92b336655747843491a8755b2a12ce3cf67e5213be5ada71b365ca79ce2",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2070_server_plan/strategies/data_modifying_cte_ordering.py": "91028fda800a3af5d8d44eef0979fa99f85e57ad0908cd37f7d279eb4c51b78c",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2100_sql_grammar/domain/infra/column_name_utils.py": "6c47ad6d6c892fa4e2f3afb67a1dc145d31be1b669a602a014f8bbb0517ff757",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2100_sql_grammar/domain/notification.py": "3f5570b3ea1d78db46c52f14d613f78675f8281414ae323ef84659fb6fc59d11",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2100_sql_grammar/domain/versioning/stmt_squash_validation.py": "902edcc70989ff215da3d0881fac997bc3b662bc78430d061a43c1d1a468a648",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2200_sql_dialect/sql_connection.py": "a4e543d624689d49be6393a53ccf411b0c1c5ab4a8b1705b6db3ba65dd1a0d7d",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2550_storage_backend/content_storage_service.py": "ff0007fad14ecd42286ac47b129f49b740c40e28c82726091114b1d226ce4b4f",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l2550_storage_backend/database_backend.py": "e49fd4b0fdcb6b1300b02c20166cf6ee979700cccb9d2bdeecf83f4e764fe1b3",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l3500_bulk_ops/sql_export_cursor.py": "0452cafef3d71124c7e94dd65d06ae75e2459abeb89724edc2cadeca48ffc238",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l5200_sql_query/__init__.py": "a0a05e939840eb0b8d8df787e4a2d464fe4c2e8f5adee31f8c03f325c3aa5450",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l5200_vector_index/__init__.py": "22cb4a8722aa95ddb7a0ebc85993cc6a5fc20117a6489b4b174d798cbc778e2a",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l6300_config/__init__.py": "1f4a0b79b7d34e6777d37da988f6f6a29d80be9ba8c84cc2c168cebe983743ae",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l7125_versioned_ops_shared/branch_model_sync.py": "24817236eaeecf3a537a3e31d8df66798c1108dd148dae699822454f4ef85d17",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l7125_versioned_txn_side_effects/__init__.py": "86fb29ab1e8fb4ac2b59eb6258bd2b2f3d729d1f867bfc78e8c63c93c3552689",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l7245_versioned_backends/__init__.py": "2f4efc45b00195a749dfd029fe51966aee2d9cbd3978dbdf7fbc85c62392a60a",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l7245_versioned_backends/generic_sparse.py": "fe8ad3ab2b2dd92ece06f2d73e5c01582eaad2bc10ed51cee2e961aa495951a6",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l7248_sparse_versioned_transactions/sparse_versioned_write_query.py": "36bae109bf9b68b8d6ae245edbc273c215fd79d1f1df9d3390f33c180d2f57eb",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l7300_sql_versioned_transactions/sql_versioned_read_transaction.py": "52990b4cf093474e335e15699fd7f567a278334131d790eb50a0ef682fe02850",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l7300_sql_versioned_transactions/sql_versioned_write_transaction.py": "9c95570d2f26c96eb4327c7d70cf4442d357adb28afa7b1f09d23936f013c478",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l8000_admin/approval_db_runtime.py": "5093829c6d12405932810c0a6e93db4747ae0c9fdd89adfe0e3eacf7b481a0d5",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l9700_sql_graph_query/grammar_expression_translator.py": "1079a07c13f1ebc24d6ee6aa015560d903b81f1945f835444072f1aba91ce138",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l9700_sql_graph_query/graph_direction_helpers.py": "a539bda782867ab0e36e9f232ff9acc527b750f377b35e1da32cb923b5183f43",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/common/l9700_sql_graph_query/where_clause_builder.py": "22ae21e7facc911895e8bfa0d616696da865d352ef502c1e39886cfce9f85260",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/l1590_llm_test_fixtures/cli.py": "2d76831e9bb5632beb3e9b49ca44ea7660ad7f6fe9ee866b81aa99db5463b801",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/l1595_llm_cache/frontend_adapters/__init__.py": "2701183af3eeff62da2df271116676f9d8307ceb6329e32fefe56cb3687fbf86",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/neo4j/versioned_read_transaction_sparse.py": "34a9f455f7c9ef065e5b806539ca335c5369739a6074aefd090bef6f15cedb44",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/read_through/transaction.py": "5c94359a7aec32aaa3b504a4c2559c3db65d71b61657f3fe4a2adec58c705700",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/sqlite/export_cursor.py": "f9a4aac4ead8b12025adce7583742a36fed3cefdaa923cc7d6476314b4a06590",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/impl/sqlite/fts/fts_searcher.py": "7b99f1adcc7d1447da433ae16990275694ddacca6d8e3c323f5b4361ee8d5079",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l1300_session/system_grant.py": "debb95d4dc86f5392cf680b1cad7dbdca9d3f2794a958bc3e5e6aed35b28b33d",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l1400_config/secrets_provider.py": "372f1c3da37d05a771a7b7595a6e711358acb79490cb5c293a580340d83a8c83",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l2000_connection/schema_transaction.py": "5d48d594cf52b540b2ff21547d1cec15276b32c5e24db5a38e6f44459fd5b61d",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l2000_connection/server_plan_execution_context.py": "aebd29cad26184d6091fb4b1553cb105eadf7da7f480ab24b4588788c89970aa",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l2000_connection/sync_async_guard.py": "b94ded8b1136bdd63a49c37b520f840dd680ebe4e4be3c6f800ce9b065c716a6",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l2050_transaction/tests/test_insert_lazy_materialization.py": "16a27e1104a2ee753d424af9a06b41b459a21b4fbb86ce86eeffb3416f2eac78",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l2050_transaction/transaction.py": "675c87aed5b4d9a4374d8915956c46e2f5bcfbf42029caa7e3ff47645f8b76a8",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l2055_lazy_result/lazy_model.py": "61d42a4495543348b650de9eee4bb37b962529e87a07b654a26cb02ba99d2a62",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l2055_lazy_result/lazy_seq.py": "9549878522416340179f9868b19ca4609a34d76190218f50949e2dab56aaf002",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l2055_lazy_result/lazy_writes.py": "bf4245ebd8dac613b323114902f4c0e582be09472dbf29cc904bd1313de80c4e",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l2070_batching/_tripwires.py": "4edc67dca918666cbf772a052d381f2d192dd420c52a912d389cc77193b7f327",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l2070_batching/cardinality.py": "f0de6e5c8d41df86d0dc4533ba3c830171f119c10e213b348fbf1ffb87ed596d",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l2070_batching/conditional_step.py": "e1fd1850d4fcee9a7e517ed9eab9a9a115466d5b17c5ff98b12db4d229494aff",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l2070_batching/optimizer.py": "19757697306bcb14498417a044de45261218959f72b701846d85b96ceb83baba",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l2070_batching/post_op.py": "80947215bcf330f4df9dbc5b99332804e238323206724b50b9383a4460d08ae1",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l2070_batching/step.py": "dcd578cff016774e09b049efed8cb820c786fea2f0ad67db34c5cc716175432d",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l2070_batching/tests/test_step_scheduling_facts.py": "92270d4660c5098cc27705ce0bfad6b46c3b0e653eb6a45d877ef5e484d8268a",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l2091_rtt_tracking/__init__.py": "eb129d2fb4257745eb528f38949c649c7dbb9975a1282b206db30d1fcaea31b6",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l2150_prepared_cache/promotion_registry.py": "d4df00be55535f19327c2f00802939190a67189e3b06be601c1c2eedbb2273e2",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l3100_schema_introspector/introspected_types.py": "0ab5159e73df265c8e336fd1d4459708d843bc70765ea24c34aa8a7717b06f48",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l3200_metadata/sql_types.py": "fca2b8846444e96c6160711508419afececbebd184c6519f216689b3fdb9f6fe",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l4000_permissions/rbac_models.py": "f3b027e2dfb81dc1d8cd059753257528710b8635e316dcd43ed169de827650ce",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l4300_timers/timer.py": "e43aee12845ff0a2e662bb6df548027044c39c9fdeb7ce64e3d3cdbe51af1e91",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l5000_subscriptions/deferred_dispatch.py": "028cf3212865f6df7c3fdd7533e3806d964c07182de2faf6e510ee57ddc83318",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l5100_fts/fts_registry.py": "138a29ff747268ec6d3c9ffd17cb3d9ba00d886423e26ef13399c400b670b05b",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l5200_vector_index/diagnostics.py": "8553dcafaa1aaac8cd520b13dd5dd90077a705405a8635a4fbbc0712a48d26c9",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l5200_vector_index/hnsw_models.py": "77d9c3a7ee2138fc8f47854c8766718d3365406703b553ec38ca909dfb66ff09",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l5200_vector_index/index_implementations/usearch_index.py": "e57a68d2ca041e93d6650eb83f4f48851577dde1519aadb070a659fbb51dd0fc",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l6500_evidence/__init__.py": "74e43375dfbb71c875e3a5c183e7e5c6c307109f388d7ed0912dbb1632351ed3",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l6500_evidence/blob_service.py": "b91dbb9cc3de025dcb14eefbcd00701bb24db24bd9174e9787c1d98a426f717a",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l6510_credentials/renewable_capability_runtime.py": "595f1cc49b9b429d26aade656d0607bc89e7f7b2482c23370bb95ebe35722a62",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l6510_credentials/renewable_orchestration.py": "ba932aabe8e3fece9fffb818e2ca6d309a3435af0e10921de7286f6015882154",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l6530_managed_secrets/_grants.py": "8f07bd973b73dc26979cbe94ade3e7ffcb19599d177a248727255dd0b646dad0",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l6530_managed_secrets/permission_scheme.py": "974044db933c0dff24ee0d6c9d37da15746bb981d4fdfaf3ad5a270ecc62c999",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l6530_managed_secrets/reaper.py": "722abfedc81bc429a3f821f25e834b15edd4240a2d70b982ee7e163cdddb9b75",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l7000_versioned_schema/index_policy.py": "1742f90f29c183d3074d2ae21af050ef201bf77632f0a1657bee1b289f82e2d9",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l7000_versioned_schema/public_helpers.py": "d3bfd6cede04b9ce9995305638cf653b53f452a70315f821c9f7e6cb05d66a94",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l7200_versioned_transactions/versioned_lazy_mixin.py": "4e0f639dd5a1b1e69a53aba70ebeb5810ef1eb67a95ec7b3f5f9a8010efe08d2",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l8000_admin/tools/config_tools.py": "8b1c8c6e7e9abf7a5562fcb38af2a1a396391cff45148e0f0451ddb5e6532dd9",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l8100_ops_analytics/_plan_scopes.py": "f82ba8f8670365845a78a458a5d48d63867086d2b57bd2fcd8b83824387411cc",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l9600_graphs/cross_graph_validation.py": "a9577d09d2494d3d1880437297de8d3f686b33be27c3bf15f124e4977137bfb8",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l9600_graphs/dynamic_schema_evolution.py": "62b5aec4a3aad92f230553c4caea6ba4e9da9ac020ba0cc8d91c634f56038faa",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l9700_graph_query/predicate_rewrite.py": "a3402dd0eb30330273cbd2c50d3552dfbb9d9131aa54d0ff4014116223ddf701",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l9700_graph_query/tests/test_predicate_rewrite.py": "646a94ce9a0a57c3ef7a7ac39f708c9f1df5900bf6ac68d6ea844b23ce1fdd52",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l9720_sparql/executor.py": "4d16703b67a74d07ab4a34c8dbf3dbd6872eb469436cb4f7d908a257aafa6b73",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l9750_graphql/executor.py": "d77c98e3c0ce9fe83d7487be58ad50dadc3244e1a16d97d22dcd1d60fb846436",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l9800_rippling/_queue_auth.py": "f5c6b3e544de75d2ac5f56bb7f89ccc35a77eec43a007b9a5e3a6337c57a57c5",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l9800_rippling/processor.py": "273dcc909a25c30ea5234f543b791a24ca729bcd1c9d8868dc6c922c2a734d73",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l9900_auto_api/actions.py": "3d09d4022cf195b3ab28e63b2f51ca00ac2488fba843fad4903a203a7d27954f",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l9900_auto_api/query_capabilities.py": "2a8e146c047fbbf878f8c2331806d7aec3f7f3da710d24b58306ca0fd518577c",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l9900_auto_api/rest_router.py": "0be6753ab5a737aef6fc8319d1bcea18528e674a72d5e4d4705442e2e194644d",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/l9900_auto_api/tests/test_expand_serverplan_lowering.py": "9ab674816008c1f847baa1b4dc78b04ddea15b0fcd08bad239fca8b86e4b0095",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/scripts/lint_async_sync_delegation.py": "146081378fa4f83f15a7f509a2030a168cb4f6ab07f34fb2782324b466970d16",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/scripts/lint_lazy_architecture.py": "3fc3dbb2e3dd96fcf34286bc2e73cbcbd3b549fa81bab6af27cfbbe39c7ffbe3",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/scripts/lint_serverplan_quality.py": "31f2a216df4e73ee7fd2730a9db2bc1ec919df8380ab79adf309248db99b3734",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/scripts/tests/test_lint_async_def_naming.py": "1dafafed59996eee101999c3c331ad57a549d2b56e39e8f80998879d6a5b9fe1",
+    "/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/nera-data-layer/tests/test_serverplan_publication_linter.py": "df2da4f224d98bbe18c7c7910280d3918ee75c1fa0cdb36771a7111ebcaad7d7"
+  },
+  "comparison": [
+    {
+      "files": 32,
+      "variants": {
+        "baseline": {
+          "medianApplyCpuMs": 9844.208,
+          "medianPeakRssBytes": 1328070656,
+          "samples": [
+            {
+              "apply": {
+                "wallMs": 7484.822375000001,
+                "cpuMs": 9844.208
+              },
+              "digest": "16284c2e6cf80a95761f5b3e6510f30d3df32f69de72fc4a1685556b130a736c",
+              "counts": {
+                "violations": 33,
+                "failures": 0,
+                "blindFiles": 0
+              },
+              "files": 32,
+              "bytes": 1318099,
+              "maxRssBytes": 1328070656,
+              "load": [
+                66.7314453125,
+                78.27099609375,
+                67.515625
+              ],
+              "variant": "baseline",
+              "repeat": 0,
+              "raw": "/tmp/rerail-frame-publications-20261021/repeat-32-0-baseline.json"
+            },
+            {
+              "apply": {
+                "wallMs": 8184.986917,
+                "cpuMs": 9943.707
+              },
+              "digest": "16284c2e6cf80a95761f5b3e6510f30d3df32f69de72fc4a1685556b130a736c",
+              "counts": {
+                "violations": 33,
+                "failures": 0,
+                "blindFiles": 0
+              },
+              "files": 32,
+              "bytes": 1318099,
+              "maxRssBytes": 1242873856,
+              "load": [
+                52.2392578125,
+                72.98583984375,
+                66.13037109375
+              ],
+              "variant": "baseline",
+              "repeat": 1,
+              "raw": "/tmp/rerail-frame-publications-20261021/repeat-32-1-baseline.json"
+            },
+            {
+              "apply": {
+                "wallMs": 9299.649000000001,
+                "cpuMs": 9153.517
+              },
+              "digest": "16284c2e6cf80a95761f5b3e6510f30d3df32f69de72fc4a1685556b130a736c",
+              "counts": {
+                "violations": 33,
+                "failures": 0,
+                "blindFiles": 0
+              },
+              "files": 32,
+              "bytes": 1318099,
+              "maxRssBytes": 1400209408,
+              "load": [
+                55.10693359375,
+                72.90625,
+                66.18115234375
+              ],
+              "variant": "baseline",
+              "repeat": 2,
+              "raw": "/tmp/rerail-frame-publications-20261021/repeat-32-2-baseline.json"
+            }
+          ]
+        },
+        "deltas": {
+          "medianApplyCpuMs": 9596.84,
+          "medianPeakRssBytes": 1277755392,
+          "samples": [
+            {
+              "apply": {
+                "wallMs": 8303.598250000001,
+                "cpuMs": 9596.84
+              },
+              "digest": "16284c2e6cf80a95761f5b3e6510f30d3df32f69de72fc4a1685556b130a736c",
+              "counts": {
+                "violations": 33,
+                "failures": 0,
+                "blindFiles": 0
+              },
+              "files": 32,
+              "bytes": 1318099,
+              "maxRssBytes": 1277755392,
+              "load": [
+                63.27490234375,
+                77.1435546875,
+                67.240234375
+              ],
+              "variant": "deltas",
+              "repeat": 0,
+              "raw": "/tmp/rerail-frame-publications-20261021/repeat-32-0-deltas.json"
+            },
+            {
+              "apply": {
+                "wallMs": 6489.84725,
+                "cpuMs": 9813.163
+              },
+              "digest": "16284c2e6cf80a95761f5b3e6510f30d3df32f69de72fc4a1685556b130a736c",
+              "counts": {
+                "violations": 33,
+                "failures": 0,
+                "blindFiles": 0
+              },
+              "files": 32,
+              "bytes": 1318099,
+              "maxRssBytes": 1329381376,
+              "load": [
+                56.2158203125,
+                74.43359375,
+                66.55224609375
+              ],
+              "variant": "deltas",
+              "repeat": 1,
+              "raw": "/tmp/rerail-frame-publications-20261021/repeat-32-1-deltas.json"
+            },
+            {
+              "apply": {
+                "wallMs": 10752.401249999999,
+                "cpuMs": 9466.613
+              },
+              "digest": "16284c2e6cf80a95761f5b3e6510f30d3df32f69de72fc4a1685556b130a736c",
+              "counts": {
+                "violations": 33,
+                "failures": 0,
+                "blindFiles": 0
+              },
+              "files": 32,
+              "bytes": 1318099,
+              "maxRssBytes": 1266319360,
+              "load": [
+                53.70654296875,
+                72.02001953125,
+                65.94482421875
+              ],
+              "variant": "deltas",
+              "repeat": 2,
+              "raw": "/tmp/rerail-frame-publications-20261021/repeat-32-2-deltas.json"
+            }
+          ]
+        },
+        "verified": {
+          "medianApplyCpuMs": 9533.291,
+          "medianPeakRssBytes": 1244413952,
+          "samples": [
+            {
+              "apply": {
+                "wallMs": 7315.935750000001,
+                "cpuMs": 9533.291
+              },
+              "digest": "16284c2e6cf80a95761f5b3e6510f30d3df32f69de72fc4a1685556b130a736c",
+              "counts": {
+                "violations": 33,
+                "failures": 0,
+                "blindFiles": 0
+              },
+              "files": 32,
+              "bytes": 1318099,
+              "maxRssBytes": 1233993728,
+              "load": [
+                60.77197265625,
+                76.15087890625,
+                67.00341796875
+              ],
+              "variant": "verified",
+              "repeat": 0,
+              "raw": "/tmp/rerail-frame-publications-20261021/repeat-32-0-verified.json"
+            },
+            {
+              "apply": {
+                "wallMs": 5891.6335,
+                "cpuMs": 9787.299
+              },
+              "digest": "16284c2e6cf80a95761f5b3e6510f30d3df32f69de72fc4a1685556b130a736c",
+              "counts": {
+                "violations": 33,
+                "failures": 0,
+                "blindFiles": 0
+              },
+              "files": 32,
+              "bytes": 1318099,
+              "maxRssBytes": 1260273664,
+              "load": [
+                58.84619140625,
+                75.25146484375,
+                66.79150390625
+              ],
+              "variant": "verified",
+              "repeat": 1,
+              "raw": "/tmp/rerail-frame-publications-20261021/repeat-32-1-verified.json"
+            },
+            {
+              "apply": {
+                "wallMs": 9660.25325,
+                "cpuMs": 9270.029
+              },
+              "digest": "16284c2e6cf80a95761f5b3e6510f30d3df32f69de72fc4a1685556b130a736c",
+              "counts": {
+                "violations": 33,
+                "failures": 0,
+                "blindFiles": 0
+              },
+              "files": 32,
+              "bytes": 1318099,
+              "maxRssBytes": 1244413952,
+              "load": [
+                54.78515625,
+                71.36474609375,
+                65.81689453125
+              ],
+              "variant": "verified",
+              "repeat": 2,
+              "raw": "/tmp/rerail-frame-publications-20261021/repeat-32-2-verified.json"
+            }
+          ]
+        }
+      },
+      "applyCpuReductionPercent": 3.1583749551005145
+    },
+    {
+      "files": 138,
+      "variants": {
+        "baseline": {
+          "medianApplyCpuMs": 38748.945,
+          "medianPeakRssBytes": 2463137792,
+          "samples": [
+            {
+              "apply": {
+                "wallMs": 36932.340333,
+                "cpuMs": 38748.945
+              },
+              "digest": "4ad2049fb003a6f5866efb44847b086a09a4e6b015bed17dc9aef77c3313669e",
+              "counts": {
+                "violations": 580,
+                "failures": 0,
+                "blindFiles": 0
+              },
+              "files": 138,
+              "bytes": 7336001,
+              "maxRssBytes": 2463137792,
+              "load": [
+                53.623046875,
+                70.57666015625,
+                65.6025390625
+              ],
+              "variant": "baseline",
+              "repeat": 0,
+              "raw": "/tmp/rerail-frame-publications-20261021/repeat-138-0-baseline.json"
+            },
+            {
+              "apply": {
+                "wallMs": 31614.179084,
+                "cpuMs": 38222.934
+              },
+              "digest": "4ad2049fb003a6f5866efb44847b086a09a4e6b015bed17dc9aef77c3313669e",
+              "counts": {
+                "violations": 580,
+                "failures": 0,
+                "blindFiles": 0
+              },
+              "files": 138,
+              "bytes": 7336001,
+              "maxRssBytes": 2533703680,
+              "load": [
+                57.92626953125,
+                66.21142578125,
+                64.85302734375
+              ],
+              "variant": "baseline",
+              "repeat": 1,
+              "raw": "/tmp/rerail-frame-publications-20261021/repeat-138-1-baseline.json"
+            },
+            {
+              "apply": {
+                "wallMs": 30398.669541,
+                "cpuMs": 38900.534
+              },
+              "digest": "4ad2049fb003a6f5866efb44847b086a09a4e6b015bed17dc9aef77c3313669e",
+              "counts": {
+                "violations": 580,
+                "failures": 0,
+                "blindFiles": 0
+              },
+              "files": 138,
+              "bytes": 7336001,
+              "maxRssBytes": 2437431296,
+              "load": [
+                52.92138671875,
+                64.0478515625,
+                64.119140625
+              ],
+              "variant": "baseline",
+              "repeat": 2,
+              "raw": "/tmp/rerail-frame-publications-20261021/repeat-138-2-baseline.json"
+            }
+          ]
+        },
+        "deltas": {
+          "medianApplyCpuMs": 37453.586,
+          "medianPeakRssBytes": 2512699392,
+          "samples": [
+            {
+              "apply": {
+                "wallMs": 37334.989083,
+                "cpuMs": 38480.486
+              },
+              "digest": "4ad2049fb003a6f5866efb44847b086a09a4e6b015bed17dc9aef77c3313669e",
+              "counts": {
+                "violations": 580,
+                "failures": 0,
+                "blindFiles": 0
+              },
+              "files": 138,
+              "bytes": 7336001,
+              "maxRssBytes": 2450522112,
+              "load": [
+                57.55419921875,
+                69.67822265625,
+                65.51416015625
+              ],
+              "variant": "deltas",
+              "repeat": 0,
+              "raw": "/tmp/rerail-frame-publications-20261021/repeat-138-0-deltas.json"
+            },
+            {
+              "apply": {
+                "wallMs": 29676.311125,
+                "cpuMs": 37453.586
+              },
+              "digest": "4ad2049fb003a6f5866efb44847b086a09a4e6b015bed17dc9aef77c3313669e",
+              "counts": {
+                "violations": 580,
+                "failures": 0,
+                "blindFiles": 0
+              },
+              "files": 138,
+              "bytes": 7336001,
+              "maxRssBytes": 2512699392,
+              "load": [
+                61.82275390625,
+                67.82568359375,
+                65.3408203125
+              ],
+              "variant": "deltas",
+              "repeat": 1,
+              "raw": "/tmp/rerail-frame-publications-20261021/repeat-138-1-deltas.json"
+            },
+            {
+              "apply": {
+                "wallMs": 31062.304,
+                "cpuMs": 36845.914
+              },
+              "digest": "4ad2049fb003a6f5866efb44847b086a09a4e6b015bed17dc9aef77c3313669e",
+              "counts": {
+                "violations": 580,
+                "failures": 0,
+                "blindFiles": 0
+              },
+              "files": 138,
+              "bytes": 7336001,
+              "maxRssBytes": 2513780736,
+              "load": [
+                50.59716796875,
+                62.53271484375,
+                63.5732421875
+              ],
+              "variant": "deltas",
+              "repeat": 2,
+              "raw": "/tmp/rerail-frame-publications-20261021/repeat-138-2-deltas.json"
+            }
+          ]
+        },
+        "verified": {
+          "medianApplyCpuMs": 38016.853,
+          "medianPeakRssBytes": 2469363712,
+          "samples": [
+            {
+              "apply": {
+                "wallMs": 33216.821875,
+                "cpuMs": 38285.983
+              },
+              "digest": "4ad2049fb003a6f5866efb44847b086a09a4e6b015bed17dc9aef77c3313669e",
+              "counts": {
+                "violations": 580,
+                "failures": 0,
+                "blindFiles": 0
+              },
+              "files": 138,
+              "bytes": 7336001,
+              "maxRssBytes": 2437251072,
+              "load": [
+                63.8095703125,
+                69.86328125,
+                65.77783203125
+              ],
+              "variant": "verified",
+              "repeat": 0,
+              "raw": "/tmp/rerail-frame-publications-20261021/repeat-138-0-verified.json"
+            },
+            {
+              "apply": {
+                "wallMs": 38592.8375,
+                "cpuMs": 38016.853
+              },
+              "digest": "4ad2049fb003a6f5866efb44847b086a09a4e6b015bed17dc9aef77c3313669e",
+              "counts": {
+                "violations": 580,
+                "failures": 0,
+                "blindFiles": 0
+              },
+              "files": 138,
+              "bytes": 7336001,
+              "maxRssBytes": 2469363712,
+              "load": [
+                60.81982421875,
+                68.50439453125,
+                65.44921875
+              ],
+              "variant": "verified",
+              "repeat": 1,
+              "raw": "/tmp/rerail-frame-publications-20261021/repeat-138-1-verified.json"
+            },
+            {
+              "apply": {
+                "wallMs": 25573.699,
+                "cpuMs": 36502.514
+              },
+              "digest": "4ad2049fb003a6f5866efb44847b086a09a4e6b015bed17dc9aef77c3313669e",
+              "counts": {
+                "violations": 580,
+                "failures": 0,
+                "blindFiles": 0
+              },
+              "files": 138,
+              "bytes": 7336001,
+              "maxRssBytes": 2499264512,
+              "load": [
+                48.380859375,
+                60.75732421875,
+                62.88916015625
+              ],
+              "variant": "verified",
+              "repeat": 2,
+              "raw": "/tmp/rerail-frame-publications-20261021/repeat-138-2-verified.json"
+            }
+          ]
+        }
+      },
+      "applyCpuReductionPercent": 1.8893211157103682
+    }
+  ],
+  "acceptance": [
+    {
+      "files": 32,
+      "baseline": {
+        "path": "/tmp/rerail-sql-tuning-20261021/chunks-32-profile",
+        "sha256": "9802085f53ca555322095bb882ea97569e03a348930cb3f54020a93e9907416b",
+        "executionBudget": {
+          "limit": 100,
+          "observed": 72,
+          "excess": 0,
+          "accepted": true,
+          "status": "passed",
+          "scope": "One complete cold workload across all workers, including setup, DDL, transactions, matching, and cleanup. Profiler-generated EXPLAIN is diagnostic work outside the job.",
+          "enforcement": "Acceptance gate after the complete run; this does not interrupt the workload at execution 101.",
+          "categories": {
+            "setup": 4,
+            "transaction": 8,
+            "matchingAndCleanup": 60
+          },
+          "sessions": [
+            {
+              "session": "profile-30767-0.json",
+              "pid": 30767,
+              "completed": 18,
+              "fromSessionStart": true,
+              "running": 0,
+              "source": "ast-session",
+              "started": 18,
+              "observed": 18
+            },
+            {
+              "session": "profile-30767-1.json",
+              "pid": 30767,
+              "completed": 18,
+              "fromSessionStart": true,
+              "running": 0,
+              "source": "ast-session",
+              "started": 18,
+              "observed": 18
+            },
+            {
+              "session": "profile-30767-2.json",
+              "pid": 30767,
+              "completed": 18,
+              "fromSessionStart": true,
+              "running": 0,
+              "source": "ast-session",
+              "started": 18,
+              "observed": 18
+            },
+            {
+              "session": "profile-30767-3.json",
+              "pid": 30767,
+              "completed": 18,
+              "fromSessionStart": true,
+              "running": 0,
+              "source": "ast-session",
+              "started": 18,
+              "observed": 18
+            }
+          ],
+          "problems": [],
+          "firstOverBudget": null
+        },
+        "counters": {
+          "vmSteps": 364668440,
+          "frameNext": 15061704,
+          "frameColumns": 64474036,
+          "frameInserts": 8841123,
+          "frameUpdatedCells": 0,
+          "frameIndexBuilds": 7548,
+          "frameIndexCpuNs": 47559428
+        },
+        "costs": {
+          "preparationCpuMs": 4605.910002,
+          "sqlExecutionCpuMs": 5462.569994,
+          "profiledApplyCpuMs": 24094.446
+        },
+        "digest": "16284c2e6cf80a95761f5b3e6510f30d3df32f69de72fc4a1685556b130a736c",
+        "counts": {
+          "violations": 33,
+          "failures": 0,
+          "blindFiles": 0
+        },
+        "files": 32,
+        "bytes": 1318099,
+        "unexpectedExplainFailures": 0,
+        "incompleteOperations": 0,
+        "incompleteSetSteps": 0
+      },
+      "final": {
+        "path": "/tmp/rerail-frame-publications-20261021/verified-32-profile",
+        "sha256": "d40bb89382d4a1643feb65afc9061192c9d564733b4b824f6a8b8e2cb459e125",
+        "executionBudget": {
+          "limit": 100,
+          "observed": 72,
+          "excess": 0,
+          "accepted": true,
+          "status": "passed",
+          "scope": "One complete cold workload across all workers, including setup, DDL, transactions, matching, and cleanup. Profiler-generated EXPLAIN is diagnostic work outside the job.",
+          "enforcement": "Acceptance gate after the complete run; this does not interrupt the workload at execution 101.",
+          "categories": {
+            "setup": 4,
+            "transaction": 8,
+            "matchingAndCleanup": 60
+          },
+          "sessions": [
+            {
+              "session": "profile-10223-0.json",
+              "pid": 10223,
+              "completed": 18,
+              "fromSessionStart": true,
+              "running": 0,
+              "source": "ast-session",
+              "started": 18,
+              "observed": 18
+            },
+            {
+              "session": "profile-10223-1.json",
+              "pid": 10223,
+              "completed": 18,
+              "fromSessionStart": true,
+              "running": 0,
+              "source": "ast-session",
+              "started": 18,
+              "observed": 18
+            },
+            {
+              "session": "profile-10223-2.json",
+              "pid": 10223,
+              "completed": 18,
+              "fromSessionStart": true,
+              "running": 0,
+              "source": "ast-session",
+              "started": 18,
+              "observed": 18
+            },
+            {
+              "session": "profile-10223-3.json",
+              "pid": 10223,
+              "completed": 18,
+              "fromSessionStart": true,
+              "running": 0,
+              "source": "ast-session",
+              "started": 18,
+              "observed": 18
+            }
+          ],
+          "problems": [],
+          "firstOverBudget": null
+        },
+        "counters": {
+          "vmSteps": 355316964,
+          "frameNext": 15061704,
+          "frameColumns": 60137439,
+          "frameInserts": 7625537,
+          "frameUpdatedCells": 976921,
+          "frameIndexBuilds": 7365,
+          "frameIndexCpuNs": 46455167
+        },
+        "costs": {
+          "preparationCpuMs": 4276.649504,
+          "sqlExecutionCpuMs": 5298.889162,
+          "profiledApplyCpuMs": 22847.073
+        },
+        "digest": "16284c2e6cf80a95761f5b3e6510f30d3df32f69de72fc4a1685556b130a736c",
+        "counts": {
+          "violations": 33,
+          "failures": 0,
+          "blindFiles": 0
+        },
+        "files": 32,
+        "bytes": 1318099,
+        "unexpectedExplainFailures": 0,
+        "incompleteOperations": 0,
+        "incompleteSetSteps": 0
+      }
+    },
+    {
+      "files": 138,
+      "baseline": {
+        "path": "/tmp/rerail-sql-tuning-20261021/chunks-138-profile",
+        "sha256": "493d29f21be80c168334986af82eb0c287f78a2824fa321d6e5eb53a9212462a",
+        "executionBudget": {
+          "limit": 100,
+          "observed": 72,
+          "excess": 0,
+          "accepted": true,
+          "status": "passed",
+          "scope": "One complete cold workload across all workers, including setup, DDL, transactions, matching, and cleanup. Profiler-generated EXPLAIN is diagnostic work outside the job.",
+          "enforcement": "Acceptance gate after the complete run; this does not interrupt the workload at execution 101.",
+          "categories": {
+            "setup": 4,
+            "transaction": 8,
+            "matchingAndCleanup": 60
+          },
+          "sessions": [
+            {
+              "session": "profile-37360-0.json",
+              "pid": 37360,
+              "completed": 18,
+              "fromSessionStart": true,
+              "running": 0,
+              "source": "ast-session",
+              "started": 18,
+              "observed": 18
+            },
+            {
+              "session": "profile-37360-1.json",
+              "pid": 37360,
+              "completed": 18,
+              "fromSessionStart": true,
+              "running": 0,
+              "source": "ast-session",
+              "started": 18,
+              "observed": 18
+            },
+            {
+              "session": "profile-37360-2.json",
+              "pid": 37360,
+              "completed": 18,
+              "fromSessionStart": true,
+              "running": 0,
+              "source": "ast-session",
+              "started": 18,
+              "observed": 18
+            },
+            {
+              "session": "profile-37360-3.json",
+              "pid": 37360,
+              "completed": 18,
+              "fromSessionStart": true,
+              "running": 0,
+              "source": "ast-session",
+              "started": 18,
+              "observed": 18
+            }
+          ],
+          "problems": [],
+          "firstOverBudget": null
+        },
+        "counters": {
+          "vmSteps": 2384203863,
+          "frameNext": 104565549,
+          "frameColumns": 443532144,
+          "frameInserts": 58799718,
+          "frameUpdatedCells": 0,
+          "frameIndexBuilds": 15983,
+          "frameIndexCpuNs": 422107588
+        },
+        "costs": {
+          "preparationCpuMs": 4001.792959,
+          "sqlExecutionCpuMs": 36070.975585,
+          "profiledApplyCpuMs": 54689.741
+        },
+        "digest": "4ad2049fb003a6f5866efb44847b086a09a4e6b015bed17dc9aef77c3313669e",
+        "counts": {
+          "violations": 580,
+          "failures": 0,
+          "blindFiles": 0
+        },
+        "files": 138,
+        "bytes": 7336001,
+        "unexpectedExplainFailures": 0,
+        "incompleteOperations": 0,
+        "incompleteSetSteps": 0
+      },
+      "final": {
+        "path": "/tmp/rerail-frame-publications-20261021/verified-138-profile",
+        "sha256": "8f4fce0142f022b56e095de22461000f490ea777dd5a8c0314e309b8a1983040",
+        "executionBudget": {
+          "limit": 100,
+          "observed": 72,
+          "excess": 0,
+          "accepted": true,
+          "status": "passed",
+          "scope": "One complete cold workload across all workers, including setup, DDL, transactions, matching, and cleanup. Profiler-generated EXPLAIN is diagnostic work outside the job.",
+          "enforcement": "Acceptance gate after the complete run; this does not interrupt the workload at execution 101.",
+          "categories": {
+            "setup": 4,
+            "transaction": 8,
+            "matchingAndCleanup": 60
+          },
+          "sessions": [
+            {
+              "session": "profile-19447-0.json",
+              "pid": 19447,
+              "completed": 18,
+              "fromSessionStart": true,
+              "running": 0,
+              "source": "ast-session",
+              "started": 18,
+              "observed": 18
+            },
+            {
+              "session": "profile-19447-1.json",
+              "pid": 19447,
+              "completed": 18,
+              "fromSessionStart": true,
+              "running": 0,
+              "source": "ast-session",
+              "started": 18,
+              "observed": 18
+            },
+            {
+              "session": "profile-19447-2.json",
+              "pid": 19447,
+              "completed": 18,
+              "fromSessionStart": true,
+              "running": 0,
+              "source": "ast-session",
+              "started": 18,
+              "observed": 18
+            },
+            {
+              "session": "profile-19447-3.json",
+              "pid": 19447,
+              "completed": 18,
+              "fromSessionStart": true,
+              "running": 0,
+              "source": "ast-session",
+              "started": 18,
+              "observed": 18
+            }
+          ],
+          "problems": [],
+          "firstOverBudget": null
+        },
+        "counters": {
+          "vmSteps": 2298657053,
+          "frameNext": 104565549,
+          "frameColumns": 406006109,
+          "frameInserts": 49307027,
+          "frameUpdatedCells": 6066384,
+          "frameIndexBuilds": 15429,
+          "frameIndexCpuNs": 388811400
+        },
+        "costs": {
+          "preparationCpuMs": 3741.953045,
+          "sqlExecutionCpuMs": 33407.025118,
+          "profiledApplyCpuMs": 50905.137
+        },
+        "digest": "4ad2049fb003a6f5866efb44847b086a09a4e6b015bed17dc9aef77c3313669e",
+        "counts": {
+          "violations": 580,
+          "failures": 0,
+          "blindFiles": 0
+        },
+        "files": 138,
+        "bytes": 7336001,
+        "unexpectedExplainFailures": 0,
+        "incompleteOperations": 0,
+        "incompleteSetSteps": 0
+      }
+    }
+  ],
+  "experiments": {
+    "deltas": {
+      "path": "/tmp/rerail-frame-publications-20261021/deltas-138-profile",
+      "sha256": "ee5361a00bb238667046af9fae1819ff190fbaf263465d610f00a8924a7eb6a2",
+      "executionBudget": {
+        "limit": 100,
+        "observed": 72,
+        "excess": 0,
+        "accepted": true,
+        "status": "passed",
+        "scope": "One complete cold workload across all workers, including setup, DDL, transactions, matching, and cleanup. Profiler-generated EXPLAIN is diagnostic work outside the job.",
+        "enforcement": "Acceptance gate after the complete run; this does not interrupt the workload at execution 101.",
+        "categories": {
+          "setup": 4,
+          "transaction": 8,
+          "matchingAndCleanup": 60
+        },
+        "sessions": [
+          {
+            "session": "profile-33723-0.json",
+            "pid": 33723,
+            "completed": 18,
+            "fromSessionStart": true,
+            "running": 0,
+            "source": "ast-session",
+            "started": 18,
+            "observed": 18
+          },
+          {
+            "session": "profile-33723-1.json",
+            "pid": 33723,
+            "completed": 18,
+            "fromSessionStart": true,
+            "running": 0,
+            "source": "ast-session",
+            "started": 18,
+            "observed": 18
+          },
+          {
+            "session": "profile-33723-2.json",
+            "pid": 33723,
+            "completed": 18,
+            "fromSessionStart": true,
+            "running": 0,
+            "source": "ast-session",
+            "started": 18,
+            "observed": 18
+          },
+          {
+            "session": "profile-33723-3.json",
+            "pid": 33723,
+            "completed": 18,
+            "fromSessionStart": true,
+            "running": 0,
+            "source": "ast-session",
+            "started": 18,
+            "observed": 18
+          }
+        ],
+        "problems": [],
+        "firstOverBudget": null
+      },
+      "counters": {
+        "vmSteps": 2339149830,
+        "frameNext": 104565549,
+        "frameColumns": 411358263,
+        "frameInserts": 49307027,
+        "frameUpdatedCells": 6066384,
+        "frameIndexBuilds": 15429,
+        "frameIndexCpuNs": 397026986
+      },
+      "costs": {
+        "preparationCpuMs": 3936.982547,
+        "sqlExecutionCpuMs": 34739.191712,
+        "profiledApplyCpuMs": 52932.249
+      },
+      "digest": "4ad2049fb003a6f5866efb44847b086a09a4e6b015bed17dc9aef77c3313669e",
+      "counts": {
+        "violations": 580,
+        "failures": 0,
+        "blindFiles": 0
+      },
+      "files": 138,
+      "bytes": 7336001,
+      "unexpectedExplainFailures": 0,
+      "incompleteOperations": 0,
+      "incompleteSetSteps": 0
+    },
+    "pipelines": {
+      "path": "/tmp/rerail-frame-publications-20261021/pipelines-138-profile",
+      "sha256": "d2b8b6f1a19abb9b5135a1e821114b7cb82d0b7b3a15d9808de68f8e7e0ce3f9",
+      "executionBudget": {
+        "limit": 100,
+        "observed": 72,
+        "excess": 0,
+        "accepted": true,
+        "status": "passed",
+        "scope": "One complete cold workload across all workers, including setup, DDL, transactions, matching, and cleanup. Profiler-generated EXPLAIN is diagnostic work outside the job.",
+        "enforcement": "Acceptance gate after the complete run; this does not interrupt the workload at execution 101.",
+        "categories": {
+          "setup": 4,
+          "transaction": 8,
+          "matchingAndCleanup": 60
+        },
+        "sessions": [
+          {
+            "session": "profile-46026-0.json",
+            "pid": 46026,
+            "completed": 18,
+            "fromSessionStart": true,
+            "running": 0,
+            "source": "ast-session",
+            "started": 18,
+            "observed": 18
+          },
+          {
+            "session": "profile-46026-1.json",
+            "pid": 46026,
+            "completed": 18,
+            "fromSessionStart": true,
+            "running": 0,
+            "source": "ast-session",
+            "started": 18,
+            "observed": 18
+          },
+          {
+            "session": "profile-46026-2.json",
+            "pid": 46026,
+            "completed": 18,
+            "fromSessionStart": true,
+            "running": 0,
+            "source": "ast-session",
+            "started": 18,
+            "observed": 18
+          },
+          {
+            "session": "profile-46026-3.json",
+            "pid": 46026,
+            "completed": 18,
+            "fromSessionStart": true,
+            "running": 0,
+            "source": "ast-session",
+            "started": 18,
+            "observed": 18
+          }
+        ],
+        "problems": [],
+        "firstOverBudget": null
+      },
+      "counters": {
+        "vmSteps": 2335871590,
+        "frameNext": 104624396,
+        "frameColumns": 411637935,
+        "frameInserts": 49319113,
+        "frameUpdatedCells": 6066384,
+        "frameIndexBuilds": 15911,
+        "frameIndexCpuNs": 398002875
+      },
+      "costs": {
+        "preparationCpuMs": 4211.177789,
+        "sqlExecutionCpuMs": 34699.235458,
+        "profiledApplyCpuMs": 54022.281
+      },
+      "digest": "4ad2049fb003a6f5866efb44847b086a09a4e6b015bed17dc9aef77c3313669e",
+      "counts": {
+        "violations": 580,
+        "failures": 0,
+        "blindFiles": 0
+      },
+      "files": 138,
+      "bytes": 7336001,
+      "unexpectedExplainFailures": 0,
+      "incompleteOperations": 0,
+      "incompleteSetSteps": 0
+    },
+    "canonical": {
+      "path": "/tmp/rerail-frame-publications-20261021/canonical-138-profile",
+      "sha256": "a57663f5408e503c9c3d98159a623a3cbbb491807e5ccb086ea8d5f61b2f3ec8",
+      "executionBudget": {
+        "limit": 100,
+        "observed": 72,
+        "excess": 0,
+        "accepted": true,
+        "status": "passed",
+        "scope": "One complete cold workload across all workers, including setup, DDL, transactions, matching, and cleanup. Profiler-generated EXPLAIN is diagnostic work outside the job.",
+        "enforcement": "Acceptance gate after the complete run; this does not interrupt the workload at execution 101.",
+        "categories": {
+          "setup": 4,
+          "transaction": 8,
+          "matchingAndCleanup": 60
+        },
+        "sessions": [
+          {
+            "session": "profile-59483-0.json",
+            "pid": 59483,
+            "completed": 18,
+            "fromSessionStart": true,
+            "running": 0,
+            "source": "ast-session",
+            "started": 18,
+            "observed": 18
+          },
+          {
+            "session": "profile-59483-1.json",
+            "pid": 59483,
+            "completed": 18,
+            "fromSessionStart": true,
+            "running": 0,
+            "source": "ast-session",
+            "started": 18,
+            "observed": 18
+          },
+          {
+            "session": "profile-59483-2.json",
+            "pid": 59483,
+            "completed": 18,
+            "fromSessionStart": true,
+            "running": 0,
+            "source": "ast-session",
+            "started": 18,
+            "observed": 18
+          },
+          {
+            "session": "profile-59483-3.json",
+            "pid": 59483,
+            "completed": 18,
+            "fromSessionStart": true,
+            "running": 0,
+            "source": "ast-session",
+            "started": 18,
+            "observed": 18
+          }
+        ],
+        "problems": [],
+        "firstOverBudget": null
+      },
+      "counters": {
+        "vmSteps": 2295378849,
+        "frameNext": 104624396,
+        "frameColumns": 406285781,
+        "frameInserts": 49319113,
+        "frameUpdatedCells": 6066384,
+        "frameIndexBuilds": 15911,
+        "frameIndexCpuNs": 384260818
+      },
+      "costs": {
+        "preparationCpuMs": 3683.922577,
+        "sqlExecutionCpuMs": 33271.070795,
+        "profiledApplyCpuMs": 50890.421
+      },
+      "digest": "4ad2049fb003a6f5866efb44847b086a09a4e6b015bed17dc9aef77c3313669e",
+      "counts": {
+        "violations": 580,
+        "failures": 0,
+        "blindFiles": 0
+      },
+      "files": 138,
+      "bytes": 7336001,
+      "unexpectedExplainFailures": 0,
+      "incompleteOperations": 0,
+      "incompleteSetSteps": 0
+    }
+  },
+  "rejectedFusion": {
+    "reason": "Less than 0.2% VM savings with more publications and greater preparation cost; original bounds retained.",
+    "patch": "diff --git a/native/src/code_rule_dsl/sql/emit/inline.rs b/native/src/code_rule_dsl/sql/emit/inline.rs\nindex 5bbc4b42..f6d990d9 100644\n--- a/native/src/code_rule_dsl/sql/emit/inline.rs\n+++ b/native/src/code_rule_dsl/sql/emit/inline.rs\n@@ -4,8 +4,8 @@\n use super::{Emitted, Rule, TEMP, Writes};\n use std::collections::HashMap;\n \n-const MAX_FRAMES: usize = 4;\n-const MAX_SQL_BYTES: usize = 64 * 1024;\n+const MAX_FRAMES: usize = 32;\n+const MAX_SQL_BYTES: usize = 128 * 1024;\n \n #[derive(Default)]\n struct Declaration {\n@@ -38,6 +38,10 @@ fn join_rule(rule: Rule) -> bool {\n     matches!(rule, Rule::EmptyIfAnyInputEmpty | Rule::CopyOf)\n }\n \n+fn pipeline_rule(rule: Rule) -> bool {\n+    join_rule(rule) || rule == Rule::EmptyIfPrimaryEmpty\n+}\n+\n fn native_source(sql: &str) -> bool {\n     [\"fact\", \"pattern\", \"text_match\"].iter().any(|table| {\n         sql.contains(&format!(\"FROM {table} \")) || sql.contains(&format!(\"JOIN {table} \"))\n@@ -109,7 +113,7 @@ pub(super) fn fuse(mut emitted: Emitted) -> Emitted {\n     let mut removed = vec![false; emitted.statements.len()];\n     let mut depth = vec![0; emitted.statements.len()];\n     for producer in 0..emitted.statements.len() {\n-        if removed[producer] || !join_rule(emitted.effects[producer].rule) {\n+        if removed[producer] || !pipeline_rule(emitted.effects[producer].rule) {\n             continue;\n         }\n         let Writes::Insert(name) = &emitted.effects[producer].writes else {\n@@ -134,7 +138,7 @@ pub(super) fn fuse(mut emitted: Emitted) -> Emitted {\n         let consumer = sites[1];\n         if consumer <= producer\n             || removed[consumer]\n-            || !join_rule(emitted.effects[consumer].rule)\n+            || !pipeline_rule(emitted.effects[consumer].rule)\n             || !emitted.effects[consumer].inputs.contains(&name)\n         {\n             continue;\n@@ -152,9 +156,10 @@ pub(super) fn fuse(mut emitted: Emitted) -> Emitted {\n         }\n         let consumer_target = match &emitted.effects[consumer].writes {\n             Writes::Insert(target)\n-                if declarations\n-                    .get(target)\n-                    .is_some_and(|d| !d.columns.is_empty()) =>\n+                if target.starts_with(\"stage_\")\n+                    || declarations\n+                        .get(target)\n+                        .is_some_and(|d| !d.columns.is_empty()) =>\n             {\n                 Some(target)\n             }\n@@ -263,7 +268,15 @@ pub(super) fn fuse(mut emitted: Emitted) -> Emitted {\n         }\n         emitted.statements[consumer] = fused;\n         emitted.effects[consumer].inputs = inputs;\n-        emitted.effects[consumer].rule = Rule::EmptyIfAnyInputEmpty;\n+        // Anti-join probes may be empty while their output is not. SQL handles that\n+        // condition; flattening the metadata into an all-inputs guard would lose rows.\n+        emitted.effects[consumer].rule = if join_rule(emitted.effects[producer].rule)\n+            && join_rule(emitted.effects[consumer].rule)\n+        {\n+            Rule::EmptyIfAnyInputEmpty\n+        } else {\n+            Rule::AlwaysRun\n+        };\n         depth[consumer] = combined_depth;\n         removed[producer] = true;\n         for &step in decl.steps.iter().chain(&decl.clears) {\n@@ -314,6 +327,34 @@ mod tests {\n         );\n     }\n \n+    #[test]\n+    fn anti_join_pipeline_can_publish_a_stage_when_its_probe_is_empty() {\n+        let mut original = Emitted::default();\n+        let name = format!(\"{TEMP}p1\");\n+        original.push(\n+            \"CREATE TEMP TABLE stage_7(k INTEGER PRIMARY KEY, file, node, s0)\".into(),\n+            Effect::default(),\n+        );\n+        create(&mut original, &name);\n+        original.push(\n+            format!(\"INSERT INTO {name} SELECT f.k,f.file,f.node,f.s0 FROM source f WHERE f.k>0\"),\n+            Reads::copy(\"source\").writes(Writes::Insert(name.clone())),\n+        );\n+        original.push(\n+            format!(\"INSERT INTO stage_7 SELECT f.k,f.file,f.node,f.s0 FROM {name} f WHERE NOT EXISTS(SELECT 1 FROM fact WHERE x=f.k)\"),\n+            Reads::anti(&name, &[\"fact\"]).writes(Writes::Insert(\"stage_7\".into())),\n+        );\n+        original.push(\n+            \"SELECT k FROM stage_7\".into(),\n+            Reads::copy(\"stage_7\").writes(Writes::None),\n+        );\n+        let fused = fuse(original.clone());\n+        assert_eq!(fused.statements.len(), original.statements.len() - 2);\n+        assert_eq!(fused.effects[1].rule, Rule::AlwaysRun);\n+        assert_eq!(run(&fused).unwrap(), vec![1]);\n+        assert_eq!(run(&fused).unwrap(), run(&original).unwrap());\n+    }\n+\n     #[test]\n     fn inlining_keeps_the_frames_column_affinity() {\n         let mut original = Emitted::default();\n"
+  },
+  "tests": {
+    "codeRuleDsl": {
+      "passed": 1496,
+      "failed": 0,
+      "ignored": 44,
+      "log": "/tmp/rerail-frame-publications-20261021/tests-final.log",
+      "sha256": "92f0c914b9b26bf87b758ee416a5df1fb3d2ddde81deba21612209be2e2e3333"
+    },
+    "scripts": {
+      "passed": 20,
+      "failed": 0,
+      "log": "/tmp/rerail-frame-publications-20261021/script-tests.log"
+    },
+    "clippy": "Library passes with and without unbounded-work; warnings denied.",
+    "format": "cargo fmt --check and git diff --check pass."
+  },
+  "remainingWork": [
+    "Recursive demand and dependency publication remain the hottest set steps.",
+    "Ranked frontier tables still carry complete capture rows.",
+    "The accepted changes remove whole-frame UPDATE copies; they do not eliminate all intermediate publication or all work amplification."
+  ]
+}

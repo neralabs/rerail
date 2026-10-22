@@ -15,6 +15,70 @@ struct Publish {
     ignore: bool,
     width: usize,
 }
+
+#[derive(Default)]
+struct Changes {
+    columns: Vec<usize>,
+    rows: Rows,
+}
+struct Patch {
+    frames: AssertUnwindSafe<Arc<FrameStore>>,
+    name: String,
+}
+impl Aggregate<Changes, i64> for Patch {
+    fn init(&self, _: &mut Context<'_>) -> rusqlite::Result<Changes> {
+        Ok(Changes::default())
+    }
+    fn step(&self, ctx: &mut Context<'_>, changes: &mut Changes) -> rusqlite::Result<()> {
+        if ctx.len() < 4
+            || !ctx.len().is_multiple_of(2)
+            || changes.rows.len >= super::super::super::frames::BUDGET
+        {
+            return Err(rusqlite::Error::ModuleError(
+                "program patch width/budget".into(),
+            ));
+        }
+        if changes.rows.len == 0 {
+            changes.columns = (2..ctx.len())
+                .step_by(2)
+                .map(|i| ctx.get::<u32>(i).map(|c| c as usize))
+                .collect::<rusqlite::Result<_>>()?;
+        }
+        let width = 1 + changes.columns.len();
+        if ctx.len() != width * 2 {
+            return Err(rusqlite::Error::ModuleError(
+                "program patch width changed".into(),
+            ));
+        }
+        if changes
+            .rows
+            .chunks
+            .last()
+            .is_none_or(|c| c.len() == c.capacity())
+        {
+            changes
+                .rows
+                .chunks
+                .push(Vec::with_capacity((4096 / width).max(1) * width));
+        }
+        let chunk = changes.rows.chunks.last_mut().unwrap();
+        chunk.push(ctx.get(1)?);
+        for i in (3..ctx.len()).step_by(2) {
+            chunk.push(ctx.get(i)?);
+        }
+        changes.rows.len += 1;
+        Ok(())
+    }
+    fn finalize(&self, _: &mut Context<'_>, changes: Option<Changes>) -> rusqlite::Result<i64> {
+        let Some(changes) = changes else {
+            return Ok(0);
+        };
+        self.frames
+            .0
+            .program_patch(&self.name, &changes.columns, changes.rows.chunks)
+            .map(|n| n as i64)
+    }
+}
 impl Aggregate<Rows, i64> for Publish {
     fn init(&self, _: &mut Context<'_>) -> rusqlite::Result<Rows> {
         Ok(Rows::default())
@@ -74,6 +138,15 @@ pub(super) fn register(
     })?;
     for (name, schema) in schemas {
         frames.register(db, &schema.declaration)?;
+        db.create_aggregate_function(
+            format!("p_patch_{name}").as_str(),
+            -1,
+            FunctionFlags::SQLITE_UTF8,
+            Patch {
+                frames: AssertUnwindSafe(Arc::clone(frames)),
+                name: name.clone(),
+            },
+        )?;
         for (prefix, replace, ignore) in [
             ("append", false, false),
             ("ignore", false, true),

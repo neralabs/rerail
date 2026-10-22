@@ -50,6 +50,24 @@ test("plan variants ignore connection addresses and retain every raw capture", a
   } finally {rmSync(directory,{recursive:true,force:true});}
 });
 
+test("column deltas report updated cells without counting them as published rows", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "rerail-patch-profile-"));
+  try {
+    writeFileSync(join(directory,"cte-program-9-0.json"),JSON.stringify([
+      {pc:0,sql:"(WITH payload(v0,v1) AS (SELECT 1,2) SELECT p_patch_data(driver.tick,p.v0,1,p.v1) FROM payload p)",next:"-1"},
+    ]));
+    writeFileSync(join(directory,"cte-control-9-0.jsonl"),[
+      {phase:0,pc:0,tick:0,started:true},
+      {phase:0,pc:0,tick:0,cpuNs:50,wallNs:100,publishedRows:3,frame:[1,2,50,70,0,1,5,7,8,6]},
+    ].map(JSON.stringify).join("\n")+"\n");
+    const [stage] = await controlStages(directory);
+    assert.equal(stage.updatedRows,3);
+    assert.equal(stage.frameUpdatedCells,6);
+    assert.equal(stage.publishedRows,undefined);
+    assert.equal(stage.frameInserts,0);
+  } finally { rmSync(directory,{recursive:true,force:true}); }
+});
+
 test("preparation is a subcost and never another SQL execution", async () => {
   const directory=mkdtempSync(join(tmpdir(),"rerail-prepare-")),raw=join(directory,"raw");mkdirSync(raw);
   try {

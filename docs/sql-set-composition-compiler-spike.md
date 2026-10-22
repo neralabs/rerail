@@ -1812,3 +1812,176 @@ The compact evidence is `benchmark/sql-generation-tuning-evidence.json`.
 It records the source fingerprint, frozen addon hash, complete acceptance gates, intermediate failures, isolated dispatcher comparison, and repeated samples.
 The final addon hash is `2a06576473d6517d6fc56cfca2cf49f948483b8023a0b20ee49577215f0d6df5`.
 The evidence identifies proposed further changes separately from implemented changes.
+
+## Frame publication and VM instruction spikes — 2026-10-21
+
+Commit `42ab496a` contains the previous preparation and publication fixes.
+This investigation uses that published commit as its baseline.
+The same 135-policy workload contains 141 matchers across 32 or 138 files.
+The existing three policy exclusions remain unchanged.
+All candidates use four workers and the same diagnostic allocator override.
+
+### Replace whole-frame updates with column deltas
+
+The 138-file baseline publishes 58,799,718 frame rows.
+Whole-frame `UPDATE` lowering accounts for approximately 10.6 million rows inside stateful programs.
+That lowering selects every column and replaces the complete table to change a few flags.
+It also republishes rows that do not satisfy the update predicate.
+
+The new lowering selects the integer primary key and assigned values for matching rows.
+SQL evaluates the predicate, subqueries, and assignments against the original table snapshot.
+A publication aggregate buffers bounded chunks until its producer reaches EOF.
+The storage callback then locates keys and changes only assigned columns.
+The callback executes no SQL and evaluates no rule predicates.
+
+When an update preserves its integer primary key, the compiler selects this shape automatically.
+Other updates retain the general replacement shape.
+This is a physical planning decision, with no new execution option.
+Column updates preserve NULLs, type changes, shared-page isolation, and unaffected lookup indexes.
+Affected indexes are invalidated before the next consumer.
+
+Profiling now records updated cells separately from inserted frame rows.
+The text summary includes both totals and shows updated cells for each hot set step.
+Updates do not count as complete row publications.
+Older captures remain readable without the new counter.
+
+The isolated update capture passes native parity and the complete 72-execution gate.
+It records 49,307,027 published rows and 6,066,384 updated cells.
+That removes 9,492,691 complete row publications, or 16.1% of the baseline.
+Column reads decrease from 443,532,144 to 411,358,263.
+VM instructions decrease from 2,384,203,863 to 2,339,149,830.
+This change removes copying, but leaves most relational work intact.
+
+### Reject wider pipeline substitution
+
+A separate candidate raises the fusion bounds from four frames to 32 frames.
+It also admits anti-join consumers and publication into shared stage tables.
+The candidate preserves native outcomes and passes its semantic tests.
+It preserves empty-probe semantics by leaving anti-join emptiness decisions in SQL.
+
+The 138-file capture executes 2,335,871,590 VM instructions.
+That saves less than 0.2% against the update-only candidate.
+Published rows increase to 49,319,113, and preparation increases from 3.94 to 4.21 CPU seconds.
+The wider substitution changes materialization and register allocation without removing the dominant recursive publications.
+The final compiler retains its original fusion bounds.
+The rejected patch remains in `/tmp/rerail-frame-publications-20261021/pipeline-experiment.patch`.
+
+### Replace repeated scalar atom lookups with joins
+
+The hottest B023 demand statements repeat canonical node-to-atom subqueries.
+They use those values in demand insertion, duplicate checks, dependency reads, and answer joins.
+The new emission joins each canonical capture to `node` once per input row.
+The expression uses the joined atom and retains the occurrence value as its fallback.
+A left join preserves NULLs and missing node rows.
+This shape adds no frame publications.
+
+The isolated comparison uses the wider-fusion candidate on both sides.
+It decreases VM instructions by 40,492,741, from 2,335,871,590 to 2,295,378,849.
+It also removes 5,352,154 frame column reads.
+EXPLAIN reports `canonical_s1 VIRTUAL TABLE INDEX 0:f=i= LEFT-JOIN`.
+The lookup has both file and node constraints.
+The final candidate combines these joins with column deltas and the original fusion bounds.
+
+The update shape changes from a complete replacement to a selected column patch:
+
+```sql
+-- Previous shape: copy every column of every row.
+SELECT p_replace_d(driver.tick,p.id,p.file,p.node,p.c0,p.dirty)
+FROM (
+  SELECT id,file,node,c0,
+         CASE WHEN predicate THEN 0 ELSE dirty END AS dirty
+  FROM d
+) p;
+
+-- New shape: select keys and changed values, then apply the completed batch.
+SELECT p_patch_d(driver.tick,p.id,4,0)
+FROM d p
+WHERE predicate;
+```
+
+The canonical demand shape uses a shared point lookup within each SQL producer:
+
+```sql
+SELECT DISTINCT f.file,f.node,COALESCE(a.atom,f.s1)
+FROM input f
+LEFT JOIN node a ON a.file=f.file AND a.id=f.s1
+WHERE NOT EXISTS (
+  SELECT 1 FROM demand d
+  WHERE d.file=f.file AND d.node=f.node
+    AND d.c0 IS COALESCE(a.atom,f.s1)
+);
+```
+
+The join supplies the canonical value to both projection and duplicate suppression.
+A separate SQL producer still repeats that lookup for its own input.
+These changes do not share the value across every recursive operation.
+
+### Final validation
+
+Both complete final captures pass native parity at 72 actual SQL executions.
+The execution count includes setup, transactions, matching, and cleanup across all four workers.
+The captures contain no unexpected EXPLAIN failures or incomplete operations.
+The native outcomes remain 33 and 580 violations, with no failures or blind files.
+
+| Metric | 32-file baseline | 32-file final | 138-file baseline | 138-file final |
+|---|---:|---:|---:|---:|
+| Published frame rows | 8,841,123 | 7,625,537 | 58,799,718 | 49,307,027 |
+| Updated cells | 0 | 976,921 | 0 | 6,066,384 |
+| VM instructions | 364,668,440 | 355,316,964 | 2,384,203,863 | 2,298,657,053 |
+| Frame column reads | 64,474,036 | 60,137,439 | 443,532,144 | 406,006,109 |
+| Frame advances | 15,061,704 | 15,061,704 | 104,565,549 | 104,565,549 |
+| Actual SQL executions | 72 | 72 | 72 | 72 |
+
+The new tests compare updates against ordinary SQLite tables.
+They include simultaneous assignments, aggregate subqueries, NULLs, type changes, missing matches, and cached indexes.
+A separate test checks column updates through shared selection pages.
+It confirms that updates do not change another view or alter live row accounting.
+
+The final suite passes 1,496 code-rule tests, including generated differential cases and the actual-program plan audit.
+It retains the 44 existing ignored tests.
+The profiling and query-shape scripts pass 20 tests.
+Library Clippy passes with and without `unbounded-work`, with warnings denied.
+Formatting and whitespace checks pass.
+
+The frozen final addon is `/tmp/rerail-frame-publications-20261021/engine-verified.node`.
+Its source hashes are in `build-verified.json` in the same directory.
+The complete captures are `verified-32-profile` and `verified-138-profile`.
+The addon SHA256 is `36074c14527a8739e6f78f5601ecaa9c5456ece1ae67dbacbb2d413ef8ead61e`.
+
+### Cold performance and remaining work
+
+Three fresh-process samples cover each variant and workload.
+The order reverses on the second round.
+Every sample matches the complete frozen native outcomes and expected digest.
+Input and addon hashes remain stable during each sample.
+The stored profile fingerprints also match the current inputs.
+
+| Files | Baseline CPU seconds | Update-only CPU seconds | Final CPU seconds | Final reduction |
+|---|---:|---:|---:|---:|
+| 32 | 9.84 | 9.60 | 9.53 | 3.2% |
+| 138 | 38.75 | 37.45 | 38.02 | 1.9% |
+
+The CPU improvement is modest despite the stable publication and instruction reductions.
+The shared host also introduces variation between rounds.
+The isolated joins reduce VM instructions, but their CPU effect is unresolved against the update-only candidate.
+Two paired rounds favor the joins.
+The median across all three rounds favors update-only emission.
+The final compiler retains the joins because they remove repeated scalar evaluation without additional publications.
+
+Median peak process RSS decreases from 1,328,070,656 to 1,244,413,952 bytes for 32 files.
+For 138 files, it changes from 2,463,137,792 to 2,469,363,712 bytes.
+The larger workload has no demonstrated memory improvement.
+
+Frame advances remain unchanged at 15.1 million and 104.6 million.
+The engine still traverses the same intermediate rows and performs the same recursive scheduling.
+The accepted changes remove copies and repeated scalar evaluation within that traversal.
+They do not remove the traversal itself.
+
+B023 demand insertion and dependency publication remain the hottest individual set steps.
+Ranked frontier tables still carry complete capture rows.
+The next compiler change must reduce intermediate row traversal and carry keys through frontier operations.
+Capture values can remain in their original relation until a consumer needs them.
+Raising substitution limits alone does not produce that shape.
+
+The checked-in evidence is `benchmark/sql-frame-publication-evidence.json`.
+It records paired samples, build hashes, complete-job acceptance, rejected fusion, and the remaining limitations.

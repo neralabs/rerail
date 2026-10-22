@@ -1,6 +1,87 @@
 use super::*;
 
 #[test]
+fn column_deltas_preserve_update_snapshots_nulls_types_and_indexes() {
+    let mut schemas = BTreeMap::from([(
+        "data".into(),
+        Schema::of("data(k INTEGER PRIMARY KEY,a,b,INDEX (a))".into()).unwrap(),
+    )]);
+    let statements = [
+        "UPDATE data SET a = b,b = a WHERE k != 4",
+        "UPDATE data SET a = (SELECT sum(b) FROM data),b = 4294967296 WHERE a IS NULL",
+        "UPDATE data SET a = NULL WHERE k = 4",
+        "UPDATE data SET a = 'changed',b = NULL WHERE b > 100",
+        "UPDATE data SET a = 12,b = a WHERE a IS NULL",
+        "UPDATE data SET b = 77 WHERE a = 'changed'",
+        "UPDATE data SET b = 88 WHERE k = 123456",
+    ];
+    let sql = render_steps(&mut schemas, &statements);
+    assert!(sql.contains("p_patch_data"));
+    assert!(!sql.contains("p_replace_data"));
+    let db = Connection::open_in_memory().unwrap();
+    let oracle = Connection::open_in_memory().unwrap();
+    let frames = Arc::new(FrameStore::default());
+    storage::register(&db, &frames, &schemas).unwrap();
+    oracle.execute_batch("CREATE TABLE data(k INTEGER PRIMARY KEY,a,b); CREATE INDEX by_a ON data(a); INSERT INTO data VALUES(7,NULL,11),(-3,22,NULL),(42,33,44),(4,NULL,55)").unwrap();
+    frames
+        .program_rows(
+            "data",
+            vec![
+                vec![Value::Integer(7), Value::Null, Value::Integer(11)],
+                vec![Value::Integer(-3), Value::Integer(22), Value::Null],
+                vec![Value::Integer(42), Value::Integer(33), Value::Integer(44)],
+                vec![Value::Integer(4), Value::Null, Value::Integer(55)],
+            ],
+            false,
+            false,
+        )
+        .unwrap();
+    // Build a lookup before mutation; subsequent reads must not reuse stale values.
+    db.query_row("SELECT count(*) FROM data WHERE a=22", [], |r| {
+        r.get::<_, i64>(0)
+    })
+    .unwrap();
+    for _ in 0..2 {
+        let (_, counts) = super::super::super::profiling::frame_counts(|| {
+            db.prepare(&sql).unwrap().query([]).unwrap().next().unwrap();
+        });
+        assert_eq!(counts[4], 0, "updates must not republish complete rows");
+        assert!(
+            counts[9] > 0,
+            "updated cells must remain visible to profiling"
+        );
+        for statement in statements {
+            oracle.execute(statement, []).unwrap();
+        }
+        let read = |db: &Connection, sql: &str| {
+            db.prepare(sql)
+                .unwrap()
+                .query_map([], |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, Value>(1)?,
+                        r.get::<_, Value>(2)?,
+                    ))
+                })
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
+        };
+        assert_eq!(
+            read(&db, "SELECT k,a,b FROM data ORDER BY k"),
+            read(&oracle, "SELECT k,a,b FROM data ORDER BY k")
+        );
+        assert_eq!(
+            read(&db, "SELECT k,a,b FROM data WHERE a='changed' ORDER BY k"),
+            read(
+                &oracle,
+                "SELECT k,a,b FROM data WHERE a='changed' ORDER BY k"
+            )
+        );
+    }
+}
+
+#[test]
 fn publication_chunks_keep_rowids_nulls_and_ignore_conflicts_across_boundaries() {
     let mut schemas = BTreeMap::from([
         (
