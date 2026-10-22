@@ -728,6 +728,13 @@ fn binds_full(rule: &Rule, utils: &[Rule], seen: &mut BTreeSet<usize>, out: &mut
     }
 }
 
+/// Whether a query's rule (through its utilities) can bind any capture.
+pub fn binds_any(q: &Query) -> bool {
+    let mut out = BTreeSet::new();
+    binds_full(&q.rule, &q.utils, &mut BTreeSet::new(), &mut out);
+    !out.is_empty()
+}
+
 fn reads_values(rule: &Rule, utils: &[Rule], seen: &mut BTreeSet<usize>) -> bool {
     match rule {
         Rule::Value(_) | Rule::Parse(_) => true,

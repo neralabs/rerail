@@ -268,6 +268,10 @@ pub struct RelPlan {
     pub code: Option<String>,
     pub per_file: bool,
     pub locations: BTreeSet<String>,
+    /// Spike A3: per stage, its fixed substitution (`subst::plan_clause`), if its shape has one.
+    pub kernels: Vec<Option<crate::subst::Kernel>>,
+    /// Spike A3: the node-dumping inputs produced in one pass over the facts.
+    pub dump: Option<crate::subst::DumpGroup>,
 }
 
 impl RelPlan {
@@ -343,7 +347,7 @@ impl RelPlan {
         let key = o.get("key").and_then(Json::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect()).unwrap_or_default();
         let code = o.get("code").and_then(Json::as_str).map(str::to_owned);
         let locations = o.get("locations").and_then(Json::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect()).unwrap_or_default();
-        Ok(Self { inputs: ins, input_schemas, syntax, stages, fin, key, code, per_file, locations })
+        Ok(Self { inputs: ins, input_schemas, syntax, stages, fin, key, code, per_file, locations, kernels: Vec::new(), dump: None })
     }
 }
 
@@ -408,10 +412,42 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
             }
         }
     }
-    for st in &plan.stages {
+    let check = crate::subst::check_mode();
+    for (si, st) in plan.stages.iter().enumerate() {
         let t0 = std::time::Instant::now();
-        match st {
-            StagePlan::Query { name, stmt, deferred, schema } => {
+        let kernel = plan.kernels.get(si).and_then(Option::as_ref);
+        match (st, kernel) {
+            (StagePlan::Query { name, .. }, Some(crate::subst::Kernel::Absorbed)) if !check => {
+                // Read only by a later kernel, which reads its sources directly.
+                let _ = name;
+            }
+            (StagePlan::Query { name, stmt, schema, .. }, Some(k)) if !matches!(k, crate::subst::Kernel::Absorbed) => {
+                let t = match crate::subst::run(k, &db, schema) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        out.failure = Some(format!("relational stage {name}: {e}"));
+                        return out;
+                    }
+                };
+                let ns = t0.elapsed().as_nanos() as u64;
+                if check {
+                    let sql = engine::execute(&db, stmt).map(|s| store(s, stmt.schema()));
+                    match sql {
+                        Ok(s) => {
+                            if let Err(e) = crate::subst::same_rows(&t.rows, &s.rows) {
+                                panic!("FACTS_A3_CHECK: stage {name} at {}: {e}", part.path);
+                            }
+                            if s.schema.cols != t.schema.cols || s.schema.affs != t.schema.affs {
+                                panic!("FACTS_A3_CHECK: stage {name}: schema differs");
+                            }
+                        }
+                        Err(e) => panic!("FACTS_A3_CHECK: stage {name}: SQL failed ({e}), kernel succeeded"),
+                    }
+                }
+                db.tables.insert(name.to_ascii_lowercase(), Rc::new(t));
+                out.stage_ns.push((format!("view:{name}"), ns));
+            }
+            (StagePlan::Query { name, stmt, deferred, schema }, _) => {
                 let t = match engine::execute(&db, stmt) {
                     Ok(t) => t,
                     Err(e) => {
@@ -449,7 +485,7 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
                 db.tables.insert(name.to_ascii_lowercase(), Rc::new(t));
                 out.stage_ns.push((name.clone(), t0.elapsed().as_nanos() as u64));
             }
-            StagePlan::Reach { name, roots, edges, forest, syntax } => {
+            (StagePlan::Reach { name, roots, edges, forest, syntax }, _) => {
                 let r = match reach(&db, roots, edges.as_ref(), *forest, if *syntax { part.facts.filter(|_| syntax_tables_present) } else { None }, plan.syntax.as_ref(), *syntax) {
                     Ok(t) => t,
                     Err(e) => {

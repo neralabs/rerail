@@ -261,7 +261,9 @@ impl Rule {
                     let (i, fields) = add_input(&inp["evidence"], &mut names, &mut inputs).map_err(|e| format!("{cid}/{name}: {e}"))?;
                     ins.push((name.clone(), i, fields));
                 }
-                Kind::Relational(Box::new(RelPlan::compile(r, ins, grammar).map_err(|e| format!("{cid}: {e}"))?))
+                let mut plan = RelPlan::compile(r, ins, grammar).map_err(|e| format!("{cid}: {e}"))?;
+                crate::subst::plan_clause(r, &mut plan, &inputs, &mut names, grammar, &utils).map_err(|e| format!("{cid}: {e}"))?;
+                Kind::Relational(Box::new(plan))
             } else {
                 return Err(format!("{cid}: clause kind"));
             };
@@ -445,6 +447,139 @@ impl Input {
     }
 }
 
+/// Spike A3: a dump group's member tables in one pass over the facts (`subst::DumpGroup`): per
+/// member, its own selection over its candidate roots in preorder; the shared gate once per node;
+/// the captures from the facts (`$NODE` named, the parent when named, per field the first child
+/// with that field when named). Rows, their order and the anchors are `Input::rows`' for each
+/// member. `None` when any evaluation refused or decoded a named escape: the caller then runs
+/// the members' own queries, so failures stay exactly the original path's.
+pub fn dump_rows(rule: &Rule, g: &crate::subst::DumpGroup, plan: &RelPlan, ctx: &FileCtx<'_>) -> Option<(Vec<Table>, Vec<(u32, u32, u32)>)> {
+    let f = ctx.f;
+    let mut tables: Vec<Table> = g.members.iter().map(|m| Table { schema: plan.input_schemas[m.plan_input].clone(), rows: Vec::new() }).collect();
+    let mut anchors = Vec::new();
+    if f.syntax_errors {
+        // `syntax: valid` (checked at compile time): no rows.
+        return Some((tables, anchors));
+    }
+    let saved = crate::pyvalue::NAMED_ESCAPES.with(|n| n.replace(0));
+    let gate = ast::Eval::new(f, ctx.path, &g.gate);
+    // Gate verdict per node: 0 not yet evaluated, 1 holds, 2 does not.
+    let mut verdict = vec![0u8; f.len()];
+    let path: Rc<str> = Rc::from(ctx.path);
+    let mut refused = false;
+    let mut env = Env::default();
+    // The ancestor capture: X per node (memoised), and per node the nearest proper ancestor
+    // where X holds (`NONE`: none; `PENDING`: not computed yet).
+    let anc_ev = g.ancestor.as_ref().map(|(_, xq)| ast::Eval::new(f, ctx.path, xq));
+    let mut near = if anc_ev.is_some() { vec![PENDING; f.len()] } else { Vec::new() };
+    let mut xval = if anc_ev.is_some() { vec![0u8; f.len()] } else { Vec::new() };
+    let mut chain: Vec<u32> = Vec::new();
+    for (mi, m) in g.members.iter().enumerate() {
+        let inp = &rule.inputs[m.rule_input];
+        let ev = ast::Eval::new(f, ctx.path, &m.sel);
+        let rows = &mut tables[mi].rows;
+        for root in ev.roots() {
+            if ev.match_root(root).is_none() {
+                continue;
+            }
+            let v = &mut verdict[root as usize];
+            if *v == 0 {
+                *v = if gate.match_root(root).is_some() { 1 } else { 2 };
+            }
+            if *v != 1 || !f.named(root) {
+                continue;
+            }
+            env.vars.clear();
+            env.vars.push((m.tail.node, Bound::Node(root)));
+            if let Some(p) = m.tail.parent {
+                if let Some(par) = f.parent(root).filter(|&x| f.named(x)) {
+                    env.vars.push((p, Bound::Node(par)));
+                }
+            }
+            for &(name, code) in &m.tail.fields {
+                let Some(code) = code else { continue };
+                if let Some(c) = f.children(root).iter().copied().find(|&c| f.field[c as usize] == code) {
+                    if f.named(c) {
+                        env.vars.push((name, Bound::Node(c)));
+                    }
+                }
+            }
+            if let (Some((aname, _)), Some(xev)) = (&g.ancestor, &anc_ev) {
+                let a = nearest_where(f, xev, root, &mut near, &mut xval, &mut chain);
+                if a != crate::facts::NONE && f.named(a) {
+                    env.vars.push((*aname, Bound::Node(a)));
+                }
+            }
+            let (s, e) = (f.start[root as usize], f.end[root as usize]);
+            let mut row = Vec::with_capacity(3 + inp.projs.len());
+            row.push(V::Text(path.clone()));
+            row.push(V::Int(s as i64));
+            row.push(V::Int(e as i64));
+            for p in &inp.projs {
+                row.push(match p {
+                    Proj::Capture(n) | Proj::Text(n) => match env.get(*n) {
+                        Some(Bound::Node(x)) => V::text(f.text(x)),
+                        _ => V::Null,
+                    },
+                    Proj::Kind(n) => match env.get(*n) {
+                        Some(Bound::Node(x)) => V::Text(crate::facts::name(f.kind[x as usize])),
+                        _ => V::Null,
+                    },
+                    Proj::Start(n) => env.get(*n).map_or(V::Null, |b| V::Int(gate.range_of(b).0 as i64)),
+                    Proj::End(n) => env.get(*n).map_or(V::Null, |b| V::Int(gate.range_of(b).1 as i64)),
+                    Proj::Line(n) => env.get(*n).map_or(V::Null, |b| V::Int(line_of(f, gate.range_of(b).0) as i64)),
+                    _ => project(p, &gate, &env, &[], ctx, &inp.query),
+                });
+            }
+            rows.push(row.into_boxed_slice());
+            anchors.push((s, e, line_of(f, s)));
+        }
+        if ev.unsupported.borrow().is_some() {
+            refused = true;
+            break;
+        }
+    }
+    if gate.unsupported.borrow().is_some() {
+        refused = true;
+    }
+    if crate::pyvalue::NAMED_ESCAPES.with(|n| n.replace(saved)) > 0 {
+        refused = true;
+    }
+    (!refused).then_some((tables, anchors))
+}
+
+const PENDING: u32 = u32::MAX - 1;
+
+/// The nearest proper ancestor of `n` where `x` holds (`inside {all[X, $A]}, stopBy: X` with X
+/// two-valued: the walk stops at the first ancestor where X holds), memoised in `near`.
+fn nearest_where(f: &Facts, x: &ast::Eval<'_>, n: u32, near: &mut [u32], xval: &mut [u8], chain: &mut Vec<u32>) -> u32 {
+    chain.clear();
+    let mut cur = n;
+    let ans = loop {
+        if near[cur as usize] != PENDING {
+            break near[cur as usize];
+        }
+        chain.push(cur);
+        match f.parent(cur) {
+            None => break crate::facts::NONE,
+            Some(p) => {
+                let v = &mut xval[p as usize];
+                if *v == 0 {
+                    *v = if x.match_root(p).is_some() { 1 } else { 2 };
+                }
+                if *v == 1 {
+                    break p;
+                }
+                cur = p;
+            }
+        }
+    };
+    for &c in chain.iter() {
+        near[c as usize] = ans;
+    }
+    ans
+}
+
 thread_local! {
     /// Capture names of the rule being evaluated, by name (for regex groups).
     pub static GROUP_NAMES: std::cell::RefCell<BTreeMap<String, Name>> = const { std::cell::RefCell::new(BTreeMap::new()) };
@@ -575,95 +710,7 @@ impl Output {
     }
 }
 
-/// Repository-partition accumulators: per (rule, clause), input tables and anchors.
-#[derive(Default)]
-pub struct RepoAcc {
-    pub inputs: BTreeMap<(usize, usize), (Vec<Table>, rustc_hash::FxHashMap<(Rc<str>, u32, u32), u32>, bool)>,
-}
-
-/// A value that may cross threads (`V` shares text through `Rc`).
-pub enum SendV {
-    Null,
-    Int(i64),
-    Real(f64),
-    Text(Box<str>),
-}
-
-/// A worker's `RepoAcc` and budget rows, detached from its `Rc`s so they can reach the
-/// merging thread.
-#[derive(Default)]
-pub struct SendAcc {
-    inputs: Vec<((usize, usize), Vec<(Schema, Vec<Box<[SendV]>>)>, Vec<((Box<str>, u32, u32), u32)>, bool)>,
-    budget: BTreeMap<(usize, usize), Vec<(String, u32)>>,
-}
-
-impl RepoAcc {
-    pub fn detach(self, budget: BTreeMap<(usize, usize), Vec<(String, u32)>>) -> SendAcc {
-        let send_v = |v: &V| match v {
-            V::Null => SendV::Null,
-            V::Int(i) => SendV::Int(*i),
-            V::Real(r) => SendV::Real(*r),
-            V::Text(s) => SendV::Text(Box::from(&**s)),
-        };
-        let inputs = self
-            .inputs
-            .into_iter()
-            .map(|(k, (tables, anchors, flag))| {
-                let tables = tables.into_iter().map(|t| (t.schema, t.rows.iter().map(|r| r.iter().map(send_v).collect()).collect())).collect();
-                let anchors = anchors.into_iter().map(|((p, s, e), l)| ((Box::from(&*p), s, e), l)).collect();
-                (k, tables, anchors, flag)
-            })
-            .collect();
-        SendAcc { inputs, budget }
-    }
-}
-
-/// The merge of every worker's `SendAcc`, back on one thread. Repeated texts (paths, kinds)
-/// share one `Rc` again. Row order within a table is free: `finish` sorts rows by path, stably,
-/// and a file's rows all come from the one worker that evaluated it.
-pub fn attach(parts: Vec<SendAcc>) -> (RepoAcc, BTreeMap<(usize, usize), Vec<(String, u32)>>) {
-    let mut texts: rustc_hash::FxHashMap<Box<str>, Rc<str>> = Default::default();
-    let mut text = |s: Box<str>| -> Rc<str> {
-        if let Some(r) = texts.get(&s) {
-            return r.clone();
-        }
-        let r: Rc<str> = Rc::from(&*s);
-        texts.insert(s, r.clone());
-        r
-    };
-    let mut repo = RepoAcc::default();
-    let mut budget: BTreeMap<(usize, usize), Vec<(String, u32)>> = BTreeMap::new();
-    for part in parts {
-        for (k, tables, anchors, flag) in part.inputs {
-            let n = tables.len();
-            let acc = repo.inputs.entry(k).or_insert_with(|| ((0..n).map(|_| Table::default()).collect(), Default::default(), false));
-            for (slot, (schema, rows)) in acc.0.iter_mut().zip(tables) {
-                slot.schema = schema;
-                slot.rows.extend(rows.into_iter().map(|r| {
-                    r.into_vec()
-                        .into_iter()
-                        .map(|v| match v {
-                            SendV::Null => V::Null,
-                            SendV::Int(i) => V::Int(i),
-                            SendV::Real(x) => V::Real(x),
-                            SendV::Text(s) => V::Text(text(s)),
-                        })
-                        .collect()
-                }));
-            }
-            for ((p, s, e), l) in anchors {
-                acc.1.insert((text(p), s, e), l);
-            }
-            acc.2 |= flag;
-        }
-        for (k, rows) in part.budget {
-            budget.entry(k).or_default().extend(rows);
-        }
-    }
-    (repo, budget)
-}
-
-pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut RepoAcc, budget: &mut BTreeMap<(usize, usize), Vec<(String, u32)>>) {
+pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut dyn crate::spill::RepoSink, budget: &mut BTreeMap<(usize, usize), Vec<(String, u32)>>) {
     for (ri, rule) in rules.iter().enumerate() {
         if !rule.scope.matches(ctx.path) {
             continue;
@@ -763,7 +810,40 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                     let mut anchors: rustc_hash::FxHashMap<(Rc<str>, u32, u32), u32> = Default::default();
                     let mut unsupported = None;
                     let path: Rc<str> = Rc::from(ctx.path);
+                    // Spike A3: a dump group's members come from one pass over the facts.
+                    let mut from_dump: Vec<Option<Table>> = (0..plan.inputs.len()).map(|_| None).collect();
+                    if let Some(g) = &plan.dump {
+                        let td = Instant::now();
+                        let dumped = dump_rows(rule, g, plan, ctx);
+                        out.add_stages(ri, ci, vec![("view:dump".into(), td.elapsed().as_nanos() as u64)]);
+                        if let Some((member_tables, member_anchors)) = dumped {
+                            if crate::subst::check_mode() {
+                                for (m, t) in g.members.iter().zip(&member_tables) {
+                                    let orig = get(m.rule_input, out).expect("member input in scope");
+                                    if let Err(e) = crate::subst::same_rows(&t.rows, &orig.table.rows) {
+                                        panic!("FACTS_A3_CHECK: dump {} at {}: {e}", plan.inputs[m.plan_input].0, ctx.path);
+                                    }
+                                    assert!(orig.unsupported.is_none());
+                                }
+                                let mut want: Vec<(u32, u32, u32)> = g.members.iter().flat_map(|m| get(m.rule_input, out).unwrap().anchors.clone()).collect();
+                                let mut got = member_anchors.clone();
+                                want.sort_unstable();
+                                got.sort_unstable();
+                                assert!(want == got, "FACTS_A3_CHECK: dump anchors at {}", ctx.path);
+                            }
+                            for (s, e, l) in member_anchors {
+                                anchors.insert((path.clone(), s, e), l);
+                            }
+                            for (m, t) in g.members.iter().zip(member_tables) {
+                                from_dump[m.plan_input] = Some(t);
+                            }
+                        }
+                    }
                     for (k, (_, idx)) in plan.inputs.iter().enumerate() {
+                        if let Some(t) = from_dump[k].take() {
+                            tables.push(t);
+                            continue;
+                        }
                         match get(*idx, out) {
                             Some(rows) => {
                                 if rows.unsupported.is_some() {
@@ -789,11 +869,8 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                             out.findings.push(Finding { check: rule.check.clone(), clause: clause.id.clone(), path: p, line: line + 1, code: if code.is_empty() { clause.viol.code.clone() } else { code } });
                         }
                     } else {
-                        let acc = repo.inputs.entry((ri, ci)).or_insert_with(|| (plan.input_schemas.iter().map(|s| Table { schema: s.clone(), rows: Vec::new() }).collect(), Default::default(), false));
-                        for (k, t) in tables.into_iter().enumerate() {
-                            acc.0[k].rows.extend(t.rows);
-                        }
-                        acc.1.extend(anchors);
+                        let anchors = anchors.into_iter().map(|((_, s, e), l)| (s, e, l)).collect();
+                        repo.push((ri, ci), crate::spill::FileRows { path: path.clone(), tables: tables.into_iter().map(|t| t.rows).collect(), anchors });
                     }
                 }
             }
@@ -806,8 +883,9 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
     }
 }
 
-/// Repository partitions and budgets, after every file.
-pub fn finish(rules: &[Rule], repo: RepoAcc, budget: BTreeMap<(usize, usize), Vec<(String, u32)>>, out: &mut Output) {
+/// Repository partitions and budgets, after every file. `load` returns one repository clause's
+/// per-file rows (from the spill files or memory); clauses are loaded and run one at a time.
+pub fn finish(rules: &[Rule], mut load: impl FnMut((usize, usize)) -> Vec<crate::spill::FileRows>, budget: BTreeMap<(usize, usize), Vec<(String, u32)>>, out: &mut Output) {
     for ((ri, ci), mut rows) in budget {
         let rule = &rules[ri];
         let clause = &rule.clauses[ci];
@@ -832,39 +910,39 @@ pub fn finish(rules: &[Rule], repo: RepoAcc, budget: BTreeMap<(usize, usize), Ve
     }
     // Every repository-partitioned clause runs once, over the rows of whatever files reached it
     // (none at all is still one partition).
-    let mut repo = repo;
     for (ri, rule) in rules.iter().enumerate() {
         for (ci, clause) in rule.clauses.iter().enumerate() {
-            if let Kind::Relational(plan) = &clause.kind {
-                if !plan.per_file {
-                    repo.inputs.entry((ri, ci)).or_insert_with(|| (plan.input_schemas.iter().map(|s| Table { schema: s.clone(), rows: Vec::new() }).collect(), Default::default(), false));
+            let Kind::Relational(plan) = &clause.kind else { continue };
+            if plan.per_file {
+                continue;
+            }
+            let t0 = Instant::now();
+            // Files in path order, each file's rows in their order.
+            let mut files = load((ri, ci));
+            files.sort_by(|a, b| a.path.cmp(&b.path));
+            let mut inputs: Vec<Table> = plan.input_schemas.iter().map(|s| Table { schema: s.clone(), rows: Vec::new() }).collect();
+            let mut anchors: rustc_hash::FxHashMap<(Rc<str>, u32, u32), u32> = Default::default();
+            for fr in files {
+                for (t, rows) in inputs.iter_mut().zip(fr.tables) {
+                    t.rows.extend(rows);
+                }
+                for (s, e, l) in fr.anchors {
+                    anchors.insert((fr.path.clone(), s, e), l);
                 }
             }
+            out.add_stages(ri, ci, vec![("spill:load".into(), t0.elapsed().as_nanos() as u64)]);
+            let r = rel::run(plan, rel::Partition { inputs, anchors, facts: None, source: "", path: "" });
+            out.add_stages(ri, ci, r.stage_ns);
+            if let Some(m) = r.failure {
+                out.failures.push(Failure { check: rule.check.clone(), clause: clause.id.clone(), path: String::new(), message: m });
+            }
+            for (p, line, code) in r.findings {
+                out.findings.push(Finding { check: rule.check.clone(), clause: clause.id.clone(), path: p, line: line + 1, code: if code.is_empty() { clause.viol.code.clone() } else { code } });
+            }
+            let e = out.clause_ns.entry((ri, ci)).or_default();
+            e.0 += 1;
+            e.1 += t0.elapsed().as_nanos() as u64;
         }
-    }
-    for ((ri, ci), (mut inputs, anchors, _)) in repo.inputs {
-        let rule = &rules[ri];
-        let clause = &rule.clauses[ci];
-        let Kind::Relational(plan) = &clause.kind else { continue };
-        let t0 = Instant::now();
-        // Rows in path order, files in path order (stable within a file).
-        for t in inputs.iter_mut() {
-            t.rows.sort_by(|a, b| match (&a[0], &b[0]) {
-                (V::Text(x), V::Text(y)) => x.cmp(y),
-                _ => std::cmp::Ordering::Equal,
-            });
-        }
-        let r = rel::run(plan, rel::Partition { inputs, anchors, facts: None, source: "", path: "" });
-        out.add_stages(ri, ci, r.stage_ns);
-        if let Some(m) = r.failure {
-            out.failures.push(Failure { check: rule.check.clone(), clause: clause.id.clone(), path: String::new(), message: m });
-        }
-        for (p, line, code) in r.findings {
-            out.findings.push(Finding { check: rule.check.clone(), clause: clause.id.clone(), path: p, line: line + 1, code: if code.is_empty() { clause.viol.code.clone() } else { code } });
-        }
-        let e = out.clause_ns.entry((ri, ci)).or_default();
-        e.0 += 1;
-        e.1 += t0.elapsed().as_nanos() as u64;
     }
 }
 

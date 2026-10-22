@@ -7,7 +7,9 @@ mod policy;
 mod pyvalue;
 mod rel;
 mod repo;
+mod spill;
 mod sql;
+mod subst;
 
 use serde_json::{Map, Value as Json, json};
 use std::collections::{BTreeMap, HashMap};
@@ -63,7 +65,7 @@ fn main() {
 /// Evaluates the given files under compiled rules: findings and failures.
 fn evaluate(rules: &[eval::Rule], files: &[(String, Arc<String>)]) -> eval::Output {
     let mut out = eval::Output::default();
-    let mut repo = eval::RepoAcc::default();
+    let mut repo = spill::Memory::default();
     let mut budget = BTreeMap::new();
     let mut sorted: Vec<&(String, Arc<String>)> = files.iter().collect();
     sorted.sort_by(|a, b| a.0.cmp(&b.0));
@@ -80,7 +82,7 @@ fn evaluate(rules: &[eval::Rule], files: &[(String, Arc<String>)]) -> eval::Outp
             None => {}
         }
     }
-    eval::finish(rules, repo, budget, &mut out);
+    eval::finish(rules, |k| repo.0.remove(&k).unwrap_or_default(), budget, &mut out);
     out
 }
 

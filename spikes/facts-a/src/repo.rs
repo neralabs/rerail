@@ -27,7 +27,8 @@ struct FileStat {
 
 struct Worker {
     out: eval::Output,
-    acc: eval::SendAcc,
+    budget: BTreeMap<(usize, usize), Vec<(String, u32)>>,
+    spill_bytes: u64,
     files: Vec<FileStat>,
     compile_ns: u64,
 }
@@ -67,12 +68,12 @@ pub fn walk(root: &Path) -> Vec<String> {
     out
 }
 
-fn worker(paths: &[String], root: &Path, policies: &str, next: &AtomicUsize) -> Worker {
+fn worker(paths: &[String], root: &Path, policies: &str, next: &AtomicUsize, spill_dir: &Path, wi: usize) -> Worker {
     let t0 = Instant::now();
     let rules = compile_batch6(policies);
     let compile_ns = t0.elapsed().as_nanos() as u64;
     let mut out = eval::Output::default();
-    let mut repo = eval::RepoAcc::default();
+    let mut repo = crate::spill::Spill::new(spill_dir, wi);
     let mut budget = BTreeMap::new();
     let mut files = Vec::new();
     loop {
@@ -109,7 +110,7 @@ fn worker(paths: &[String], root: &Path, policies: &str, next: &AtomicUsize) -> 
         stat.extract_ns = ns.extract;
         files.push(stat);
     }
-    Worker { out, acc: repo.detach(budget), files, compile_ns }
+    Worker { out, budget, spill_bytes: repo.finish(), files, compile_ns }
 }
 
 /// Nearest-rank percentile of sorted values.
@@ -156,9 +157,15 @@ pub fn repo(args: &[String]) {
     let paths = walk(root);
     let walk_ns = t_all.elapsed().as_nanos() as u64;
     let next = AtomicUsize::new(0);
+    // Repository-partition rows go to a per-run temporary directory during the file phase.
+    let spill_dir = std::env::temp_dir().join(format!("facts-a-spill-{}", std::process::id()));
+    std::fs::create_dir_all(&spill_dir).unwrap();
     let t_workers = Instant::now();
     let workers: Vec<Worker> = std::thread::scope(|s| {
-        let handles: Vec<_> = (0..threads).map(|_| s.spawn(|| worker(&paths, root, &policies, &next))).collect();
+        let handles: Vec<_> = (0..threads).map(|wi| {
+            let (paths, policies, next, spill_dir) = (&paths, &policies, &next, &spill_dir);
+            s.spawn(move || worker(paths, root, policies, next, spill_dir, wi))
+        }).collect();
         handles.into_iter().map(|h| h.join().unwrap()).collect()
     });
     let workers_wall_ns = t_workers.elapsed().as_nanos() as u64;
@@ -168,22 +175,26 @@ pub fn repo(args: &[String]) {
     let t_merge = Instant::now();
     let rules = compile_batch6(&policies);
     let mut out = eval::Output::default();
-    let mut parts = Vec::new();
+    let mut budget: BTreeMap<(usize, usize), Vec<(String, u32)>> = BTreeMap::new();
     let mut files = Vec::new();
     let mut compile_ns = Vec::new();
+    let mut spill_bytes = 0u64;
     for w in workers {
         out.merge(w.out);
-        parts.push(w.acc);
+        for (k, rows) in w.budget {
+            budget.entry(k).or_default().extend(rows);
+        }
         files.extend(w.files);
         compile_ns.push(w.compile_ns);
+        spill_bytes += w.spill_bytes;
     }
-    let (acc, budget) = eval::attach(parts);
     let merge_ns = t_merge.elapsed().as_nanos() as u64;
     let rss_after_merge = max_rss();
     let cur_after_merge = cur_rss();
     let t_finish = Instant::now();
     let per_file_ns: BTreeMap<(usize, usize), u64> = out.clause_ns.iter().map(|(k, v)| (*k, v.1)).collect();
-    eval::finish(&rules, acc, budget, &mut out);
+    eval::finish(&rules, |k| crate::spill::load(&spill_dir, threads, k), budget, &mut out);
+    std::fs::remove_dir_all(&spill_dir).unwrap();
     let finish_ns = t_finish.elapsed().as_nanos() as u64;
     let rss_after_finish = max_rss();
     let cur_after_finish = cur_rss();
@@ -239,6 +250,7 @@ pub fn repo(args: &[String]) {
             "merge_and_compile": merge_ns,
             "finish": finish_ns,
         },
+        "spill_bytes": spill_bytes,
         "max_rss_bytes": {
             "after_workers": rss_after_workers,
             "after_merge": rss_after_merge,
