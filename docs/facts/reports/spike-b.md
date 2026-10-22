@@ -12,7 +12,7 @@ Branch `Moti-Velz/facts-spike-b`, crate `spikes/facts-b`. Raw runs: `~/rerail-be
 | Build | `cargo build --release -p facts-b` (workspace release profile: thin LTO, codegen-units 1), `CARGO_BUILD_JOBS=4`, `CARGO_TARGET_DIR=<worktree>/target` |
 | Engine | differential-dataflow 0.25.1, timely 0.31.0, one worker (`timely::execute_directly`), timestamps `u32` epochs, diffs `i32` |
 | Grammar | Rerail's vendored, patched tree-sitter-python (`native/grammars/tree-sitter-python/src/grammar.json`), generated and compiled by the crate's `build.rs` exactly as `native/build.rs` does. No production crate touched. |
-| Machine | macOS (Darwin 25.6), arm64; every timing run under `~/rerail-bench/bench-lock`; 1-minute load before the runs 1.56 to 4.20 (all trusted, < 8) |
+| Machine | macOS (Darwin 25.6), arm64; every timing run under `~/rerail-bench/bench-lock`; 1-minute load before the runs 1.56 to 6.24 (all trusted, < 8) |
 | Corpus | `~/tempo-qe/workspaces47` scan: 47 worktrees, 262,567 `.py` files, **7,091 distinct contents** (blake3). Worktrees `01`-`40` form the 40; they hold 7,057 distinct contents. |
 | Base | strict majority: every (path, hash) held by ≥ 21 of the 40 worktrees: 5,458 files, 1,103,227 exported fact rows (`20261022-122050-divergence`) |
 | Replay | seed `0x5EED_B` (388827), `~/rerail-bench/facts/spike-b/edits/seed-5eedb/{events.jsonl,summary.json}`: 1,000 single-file edits round-robin over 01-40, 5 bulk events, 5 new worktrees (41-45) × 10 edits, 51 real commits |
@@ -176,6 +176,6 @@ Hot keys (`20261022-121844-track-flat` → `hot_keys`): the widest reduce keys a
 ## 7. Resume notes
 
 - Branch state: all code committed (`spike-b:` commits up to the report commit). Nothing half-done for the gates.
-- Reproduce: § 3. Store and memberships live under `~/rerail-bench/facts/`; `extract` and `divergence` recreate them, `edits` recreates the replay.
+- Reproduce: § 3. Store and memberships live under `~/rerail-bench/facts/` (`store/`, `spike-b/membership/`, generated edit contents in `spike-b/contents/`); `extract` and `divergence` recreate them, `edits` recreates the replay and its contents' facts.
 - Not done: trace-level (allocator) bytes per worktree; fact eviction; an exactness run of the plurality variant (it changes only the base membership the same operators read). The R2 hop census covers initial memberships only, not every replay step (the oracle uses the same 4-hop bound, so B1 is unaffected).
 - Code map: `facts.rs` extractor and format; `store.rs` interner and content store; `base.rs` base and deltas; `derive.rs` per-file derivations; `rules.rs` R2 group logic; `flow.rs` dataflow and tag algebra; `oracle.rs` from-scratch evaluation; `edits.rs` replay generator; `replay.rs` driver and measurements.
