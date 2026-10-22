@@ -204,14 +204,14 @@ impl SyntaxSpec {
                 .collect();
             node_rows.push(row.into_boxed_slice());
         }
-        let mut out = vec![(self.name.clone(), Table { schema: schemas[0].1.clone(), rows: node_rows })];
+        let mut out = vec![(self.name.clone(), Table::from_rows(schemas[0].1.clone(), node_rows))];
         let mut si = 1;
         if let Some(e) = &self.edges {
             let rows = selected
                 .iter()
                 .filter_map(|&(id, ord)| f.parent(id).map(|par| vec![V::Text(p.clone()), V::Int(par as i64), V::Int(id as i64), V::Int(ord)].into_boxed_slice()))
                 .collect();
-            out.push((e.clone(), Table { schema: schemas[si].1.clone(), rows }));
+            out.push((e.clone(), Table::from_rows(schemas[si].1.clone(), rows)));
             si += 1;
         }
         if let Some(o) = &self.ownership {
@@ -242,7 +242,7 @@ impl SyntaxSpec {
                     r.into_boxed_slice()
                 })
                 .collect();
-            out.push((o.clone(), Table { schema: schemas[si].1.clone(), rows }));
+            out.push((o.clone(), Table::from_rows(schemas[si].1.clone(), rows)));
         }
         out
     }
@@ -354,7 +354,7 @@ impl RelPlan {
 /// One partition's evaluation context.
 pub struct Partition<'a> {
     /// Input tables in `plan.inputs` order.
-    pub inputs: Vec<Table>,
+    pub inputs: Vec<Rc<Table>>,
     /// Anchor spans: (path, start, end) -> line (0-based).
     pub anchors: rustc_hash::FxHashMap<(Rc<str>, u32, u32), u32>,
     /// Per-file facts for syntax tables and syntax-span anchoring (per-file partitions).
@@ -371,47 +371,31 @@ pub struct RelOutcome {
 }
 
 fn store(t: Table, schema: &Schema) -> Table {
-    // CTAS converts stored values by each column's declared affinity.
-    let affs = &schema.affs;
-    if affs.iter().all(|a| *a == Aff::None) {
-        return Table { schema: schema.clone(), rows: t.rows };
-    }
-    let rows = t
-        .rows
-        .into_iter()
-        .map(|r| r.iter().zip(affs).map(|(v, a)| sv::apply_affinity(v.clone(), *a)).collect::<Vec<_>>().into_boxed_slice())
-        .collect();
-    Table { schema: schema.clone(), rows }
+    // CTAS converts stored values by each column's declared affinity (on read).
+    let len = t.len();
+    let cols = t.cols.iter().take(schema.cols.len()).zip(&schema.affs).map(|(c, a)| engine::Column::with_aff(c, *a)).collect();
+    Table::new(schema.clone(), cols, len)
 }
 
-/// `FACTS_MEMTRACE=1`: per stored stage, its rows, an estimate of its bytes (row boxes, values
-/// and text payloads, shared texts counted per reference) and the process's current RSS.
+/// `FACTS_MEMTRACE=1`: per stored stage, its rows, the bytes its columns hold themselves
+/// (values, text payloads, gather indexes) and the process's current RSS.
 fn memtrace(name: &str, t: &Table) {
     if std::env::var_os("FACTS_MEMTRACE").is_none() {
         return;
     }
-    let mut bytes = 0usize;
-    for r in &t.rows {
-        bytes += 16 + r.len() * std::mem::size_of::<V>();
-        for v in r.iter() {
-            if let V::Text(s) = v {
-                bytes += s.len();
-            }
-        }
-    }
-    eprintln!("memtrace {name}: {} rows x {} cols ~{} MB, rss {} MB", t.rows.len(), t.schema.cols.len(), bytes >> 20, crate::repo::cur_rss() >> 20);
+    eprintln!("memtrace {name}: {} rows x {} cols ~{} MB, rss {} MB", t.len(), t.schema.cols.len(), t.bytes() >> 20, crate::repo::cur_rss() >> 20);
 }
 
 pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
     let mut out = RelOutcome { findings: Vec::new(), failure: None, stage_ns: Vec::new() };
-    let mut db = Db { tables: Default::default(), source: part.source, path: part.path };
+    let mut db = Db::new(part.source, part.path);
     for ((name, _), t) in plan.inputs.iter().zip(part.inputs) {
-        db.tables.insert(name.to_ascii_lowercase(), Rc::new(t));
+        db.tables.insert(name.to_ascii_lowercase(), t);
     }
     let mut syntax_tables_present = false;
     if let Some(spec) = &plan.syntax {
         // Syntax rows exist for files the gate input has witnesses in.
-        let gate_has_rows = db.tables.get(&spec.gate.to_ascii_lowercase()).is_some_and(|t| !t.rows.is_empty());
+        let gate_has_rows = db.tables.get(&spec.gate.to_ascii_lowercase()).is_some_and(|t| !t.is_empty());
         match (part.facts, gate_has_rows) {
             (Some((f, path)), true) => {
                 if f.syntax_errors {
@@ -425,7 +409,7 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
             }
             _ => {
                 for (n, s) in spec.schemas() {
-                    db.tables.insert(n.to_ascii_lowercase(), Rc::new(Table { schema: s, rows: vec![] }));
+                    db.tables.insert(n.to_ascii_lowercase(), Rc::new(Table::empty(s)));
                 }
             }
         }
@@ -452,7 +436,7 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
                     let sql = engine::execute(&db, stmt).map(|s| store(s, stmt.schema()));
                     match sql {
                         Ok(s) => {
-                            if let Err(e) = crate::subst::same_rows(&t.rows, &s.rows) {
+                            if let Err(e) = crate::subst::same_rows(&t, &s) {
                                 panic!("FACTS_A3_CHECK: stage {name} at {}: {e}", part.path);
                             }
                             if s.schema.cols != t.schema.cols || s.schema.affs != t.schema.affs {
@@ -477,28 +461,31 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
                 let mut t = store(t, stmt.schema());
                 if !deferred.is_empty() {
                     // Deferred columns are evaluated over the stored columns.
+                    let n = t.len();
+                    let null_col = || Rc::new(engine::Column::Vals(vec![V::Null; n]));
+                    let col_at = |i: usize| t.cols.get(i).cloned().unwrap_or_else(null_col);
                     let stored_cols: Vec<usize> = (0..schema.cols.len()).filter(|i| !deferred.iter().any(|(p, _, _)| p == i)).collect();
-                    let mut rows = Vec::with_capacity(t.rows.len());
-                    for r in &t.rows {
-                        let stored: Vec<V> = stored_cols.iter().map(|&i| r.get(i).cloned().unwrap_or(V::Null)).collect();
-                        let mut full: Vec<V> = (0..schema.cols.len()).map(|i| r.get(i).cloned().unwrap_or(V::Null)).collect();
-                        for (pos, pe, s) in deferred {
-                            match engine::eval_scalar(&db, s, pe, &stored) {
-                                Ok(v) => full[*pos] = v,
+                    let stored = Table::new(Schema::default(), stored_cols.iter().map(|&i| col_at(i)).collect(), n);
+                    let mut cols: Vec<Rc<engine::Column>> = (0..schema.cols.len()).map(col_at).collect();
+                    for (pos, pe, s) in deferred {
+                        let mut vals = Vec::with_capacity(n);
+                        for r in 0..n {
+                            match engine::eval_scalar(&db, s, pe, &stored, r) {
+                                Ok(v) => vals.push(v),
                                 Err(e) => {
                                     out.failure = Some(format!("relational stage {name} deferred: {e}"));
                                     return out;
                                 }
                             }
                         }
-                        rows.push(full.into_boxed_slice());
+                        cols[*pos] = Rc::new(engine::Column::Vals(vals));
                     }
-                    t = Table { schema: schema.clone(), rows };
+                    t = Table::new(schema.clone(), cols, n);
                 }
                 if std::env::var_os("FACTS_DEBUG").is_some() {
-                    eprintln!("stage {name}: {} rows {:?}", t.rows.len(), t.schema.cols);
-                    for r in t.rows.iter().take(4) {
-                        eprintln!("    {r:?}");
+                    eprintln!("stage {name}: {} rows {:?}", t.len(), t.schema.cols);
+                    for r in 0..t.len().min(4) {
+                        eprintln!("    {:?}", t.row(r));
                     }
                 }
                 memtrace(&name, &t);
@@ -533,7 +520,7 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
     let code_i = plan.code.as_ref().and_then(|c| ci(c));
     let key_i: Vec<usize> = plan.key.iter().filter_map(|k| ci(k)).collect();
     let mut seen = std::collections::HashSet::new();
-    for row in &fin.rows {
+    for row in (0..fin.len()).map(|i| fin.row(i)) {
         let V::Text(path) = &row[pi] else {
             out.failure = Some("relational path must be text".into());
             out.findings.clear();
@@ -593,7 +580,7 @@ fn reach(db: &Db<'_>, roots: &Statement, edges: Option<&Statement>, forest: bool
     let rt = engine::execute(db, roots)?;
     let mut root_keys: Vec<(V, V)> = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    for r in &rt.rows {
+    for r in (0..rt.len()).map(|i| rt.row(i)) {
         if r[0].is_null() || r[1].is_null() {
             continue;
         }
@@ -606,7 +593,7 @@ fn reach(db: &Db<'_>, roots: &Statement, edges: Option<&Statement>, forest: bool
         let spec = spec.ok_or("syntax reachability without a syntax spec")?;
         let Some((f, path)) = facts_ref else {
             if root_keys.is_empty() {
-                return Ok(Table { schema, rows });
+                return Ok(Table::from_rows(schema, rows));
             }
             return Err("syntax root is outside the eligible files".into());
         };
@@ -627,7 +614,7 @@ fn reach(db: &Db<'_>, roots: &Statement, edges: Option<&Statement>, forest: bool
                 }
             }
         }
-        return Ok(Table { schema, rows });
+        return Ok(Table::from_rows(schema, rows));
     }
     let et = engine::execute(db, edges.ok_or("reachability edges")?)?;
     // Adjacency by (path, src) over distinct edges; keys compare by storage class (affinity
@@ -635,7 +622,7 @@ fn reach(db: &Db<'_>, roots: &Statement, edges: Option<&Statement>, forest: bool
     let mut adj: rustc_hash::FxHashMap<(sv::DKey, sv::DKey), Vec<V>> = Default::default();
     let mut eseen = std::collections::HashSet::new();
     let mut parents: rustc_hash::FxHashMap<(sv::DKey, sv::DKey), sv::DKey> = Default::default();
-    for r in &et.rows {
+    for r in (0..et.len()).map(|i| et.row(i)) {
         if r[0].is_null() || r[1].is_null() || r[2].is_null() {
             continue;
         }
@@ -673,5 +660,5 @@ fn reach(db: &Db<'_>, roots: &Statement, edges: Option<&Statement>, forest: bool
             rows.push(vec![p.clone(), root.clone(), n].into_boxed_slice());
         }
     }
-    Ok(Table { schema, rows })
+    Ok(Table::from_rows(schema, rows))
 }

@@ -5,12 +5,13 @@
 # FACTS_RUNS overrides the runs directory (Phase 2: ~/rerail-bench/facts/phase-2/<slice>/runs).
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-R=${FACTS_RUNS:-~/rerail-bench/facts/spike-a/runs}/$(date +%Y%m%dT%H%M%S)-repo
+R=${FACTS_RUNS:-~/rerail-bench/facts/spike-a/runs}/$(date +%Y%m%dT%H%M%S)-repo${FACTS_A3_OFF:+-generic}
 mkdir -p "$R"
 BIN=./spikes/facts-a/target/release/facts-a
 CMD="$BIN repo --threads 4 --out-dir $R"
 {
   echo "$CMD"
+  echo "env FACTS_A3_OFF=${FACTS_A3_OFF:-}"
   echo "commit $(git rev-parse HEAD)"
   echo "wrapper: ~/rerail-bench/bench-lock bash -c 'uptime; /usr/bin/time -l perl -e alarm(900) <cmd>; uptime'"
   echo "parity: $BIN repo-compare --oracle ~/rerail-bench/facts/spike-a/work/suite-b6.json --results $R/results.json --output $R/parity.json"

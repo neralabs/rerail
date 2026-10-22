@@ -3,7 +3,7 @@ use crate::ast::{self, Bound, Compiler, Env, Name, Names, Query};
 use crate::facts::Facts;
 use crate::policy::{self, Scope};
 use crate::rel::{self, RelPlan};
-use crate::sql::engine::{Schema, Table};
+use crate::sql::engine::{Column, Schema, Table, TextCell};
 use crate::sql::value::V;
 use regex::Regex;
 use serde_json::{Map, Value as Json};
@@ -84,6 +84,8 @@ pub struct Rule {
     pub clauses: Vec<Clause>,
     pub inputs: Vec<Input>,
     pub names: Names,
+    /// Per input, the last clause that reads it: its rows are dropped after that clause.
+    pub last_use: Vec<usize>,
 }
 
 fn proj_parse(s: &Json, names: &mut Names) -> Result<Proj, String> {
@@ -158,6 +160,8 @@ impl Rule {
         let mut inputs: Vec<Input> = Vec::new();
         let mut keys: BTreeMap<String, usize> = BTreeMap::new();
         let mut clauses = Vec::new();
+        // One compiled utility table for every input query without local utilities.
+        let mut util_table: Option<(Rc<[ast::Rule]>, Rc<[bool]>)> = None;
         let mut add_input = |ev: &Json, names: &mut Names, inputs: &mut Vec<Input>| -> Result<(usize, Vec<String>), String> {
             let key = serde_json::to_string(ev).unwrap();
             let project = ev.get("project").and_then(Json::as_object).cloned().unwrap_or_default();
@@ -169,7 +173,11 @@ impl Rule {
             }
             let ast_json = ev.get("query").and_then(|q| q.get("ast")).ok_or("evidence query must be ast")?;
             let mut comp = Compiler::new(names, grammar, &utils);
+            comp.shared = util_table.clone();
             let query = comp.query(ast_json)?;
+            if util_table.is_none() {
+                util_table = comp.shared.take();
+            }
             let projs = fields.iter().map(|f| proj_parse(&project[f], names)).collect::<Result<Vec<_>, _>>()?;
             let each = ev.get("each").and_then(Json::as_str).map(|e| names.id(e));
             let anchor = anchor_parse(ev.get("anchor"), names)?;
@@ -269,13 +277,21 @@ impl Rule {
             };
             clauses.push(Clause { id: cid, kind, viol });
         }
-        Ok(Rule { id, check, scope, clauses, inputs, names })
+        let mut last_use = vec![0; inputs.len()];
+        for (ci, c) in clauses.iter().enumerate() {
+            match &c.kind {
+                Kind::ForbidAst { input } | Kind::Budget { input, .. } => last_use[*input] = ci,
+                Kind::Relational(plan) => plan.inputs.iter().for_each(|(_, i)| last_use[*i] = ci),
+                Kind::ForbidRegex(_) => {}
+            }
+        }
+        Ok(Rule { id, check, scope, clauses, inputs, names, last_use })
     }
 }
 
 /// An input's rows for one file.
 pub struct Rows {
-    pub table: Table,
+    pub table: Rc<Table>,
     /// Anchor spans with their lines (0-based) and witness spans.
     pub anchors: Vec<(u32, u32, u32)>,
     pub witnesses: Vec<(u32, u32)>,
@@ -293,8 +309,20 @@ fn line_of(f: &Facts, byte: u32) -> u32 {
 }
 
 impl Input {
-    pub fn rows(&self, ctx: &FileCtx<'_>, schema: &Schema) -> Rows {
-        let mut out = Rows { table: Table { schema: schema.clone(), rows: Vec::new() }, anchors: Vec::new(), witnesses: Vec::new(), unsupported: None };
+    pub fn rows(&self, ctx: &FileCtx<'_>, schema: &Schema, memo: &ast::FileMemo, source: &Rc<str>) -> Rows {
+        let mut out = Rows { table: Rc::new(Table::empty(schema.clone())), anchors: Vec::new(), witnesses: Vec::new(), unsupported: None };
+        // Columns: path, start, end, then the projections; a capture's text is its node's byte
+        // range of the source (`Column::Text`), read when a stage reads it.
+        enum Col {
+            Vals(Vec<V>),
+            Text(Vec<TextCell>),
+        }
+        let is_text = |p: &Proj| match p {
+            Proj::Capture(_) => true,
+            Proj::Text(n) => !self.query.decoded.iter().any(|(t, _)| t == n),
+            _ => false,
+        };
+        let mut cols: Vec<Col> = (0..3).map(|_| Col::Vals(Vec::new())).chain(self.projs.iter().map(|p| if is_text(p) { Col::Text(Vec::new()) } else { Col::Vals(Vec::new()) })).collect();
         let f = ctx.f;
         match self.query.syntax {
             ast::SyntaxMode::Valid if f.syntax_errors => return out,
@@ -305,7 +333,7 @@ impl Input {
             }
             _ => {}
         }
-        let ev = ast::Eval::new(f, ctx.path, &self.query);
+        let ev = ast::Eval::shared(f, ctx.path, &self.query, memo);
         let path: Rc<str> = Rc::from(ctx.path);
         let each_is_group = self.each.is_some_and(|e| !self.query_binds(e));
         for root in ev.roots() {
@@ -317,11 +345,24 @@ impl Input {
                     Anchor::FileStart => (0, 0),
                     Anchor::Capture(n) => capture_range(&ev, &env, groups, *n).unwrap_or(witness),
                 };
-                let mut row = vec![V::Text(path.clone()), V::Int(span.0 as i64), V::Int(span.1 as i64)];
-                for p in &self.projs {
-                    row.push(project(p, &ev, &env, groups, ctx, &self.query));
+                let fixed = [V::Text(path.clone()), V::Int(span.0 as i64), V::Int(span.1 as i64)];
+                for (c, v) in cols.iter_mut().zip(fixed) {
+                    if let Col::Vals(c) = c {
+                        c.push(v);
+                    }
                 }
-                out.table.rows.push(row.into_boxed_slice());
+                for (c, p) in cols[3..].iter_mut().zip(&self.projs) {
+                    match c {
+                        Col::Text(c) => c.push(match p {
+                            Proj::Capture(n) | Proj::Text(n) => match env.get(*n) {
+                                Some(Bound::Node(x)) => TextCell::Span(f.start[x as usize], f.end[x as usize]),
+                                _ => TextCell::Val(project(p, &ev, &env, groups, ctx, &self.query)),
+                            },
+                            _ => TextCell::Val(project(p, &ev, &env, groups, ctx, &self.query)),
+                        }),
+                        Col::Vals(c) => c.push(project(p, &ev, &env, groups, ctx, &self.query)),
+                    }
+                }
                 let line = if matches!(self.anchor, Anchor::FileStart) { 0 } else { line_of(f, span.0) };
                 out.anchors.push((span.0, span.1, line));
                 out.witnesses.push(witness);
@@ -395,6 +436,17 @@ impl Input {
         if crate::pyvalue::NAMED_ESCAPES.with(|n| n.replace(0)) > 0 && out.unsupported.is_none() {
             out.unsupported = Some("`\\N{...}` escape (needs the Unicode name table)".into());
         }
+        let n = out.witnesses.len();
+        let cols = cols
+            .into_iter()
+            .map(|c| {
+                Rc::new(match c {
+                    Col::Vals(v) => Column::Vals(v),
+                    Col::Text(t) => Column::text(source.clone(), t),
+                })
+            })
+            .collect();
+        out.table = Rc::new(Table::new(schema.clone(), cols, n));
         out
     }
 
@@ -464,11 +516,12 @@ pub struct DumpNs {
 /// the members' own queries, so failures stay exactly the original path's.
 pub fn dump_rows(rule: &Rule, g: &crate::subst::DumpGroup, plan: &RelPlan, ctx: &FileCtx<'_>, ns: &mut DumpNs) -> Option<(Vec<Table>, Vec<(u32, u32, u32)>)> {
     let f = ctx.f;
-    let mut tables: Vec<Table> = g.members.iter().map(|m| Table { schema: plan.input_schemas[m.plan_input].clone(), rows: Vec::new() }).collect();
+    let schemas = || g.members.iter().map(|m| plan.input_schemas[m.plan_input].clone());
+    let mut tables: Vec<Vec<Box<[V]>>> = g.members.iter().map(|_| Vec::new()).collect();
     let mut anchors = Vec::new();
     if f.syntax_errors {
         // `syntax: valid` (checked at compile time): no rows.
-        return Some((tables, anchors));
+        return Some((schemas().map(Table::empty).collect(), anchors));
     }
     let saved = crate::pyvalue::NAMED_ESCAPES.with(|n| n.replace(0));
     let gate = ast::Eval::new(f, ctx.path, &g.gate);
@@ -518,7 +571,7 @@ pub fn dump_rows(rule: &Rule, g: &crate::subst::DumpGroup, plan: &RelPlan, ctx: 
         }
         ns.ancestor += t.elapsed().as_nanos() as u64;
         let t = Instant::now();
-        let rows = &mut tables[mi].rows;
+        let rows = &mut tables[mi];
         rows.reserve(selected.len());
         for (k, &root) in selected.iter().enumerate() {
             env.vars.clear();
@@ -574,7 +627,7 @@ pub fn dump_rows(rule: &Rule, g: &crate::subst::DumpGroup, plan: &RelPlan, ctx: 
     if crate::pyvalue::NAMED_ESCAPES.with(|n| n.replace(saved)) > 0 {
         refused = true;
     }
-    (!refused).then_some((tables, anchors))
+    (!refused).then(|| (schemas().zip(tables).map(|(s, rows)| Table::from_rows(s, rows)).collect(), anchors))
 }
 
 const PENDING: u32 = u32::MAX - 1;
@@ -740,6 +793,8 @@ impl Output {
 }
 
 pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut dyn crate::spill::RepoSink, budget: &mut BTreeMap<(usize, usize), Vec<(String, u32)>>) {
+    // The file's text, shared by every input column that reads node text.
+    let source: Rc<str> = Rc::from(ctx.source);
     for (ri, rule) in rules.iter().enumerate() {
         if !rule.scope.matches(ctx.path) {
             continue;
@@ -751,22 +806,24 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                 g.insert(n.clone(), i as Name);
             }
         });
-        let mut cache: BTreeMap<usize, Rc<Rows>> = BTreeMap::new();
-        let mut get = |i: usize, out: &mut Output| -> Option<Rc<Rows>> {
+        // Memoised verdicts shared by the rule's queries over this file.
+        let memo = ast::FileMemo::default();
+        let cache: std::cell::RefCell<BTreeMap<usize, Rc<Rows>>> = Default::default();
+        let get = |i: usize, out: &mut Output| -> Option<Rc<Rows>> {
             let inp = &rule.inputs[i];
             if inp.paths.as_ref().is_some_and(|p| !p.matches(ctx.path)) {
                 return None;
             }
-            if let Some(r) = cache.get(&i) {
+            if let Some(r) = cache.borrow().get(&i) {
                 return Some(r.clone());
             }
             let t0 = Instant::now();
             let schema = rel::input_schema(&inp.fields);
-            let r = Rc::new(inp.rows(ctx, &schema));
+            let r = Rc::new(inp.rows(ctx, &schema, &memo, &source));
             let e = out.input_ns.entry((ri, i)).or_default();
             e.0 += 1;
             e.1 += t0.elapsed().as_nanos() as u64;
-            cache.insert(i, r.clone());
+            cache.borrow_mut().insert(i, r.clone());
             Some(r)
         };
         for (ci, clause) in rule.clauses.iter().enumerate() {
@@ -783,7 +840,7 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                         ast::SyntaxMode::Valid if f.syntax_errors => {}
                         ast::SyntaxMode::Invalid if !f.syntax_errors => {}
                         _ => {
-                            let ev = ast::Eval::new(f, ctx.path, &inp.query);
+                            let ev = ast::Eval::shared(f, ctx.path, &inp.query, &memo);
                             for root in ev.roots() {
                                 let Some(env) = ev.match_root(root) else { continue };
                                 let witness = (f.start[root as usize], f.end[root as usize]);
@@ -823,13 +880,8 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                         }
                         let acc = budget.entry((ri, ci)).or_default();
                         // Groups by (path, start line of the root); the first row's witness reports.
-                        for (k, row) in rows.table.rows.iter().enumerate() {
-                            let line = match &row[4] {
-                                V::Int(l) => *l as u32,
-                                _ => u32::MAX,
-                            };
+                        for k in 0..rows.table.len() {
                             let wline = line_of(ctx.f, rows.witnesses[k].0);
-                            let _ = line;
                             acc.push((ctx.path.to_owned(), wline));
                         }
                     }
@@ -840,7 +892,7 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                     let mut unsupported = None;
                     let path: Rc<str> = Rc::from(ctx.path);
                     // Spike A3: a dump group's members come from one pass over the facts.
-                    let mut from_dump: Vec<Option<Table>> = (0..plan.inputs.len()).map(|_| None).collect();
+                    let mut from_dump: Vec<Option<Rc<Table>>> = (0..plan.inputs.len()).map(|_| None).collect();
                     if let Some(g) = &plan.dump {
                         let td = Instant::now();
                         let mut dns = DumpNs::default();
@@ -853,7 +905,7 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                             if crate::subst::check_mode() {
                                 for (m, t) in g.members.iter().zip(&member_tables) {
                                     let orig = get(m.rule_input, out).expect("member input in scope");
-                                    if let Err(e) = crate::subst::same_rows(&t.rows, &orig.table.rows) {
+                                    if let Err(e) = crate::subst::same_rows(t, &orig.table) {
                                         panic!("FACTS_A3_CHECK: dump {} at {}: {e}", plan.inputs[m.plan_input].0, ctx.path);
                                     }
                                     assert!(orig.unsupported.is_none());
@@ -868,7 +920,7 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                                 anchors.insert((path.clone(), s, e), l);
                             }
                             for (m, t) in g.members.iter().zip(member_tables) {
-                                from_dump[m.plan_input] = Some(t);
+                                from_dump[m.plan_input] = Some(Rc::new(t));
                             }
                         }
                     }
@@ -885,9 +937,9 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                                 for (s, e, l) in &rows.anchors {
                                     anchors.insert((path.clone(), *s, *e), *l);
                                 }
-                                tables.push(Table { schema: rows.table.schema.clone(), rows: rows.table.rows.clone() });
+                                tables.push(rows.table.clone());
                             }
-                            None => tables.push(Table { schema: plan.input_schemas[k].clone(), rows: Vec::new() }),
+                            None => tables.push(Rc::new(Table::empty(plan.input_schemas[k].clone()))),
                         }
                     }
                     if let Some(u) = unsupported {
@@ -903,7 +955,8 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                         }
                     } else {
                         let anchors = anchors.into_iter().map(|((_, s, e), l)| (s, e, l)).collect();
-                        repo.push((ri, ci), crate::spill::FileRows { path: path.clone(), tables: tables.into_iter().map(|t| t.rows).collect(), anchors });
+                        let rows = |t: &Table| -> Vec<Box<[V]>> { (0..t.len()).map(|r| t.row(r).into_boxed_slice()).collect() };
+                        repo.push((ri, ci), crate::spill::FileRows { path: path.clone(), tables: tables.iter().map(|t| rows(t)).collect(), anchors });
                     }
                 }
             }
@@ -912,6 +965,7 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
             e.0 += 1;
             e.1 += ns;
             out.clause_samples.push(((ri as u16, ci as u16), ns));
+            cache.borrow_mut().retain(|i, _| rule.last_use[*i] > ci);
         }
     }
 }
@@ -953,17 +1007,18 @@ pub fn finish(rules: &[Rule], mut load: impl FnMut((usize, usize)) -> Vec<crate:
             // Files in path order, each file's rows in their order.
             let mut files = load((ri, ci));
             files.sort_by(|a, b| a.path.cmp(&b.path));
-            let mut inputs: Vec<Table> = plan.input_schemas.iter().map(|s| Table { schema: s.clone(), rows: Vec::new() }).collect();
+            let mut input_rows: Vec<Vec<Box<[V]>>> = plan.input_schemas.iter().map(|_| Vec::new()).collect();
             let mut anchors: rustc_hash::FxHashMap<(Rc<str>, u32, u32), u32> = Default::default();
             for fr in files {
-                for (t, rows) in inputs.iter_mut().zip(fr.tables) {
-                    t.rows.extend(rows);
+                for (t, rows) in input_rows.iter_mut().zip(fr.tables) {
+                    t.extend(rows);
                 }
                 for (s, e, l) in fr.anchors {
                     anchors.insert((fr.path.clone(), s, e), l);
                 }
             }
             out.add_stages(ri, ci, vec![("spill:load".into(), t0.elapsed().as_nanos() as u64)]);
+            let inputs = plan.input_schemas.iter().zip(input_rows).map(|(s, rows)| Rc::new(Table::from_rows(s.clone(), rows))).collect();
             let r = rel::run(plan, rel::Partition { inputs, anchors, facts: None, source: "", path: "" });
             out.add_stages(ri, ci, r.stage_ns);
             if let Some(m) = r.failure {
