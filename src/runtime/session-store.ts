@@ -67,9 +67,19 @@ export interface SessionPageQuery {
   cursor?: string;
 }
 
+/** Per page row: its history counts and when it last recorded an event. */
+export interface SessionPageRow extends StoredSessionSummary {
+  /** Violations in the session's history (as `/api/violations?sessionId=` totals it). */
+  violationCount: number;
+  /** Of those, the ones no audit recorded in Log mode: steered (or blocked). */
+  steeredViolations: number;
+  /** `observed_at` of the session's newest event; null when it has none. */
+  lastEventAt: number | null;
+}
+
 export interface SessionPage {
-  /** Newest first, each with its violation history count (as `/api/violations?sessionId=` totals it). */
-  sessions: Array<StoredSessionSummary & { violationCount: number }>;
+  /** Newest first. */
+  sessions: SessionPageRow[];
   /** Every session the query matches, on every page. */
   total: number;
   nextCursor: string | null;
@@ -464,12 +474,16 @@ export class SqliteSessionReader {
     // The page is chosen first and counted after: sorting every session with its counts attached would count them all.
     // The page and its total come from one snapshot, so a commit between them cannot make them disagree.
     const { rows, total } = database.transaction(() => ({
-      rows: database.all<StoredSessionSummary & { violationCount: number }>(sql`
+      rows: database.all<SessionPageRow>(sql`
         SELECT
           page.session_id AS sessionId, page.host AS host, page.cwd AS cwd, page.repository_id AS repositoryId,
           page.started_at AS startedAt, page.ended_at AS endedAt,
           (SELECT count(*) FROM ${events} WHERE ${events.sessionId} = page.session_id) AS eventCount,
-          (SELECT count(*) FROM ${auditViolations} WHERE ${auditViolations.sessionId} = page.session_id) AS violationCount
+          (SELECT ${events.observedAt} FROM ${events} WHERE ${events.sessionId} = page.session_id
+            ORDER BY ${events.sequence} DESC LIMIT 1) AS lastEventAt,
+          (SELECT count(*) FROM ${auditViolations} WHERE ${auditViolations.sessionId} = page.session_id) AS violationCount,
+          (SELECT count(*) FROM ${auditViolations}
+            WHERE ${auditViolations.sessionId} = page.session_id AND ${auditViolations.logged} = 0) AS steeredViolations
         FROM (
           SELECT * FROM ${sessions}
           WHERE ${and(matching, continuing) ?? sql`1 = 1`}

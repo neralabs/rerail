@@ -42,6 +42,8 @@ export interface DaemonHealth extends Pick<DaemonState, "version" | "pid" | "ui"
   native: NativeStatus;
   /** Absolute checkout path native sessions address. */
   workspaceRoot: string;
+  /** When Rerail was installed on this machine (epoch ms); null before the database exists. */
+  installedAt: number | null;
 }
 
 /**
