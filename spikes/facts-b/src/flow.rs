@@ -53,12 +53,38 @@ pub fn arrange<'s, K: Rec, V: Rec>(r: BD<'s, (K, V)>, name: &str) -> BDK<'s, K, 
     r.map(|(w, (k, v))| (k, (w, v))).arrange_by_key_named(&format!("A:{name}"))
 }
 
+/// Tag hierarchy: parent of every tag (0 for the base, for cluster bases, and for worktrees in the
+/// flat design; a cluster tag for worktrees under a cluster base). Fixed for a run.
+static PARENT: std::sync::OnceLock<Vec<W>> = std::sync::OnceLock::new();
+
+pub fn set_parents(p: Vec<W>) {
+    PARENT.set(p).expect("parents set once");
+}
+
+pub fn parent(t: W) -> W {
+    PARENT.get().expect("parents").get(t as usize).copied().unwrap_or(BASE)
+}
+
+/// The worktrees a tag's facts reach: a cluster tag's children, or the tag itself.
+fn children_or_self(t: W) -> Vec<W> {
+    let p = PARENT.get().expect("parents");
+    let kids: Vec<W> = (0..p.len() as W).filter(|&c| c != BASE && p[c as usize] == t).collect();
+    if kids.is_empty() { vec![t] } else { kids }
+}
+
+/// `a` is `b` or one of its ancestors.
+fn anc_or_eq(a: W, b: W) -> bool {
+    a == b || a == BASE || parent(b) == a
+}
+
+/// The tag of a pair of facts: the deeper of two tags on one chain; None across chains.
 fn tag(w1: W, w2: W) -> Option<W> {
-    match (w1, w2) {
-        (a, b) if a == b => Some(a),
-        (a, BASE) => Some(a),
-        (BASE, b) => Some(b),
-        _ => None,
+    if anc_or_eq(w1, w2) {
+        Some(w2)
+    } else if anc_or_eq(w2, w1) {
+        Some(w1)
+    } else {
+        None
     }
 }
 
@@ -77,14 +103,18 @@ pub fn presence<'s, D: Rec>(r: BD<'s, D>, name: &str) -> BDK<'s, D, ()> {
     input.reduce_abelian::<_, ValBuilder<D, (W, ()), T, R>, ValSpine<D, (W, ()), T, R>, _, _>(
         &format!("R:{name}:presence"),
         |_x, vals: &[(&W, R)], out: &mut Vec<((W, ()), R)>| {
-            // vals sorted by w: the base count first when present.
-            let c = vals.iter().find(|(w, _)| **w == BASE).map(|(_, c)| *c).unwrap_or(0);
+            // vals sorted by tag: base, then cluster and worktree tags.
+            let at = |t: W| vals.iter().find(|(w, _)| **w == t).map(|(_, c)| *c).unwrap_or(0);
+            let c = at(BASE);
             if c > 0 {
                 out.push(((BASE, ()), 1));
             }
             for (w, d) in vals {
                 if **w != BASE {
-                    let f = flip(c, c + d);
+                    // counts at the parent level: base, or base + the cluster's delta
+                    let p = parent(**w);
+                    let below = if p == BASE { c } else { c + at(p) };
+                    let f = flip(below, below + d);
                     if f != 0 {
                         out.push(((**w, ()), f));
                     }
@@ -103,20 +133,23 @@ pub fn key_presence<'s, K: Rec, V: Rec>(arr: &BDK<'s, K, V>, name: &str) -> BDK<
     arr.clone().reduce_abelian::<_, ValBuilder<K, (W, ()), T, R>, ValSpine<K, (W, ()), T, R>, _, _>(
         &format!("R:{name}:key_presence"),
         |_k, vals: &[(&(W, V), R)], out: &mut Vec<((W, ()), R)>| {
-            let c: R = vals.iter().filter(|((w, _), _)| *w == BASE).map(|(_, c)| *c).sum();
+            let mut per: Vec<(W, R)> = Vec::new();
+            for ((w, _), d) in vals {
+                match per.last_mut() {
+                    Some((lw, ld)) if lw == w => *ld += d,
+                    _ => per.push((*w, *d)),
+                }
+            }
+            let at = |t: W| per.iter().find(|(w, _)| *w == t).map(|(_, c)| *c).unwrap_or(0);
+            let c = at(BASE);
             if c > 0 {
                 out.push(((BASE, ()), 1));
             }
-            let mut i = 0;
-            while i < vals.len() {
-                let w = vals[i].0 .0;
-                let mut d = 0;
-                while i < vals.len() && vals[i].0 .0 == w {
-                    d += vals[i].1;
-                    i += 1;
-                }
+            for &(w, d) in &per {
                 if w != BASE {
-                    let f = flip(c, c + d);
+                    let p = parent(w);
+                    let below = if p == BASE { c } else { c + at(p) };
+                    let f = flip(below, below + d);
                     if f != 0 {
                         out.push(((w, ()), f));
                     }
@@ -147,14 +180,9 @@ pub fn reduce<'s, K: Rec, V: Rec, V2: Rec>(
         .reduce_abelian::<_, ValBuilder<K, (W, V2), T, R>, ValSpine<K, (W, V2), T, R>, _, _>(
             &format!("R:{name}"),
             move |k, vals: &[(&(W, V), R)], out: &mut Vec<((W, V2), R)>| {
-                let base: Vec<(&V, R)> = vals.iter().filter(|((w, _), _)| *w == BASE).map(|((_, v), c)| (v, *c)).collect();
-                let mut base_out = Vec::new();
-                if !base.is_empty() {
-                    logic(k, &base, &mut base_out);
-                }
-                for (v2, c) in &base_out {
-                    out.push(((BASE, v2.clone()), *c));
-                }
+                use std::collections::BTreeMap;
+                // members per tag (vals sorted by (tag, value)).
+                let mut by_tag: Vec<(W, &[(&(W, V), R)])> = Vec::new();
                 let mut i = 0;
                 while i < vals.len() {
                     let w = vals[i].0 .0;
@@ -162,26 +190,49 @@ pub fn reduce<'s, K: Rec, V: Rec, V2: Rec>(
                     while j < vals.len() && vals[j].0 .0 == w {
                         j += 1;
                     }
-                    if w != BASE {
-                        // members_w = base + delta_w (vals sorted by (w, v): merge by value)
-                        let mut m: std::collections::BTreeMap<&V, R> = base.iter().map(|(v, c)| (*v, *c)).collect();
-                        for ((_, v), d) in &vals[i..j] {
+                    by_tag.push((w, &vals[i..j]));
+                    i = j;
+                }
+                let slice = |t: W| by_tag.iter().find(|(w, _)| *w == t).map(|(_, s)| *s).unwrap_or(&[]);
+                let members = |tags: &[W]| -> BTreeMap<&V, R> {
+                    let mut m: BTreeMap<&V, R> = BTreeMap::new();
+                    for &t in tags {
+                        for ((_, v), d) in slice(t) {
                             *m.entry(v).or_default() += d;
                         }
-                        let full: Vec<(&V, R)> = m.into_iter().filter(|(_, c)| *c != 0).collect();
-                        debug_assert!(full.iter().all(|(_, c)| *c > 0), "negative group member");
-                        let mut wo = Vec::new();
-                        if !full.is_empty() {
-                            logic(k, &full, &mut wo);
-                        }
-                        for (v2, c) in wo {
-                            out.push(((w, v2), c));
-                        }
-                        for (v2, c) in &base_out {
-                            out.push(((w, v2.clone()), -c));
-                        }
                     }
-                    i = j;
+                    m.retain(|_, c| *c != 0);
+                    debug_assert!(m.values().all(|c| *c > 0), "negative group member");
+                    m
+                };
+                let eval = |m: &BTreeMap<&V, R>| -> Vec<(V2, R)> {
+                    let full: Vec<(&V, R)> = m.iter().map(|(v, c)| (*v, *c)).collect();
+                    let mut o = Vec::new();
+                    if !full.is_empty() {
+                        logic(k, &full, &mut o);
+                    }
+                    o
+                };
+                let base_out = eval(&members(&[BASE]));
+                for (v2, c) in &base_out {
+                    out.push(((BASE, v2.clone()), *c));
+                }
+                for (w, _) in &by_tag {
+                    if *w == BASE {
+                        continue;
+                    }
+                    // out(w) = logic(parent level + Δw) - logic(parent level)
+                    let p = parent(*w);
+                    let chain: Vec<W> = if p == BASE { vec![BASE] } else { vec![BASE, p] };
+                    let below = if p == BASE { base_out.clone() } else { eval(&members(&chain)) };
+                    let mut with = chain.clone();
+                    with.push(*w);
+                    for (v2, c) in eval(&members(&with)) {
+                        out.push(((*w, v2), c));
+                    }
+                    for (v2, c) in below {
+                        out.push(((*w, v2), -c));
+                    }
                 }
                 // DD expects consolidated output.
                 differential_dataflow::consolidation::consolidate(out);
@@ -254,7 +305,7 @@ pub struct Handles {
     pub tracker: TrackerRef,
 }
 
-pub fn build(worker: &mut timely::worker::Worker, world: Rc<RefCell<World>>, track_on: bool) -> Handles {
+pub fn build(worker: &mut timely::worker::Worker, world: Rc<RefCell<World>>, track_on: bool, only_r1: bool) -> Handles {
     let probe = Handle::new();
     let tracker: TrackerRef = Rc::new(RefCell::new(Tracker { on: track_on, ..Default::default() }));
     worker.dataflow::<T, _, _>(|scope| {
@@ -285,6 +336,7 @@ pub fn build(worker: &mut timely::worker::Worker, world: Rc<RefCell<World>>, tra
         let r1 = capture(dead, &probe);
 
         // ---- R2: public API function families ---------------------------------------------
+        let r2: Out<R2F> = if only_r1 { Rc::default() } else {
         let decl = derived!("r2_decl", |p, c, wd| wd.r2_decl(p, c));
         let bind = derived!("r2_bind", |p, c, wd| wd.r2_bind(p, c));
         let exports = derived!("r2_export", |p, c, wd| wd.r2_export(p, c));
@@ -332,9 +384,11 @@ pub fn build(worker: &mut timely::worker::Worker, world: Rc<RefCell<World>>, tra
                 out.push((f, 1));
             }
         });
-        let r2 = capture(issues.map(|(w, (_, f))| (w, f)).concat(mixed), &probe);
+        capture(issues.map(|(w, (_, f))| (w, f)).concat(mixed), &probe)
+        };
 
         // ---- R3: reachability to the seeds, demand-driven from them --------------------------
+        let r3: Out<R3F> = if only_r1 { Rc::default() } else {
         let target = derived!("r3_target", |p, c, wd| wd.r3_target(p, c));
         let local_edges = derived!("r3_local_edge", |p, c, wd| wd.r3_calls(p, c).0);
         let ext = derived!("r3_callsite", |p, c, wd| wd.r3_calls(p, c).1);
@@ -355,21 +409,21 @@ pub fn build(worker: &mut timely::worker::Worker, world: Rc<RefCell<World>>, tra
             })
             .map(|(w, _)| (w, ()))
             .reduce(|_w, _vals, out: &mut Vec<((), R)>| out.push(((), 1)))
-            .map(|(w, ())| w);
+            // a cluster base's delta activates every worktree under it
+            .flat_map(|(t, ())| children_or_self(t))
+            .distinct_total_core::<R>();
         let active = track(&tracker, "r3_active", active.map(|w| (w, ()))).map(|(w, ())| w);
-        let (seeds_b, seeds_d) = (seeds.clone().filter(|(w, _)| *w == BASE), seeds.filter(|(w, _)| *w != BASE));
-        // seeds_w = seeds_B for every active worktree, plus that worktree's seed delta.
+        let seeds_b = seeds.clone().filter(|(w, _)| *w == BASE);
+        // seeds_w = the seeds visible to every active worktree (base, its cluster's, its own).
         let seeds_all = active
             .clone()
             .map(|w| ((), w))
-            .join(seeds_b.clone().map(|(_, s)| ((), s)))
-            .map(|((), (w, s))| (w, s))
-            .concat(seeds_d)
+            .join(seeds.map(|(t, s)| ((), (t, s))))
+            .flat_map(|((), (w, (t, s)))| anc_or_eq(t, w).then_some((w, s)))
             .concat(seeds_b);
-        // One backward step: callers of reached nodes, base facts for every worktree, delta facts
-        // for their own.
+        // One backward step: callers of reached nodes, through facts visible to the worktree.
         fn ok(w: W, wf: W) -> bool {
-            wf == BASE || wf == w
+            anc_or_eq(wf, w)
         }
         macro_rules! step {
             ($reach:expr, $local:expr, $tgt:expr, $cs:expr) => {{
@@ -400,7 +454,8 @@ pub fn build(worker: &mut timely::worker::Worker, world: Rc<RefCell<World>>, tra
         // Δ for active worktrees: found_w - found_B.
         let found_b = found.clone().filter(|(w, _)| *w == BASE);
         let minus = active.map(|w| ((), w)).join(found_b.map(|(_, f)| ((), f))).map(|((), (w, f))| (w, f));
-        let r3 = capture(found.concat(minus.negate()).map(|(w, ((p, q), f))| (w, (p, q, f))), &probe);
+        capture(found.concat(minus.negate()).map(|(w, ((p, q), f))| (w, (p, q, f))), &probe)
+        };
         Handles { files: files_in, probe: probe.clone(), r1, r2, r3, tracker: tracker.clone() }
     })
 }

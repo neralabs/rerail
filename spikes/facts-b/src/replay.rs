@@ -61,7 +61,7 @@ fn full<F: Clone + Ord + Hash + Eq>(out: &Out<F>, w: W) -> Result<BTreeSet<F>, S
     let o = out.borrow();
     let mut m: BTreeMap<F, flow::R> = BTreeMap::new();
     for ((ww, f), d) in o.iter() {
-        if *ww == flow::BASE || *ww == w {
+        if *ww == flow::BASE || *ww == w || (*ww == flow::parent(w)) {
             *m.entry(f.clone()).or_default() += d;
         }
     }
@@ -94,7 +94,17 @@ pub struct Opts {
     pub events: Option<std::path::PathBuf>,
     pub limit: Option<usize>,
     pub track: bool,
+    pub clusters: bool,
+    /// Evaluate R1 only (R2/R3 not built).
+    pub only_r1: bool,
+    /// Naive worktree-keyed variant: no shared base; every worktree holds its full membership.
+    pub naive: bool,
 }
+
+/// Cluster bases for the two-level variant: contiguous ranges of the 40 worktrees (ordered by
+/// commit date), cut where the divergence table steps.
+pub const CLUSTERS: [std::ops::RangeInclusive<W>; 8] = [1..=3, 4..=9, 10..=12, 13..=16, 17..=23, 24..=28, 29..=34, 35..=40];
+pub const CLUSTER_TAG0: W = 100;
 
 pub fn run(run_dir: &Path, opts: Opts) {
     std::fs::create_dir_all(run_dir).unwrap();
@@ -121,13 +131,28 @@ pub fn run(run_dir: &Path, opts: Opts) {
     let rss_after_store = rss();
     let oracle_on = opts.oracle;
     let track_on = opts.track;
+    let clusters_on = opts.clusters;
+    let only_r1 = opts.only_r1;
+    let naive = opts.naive;
     let run_dir = run_dir.to_path_buf();
 
     timely::execute_directly(move |worker| {
         let world = Rc::new(RefCell::new(World::new(st)));
         let t_build = Instant::now();
+        // Tag hierarchy: flat (every worktree under the base) or cluster bases (majority of a
+        // contiguous range of worktrees, itself a delta from the base).
+        let mut parents = vec![flow::BASE; 128];
+        if clusters_on {
+            for (i, r) in CLUSTERS.iter().enumerate() {
+                parents[CLUSTER_TAG0 as usize + i] = flow::BASE;
+                for w in r.clone() {
+                    parents[w as usize] = CLUSTER_TAG0 + i as W;
+                }
+            }
+        }
+        flow::set_parents(parents);
         let sizes = flow::register_logging(worker);
-        let mut h: Handles = flow::build(worker, world.clone(), track_on);
+        let mut h: Handles = flow::build(worker, world.clone(), track_on, only_r1);
         // Memberships as (path sym -> content id).
         let to_map = |m: &store::Membership, wd: &mut World| -> BTreeMap<Sym, Cid> {
             m.iter().map(|(p, hh)| (wd.path(p), wd.store.by_hash[hh])).collect()
@@ -137,24 +162,50 @@ pub fn run(run_dir: &Path, opts: Opts) {
         for (i, (_, m)) in ms.iter().enumerate() {
             members.insert(i as W + 1, to_map(m, &mut world.borrow_mut()));
         }
+        // Cluster bases (tags CLUSTER_TAG0..): majority (path, content) within the range.
+        let mut cluster_maps: BTreeMap<W, BTreeMap<Sym, Cid>> = BTreeMap::new();
+        if clusters_on {
+            for (i, r) in CLUSTERS.iter().enumerate() {
+                let mut count: BTreeMap<(Sym, Cid), usize> = BTreeMap::new();
+                for w in r.clone() {
+                    for (p, c) in &members[&w] {
+                        *count.entry((*p, *c)).or_default() += 1;
+                    }
+                }
+                let need = r.clone().count() / 2 + 1;
+                cluster_maps.insert(CLUSTER_TAG0 + i as W, count.into_iter().filter(|x| x.1 >= need).map(|x| x.0).collect());
+            }
+        }
         let mut divergence: BTreeMap<W, (usize, usize)> = BTreeMap::new();
-        let delta_of = |m: &BTreeMap<Sym, Cid>| -> Vec<((Sym, Cid), flow::R)> {
+        let delta_of = |m: &BTreeMap<Sym, Cid>, below: &BTreeMap<Sym, Cid>| -> Vec<((Sym, Cid), flow::R)> {
             let mut v = Vec::new();
             for (p, c) in m {
-                if base_map.get(p) != Some(c) {
+                if below.get(p) != Some(c) {
                     v.push(((*p, *c), 1));
                 }
             }
-            for (p, c) in &base_map {
+            for (p, c) in below {
                 if m.get(p) != Some(c) {
                     v.push(((*p, *c), -1));
                 }
             }
             v
         };
+        let empty: BTreeMap<Sym, Cid> = BTreeMap::new();
+        let below_of = |w: W| -> &BTreeMap<Sym, Cid> {
+            let p = flow::parent(w);
+            if naive {
+                &empty
+            } else if p == flow::BASE {
+                &base_map
+            } else {
+                &cluster_maps[&p]
+            }
+        };
         let mut epoch: flow::T = 0;
-        // Base first, then all deltas, as two timed epochs.
-        for (p, c) in &base_map {
+        // Base first, then the cluster bases and every worktree's delta, one epoch each.
+        let flow_base = if naive { &empty } else { &base_map };
+        for (p, c) in flow_base {
             h.files.update((flow::BASE, (*p, *c)), 1);
         }
         epoch += 1;
@@ -165,13 +216,14 @@ pub fn run(run_dir: &Path, opts: Opts) {
         let rss_after_base = rss();
         let t_d = Instant::now();
         let mut per_wt_load_ms = Vec::new();
-        for (w, m) in &members {
-            let d = delta_of(m);
+        let levels: Vec<(W, &BTreeMap<Sym, Cid>)> = cluster_maps.iter().chain(members.iter()).map(|(w, m)| (*w, m)).collect();
+        for (w, m) in levels {
+            let d = delta_of(m, below_of(w));
             let paths: BTreeSet<Sym> = d.iter().map(|((p, _), _)| *p).collect();
-            divergence.insert(*w, (paths.len(), d.len()));
+            divergence.insert(w, (paths.len(), d.len()));
             let t = Instant::now();
             for (rec, s) in d {
-                h.files.update((*w, rec), s);
+                h.files.update((w, rec), s);
             }
             epoch += 1;
             h.files.advance_to(epoch);
@@ -195,11 +247,12 @@ pub fn run(run_dir: &Path, opts: Opts) {
             let files: Vec<(Sym, Cid)> = members[&w].iter().map(|(p, c)| (*p, *c)).collect();
             let f = oracle::evaluate(&mut world.borrow_mut(), &files);
             check.worktree_checks += 1;
-            for (rule, res) in [
-                ("R1", full(&h.r1, w).map(|d| diff_sets(&d, &f.r1))),
-                ("R2", full(&h.r2, w).map(|d| diff_sets(&d, &f.r2))),
-                ("R3", full(&h.r3, w).map(|d| diff_sets(&d, &f.r3))),
-            ] {
+            let mut rules = vec![("R1", full(&h.r1, w).map(|d| diff_sets(&d, &f.r1)))];
+            if !only_r1 {
+                rules.push(("R2", full(&h.r2, w).map(|d| diff_sets(&d, &f.r2))));
+                rules.push(("R3", full(&h.r3, w).map(|d| diff_sets(&d, &f.r3))));
+            }
+            for (rule, res) in rules {
                 match res {
                     Ok((a, b)) if a.is_empty() && b.is_empty() => {}
                     Ok((a, b)) => check.differences.push(json!({"event": at, "worktree": w, "rule": rule, "incremental_only": a, "oracle_only": b})),
@@ -242,7 +295,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
         if track_on {
             let wd = world.borrow();
             for (w, m) in &members {
-                for ((_, c), s) in delta_of(m) {
+                for ((_, c), s) in delta_of(m, below_of(*w)) {
                     bump(&mut refc, &wd, *w, c, s);
                 }
             }
@@ -258,6 +311,12 @@ pub fn run(run_dir: &Path, opts: Opts) {
                 if ev.group == "new_worktree" || ev.group == "commit_init" {
                     assert!(!members.contains_key(&w), "worktree {w} exists");
                     members.insert(w, base_map.clone());
+                    if naive {
+                        // no shared base: the clone's whole membership is its own input
+                        for (p, c) in &base_map {
+                            ups.push(((w, (*p, *c)), 1));
+                        }
+                    }
                 }
                 let m = members.get_mut(&w).unwrap();
                 for (path, old, new) in &ev.changes {
@@ -348,10 +407,16 @@ pub fn run(run_dir: &Path, opts: Opts) {
         }
         let mut state_rows = Vec::new();
         for (w, m) in &members {
-            let d = delta_of(m);
+            let d = delta_of(m, below_of(*w));
             let paths: BTreeSet<Sym> = d.iter().map(|((p, _), _)| *p).collect();
             let (rels, bytes) = per_wt.get(w).cloned().unwrap_or_default();
             state_rows.push(json!({"worktree": w, "delta_paths": paths.len(), "delta_entries": d.len(), "state_bytes": bytes, "records": rels}));
+        }
+        for (c, m) in &cluster_maps {
+            let d = delta_of(m, &base_map);
+            let paths: BTreeSet<Sym> = d.iter().map(|((p, _), _)| *p).collect();
+            let (rels, bytes) = per_wt.get(c).cloned().unwrap_or_default();
+            state_rows.push(json!({"cluster_base": c, "delta_paths": paths.len(), "delta_entries": d.len(), "state_bytes": bytes, "records": rels}));
         }
         drop(tr);
         // Arrangement sizes from differential's logging, grouped by operator name.
@@ -415,6 +480,9 @@ pub fn run(run_dir: &Path, opts: Opts) {
                           "first_differences": check.differences.iter().take(20).collect::<Vec<_>>(), "oracle_seconds": check.oracle_seconds},
             "state": state_rows,
             "tracked": track_on,
+            "clusters": clusters_on,
+            "only_r1": only_r1,
+            "naive": naive,
             "arrangements": arrangements,
             "per_worktree_load_ms": per_wt_load_ms,
             "resident_facts": {"contents": member_hashes.len(), "bytes": fact_bytes, "interned_strings": wd.store.syms.len(), "interner_bytes": wd.store.syms.bytes()},

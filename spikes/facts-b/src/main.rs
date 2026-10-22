@@ -34,6 +34,9 @@ fn main() {
                 events: arg(&args, "--events").map(PathBuf::from),
                 limit: arg(&args, "--limit").map(|x| x.parse().unwrap()),
                 track: args.iter().any(|a| a == "--track"),
+                clusters: args.iter().any(|a| a == "--clusters"),
+                only_r1: args.iter().any(|a| a == "--only-r1"),
+                naive: args.iter().any(|a| a == "--naive"),
             },
         ),
         "edits" => edits::run(
