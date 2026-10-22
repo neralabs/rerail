@@ -50,10 +50,16 @@ pub fn run(args: &[String]) {
         let mut leaves = leaf::Leaves::new();
         let c = rerail_facts::compile::compile_report(&doc, &config, &mut leaves).expect("compile");
         let spike = eval::Rule::compile(&doc, &config, None, &facts::GRAMMAR).expect("spike compile");
-        assert_eq!(spike.inputs.len(), c.program.inputs.len(), "{rule}: input numbering differs");
-        for (a, b) in spike.inputs.iter().zip(&c.program.inputs) {
-            assert_eq!(a.fields, b.fields.iter().map(|f| f.0.clone()).collect::<Vec<_>>(), "{rule}: input fields differ");
+        // Spike A numbers pattern inputs only (its regex clauses are not inputs).
+        let mut spike_index: BTreeMap<u32, u32> = BTreeMap::new();
+        for (k, def) in c.program.inputs.iter().enumerate() {
+            if matches!(def.kind, rerail_facts::ir::InputKind::Pattern { .. }) {
+                let n = spike_index.len() as u32;
+                assert_eq!(spike.inputs[n as usize].fields, def.fields.iter().map(|f| f.0.clone()).collect::<Vec<_>>(), "{rule}: input {} fields differ", def.name);
+                spike_index.insert(k as u32, n);
+            }
         }
+        assert_eq!(spike_index.len(), spike.inputs.len(), "{rule}: input numbering differs");
         // Inputs each export scans.
         let mut wanted: BTreeSet<u32> = BTreeSet::new();
         let mut per_export: Vec<(usize, BTreeSet<u32>)> = Vec::new();
@@ -73,6 +79,7 @@ pub fn run(args: &[String]) {
             let hs: Vec<_> = (0..threads)
                 .map(|_| {
                     let doc = &doc;
+                    let spike_index = &spike_index;
                     let config = &config;
                     let wanted = wanted.clone();
                     let next = &next;
@@ -92,7 +99,7 @@ pub fn run(args: &[String]) {
                             let Ok(facts::Built::Facts(f)) = facts::build(path, source.clone()) else { continue };
                             let ctx = eval::FileCtx { f: &f, path, source: &source };
                             for &w in &wanted {
-                                let input = &spike.inputs[w as usize];
+                                let input = &spike.inputs[spike_index[&w] as usize];
                                 if input.paths.as_ref().is_some_and(|p| !p.matches(path)) {
                                     continue;
                                 }
