@@ -106,11 +106,7 @@ declare module "*/ui/poll.js" {
 
 declare module "*/ui/derive.js" {
   export function violationOutcome(finding: { mode?: string }): "logged" | "steered";
-  export function suppressionsText(stored: object, checkoutPath?: string): string;
-  export function nextSuppressions(stored: object): "honour" | "ignore";
-  export function optionsText(stored: object, checkoutPath?: string): string | null;
   export function isRunning(stored: { enabled: boolean; configError?: string | null }): boolean;
-  export function onText(stored: object, checkoutPath?: string): string;
   export function packSuppressions(rules: readonly object[], packId: string, owner: "repository" | "checkout", checkoutPath?: string): { text: string; next: "honour" | "ignore" };
   export function inPack(rule: object, packId: string): boolean;
 }
@@ -146,10 +142,9 @@ declare module "*/ui/state.js" {
   export const ui: { filter: string; query: string; range: number; actRule: string | null; view: string; settingUp: boolean; selectedSession: string | null; panel: object | null };
   export function keptPacks(): readonly string[];
   export function isAudited(id: string): boolean;
-  export function summary(): { logged: number; triggers: number; on: unknown[]; sessionsInRange: number; sessionsWithTriggers: number };
   export function runningCount(): number;
   export function matches(stored: object): boolean;
-  export interface RuleGroup { name: string; all: Array<{ rule: { id: string } }>; shown: Array<{ rule: { id: string } }> }
+  export interface RuleGroup { name: string; all: Array<{ rule: { id: string } }> }
   export function ruleSections(): Array<{ key: string; kind: "mine" | "pack" | "legacy"; groups: RuleGroup[] }>;
 }
 
@@ -170,7 +165,6 @@ declare module "*/ui/settings-writes.js" {
   export function settingWrites(page: { toast: (message: string) => void; invalidate: () => void; owner: () => "repository" | "checkout" }): {
     setEnabled(ids: readonly string[], enabled: boolean, label: string): Promise<void>;
     setPackEnabled(packId: string, enabled: boolean, label: string): Promise<void>;
-    setSuppressions(ids: readonly string[], suppressions: "honour" | "ignore", label: string): Promise<void>;
     setPackSuppressions(packId: string, suppressions: "honour" | "ignore", label: string): Promise<void>;
   };
 }

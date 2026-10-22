@@ -55,7 +55,7 @@ async function fetchFresh(path, slot = path, wanted = () => true) {
 export const refetch = slot => { etags.delete(slot); };
 
 /** `repository=…&checkout=…` from the page's scope: the target every repository read and write names. */
-export function scopeTarget() {
+function scopeTarget() {
   const target = {};
   const repository = data.repository?.repositoryKey ?? ui.scope?.repository;
   if (repository !== undefined) target.repository = repository;
@@ -233,7 +233,6 @@ async function loadRules() {
   const body = await fetchFresh(`/api/repository/rules?${scopeQuery()}`, "rules");
   if (body === undefined) return false;
   data.rules = toStoredRules(body.rules);
-  data.unavailable = body.unavailable;
   data.attachedPacks = attachedPacksOf(body.rules, body.unavailable);
   return true;
 }
@@ -534,7 +533,7 @@ function pumpTitles() {
 /**
  * What a page can ask a poll for, by name; each loads with the range's `since`. A view declares the names it shows
  * (`needs` in its module) and the poll loads each name once, whoever else asked for it.
- * - `rules`: the repository's rules (`data.rules`, `attachedPacks`, `unavailable`).
+ * - `rules`: the repository's rules (`data.rules`, `attachedPacks`).
  * - `packs`: every rule pack that comes with Rerail (`data.packs`).
  * - `activity`: each rule's activity in the range and since install (`data.activity`, `activityAll`, their sessions).
  * - `recentSessions`: the range's five newest sessions and how many started in it (`data.recentSessions`).
@@ -658,7 +657,7 @@ export function changeScope(scope) {
   ui.removeAsk = null;
   ui.selectedSession = null;
   Object.assign(data, {
-    repository: null, checkout: null, unavailable: [], rules: new Map(), attachedPacks: new Map(), activity: {}, activityAll: {},
+    repository: null, checkout: null, rules: new Map(), attachedPacks: new Map(), activity: {}, activityAll: {},
     activitySessions: null, activityAllSessions: null, findings: pagedList(), ruleFindings: pagedList(), sessions: pagedList(),
     sessionFindings: pagedList(), recentSessions: null, recommendations: null, followGitignore: null, loaded: false, missing: false,
   });

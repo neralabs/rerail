@@ -3,7 +3,7 @@
  * `sheet.js`, the frame and each view's own actions) write `ui` and optimistic `data`, and `poll.js` writes fetches.
  * Rules are keyed by id so a poll can patch the row that changed and nothing else.
  */
-import { isLog, isByRerail, isRunning, ruleTitle, rulePrefix, scopeText, categoryLabel } from "./derive.js";
+import { isByRerail, isRunning, ruleTitle, rulePrefix, scopeText } from "./derive.js";
 import { startOfDay } from "./format.js";
 
 /**
@@ -36,8 +36,6 @@ export const data = {
   checkout: null,
   /** Every repository Rerail knows (`GET /api/repositories`): the picker and Settings. */
   repositories: [],
-  /** Attachments whose rule or pack cannot be found. */
-  unavailable: [],
   /** id → stored rule, insertion order = catalog order. */
   rules: new Map(),
   /**
@@ -206,12 +204,6 @@ export const packFolder = (recommendations, id) => recommendations.find(r => r.p
 
 /** The row title: the pack's plain title when the rule comes from one, else the rule's own. */
 export const titleOf = stored => packRuleOf(stored.rule.id)?.rule.title ?? ruleTitle(stored);
-/** "By Rerail · <the pack's category>", "By Rerail", or "Created by you". */
-export function originChip(stored) {
-  if (!isByRerail(stored)) return "Created by you";
-  const category = categoryLabel(packOfRule(stored)?.category);
-  return category ? `By Rerail · ${category}` : "By Rerail";
-}
 
 const haystacks = new WeakMap();
 /** Text the search box runs over: title, id, description, scope, pack and group. */
@@ -228,8 +220,6 @@ function searchText(stored) {
 export function matches(stored) {
   const id = stored.rule.id;
   const f = ui.filter;
-  if (f === "mine" && isByRerail(stored)) return false;
-  if (f === "rerail" && !isByRerail(stored)) return false;
   if (f === "on" && !isRunning(stored)) return false;
   if (f === "off" && isRunning(stored)) return false;
   if (f === "fired" && fires(id) === 0) return false;
@@ -238,21 +228,10 @@ export function matches(stored) {
 }
 export const filtering = () => ui.filter !== "all" || ui.query !== "";
 
-const az = (a, b) => titleOf(a).localeCompare(titleOf(b));
-
-export function sortRules(list) {
-  const c = [...list];
-  switch (ui.sort) {
-    case "az": return c.sort(az);
-    case "recent": return c.sort((a, b) => (activityOf(b.rule.id).lastSeenAt ?? 0) - (activityOf(a.rule.id).lastSeenAt ?? 0) || az(a, b));
-    default: return c.sort((a, b) => fires(b.rule.id) - fires(a.rule.id) || az(a, b));
-  }
-}
-
 /**
  * The rule list's sections, in order: Created rules, one per rule pack added here, then every other
  * rule by Rerail (added on its own, not through a pack). Each section holds its groups; a group holds
- * every rule (`all`) and the ones the filters let through (`shown`).
+ * every rule (`all`).
  */
 export function ruleSections() {
   const mine = [], byPack = new Map(), other = new Map();
@@ -271,7 +250,7 @@ export function ruleSections() {
     if (!groups.has(group)) groups.set(group, []);
     groups.get(group).push(r);
   }
-  const group = (name, all) => ({ name, all, shown: sortRules(all.filter(matches)) });
+  const group = (name, all) => ({ name, all });
   const sections = [{ key: "mine", kind: "mine", groups: [group("Created by you", mine)] }];
   for (const pack of data.packs) {
     const groups = byPack.get(pack.id);
@@ -287,32 +266,8 @@ export function ruleSections() {
 /** How many of the repository's rules run: switched on, with options that apply. */
 export const runningCount = () => [...data.rules.values()].filter(isRunning).length;
 
-/** Every per-render aggregate, computed once. */
-export function summary() {
-  const rules = rulesArray();
-  const on = rules.filter(isRunning);
-  let triggers = 0, rerailTotal = 0, steerRules = 0, firedN = 0, firedOn = 0, logged = 0;
-  for (const r of rules) {
-    const id = r.rule.id, f = fires(id), a = activityOf(id);
-    triggers += f;
-    rerailTotal += a.rerails;
-    // Counted by the mode recorded with each violation; the rule may have changed mode since.
-    if (isMeasured(id)) logged += a.loggedViolations ?? 0;
-    if (a.rerails > 0) steerRules += 1;
-    if (f > 0) { firedN += 1; if (isRunning(r)) firedOn += 1; }
-  }
-  const logOn = on.filter(isLog).length;
-  return {
-    rules, on, logOn, steerOn: on.length - logOn,
-    triggers, rerails: rerailTotal, steerRules, logged,
-    firedN, firedOn,
-    // Exact, from the activity answer: sessions started in range, and sessions with a violation logged in range.
-    sessionsInRange: data.activitySessions?.started ?? 0,
-    sessionsWithTriggers: data.activitySessions?.withViolations ?? 0,
-    // Whether any session was ever recorded here: the overview's "your next session shows here".
-    anySessions: (data.activityAllSessions?.started ?? 0) > 0,
-  };
-}
+/** Every violation of the repository's rules in range: what a pack page's share of violations is of. */
+export const totalFires = () => rulesArray().reduce((sum, r) => sum + fires(r.rule.id), 0);
 
 /** The open rule panel's violations in range, newest first, from the pages loaded for it. */
 export const ruleFindings = id => (data.ruleFindings.owner === id ? data.ruleFindings.rows : []);

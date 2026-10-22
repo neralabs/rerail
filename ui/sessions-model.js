@@ -8,7 +8,7 @@ import { data } from "./state.js";
 
 export const STALE_MIN = 30;
 
-export const VERBS = {
+const VERBS = {
   read: { label: "Read", level: "observe" }, find: { label: "Find", level: "observe" }, search: { label: "Search", level: "observe" }, web: { label: "Web", level: "observe" },
   edit: { label: "Edit", level: "change" }, create: { label: "Create", level: "change" }, delete: { label: "Delete", level: "change" },
   run: { label: "Run", level: "execute" }, mcp: { label: "MCP", level: "outside" }, ask: { label: "Ask", level: "ask" },
@@ -30,7 +30,7 @@ const TOOL_VERB = {
   todo: "todo", todowrite: "todo", todo_write: "todo", update_plan: "todo",
 };
 
-export function verbOf(toolName) {
+function verbOf(toolName) {
   const name = String(toolName ?? "").toLowerCase();
   if (name.startsWith("mcp") || name.includes("__")) return "mcp";
   return TOOL_VERB[name] ?? "other";
@@ -47,7 +47,7 @@ const RUN_KINDS = [
 const RUN_KIND = c => RUN_KINDS.find(([re]) => re.test(c))?.[1] ?? "command";
 
 /** The one string that names what a tool call touched. */
-export function targetOf(verb, input) {
+function targetOf(verb, input) {
   if (input === null || typeof input !== "object") return typeof input === "string" ? input : "";
   const pick = keys => { for (const k of keys) { const v = input[k]; if (typeof v === "string" && v.trim()) return v.trim(); } return ""; };
   if (verb === "run") return pick(["command", "cmd", "code", "script"]);

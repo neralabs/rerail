@@ -174,9 +174,6 @@ body[data-panel="open"] .panel{display:flex}
 .sw[aria-checked="mixed"]{background:var(--brand-subtle);border-color:var(--brand)}
 .sw[aria-checked="mixed"]::after{transform:translateX(7px);background:var(--brand)}
 .badge{display:inline-flex;align-items:center;gap:4px;padding:1px 7px;border-radius:var(--radius-md);font-size:11px;font-weight:500;background:var(--subtle);color:var(--muted-foreground);white-space:nowrap}
-.badge.mine{background:var(--info-subtle);color:var(--info-foreground)}
-.badge.rerail{background:var(--brand-subtle);color:var(--brand-foreground)}
-.badge.on{background:var(--success-subtle);color:var(--success-foreground)}
 /* A rule pack's logo: the sidebar, the catalog and the sheet. */
 .picon{flex:none;width:36px;height:36px;border-radius:50%;background:var(--brand-subtle);color:var(--brand-foreground);display:grid;place-items:center}
 .picon .ltr{font-weight:700;font-size:13px;letter-spacing:-.02em;line-height:1}
@@ -191,12 +188,10 @@ body[data-panel="open"] .panel{display:flex}
 .welcome b{font-size:14px}
 .welcome p{margin:4px 0 0;font-size:13px;line-height:1.5;color:var(--info-foreground);opacity:.9}
 .welcome p.acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;opacity:1}
-.welcome > .btn{margin-left:auto;flex:none}
 .welcome .x{margin-left:auto;width:28px;height:28px;border-radius:6px;display:grid;place-items:center;color:var(--info-foreground);flex:none}
 .welcome .x:hover{background:var(--subtle)}
 .welcome.warn{background:var(--warning-subtle);color:var(--warning-foreground)}
 .welcome.warn p{color:var(--warning-foreground)}
-.welcome.next{margin:0 0 16px}
 
 /* ---- sections and lists ---- */
 section.group{margin-bottom:24px}
@@ -207,9 +202,6 @@ section.group{margin-bottom:24px}
 .ghead .act{grid-column:2;grid-row:1 / span 2;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px 20px;align-items:center;min-width:0}
 .ghead.top{margin-top:24px}
 .ghead h2 .n2{display:inline-flex;align-items:center;font-size:11.5px;font-weight:500;line-height:16px;color:var(--muted-foreground);background:var(--subtle);padding:1px 7px;border-radius:var(--radius-md);margin-left:8px;vertical-align:2px;white-space:nowrap}
-.ghead h2 .n2.mix{color:var(--foreground)}
-.ghead h2 .share{font-size:12px;font-weight:400;color:var(--muted-foreground);margin-left:10px}
-.ghead p .chip{margin-left:8px;vertical-align:1px}
 .list{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-xl);box-shadow:var(--nera-card-shadow);overflow:hidden}
 .empty{padding:40px 20px;text-align:center;color:var(--muted-foreground)}
 .empty h3{margin:0 0 6px;color:var(--foreground);font-size:15px;font-weight:600}

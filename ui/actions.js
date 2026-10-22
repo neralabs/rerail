@@ -9,7 +9,7 @@ import { data, ui, titleOf, packOfRule, packById, rulesArray, reviewing } from "
 import { refreshNow } from "./poll.js";
 import { packName } from "./attachments.js";
 import { parseRoute } from "./routes.js";
-import { closePanel, copyText, go, invalidate, openPack, openRule, ownerWords, showRepository, toast, writes } from "./shell.js";
+import { closePanel, copyText, go, invalidate, openPack, openRule, showRepository, toast, writes } from "./shell.js";
 import { restoreRule } from "./rule-remove.js";
 
 function toggleRule(id) {
@@ -17,8 +17,8 @@ function toggleRule(id) {
   if (!stored) return;
   const enabled = !stored.enabled;
   writes.setEnabled([id], enabled, enabled
-    ? `On ${ownerWords()}. Rerail audits “${titleOf(stored)}” from the coding agent’s next turn.`
-    : `Off ${ownerWords()}. Rerail stops auditing “${titleOf(stored)}”.`);
+    ? `On. Rerail audits “${titleOf(stored)}” from the coding agent’s next turn.`
+    : `Off. Rerail stops auditing “${titleOf(stored)}”.`);
 }
 
 /** What an added pack turns on: its rules, but not the opt-in ones the pack starts off. */

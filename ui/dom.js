@@ -48,10 +48,6 @@ export function setClass(el, name, on) {
   if (el.classList.contains(name) !== Boolean(on)) el.classList.toggle(name, Boolean(on));
 }
 
-export function setStyle(el, prop, value) {
-  if (el.style.getPropertyValue(prop) !== value) el.style.setProperty(prop, value);
-}
-
 /** Replace children only when the rendered signature changes; for small static fragments. */
 export function setContent(el, signature, build) {
   if (el.dataset.sig === signature) return;
@@ -153,10 +149,4 @@ export function syncChildren(parent, items, key, create, update) {
     cursor = next;
   }
   for (const k of map.keys()) if (!want.has(k)) map.delete(k);
-}
-
-/** Drop the keyed map so the next sync rebuilds from scratch (used when a container is emptied). */
-export function clearKeyed(parent) {
-  KEYED.delete(parent);
-  parent.replaceChildren();
 }

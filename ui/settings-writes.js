@@ -1,13 +1,13 @@
 /**
- * The page's rule setting writes: rules on or off, a whole rule pack on or off, and whether a rule or a rule pack
- * honours linter suppression comments. Each change is one `PUT /api/repository/settings` per folder and setting it
- * writes, owned by this worktree or the repository (`owner()`), sent in click order. The page shows the change at once;
- * after a failed write it puts back what nothing saved and reads the rules in full, so it ends on what the daemon holds.
+ * The page's rule setting writes: rules on or off, a whole rule pack on or off, and whether a rule pack's rules honour
+ * linter suppression comments. Each change is one `PUT /api/repository/settings` per folder and setting it writes,
+ * owned by this worktree or the repository (`owner()`), sent in click order. The page shows the change at once; after a
+ * failed write it puts back what nothing saved and reads the rules in full, so it ends on what the daemon holds.
  * `toast` and `invalidate` are the page's.
  */
 import { send } from "./api.js";
 import { data } from "./state.js";
-import { inPack, packSettingDecides, settingDecides } from "./derive.js";
+import { inPack, packSettingDecides } from "./derive.js";
 import { captureScope, inScope, refetch, refreshNow } from "./poll.js";
 
 const SETTINGS = "/api/repository/settings";
@@ -127,17 +127,6 @@ export function settingWrites({ toast, invalidate, owner }) {
   }
 
   /**
-   * Honour or ignore suppression comments for rules, at every folder each is added at. The page shows it in the
-   * folders the rule's setting decides: not where a setting that outranks it decides, by owner or folder depth.
-   */
-  function setSuppressions(ids, suppressions, label) {
-    const rules = storedRules(ids);
-    const by = owner();
-    const decides = state => settingDecides(state, "rule", by, data.checkout?.checkoutPath);
-    return save(writesOf(ruleTargets(rules), { suppressions }), rules, showSuppressions(suppressions, decides, decider(by, "rule")), label);
-  }
-
-  /**
    * Honour or ignore suppression comments for a rule pack, at every folder it is added at. The page shows it in the
    * folders of the pack's rules its setting decides: not where a setting that outranks it decides, by owner, folder
    * depth, or a rule's own setting at the same owner and folder.
@@ -150,7 +139,7 @@ export function settingWrites({ toast, invalidate, owner }) {
     return save(writesOf(folders, { suppressions }), rules, showSuppressions(suppressions, decides, decider(by, "pack")), label);
   }
 
-  return { setEnabled, setPackEnabled, setSuppressions, setPackSuppressions };
+  return { setEnabled, setPackEnabled, setPackSuppressions };
 }
 
 /**
@@ -173,10 +162,10 @@ const decider = (owner, target) => state => (owner === "checkout"
   : { by: "repository", folder: state.folder, target });
 
 /**
- * Show a suppressions change on a stored rule, in every folder it is added at that `changes` (all by default), with
- * what now decides it (`source`, from the folder's state).
+ * Show a suppressions change on a stored rule, in every folder it is added at that `changes`, with what now decides it
+ * (`source`, from the folder's state).
  */
-const showSuppressions = (suppressions, changes = () => true, source = state => state.suppressionsSource) => r => {
+const showSuppressions = (suppressions, changes, source) => r => {
   r.folderStates = r.folderStates.map(state => (changes(state) ? { ...state, suppressions, suppressionsSource: source(state) } : state));
   r.suppressions = r.folderStates[0]?.suppressions ?? suppressions;
   r.suppressionsSource = r.folderStates[0]?.suppressionsSource ?? r.suppressionsSource;

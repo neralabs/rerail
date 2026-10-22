@@ -6,8 +6,8 @@
  */
 import { h, setAttr, setClass, setContent, setText, icon } from "../dom.js";
 import { fmt } from "../format.js";
-import { data, ui, packById, repoName, summary, rangeLabel, fires, filtering, isAttached } from "../state.js";
-import { ownerWords, writes } from "../shell.js";
+import { data, ui, packById, repoName, totalFires, rangeLabel, fires, filtering, isAttached } from "../state.js";
+import { writes } from "../shell.js";
 import { pageKey, pageRules, packSwitch, runningOf, shownRules, switchTurnsOn } from "../pack-model.js";
 import { CREATE_COMMAND, renderRuleTable } from "../render/rules.js";
 import { ruleControls, ruleControlActions, ruleControlInput, ruleControlChange } from "../render/rule-controls.js";
@@ -52,7 +52,7 @@ function renderHead(all, shown, pack) {
   setText(page.title, name);
   setText(page.count, filtering() && shown.length < all.length ? `${fmt(shown.length)} of ${fmt(all.length)} shown` : `${fmt(onN)} of ${fmt(all.length)} on`);
   setClass(page.count, "mix", onN < all.length);
-  const total = summary().triggers, n = all.reduce((sum, r) => sum + fires(r.rule.id), 0);
+  const total = totalFires(), n = all.reduce((sum, r) => sum + fires(r.rule.id), 0);
   setAttr(page.share, "hidden", total === 0);
   setText(page.share, `${fmt(n)} of ${fmt(total)} violations logged`);
   setAttr(page.share, "title", `Violations logged by these rules, of all violations ${rangeLabel()}`);
@@ -92,7 +92,7 @@ function togglePage() {
   const all = pageRules(pageKey(ui.view, ui.pack));
   if (all === null || all.length === 0) return;
   const turnOn = switchTurnsOn(packSwitch(all).state), pack = ui.view === "created" ? null : packById(ui.pack);
-  const label = `${turnOn ? "On" : "Off"} ${ownerWords()}: ${all.length === 1 ? "its rule" : `all ${fmt(all.length)} rules`} in ${pack?.name ?? CREATED}.`;
+  const label = `${turnOn ? "On" : "Off"}: ${all.length === 1 ? "its rule" : `all ${fmt(all.length)} rules`} in ${pack?.name ?? CREATED}.`;
   // A pack's rules follow one setting for the pack; rules created by you have no pack, so each gets its own.
   if (pack) writes.setPackEnabled(pack.id, turnOn, label);
   else writes.setEnabled(all.map(r => r.rule.id), turnOn, label);

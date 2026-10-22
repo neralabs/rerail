@@ -7,7 +7,7 @@ import { ui } from "./state.js";
 import { packName } from "./attachments.js";
 import { renderPanel } from "./render/panel.js";
 import { ruleSheetActions } from "./render/rule-sheet-actions.js";
-import { closePanel, invalidate, openRule, ownerWords, writes } from "./shell.js";
+import { closePanel, invalidate, openRule, writes } from "./shell.js";
 
 /** An open sheet shows its rule's numbers and recent violations, and a pack's rules. */
 export const SHEET_NEEDS = ["rules", "packs", "activity", "ruleFindings"];
@@ -18,8 +18,8 @@ export const renderSheet = renderPanel;
 /** Honour or ignore linter suppression comments for every rule of a pack. */
 function suppressPack(id, suppressions) {
   writes.setPackSuppressions(id, suppressions, suppressions === "ignore"
-    ? `Suppression comments ignored ${ownerWords()} in ${packName(id)}. A rule with its own setting keeps it.`
-    : `Suppression comments honoured ${ownerWords()} in ${packName(id)}. A rule with its own setting keeps it.`);
+    ? `Suppression comments ignored in ${packName(id)}. A rule with its own setting keeps it.`
+    : `Suppression comments honoured in ${packName(id)}. A rule with its own setting keeps it.`);
 }
 
 export const sheetActions = {

@@ -65,9 +65,6 @@ export function toast(message, { error = FAILURE.test(message), action = null } 
   if (!error) toastTimer = setTimeout(hideToast, action === null ? TOAST_MS : ACTION_TOAST_MS);
 }
 
-/** A failure: stays until dismissed. */
-export const toastError = message => toast(message, { error: true });
-
 export function hideToast() {
   clearTimeout(toastTimer);
   document.getElementById("toast").classList.remove("show");
@@ -113,7 +110,6 @@ export async function loadMore(load) {
  * a worktree. The writers still take an owner, so a test can write as a worktree.
  */
 export const changeOwner = () => "repository";
-export const ownerWords = () => "for the repository";
 
 /**
  * The page's writes: a rule's or a pack's settings, written as `changeOwner()` (`settings-writes.js`), and rule
