@@ -609,9 +609,17 @@ impl KeyEnv {
                     refuse(if keys.is_empty() { "LIMIT without ORDER BY".into() } else { "LIMIT under an ORDER BY that is not a key (ties broken by input order)".into() });
                 }
             }
+            Rel::With { bindings, .. } => {
+                for (_, b) in bindings {
+                    if let Binding::Fix { set: false, .. } = b {
+                        refuse("bag (UNION ALL) recursion: no set fixpoint for the dataflow".into());
+                    }
+                }
+            }
             Rel::Aggregate { input, aggs, .. } => {
                 for a in aggs {
-                    if matches!(a.f, AggFn::GroupConcat | AggFn::JsonGroupArray) && !matches!(&**input, Rel::Sort { .. }) {
+                    let total = sorted_input(input).is_some_and(|(sin, keys)| self.total(sin, &keys));
+                    if matches!(a.f, AggFn::GroupConcat | AggFn::JsonGroupArray) && !total {
                         refuse(format!("{:?} over an input without a total order", a.f));
                     }
                 }
@@ -620,6 +628,16 @@ impl KeyEnv {
         }
         each_expr(r, &mut |e| subqueries(e, &mut |s| self.audit(s, at, out, clause)));
         each_child(r, &mut |c| self.audit(c, at, out, clause));
+    }
+}
+
+/// The sort an aggregate's input arrives in (through filters and projections, which keep row
+/// order), with its key columns over the sort's own input.
+fn sorted_input(r: &Rel<RepoSource>) -> Option<(&Rel<RepoSource>, BTreeSet<u16>)> {
+    match r {
+        Rel::Sort { input, keys, .. } if !keys.is_empty() => Some((input, keys.iter().map(|k| k.0).collect())),
+        Rel::Filter { input, .. } | Rel::Project { input, .. } => sorted_input(input),
+        _ => None,
     }
 }
 

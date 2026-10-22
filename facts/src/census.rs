@@ -135,6 +135,38 @@ fn stage_digests(inputs: &[crate::ir::InputDef], front_stages: &[(String, Rel<An
     digests
 }
 
+/// A leaf check that accepts every pattern and regex: the census's IR-level pass, which shows
+/// what the IR, the front ends and the classifier decide independently of the leaf executor's
+/// coverage. Never used to evaluate.
+pub struct IrOnly;
+impl LeafCheck for IrOnly {
+    fn pattern(&mut self, _: &Json, _: &std::collections::BTreeMap<String, Json>) -> Result<Vec<String>, String> {
+        Ok(vec![])
+    }
+    fn regex(&mut self, _: &Json) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+/// Stage digest with inputs abstracted to their columns: equal shapes compute the same algebra
+/// over (possibly different) leaves, i.e. one relation over all nodes filtered per clause.
+fn stage_shapes(front_stages: &[(String, Rel<AnySource>)], inputs: &[crate::ir::InputDef]) -> Vec<String> {
+    let mut digests: Vec<String> = Vec::new();
+    for (_, rel) in front_stages {
+        let mapped = crate::ir::map_rel(rel.clone(), &mut |s| {
+            Ok::<_, ()>(match s {
+                AnySource::Stage(i) => format!("stage:{}", digests[i as usize]),
+                AnySource::Input(i) => format!("input[{}]", inputs[i as usize].schema.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(",")),
+                AnySource::Syntax(t) => format!("syntax:{t:?}"),
+                AnySource::ReferenceEdges => "reference_edges".into(),
+            })
+        })
+        .unwrap();
+        digests.push(blake3::hash(format!("{mapped:?}").as_bytes()).to_hex()[..16].to_owned());
+    }
+    digests
+}
+
 pub struct Census {
     pub json: Json,
     pub markdown: String,
@@ -148,12 +180,16 @@ pub fn run(dir: &Path, config: &Map<String, Json>, leaves: &mut dyn LeafCheck) -
     let mut runtime: BTreeMap<String, usize> = BTreeMap::new();
     let mut texts: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut digests: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut shapes: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut exports_json = Vec::new();
     let mut classification = Vec::new();
     let mut orders = Vec::new();
     let mut compiled_n = 0;
     for p in &paths {
         let doc: Json = serde_json::from_slice(&std::fs::read(p).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        // The configuration's options that this document declares.
+        let declared = crate::policy::option_values(&doc, &Map::new())?;
+        let config: &Map<String, Json> = &config.iter().filter(|(k, _)| declared.contains_key(*k)).map(|(k, v)| (k.clone(), v.clone())).collect();
         let c = compile_report(&doc, config, leaves)?;
         let rule = c.program.rule.clone();
         let short = rule.trim_start_matches("data-layer-").to_owned();
@@ -188,6 +224,9 @@ pub fn run(dir: &Path, config: &Map<String, Json>, leaves: &mut dyn LeafCheck) -
                     .collect();
                 for ((name, _), d) in fs.iter().zip(stage_digests(&front.inputs, &fs)) {
                     digests.entry(d).or_default().push(format!("{short}/{}/{name}", fc.id));
+                }
+                for ((name, _), d) in fs.iter().zip(stage_shapes(&fs, &front.inputs)) {
+                    shapes.entry(d).or_default().push(format!("{short}/{}/{name}", fc.id));
                 }
             }
         }
@@ -257,12 +296,19 @@ pub fn run(dir: &Path, config: &Map<String, Json>, leaves: &mut dyn LeafCheck) -
         })
         .map(|(t, v)| json!({ "bytes": t.len(), "stages": v }))
         .collect();
-    let shared_digests: Vec<Json> = digests.iter().filter(|(_, v)| v.len() > 1).map(|(d, v)| json!({ "digest": d, "stages": v })).collect();
+    let across = |v: &Vec<String>| {
+        let mut clauses: Vec<&str> = v.iter().map(|s| s.rsplit_once('/').unwrap().0).collect();
+        clauses.sort();
+        clauses.dedup();
+        clauses.len() > 1
+    };
+    let shared_digests: Vec<Json> = digests.iter().filter(|(_, v)| across(v)).map(|(d, v)| json!({ "digest": d, "stages": v })).collect();
+    let shared_shapes: Vec<Json> = shapes.iter().filter(|(_, v)| across(v)).map(|(d, v)| json!({ "digest": d, "stages": v })).collect();
     let json = json!({
         "rules": rules, "compiled": compiled_n, "total": paths.len(),
         "constructs": constructs.iter().map(|(k, (n, by))| json!({"construct": k, "count": n, "rules": by})).collect::<Vec<_>>(),
         "runtime_refusals": runtime, "classification": classification, "exports": exports_json,
-        "sharing": { "byte_identical_texts": shared_texts, "ir_digest_groups": shared_digests },
+        "sharing": { "byte_identical_texts": shared_texts, "ir_digest_groups": shared_digests, "ir_shape_groups": shared_shapes },
         "repository_order": orders,
     });
     let markdown = render(&json);
@@ -319,5 +365,29 @@ fn render(j: &Json) -> String {
     }
     let trivial = j["classification"].as_array().unwrap().iter().filter(|c| c["form"] == "relational" && c["declared"] == "file" && c["inferred"] == "file" && c["file_stages"] == 0).count();
     writeln!(m, "\nNot listed: {trivial} stage-less `partitionBy: file` relational clauses, all inferred per file.").unwrap();
+    let sh = &j["sharing"];
+    let count = |k: &str| {
+        let g = sh[k].as_array().unwrap();
+        let rules = g.iter().filter(|x| {
+            let mut r: Vec<&str> = x["stages"].as_array().unwrap().iter().map(|s| s.as_str().unwrap().split('/').next().unwrap()).collect();
+            r.sort();
+            r.dedup();
+            r.len() > 1
+        });
+        (g.len(), g.iter().map(|x| x["stages"].as_array().unwrap().len()).sum::<usize>(), rules.count())
+    };
+    let (tg, ts, tr) = count("byte_identical_texts");
+    let (dg, ds, dr) = count("ir_digest_groups");
+    let (sg, ss, sr) = count("ir_shape_groups");
+    writeln!(m, "\nSharing census (stages recurring in more than one clause):\n\n| measure | groups | stages in them | groups spanning rules |\n|---|--:|--:|--:|").unwrap();
+    writeln!(m, "| byte-identical stage text (whitespace-normalised) | {tg} | {ts} | {tr} |").unwrap();
+    writeln!(m, "| equal IR digest (same algebra over the same inputs) | {dg} | {ds} | {dr} |").unwrap();
+    writeln!(m, "| equal IR shape (same algebra, inputs abstracted to their columns) | {sg} | {ss} | {sr} |").unwrap();
+    writeln!(m, "\nOrder-dependent constructs left in repository plans (after the cut):\n").unwrap();
+    for o in j["repository_order"].as_array().unwrap() {
+        let cs: Vec<&str> = o["constructs"].as_array().unwrap().iter().map(|c| c.as_str().unwrap()).collect();
+        let refused = o["refused"].as_array().unwrap().len();
+        writeln!(m, "- `{}`/`{}`: {}{}", o["rule"].as_str().unwrap(), o["clause"].as_str().unwrap(), if cs.is_empty() { "none".to_string() } else { cs.join("; ") }, if refused > 0 { format!(" (refused: {refused})") } else { String::new() }).unwrap();
+    }
     m
 }

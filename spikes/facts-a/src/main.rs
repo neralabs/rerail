@@ -4,6 +4,7 @@ mod facts;
 mod factfile;
 mod fstring;
 mod leaf;
+mod volume;
 use rerail_facts::policy;
 mod pyvalue;
 mod rel;
@@ -53,6 +54,7 @@ fn main() {
         Some("inspect") => factfile::inspect(&args),
         Some("census") => census(&args),
         Some("explain") => explain(&args),
+        Some("export-volume") => volume::run(&args),
         Some("parse") => {
             let path = &args[2];
             let source = Arc::new(std::fs::read_to_string(path).unwrap());
@@ -231,6 +233,22 @@ fn census(args: &[String]) {
     std::fs::write(out.join("census.json"), serde_json::to_string_pretty(&c.json).unwrap()).unwrap();
     std::fs::write(out.join("census.md"), &c.markdown).unwrap();
     println!("{}", c.markdown);
+    // IR-level pass: every pattern and regex leaf accepted, so the table shows what the IR, the
+    // front ends and the classifier decide whatever the leaf executor covers.
+    let ir = rerail_facts::census::run(std::path::Path::new(&rules), &Map::new(), &mut rerail_facts::census::IrOnly).expect("census");
+    std::fs::write(out.join("census-ir.json"), serde_json::to_string_pretty(&ir.json).unwrap()).unwrap();
+    std::fs::write(out.join("census-ir.md"), &ir.markdown).unwrap();
+    // The option variant that makes state-flow-1 / state-projection-recovery-2 repository clauses.
+    let mut cfg = Map::new();
+    cfg.insert("entryPoint".into(), Json::String("scan_project_sources".into()));
+    let ps = rerail_facts::census::run(std::path::Path::new(&rules), &cfg, &mut rerail_facts::census::IrOnly);
+    match ps {
+        Ok(ps) => {
+            std::fs::write(out.join("census-ir-scan-project-sources.json"), serde_json::to_string_pretty(&ps.json).unwrap()).unwrap();
+            std::fs::write(out.join("census-ir-scan-project-sources.md"), &ps.markdown).unwrap();
+        }
+        Err(e) => eprintln!("scan_project_sources variant: {e}"),
+    }
 }
 
 /// Phase 2 `EXPLAIN`: each policy in `--rules` (or only `--rule <id>`) compiled under `--config`
