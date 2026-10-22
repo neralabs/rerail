@@ -185,11 +185,15 @@ jobs:
         run: |
           set -euo pipefail
           runtime="$(sed -n 's/^  runtime: *\([a-z0-9._-]*\) *$/\1/p' "packs/$PACK/upstream/$TOOL/gates.yaml")"
-          echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' "conformance/recorders/port-readiness/runtimes/$runtime/rust-toolchain.toml")" >> "$GITHUB_OUTPUT"
+          [ -n "$runtime" ] || { echo "::error::packs/$PACK/upstream/$TOOL/gates.yaml has no upstream.runtime line this step reads"; exit 1; }
+          toolchain="conformance/recorders/port-readiness/runtimes/$runtime/rust-toolchain.toml"
+          channel="$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' "$toolchain")"
+          [ -n "$channel" ] || { echo "::error::$toolchain has no channel line this step reads"; exit 1; }
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
 
       - name: Install the pinned Rust toolchain with clippy
         if: matrix.tool == 'clippy'
-        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: ${{ steps.clippy-toolchain.outputs.channel }}
           components: clippy
