@@ -61,58 +61,64 @@ RECORDINGS = ["fixtures/host/data-layer-port/batch-06-recording.json", "fixtures
 BATCH6 = ["serverplan_bypass", "serverplan_steps", "serverplan_state_tripwires", "serverplan_dispatch_architecture",
           "serverplan_quality", "serverplan_target_architecture", "execution_authority_bypass",
           "impl_direct_execution", "raw_execute_regression", "legacy_execution_surfaces"]
-# Accepted residue: quality-contracts-1 refuses its `annotation` sub-grammar until S4's
-# `string_type_definition` fact lands (Phase 2 G2.2). Remove the entry then; nothing else is accepted.
-RESIDUE = [("serverplan_quality", "quality-contracts-1", "parse grammar `annotation`")]
+# Accepted residue, (check, clause, message part): failures the gate tolerates. Empty since S4's
+# `string_type_definition` (275b016d1) made quality-contracts-1 exact; nothing else is accepted.
+RESIDUE: list[tuple[str, str, str]] = []
 THREADS = "4"
 
 # The generic mutants: (number, name, crate, site, what it breaks, the checks that run against it). They
-# target components, not rules: the delta generator, the classifier, the planner's audit. Rewrite mutants
-# come from docs/facts/REWRITES.md (`rewrite_mutants`), one per rewrite; until that registry exists, the
-# three A3 views stand for the three rewrite kinds (1-3).
+# target components, not rules: the delta generator (S3), the classifier and the plan audit (S1). Rewrite
+# mutants come from docs/facts/REWRITES.md (`rewrite_mutants`), one per registered rewrite; 1-3 are the
+# interim mutants of S2's A3 views (gone with subst.rs). Numbering: REWRITES.md § Numbers.
 MUTANTS = [
-    (4, "delta-cross-term", "facts-b", "delta generator: join", "the join drops the ΔR⋈ΔS cross term", ["b-exactness"]),
-    (5, "delta-count-retraction", "facts-b", "delta generator: count/presence", "counts ignore retractions (negative deltas)", ["b-exactness"]),
-    (6, "delta-fixpoint-early", "facts-b", "delta generator: recursion", "the fixpoint stops one round early", ["b-exactness"]),
-    (7, "classifier-membership", "rerail-facts", "classify::file_source", "a per-content plan reaching a membership/exported relation is accepted", ["classifier-leak"]),
-    (8, "planner-inner-scan", "rerail-facts", "plan audit", "the plan audit admits an inner scan", ["planner-audit"]),
-]
-INTERIM_REWRITES = [
-    (1, "rewrite-dropped-side-condition", "facts-a", "subst.rs::edges (A3 view)", "dropped side condition: edges keeps rows whose edge_parent is NULL", ["a3-check", "a-reference"]),
-    (2, "rewrite-lost-union-arm", "facts-a", "subst.rs::nodes (A3 view)", "lost union arm: nodes drops the last arm of its source union", ["a3-check", "a-reference"]),
-    (3, "rewrite-interval-bound", "facts-a", "ast.rs::has_end_memo (A3 memo)", "wrong interval bound: the descendant range starts at id + 2 (first descendant skipped)", ["a3-check", "a-reference"]),
+    (1, "a3-dropped-side-condition", "facts-a", "subst.rs::edges (A3 view)", "dropped side condition: edges keeps rows whose edge_parent is NULL", ["a3-check", "a-reference"]),
+    (2, "a3-lost-union-arm", "facts-a", "subst.rs::nodes (A3 view)", "lost union arm: nodes drops the last arm of its source union", ["a3-check", "a-reference"]),
+    (3, "a3-interval-bound", "facts-a", "ast.rs::has_end_memo (A3 memo)", "wrong interval bound: the descendant range starts at id + 2", ["a3-check", "a-reference"]),
+    (4, "delta-cross-term", "facts-b", "gen: join tags (tags.rs, lower.rs)", "the join drops the ΔR⋈ΔS cross term", ["b-generated"]),
+    (5, "delta-count-retraction", "facts-b", "gen: presence/count (lower.rs)", "counts ignore retractions (negative deltas)", ["b-generated"]),
+    (6, "delta-fixpoint-early", "facts-b", "gen: fixpoint (lower.rs)", "the fixpoint stops early (rounds >= 2 dropped)", ["b-generated"]),
+    (7, "classifier-membership", "rerail-facts", "classify::file_source", "a per-content plan reaching a membership relation is accepted", ["classifier-leak", "rerail-facts-lib"]),
+    (8, "planner-inner-scan", "rerail-facts", "phys.rs plan audit", "the plan audit admits an inner scan", ["planner-audit", "rerail-facts-lib"]),
 ]
 REWRITES = ROOT / "docs/facts/REWRITES.md"
-REWRITE_KINDS = ("dropped side condition", "wrong interval bound", "lost union arm")
 
 
 def rewrite_mutants() -> tuple[list[tuple], list[str]]:
-    """One mutant per rewrite row of REWRITES.md: the first markdown table whose header has `rewrite`
-    and `mutant` columns; a mutant cell reads `<n> <kind>`. Returns (mutants, problems); a rewrite with no
-    mutant is a problem, so the gate fails until every rewrite has one."""
+    """One mutant per row of REWRITES.md's registry: the first markdown table whose header has `rewrite`
+    and `mutant` columns (contiguous lines); a mutant cell reads `<n> <kind>`. Each runs the crate's lib
+    tests, which hold the rewrite's differential test. Returns (mutants, problems); a rewrite without a
+    well-formed mutant is a problem, so the gate fails until every registered rewrite has one."""
     if not REWRITES.exists():
-        return INTERIM_REWRITES, []
-    rows = [l.strip().strip("|").split("|") for l in REWRITES.read_text().splitlines() if l.strip().startswith("|")]
-    header = next((i for i, r in enumerate(rows) if any("mutant" in c.lower() for c in r) and any("rewrite" in c.lower() for c in r)), None)
-    if header is None:
-        return [], ["REWRITES.md has no table with `rewrite` and `mutant` columns"]
-    cols = [c.strip().lower() for c in rows[header]]
-    ri, mi = next(i for i, c in enumerate(cols) if "rewrite" in c), next(i for i, c in enumerate(cols) if "mutant" in c)
-    out, problems = [], []
-    for r in rows[header + 2:]:
-        if len(r) <= max(ri, mi):
+        return [], ["docs/facts/REWRITES.md is missing"]
+    lines = REWRITES.read_text().splitlines()
+    table: list[list[str]] = []
+    for i, line in enumerate(lines):
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if line.strip().startswith("|") and any(c.lower() == "mutant" for c in cells) and any(c.lower() == "rewrite" for c in cells):
+            for row in lines[i:]:
+                if not row.strip().startswith("|"):
+                    break
+                table.append([c.strip() for c in row.strip().strip("|").split("|")])
             break
-        name, cell = r[ri].strip().strip("`"), r[mi].strip()
+    if not table:
+        return [], ["REWRITES.md has no table with `rewrite` and `mutant` columns"]
+    cols = [c.lower() for c in table[0]]
+    ri, mi = cols.index("rewrite"), cols.index("mutant")
+    ii = cols.index("id") if "id" in cols else ri
+    out, problems = [], []
+    for r in table[2:]:
+        # The mutant cell counted from the row's end: a `|` inside an earlier cell cannot shift it.
+        name, cell = f"{r[ii]} {r[ri]}".strip(), r[mi - len(cols)] if len(r) >= len(cols) else ""
         words = cell.split(maxsplit=1)
-        if not words or not words[0].isdigit() or len(words) < 2 or words[1].strip().lower() not in REWRITE_KINDS:
+        if len(words) < 2 or not words[0].isdigit():
             problems.append(f"rewrite {name}: mutant cell {cell!r} is not `<n> <kind>`")
             continue
-        out.append((int(words[0]), f"rewrite-{name}", "rerail-facts", f"rewrite {name}", words[1].strip(), ["a3-check", "a-reference"]))
+        out.append((int(words[0]), f"rewrite-{r[ii].lower()}", "rerail-facts", f"rewrite {name}", words[1], ["rerail-facts-lib"]))
     return out, problems
 
 
-LANES = {"a": ["a-replay", "a-repo", "a-subset", "a3-check", "a-reference"], "b": ["b-exactness"],
-         "c": ["reference-selftest", "classifier-leak", "harness-replay", "explain-stable", "planner-audit"]}
+LANES = {"a": ["a-replay", "a-repo", "a-subset", "a3-check", "a-reference"], "b": ["b-exactness"], "g": ["b-generated"],
+         "c": ["rerail-facts-lib", "classifier-leak", "planner-audit", "explain-stable", "harness-replay"]}
 PACKAGES = ["facts-a", "facts-b", "rerail-facts"]
 
 print_lock = threading.Lock()
@@ -176,8 +182,8 @@ def build(rd: Path) -> tuple[bool, dict]:
     present = [p for p in PACKAGES if p in pkgs]
     mutants = [p for p in present if "mutants" in pkgs[p].get("features", {})]
     env = {"CARGO_TARGET_DIR": str(target)}
-    features = ["--features", ",".join(f"{p}/mutants" for p in mutants)] if mutants else []
     bins = [p for p in present if p in ("facts-a", "facts-b")]
+    features = ["--features", ",".join(f"{p}/mutants" for p in bins if p in mutants)] if any(p in mutants for p in bins) else []
     t0 = time.monotonic()
     status, _ = run(["cargo", "build", "--release", *sum((["-p", p] for p in bins), []), *features], rd / "build", env)
     if status == 0 and "rerail-facts" in present:
@@ -336,40 +342,69 @@ def check_a_reference(d: Path, env: dict, gate_dir: Path) -> tuple[bool, str, di
     return compare_reference(compiled, d / "results.json")
 
 
-def check_b(d: Path, env: dict, fail_fast: bool = False) -> tuple[bool, str, dict]:
-    cmd = [binary("facts-b"), "replay", "--events", str(EVENTS), "--run-dir", str(d), *(["--fail-fast"] if fail_fast else [])]
+def check_b(d: Path, env: dict, sub: str, fail_fast: bool = False) -> tuple[bool, str, dict]:
+    """`facts-b <sub> --events E`: `replay` (Spike B's hand-written delta rules, the generator's test
+    vectors) or `greplay` (the delta-plan generator over IR plans, against rerail_facts::reference)."""
+    cmd = [binary("facts-b"), sub, "--events", str(EVENTS), "--run-dir", str(d), *(["--fail-fast"] if fail_fast else [])]
     status, _ = run(cmd, d, env)
     if status != 0 or not (d / "results.json").exists():
         return False, f"exit {status}", {"detected": False}
-    x = json.loads((d / "results.json").read_text())["exactness"]
+    r = json.loads((d / "results.json").read_text())
+    x = r["exactness"]
     want = sum(1 for l in EVENTS.read_text().splitlines() if l.strip())
-    events = json.loads((d / "results.json").read_text())["events"]
-    ok = x["differences"] == 0 and x["checks"] > 0 and events == want
+    refusals = r.get("runtime_refusals", {})
+    plans = ",".join(p["plan"] for p in r.get("plans", [])) or "R1-R3 (hand-written)"
+    ok = x["differences"] == 0 and x["checks"] > 0 and r["events"] == want and not refusals
     return ok, (f"{x['differences']} differences in {x['checks']} checkpoints, {x['worktree_checks']} worktree checks, "
-                f"{events}/{want} events"), {"exactness": x, "detected": x["differences"] > 0}
+                f"{r['events']}/{want} events, plans {plans}" + (f", runtime refusals {refusals}" if refusals else "")), \
+        {"exactness": x, "detected": x["differences"] > 0}
 
 
-def cargo_test(d: Path, env: dict, name: str) -> tuple[int, int]:
-    """`cargo test --release -p rerail-facts [--features mutants] <name>`: (exit status, tests run)."""
+def cargo_test(d: Path, env: dict, *names: str) -> tuple[int, int, list[str]]:
+    """`cargo test --release -p rerail-facts [--features mutants] <names>`: (exit status, tests run,
+    failed tests)."""
     pkgs = workspace_packages()
     f = ["--features", "rerail-facts/mutants"] if "mutants" in pkgs["rerail-facts"].get("features", {}) else []
-    status, _ = run(["cargo", "test", "--release", "-p", "rerail-facts", *f, name], d,
+    status, _ = run(["cargo", "test", "--release", "-p", "rerail-facts", *f, *names], d,
                     {**env, "CARGO_TARGET_DIR": os.environ["FACTS_GATE_TARGET"]})
     out = (d / "stdout.txt").read_text(errors="replace")
     ran = sum(int(l.split()[1]) for l in out.splitlines() if l.startswith("running ") and l.split()[1].isdigit())
-    return status, ran
+    failed = [l.split()[1] for l in out.splitlines() if l.startswith("test ") and l.rstrip().endswith("FAILED")]
+    return status, ran, failed
 
 
-def check_classifier(d: Path, env: dict) -> tuple[bool, str, dict]:
+def check_cargo(d: Path, env: dict, what: str, *names: str) -> tuple[bool, str, dict]:
     if "rerail-facts" not in workspace_packages():
-        return False, "package rerail-facts (S1's classifier) is not in the workspace yet", {"detected": False, "missing": True}
-    status, ran = cargo_test(d, env, "leak")
-    return status == 0 and ran > 0, f"{ran} leak tests, exit {status}", {"tests": ran, "detected": status != 0, "missing": ran == 0}
+        return False, "package rerail-facts is not in the workspace", {"detected": False}
+    status, ran, failed = cargo_test(d, env, *names)
+    return (status == 0 and ran > 0, f"{ran} {what}, exit {status}" + (f", failed: {', '.join(failed[:6])}" if failed else ""),
+            {"tests": ran, "failed": failed, "detected": status != 0 and ran > 0})
 
 
-def check_reference(d: Path, env: dict) -> tuple[bool, str, dict]:
-    status, ran = cargo_test(d, env, "reference::")
-    return status == 0 and ran > 0, f"{ran} reference evaluator tests, exit {status}", {"tests": ran}
+def check_explain(d: Path, env: dict) -> tuple[bool, str, dict]:
+    """EXPLAIN stability (INVARIANTS I5): `facts-a explain` over the pack, twice in fresh processes, and
+    once per rule in its own process; all three texts byte-identical (no addresses, no hash order, no
+    state carried between rules). Per-file identity holds by construction while EXPLAIN prints the
+    rule's plan with no file input; it becomes a per-file comparison once the physical EXPLAIN takes one."""
+    rules = ROOT / "packs/data-layer/candidates/rules"
+    texts = []
+    for i in (1, 2):
+        status, _ = run([binary("facts-a"), "explain", "--rules", str(rules)], d / f"all-{i}", env)
+        if status != 0:
+            return False, f"explain exit {status}", {}
+        texts.append((d / f"all-{i}" / "stdout.txt").read_bytes())
+    ids = [json.loads(p.read_text())["id"] for p in sorted(rules.glob("*.json"))]
+    per_rule = b""
+    for rid in ids:
+        status, _ = run([binary("facts-a"), "explain", "--rules", str(rules), "--rule", rid], d / "rule" / rid, env)
+        if status != 0:
+            return False, f"explain --rule {rid} exit {status}", {}
+        per_rule += (d / "rule" / rid / "stdout.txt").read_bytes()
+    texts.append(per_rule)
+    same = texts[0] == texts[1] == texts[2]
+    digest = hashlib.sha256(texts[0]).hexdigest()[:16]
+    return same and len(texts[0]) > 0, (f"{len(ids)} rules, {len(texts[0])} bytes, sha256 {digest}, "
+                                        + ("identical across 2 runs and per-rule processes" if same else "TEXT DIFFERS")), {}
 
 
 def check_harness_replay(d: Path, env: dict) -> tuple[bool, str, dict]:
@@ -390,14 +425,7 @@ def check_harness_replay(d: Path, env: dict) -> tuple[bool, str, dict]:
     matched = sum(1 for row in r["rows"] if not (row["falsePositives"] or row["falseNegatives"] or row["engineFailures"]))
     ok = not bad and r["replayedCalls"] == want and r["factsCalls"] == want and not r["missingCoverage"]
     return ok, (f"{matched}/{r['replayedCalls']} calls, {r['falsePositives']} FP, {r['falseNegatives']} FN, {r['engineFailures']} failures"
-                + (", misses all accepted residue" if not bad else f", unaccepted: {'; '.join(bad[:5])}")), {"unaccepted": bad}
-
-
-# Checks whose command the owning slice has not provided yet: they fail, naming what is missing.
-PENDING = {
-    "explain-stable": "S1's EXPLAIN command (plan text byte-identical across two runs and across files of one rule) is not defined yet",
-    "planner-audit": "S1's plan audit test (an inner scan is rejected) and its mutant 8 are not defined yet",
-}
+                + ("" if not bad else f", unaccepted: {'; '.join(bad[:5])}")), {"unaccepted": bad}
 
 
 # ---------------------------------------------------------------------------------------------------
@@ -417,44 +445,47 @@ def run_check(cid: str, gate_dir: Path, env: dict) -> tuple[bool, str, dict]:
     if cid == "a-reference":
         return check_a_reference(d, env, gate_dir)
     if cid == "b-exactness":
-        return check_b(d, env)
+        return check_b(d, env, "replay")
+    if cid == "b-generated":
+        return check_b(d, env, "greplay")
+    if cid == "rerail-facts-lib":
+        return check_cargo(d, env, "lib tests (rewrite differentials, classifier, audit, reference)", "--lib")
     if cid == "classifier-leak":
-        return check_classifier(d, env)
-    if cid == "reference-selftest":
-        return check_reference(d, env)
+        return check_cargo(d, env, "leak tests", "leak")
+    if cid == "planner-audit":
+        return check_cargo(d, env, "plan audit tests", "phys::tests::audit")
+    if cid == "explain-stable":
+        return check_explain(d, env)
     if cid == "harness-replay":
         return check_harness_replay(d, env)
-    if cid in PENDING:
-        return False, f"pending: {PENDING[cid]}", {}
     raise ValueError(cid)
 
 
 def run_mutant_check(n: int, cid: str, gate_dir: Path) -> str:
-    """killed | survived | error, for mutant `n` under check `cid`."""
+    """killed | survived | error, for mutant `n` under check `cid`. A kill is a detection the check
+    names (an A3_CHECK panic, a findings difference, an exactness difference, a failing test), never a
+    crash or a missing tool."""
     d = gate_dir / "mutants" / f"{n}-{cid}"
     env = {"FACTS_MUTANT": str(n)}
     if cid == "a3-check":
         ok, _, det = check_a3(d, env)
-        return "survived" if ok else ("killed" if det.get("detected") else "error")
-    if cid == "a-reference":
+    elif cid == "a-reference":
         status, _ = run(repo_cmd(d, subset_root()), d, env)
-        if status != 0 or not (d / "results.json").exists():
-            return "error"
         reference = gate_dir / "a-reference" / "results.json"
-        if not reference.exists():
+        if status != 0 or not (d / "results.json").exists() or not reference.exists():
             return "error"
         same, _, diff = compare_reference(d / "results.json", reference)
         (d / "difference.json").write_text(json.dumps(diff, indent=1))
         return "survived" if same else "killed"
-    if cid == "b-exactness":
-        ok, _, det = check_b(d, env, fail_fast=True)
-        return "survived" if ok else ("killed" if det.get("detected") else "error")
-    if cid in PENDING:
-        return "error"
-    if cid == "classifier-leak":
-        ok, _, det = check_classifier(d, env)
-        return "survived" if ok else ("killed" if det.get("detected") and not det.get("missing") else "error")
-    raise ValueError(cid)
+    elif cid in ("b-exactness", "b-generated"):
+        ok, _, det = check_b(d, env, "replay" if cid == "b-exactness" else "greplay", fail_fast=True)
+    elif cid in ("rerail-facts-lib", "classifier-leak", "planner-audit"):
+        names = {"rerail-facts-lib": ["--lib"], "classifier-leak": ["leak"], "planner-audit": ["phys::tests::audit"]}[cid]
+        ok, _, det = check_cargo(d, env, "tests", *names)
+        (d / "failed-tests.txt").write_text("\n".join(det.get("failed", [])) + "\n")
+    else:
+        raise ValueError(cid)
+    return "survived" if ok else ("killed" if det.get("detected") else "error")
 
 
 def main() -> int:

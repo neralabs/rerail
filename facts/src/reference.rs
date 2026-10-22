@@ -297,6 +297,100 @@ impl Agg {
     }
 }
 
+/// SQLite's `printf` for the conversions `%d %i %s %f %%` with flags `-`, `0`, `+`, ` `, a width
+/// and a precision; any other conversion is refused by name. A missing argument reads as NULL
+/// (0 for numbers, `''` for `%s`), as in SQLite.
+fn printf(fmt: &str, args: &[V]) -> Result<String, Error> {
+    let mut out = String::new();
+    let mut next = args.iter();
+    let mut chars = fmt.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            out.push(c);
+            continue;
+        }
+        let (mut left, mut zero, mut plus, mut space) = (false, false, false, false);
+        while let Some(&f) = chars.peek() {
+            match f {
+                '-' => left = true,
+                '0' => zero = true,
+                '+' => plus = true,
+                ' ' => space = true,
+                _ => break,
+            }
+            chars.next();
+        }
+        let mut width = 0usize;
+        while let Some(d) = chars.peek().and_then(|c| c.to_digit(10)) {
+            width = width * 10 + d as usize;
+            chars.next();
+        }
+        let mut precision = None;
+        if chars.peek() == Some(&'.') {
+            chars.next();
+            let mut p = 0usize;
+            while let Some(d) = chars.peek().and_then(|c| c.to_digit(10)) {
+                p = p * 10 + d as usize;
+                chars.next();
+            }
+            precision = Some(p);
+        }
+        let conv = chars.next().ok_or("printf: format ends inside a conversion")?;
+        let mut arg = || next.next().cloned().unwrap_or(V::Null);
+        let (sign, body) = match conv {
+            '%' => {
+                out.push('%');
+                continue;
+            }
+            'd' | 'i' => {
+                let i = match sv::cast(&arg(), Aff::Integer) {
+                    V::Int(i) => i,
+                    _ => 0,
+                };
+                let digits = i.unsigned_abs().to_string();
+                let digits = match precision {
+                    Some(p) if digits.len() < p => format!("{}{digits}", "0".repeat(p - digits.len())),
+                    _ => digits,
+                };
+                (if i < 0 { "-" } else if plus { "+" } else if space { " " } else { "" }, digits)
+            }
+            'f' => {
+                let f = match sv::cast(&arg(), Aff::Real) {
+                    V::Real(f) => f,
+                    _ => 0.0,
+                };
+                let s = format!("{:.*}", precision.unwrap_or(6), f.abs());
+                (if f.is_sign_negative() && f != 0.0 { "-" } else if plus { "+" } else if space { " " } else { "" }, s)
+            }
+            's' => {
+                let s = sv::to_text(&arg()).map(|t| t.to_string()).unwrap_or_default();
+                let s = match precision {
+                    Some(p) => s.chars().take(p).collect(),
+                    None => s,
+                };
+                ("", s)
+            }
+            other => return Err(format!("printf: conversion %{other} is not supported by the reference")),
+        };
+        let len = sign.chars().count() + body.chars().count();
+        let pad = width.saturating_sub(len);
+        if left {
+            out.push_str(sign);
+            out.push_str(&body);
+            out.push_str(&" ".repeat(pad));
+        } else if zero && conv != 's' {
+            out.push_str(sign);
+            out.push_str(&"0".repeat(pad));
+            out.push_str(&body);
+        } else {
+            out.push_str(&" ".repeat(pad));
+            out.push_str(sign);
+            out.push_str(&body);
+        }
+    }
+    Ok(out)
+}
+
 impl<'a, S> Evaluator<'a, S> {
     pub fn new(source: &'a dyn Fn(&S) -> Result<Vec<Row>, Error>) -> Self {
         Self { source, locals: RefCell::new(Vec::new()) }
@@ -868,14 +962,28 @@ impl<'a, S> Evaluator<'a, S> {
                 V::text(&regex(&p)?.replace_all(&t, &*by))
             }
             Func::SourceText => return Err("reference: source_text reads a content's text; repository plans have none (IR.md § 7)".into()),
+            Func::JsonArray => {
+                let mut items = Vec::with_capacity(args.len());
+                for i in 0..args.len() {
+                    items.push(json_of(&a(i)?));
+                }
+                V::text(&serde_json::Value::Array(items).to_string())
+            }
+            Func::Printf => {
+                let Some(fmt) = sv::to_text(&a(0)?) else { return Ok(V::Null) };
+                let mut vals = Vec::with_capacity(args.len().saturating_sub(1));
+                for i in 1..args.len() {
+                    vals.push(a(i)?);
+                }
+                V::text(&printf(&fmt, &vals)?)
+            }
         })
     }
 }
 
 /// A plan's stages in order, then its sink's relation: the rows a plan produces. `scan` resolves
 /// the plan's non-stage sources (for a repository plan: an exported relation's rows over the
-/// worktree's members). Stage rows are stored with their columns' affinities (CTAS), deferred
-/// columns evaluated over the stored row.
+/// worktree's members). Stage rows are stored with their columns' affinities (CTAS).
 pub fn evaluate_plan<S: Clone>(plan: &Plan<S>, stage_of: impl Fn(&S) -> Option<StageId>, scan: &dyn Fn(&S) -> Result<Vec<Row>, Error>) -> Result<Vec<Row>, Error> {
     let stages: RefCell<Vec<Rc<Vec<Row>>>> = RefCell::new(Vec::new());
     let source = |s: &S| -> Result<Vec<Row>, Error> {
@@ -887,23 +995,11 @@ pub fn evaluate_plan<S: Clone>(plan: &Plan<S>, stage_of: impl Fn(&S) -> Option<S
     let ev = Evaluator::new(&source);
     for st in &plan.stages {
         let rows = match &st.def {
-            StageDef::Query { rel, deferred } => {
+            StageDef::Query { rel } => {
                 let mut rows = ev.rel(rel, &[])?;
-                let stored = width(rel);
                 for row in rows.iter_mut() {
-                    for (c, col) in st.schema.iter().enumerate().take(stored) {
-                        if c < row.len() && !deferred.iter().any(|(d, _)| *d as usize == c) {
-                            row[c] = sv::apply_affinity(std::mem::replace(&mut row[c], V::Null), col.aff);
-                        }
-                    }
-                    for (c, e) in deferred {
-                        let v = ev.expr(e, &[row.as_slice()])?;
-                        let c = *c as usize;
-                        if c < row.len() {
-                            row[c] = v;
-                        } else {
-                            row.push(v);
-                        }
+                    for (v, col) in row.iter_mut().zip(&st.schema) {
+                        *v = sv::apply_affinity(std::mem::replace(v, V::Null), col.aff);
                     }
                 }
                 rows
@@ -1077,5 +1173,14 @@ mod tests {
         assert_eq!(texts(&ev.rel(&q, &[]).unwrap()), ["p|2|3", "p|1|1", "p|1|2"]);
         let e: Expr<RepoSource> = Expr::InList { e: Box::new(Expr::Lit(Lit::Int(3))), list: vec![(Expr::Lit(Lit::Int(1)), (Aff::None, Aff::None)), (Expr::Lit(Lit::Null), (Aff::None, Aff::None))], negated: true };
         assert!(eval_scalar(&e, &[], &[]).unwrap().is_null());
+    }
+
+    #[test]
+    fn printf_and_json_array() {
+        assert_eq!(printf("%012d.", &[V::Int(42)]).unwrap(), "000000000042.");
+        assert_eq!(printf("%-4s|%5.2f|%%|%+d", &[t("ab"), V::Real(3.14159), V::Int(7)]).unwrap(), "ab  | 3.14|%|+7");
+        assert!(printf("%q", &[]).is_err());
+        let e: Expr<RepoSource> = Expr::Func(Func::JsonArray, vec![Expr::Lit(Lit::Text("a".into())), Expr::Lit(Lit::Int(1)), Expr::Lit(Lit::Null)]);
+        assert_eq!(sv::to_text(&eval_scalar(&e, &[], &[]).unwrap()).unwrap().as_ref(), r#"["a",1,null]"#);
     }
 }
