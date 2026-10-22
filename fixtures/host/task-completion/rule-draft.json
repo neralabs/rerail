@@ -5,7 +5,7 @@
     "mode": "log",
     "match": {
       "field": "text",
-      "regex": "(?i)\\b(?:not yet done|still to do|i (?:have not|haven['’]t) (?:yet )?(?:fixed the actual bug|completed the task|finished the task)|next i['’]ll (?:run|finish|implement|apply|add|fix|move on))\\b"
+      "regex": "(?im)^[ \\t]*(?:[-*] )?(?:\\*\\*)?(?:(?:i(?:['’]m| am) stopping here,? and )?(?:i (?:have not|haven['’]t) (?:yet )?(?:completed|finished) (?:the |this |your )?(?:task|work|request|implementation)\\b|i (?:have not|haven['’]t) (?:yet )?(?:implemented|fixed) (?:the |this |actual |requested )*(?:bug|fix|feature|change|implementation)\\b|i still need to (?:implement|finish|complete|fix)\\b|(?:the |this |my )?(?:task|work|implementation|requested (?:change|feature|fix)) (?:is|remains) (?:not (?:yet )?(?:done|complete|finished)|unfinished|incomplete)\\b|i(?:['’]m| am) not (?:yet )?(?:done|finished) (?:with )?(?:the |this |your )?(?:task|work|request|implementation)\\b)|(?:not yet done|still to do)(?:\\*\\*)? from (?:the )?(?:spec|request|requirements)\\b|(?:not yet done|still to do)(?:\\*\\*)?\\s*:\\s*(?:\\*\\*)?\\s*(?:implement|fix|finish|complete|capture|add|wire|connect|update|remove)\\b)"
     },
     "sample": {
       "source": "assistant-text",
@@ -33,12 +33,42 @@
       {
         "source": "assistant-text",
         "boundary": "turn",
-        "text": "Not yet done: capture a cancellation escaping the sandbox exit when scoring_done is set, record it as cancelled_error, and let the completion block log the sample."
+        "text": "- Not yet done: capture a cancellation escaping the sandbox exit when scoring_done is set, record it as cancelled_error, and let the completion block log the sample."
       },
       {
         "source": "assistant-text",
         "boundary": "turn",
-        "text": "I haven't run the program yet, so the change is not yet verified. Next I'll run a smoke check of the database binning against the spec cases."
+        "text": "I'm stopping here, and the work is not done. The fix is written but unverified."
+      },
+      {
+        "source": "assistant-text",
+        "boundary": "turn",
+        "text": "I haven't finished your request. The migration is still missing."
+      },
+      {
+        "source": "assistant-text",
+        "boundary": "turn",
+        "text": "I have not implemented the requested feature."
+      },
+      {
+        "source": "assistant-text",
+        "boundary": "turn",
+        "text": "I still need to implement the remaining handler."
+      },
+      {
+        "source": "assistant-text",
+        "boundary": "turn",
+        "text": "The implementation remains incomplete."
+      },
+      {
+        "source": "assistant-text",
+        "boundary": "turn",
+        "text": "This task is unfinished."
+      },
+      {
+        "source": "assistant-text",
+        "boundary": "turn",
+        "text": "I'm not done with your request. The endpoint still needs implementation."
       }
     ],
     "passed": [
@@ -76,6 +106,61 @@
         "source": "assistant-text",
         "boundary": "message",
         "text": "I have not completed the task."
+      },
+      {
+        "source": "assistant-text",
+        "boundary": "turn",
+        "text": "**Still to do, once the scans and test-runs finish:**\n1. Test-run the candidates that qualify, then rebuild the suite from tasks that pass."
+      },
+      {
+        "source": "assistant-text",
+        "boundary": "turn",
+        "text": "**Not yet done:**\n- The Linux runner blocker in that note is still open: inside the sandbox, Rerail's extension can't reach the Rerail daemon. It's the other session's next step."
+      },
+      {
+        "source": "assistant-text",
+        "boundary": "turn",
+        "text": "**Still to do:** once the server batches finish, pull their runs to the Mac and judge them with rejudge. The analysis comes after that."
+      },
+      {
+        "source": "assistant-text",
+        "boundary": "turn",
+        "text": "**Still to do:** run the plain tox gate in an environment that has it. That gate covers ruff/pep8/docstrings, mypy, docs and the 100% branch coverage check, none of which I could run here."
+      },
+      {
+        "source": "assistant-text",
+        "boundary": "turn",
+        "text": "Next I'll run the deployment if you approve it."
+      },
+      {
+        "source": "assistant-text",
+        "boundary": "turn",
+        "text": "The change is complete. Optional follow-up: add a dashboard."
+      },
+      {
+        "source": "assistant-text",
+        "boundary": "turn",
+        "text": "The test says: 'I have not completed the task.' This is a quoted fixture."
+      },
+      {
+        "source": "assistant-text",
+        "boundary": "turn",
+        "text": "> I have not completed the task.\n\nThat quotation describes an earlier run."
+      },
+      {
+        "source": "assistant-text",
+        "boundary": "turn",
+        "text": "Composer install is still running in the background (bg_1). Next I'll run migrations and the new feature tests against the MySQL container once it finishes."
+      },
+      {
+        "source": "assistant-text",
+        "boundary": "turn",
+        "text": "Still to do: run pnpm --filter zero-client run test active-clients-manager zero.test somewhere with Playwright browsers installed."
+      },
+      {
+        "source": "assistant-text",
+        "boundary": "turn",
+        "text": "One small difference: the old base typeAnnotations getter threw 'not implemented', and it is now an abstract field that both subclasses already set."
       }
     ]
   }

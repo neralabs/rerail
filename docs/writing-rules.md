@@ -112,7 +112,8 @@ A rule from `/rerail-create` is never `block`, and belongs to the repository it 
 
 The experimental conversation-rule draft in
 [`fixtures/host/task-completion/rule-draft.json`](../fixtures/host/task-completion/rule-draft.json)
-records explicit admissions such as "Not yet done", "I have not yet fixed the actual bug", and "Next I'll run".
+records direct admissions such as "I haven't finished your request", "The implementation remains incomplete",
+or "Not yet done from the spec". Generic "Still to do" headings and "Next I'll run" promises are insufficient.
 It uses a structural text match at the assistant's `turn` boundary, in **Log** mode, with `repeat.mode: once`.
 It is opt-in and is not attached to repositories automatically. From a source checkout:
 
@@ -122,7 +123,8 @@ rerail rules add fixtures/host/task-completion/rule-draft.json
 ```
 
 Log records matches without sending the action to the agent. The draft includes shortened examples from internal
-Haiku runs and completion, blocker, source, and boundary cases; the catalog regression test runs them through the engine.
+Haiku runs, other Rerail sessions and an Opus run, plus constructed phrasing, completion, blocker, quotation, source,
+and boundary cases; the catalog regression test runs them through the engine.
 The wording detects possible unfinished work, not actual task completion. It can match quoted text, optional work,
 or historical admissions, and it misses incomplete work reported as "Done". A blocker and an admission can also
 appear together. The action therefore asks the agent to check the original request and continue only within its
@@ -132,3 +134,41 @@ Keep this experiment in Log while measuring its matches. If later changed to Ste
 late-delivery continuation path; Claude Code and Codex hold stop-time steers until the next context event. A `turn`
 boundary is host-dependent: OMP emits one after each model call, so this is not a portable final-stop detector.
 Once-per-session delivery is not once per user request, and a successful match test does not verify host continuation.
+
+#### Cross-session review (22 October 2026)
+
+The wording review screened 828 nonempty turn-end messages from 105 local Rerail sessions (633 OMP, 118 Claude Code,
+77 Codex), excluding the rule-design session. It also screened complete final transcript messages from 360 non-Haiku
+Python study runs (90 each for DeepSeek, Luna, Opus, and Qwen), separately from the original 90 Haiku runs.
+An extended screen read 3,414 transcript files from the older witness, Stage 1, Stage 2, steer-strategy and packs
+collections, retaining 3,305 unique sessions with nonempty normal-stop endings. Those include task and CI sessions
+and voided attempts; they are not an independent benchmark cohort. Most (2,749) used Opus; the rest used Luna,
+Command A+, DeepSeek, GLM, Mistral, Qwen and North Mini Code.
+Candidate messages and their surrounding requests were inspected; the entire corpus was not independently labelled
+for task completion. Counts below are text matches before repeat suppression, not precision or recall estimates.
+
+| Source | Earlier wording | Revised wording |
+|---|---:|---:|
+| Local sessions, 828 messages | 3 | 0 |
+| Non-Haiku study runs, 360 endings | 1 | 0 |
+| Older study collections, 3,305 session endings | 11 | 0 |
+| Haiku study runs, 90 endings | 10 | 4 |
+
+The earlier three local matches were all from one study session. They reported work waiting on running batches,
+or a blocker owned by another session. The Opus match handed off a `tox` check because the environment lacked its
+tools. These are poor reasons to automatically resume an agent; all four now pass and have fixture excerpts.
+Local event sequences 56860, 59344, and 63465 identify those status reports; the Opus example is the legacy-message
+Falcon #2723 on-1 run. Only relevant excerpts are included, without unrelated session details.
+
+The older-study matches include browser tests blocked by Playwright downloads (Rocicorp #6706), migrations waiting
+on a background Composer install (Krayin #2575), and desktop verification that could not run in the sandbox
+(Openscreen #963). They also include ambiguous verification and repo-workflow handoffs, which need request context
+to judge; the 11 matches should not all be labelled false positives. Additional fixture excerpts cover background
+dependency waiting, browser availability and a generated-code getter that throws "not implemented".
+
+The revised wording retains four clear Haiku admissions: Hive current on-2, Inspect current on-3, Inspect legacy
+on-1, and Inspect off-1. It also covers constructed variations about an unfinished request or implementation rather
+than naming the actual bug. It intentionally misses the OpenEvolve promise to run a smoke check and the arXiv
+promise to extract another helper. Those endings can indicate unfinished work, but a bare future promise cannot
+distinguish it from optional, blocked, or background work. There were no additional confirmed positive examples in
+the non-Haiku sample, so broader recall remains unproven. Keep the rule in Log.
