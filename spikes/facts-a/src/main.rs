@@ -3,7 +3,7 @@ mod eval;
 mod facts;
 mod factfile;
 mod fstring;
-mod policy;
+use rerail_facts::policy;
 mod pyvalue;
 mod rel;
 mod mutant;
