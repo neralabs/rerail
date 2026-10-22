@@ -44,6 +44,9 @@ pub(super) fn kinds(
 }
 
 fn closed(program: &Program, producer: usize, roots: usize) -> Result<(), String> {
+    if super::recursion::mutual(program, producer) {
+        return Err("component demand must restrict all members together".into());
+    }
     let arms = physical::expand(&program.relations[producer].expression)?;
     for arm in arms {
         for (node, id) in &arm.references {
@@ -158,6 +161,9 @@ fn specialize(set: &mut Set, program: &mut Program, cache: &mut HashMap<(usize, 
 }
 
 fn key_spec(program: &Program, producer: usize, roots: Vec<u16>) -> Result<KeyDemand, String> {
+    if super::recursion::mutual(program, producer) {
+        return Err("component key demand must cover all members together".into());
+    }
     let mut parents = BTreeSet::new();
     for arm in physical::expand(&program.relations[producer].expression)? {
         for (node, id) in &arm.references {
@@ -330,6 +336,7 @@ pub(super) fn inline(set: &Set, program: &Program) -> Set {
             ir::references(&relation.expression, &mut refs);
             if relation.keys.is_none()
                 && !refs.contains(id)
+                && !super::recursion::mutual(program, *id)
                 && !matches!(
                     relation.expression,
                     Set::Ancestors { .. } | Set::SearchRoots { .. }

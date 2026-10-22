@@ -3030,3 +3030,99 @@ It alternates generated/reference order on fresh connections with identical inst
 Parsing, EXPLAIN, and diagnostic cardinality queries stay outside the kernel timing and matching-execution count.
 It preserves evidence before failing either performance gate.
 Raw accepted artifacts are in `/tmp/rerail-complete-20261022/accepted`.
+
+### Milestone 2: structural recursive components — started 2026-10-22
+
+The next kernel compiles mutually recursive, capture-free utilities into one tagged recursive CTE per component.
+Its semantic key is `(utility, file, node)`.
+Each recursive arm must reference the component once and advance strictly in one common preorder direction.
+This proof excludes node revisits within an evaluation path; utility dependency cycles remain valid.
+`UNION` removes duplicate answers at diamonds before further expansion.
+The compiler will reject negative, nonlinear, and nonmonotone components until their outcome contracts exist.
+
+Demand propagation must not specialize one component member independently or inline a cycle.
+Tests will compare native, current-engine, and generated results across multiple files, cycles, diamonds, empty closures, and external consumers.
+Scaling evidence will include actual traced executions, VM work, EXPLAIN, and component cardinalities.
+This work does not complete the unknown, failure, enumeration, witness, or resource-limit gates.
+
+The first five component checks passed before the depth-scaling run stalled in the native oracle.
+The harness omitted the native evaluator's normal per-file memo scope.
+I stopped that run and added the same memo scope used during file evaluation.
+Memoization preserves native utility-budget charges, including repeated logical paths.
+The scaling policy therefore uses adjacent seed levels to avoid exponential native budget charges while retaining duplicate SQL paths.
+The smaller differential cases retain alternating success and failure levels.
+No performance result came from the stopped run.
+
+Self-recursion now uses the same termination proof as mutual recursion.
+Single-state closures retain their narrower `(file, node)` key.
+Parent and previous-sibling steps decrease preorder; child and next-sibling steps increase it.
+Each component requires one common direction, including every hop within an arm.
+Negative and nonlinear dependencies still fail compilation.
+Seedless positive closures produce no rows.
+Components exceeding 128 expanded arms fail before SQL preparation.
+This bound prevents a new unbounded compound query; later physical planning must handle larger programs.
+
+### Structural component results — 2026-10-22
+
+The component kernel passes native and current-engine differential tests.
+The [evidence](../benchmark/sql-relational-components-evidence.json) records exact outputs, EXPLAIN, source hashes, executable hashes, and the B023 regression check.
+The [generated SQL](../benchmark/sql-relational-components.sql) contains one three-state recursive relation.
+Each state view projects from that shared relation.
+No host loop schedules recursive rounds.
+
+The test harness now traces actual matching executions, including SQL issued inside callbacks.
+It removes the trace before EXPLAIN and diagnostic cardinality queries.
+All six scaling kernels execute one matching statement and publish zero frames.
+
+| Case | Size | Matches | Component rows | VM instructions |
+| --- | ---: | ---: | ---: | ---: |
+| Diamond depth | 16 | 53 | 157 | 9,519 |
+| Diamond depth | 64 | 197 | 589 | 35,583 |
+| Diamond depth | 128 | 389 | 1,165 | 70,335 |
+| Independent regions | 16 | 224 | 640 | 38,790 |
+| Independent regions | 64 | 896 | 2,560 | 155,046 |
+| Independent regions | 256 | 3,584 | 10,240 | 620,070 |
+
+Eight times the depth requires approximately 7.4 times the VM work.
+Sixteen times the independent regions requires approximately 16 times the VM work.
+All six kernels create zero automatic-index rows and use 12,864 bytes of statement memory.
+Statement memory excludes the recursive queue and temporary storage; these results do not establish total memory use.
+Component row counts come from separate diagnostic queries, not physical-write counters.
+
+EXPLAIN shows a kind-indexed seed scan, followed by file/node and file/parent probes in recursive arms.
+The recursive relation stores only state, file, and node.
+Its `UNION` deduplicates answers before further expansion; paths do not enter its semantic key.
+The final output uses a temporary ordering tree.
+SQLite labels recursive compound substeps `UNION ALL` in EXPLAIN; the emitted recursive CTE uses `UNION` and deduplicates its queue.
+
+Tests also cover independent components, external negative consumers, multiple files, seedless recursion, and single-state closures.
+The capture-bearing integration case returns five exact roots and witnesses across two files.
+Those captures stay outside the shared structural component.
+The compiler rejects negative dependencies, nonlinear dependencies, mixed traversal directions, and excessive component expansion.
+Demand propagation retains complete shared component answers and rejects independent member specialization.
+
+The frozen B023 regression run passes all existing gates.
+The generated query is byte-identical to the Milestone 1 artifact.
+All three samples use 2,812,255 VM instructions, one traced matching statement, and zero frame publications.
+The 138 files retain the exact two native roots and capture witnesses.
+Paired median cold kernel CPU is 113.006 ms, versus 61.352 ms for the reference: a ratio of 1.842.
+This confirms the gate on the current source; unchanged SQL prevents attributing timing variation to a new execution optimization.
+
+Validation passed the relational tests, B023 fixtures, adversarial snippets, frozen corpus, rustfmt, and both Clippy configurations.
+The replacement remains test-only.
+Milestone 2 still needs explicit unknown outcomes, withheld captures, reached failures, enumeration, parameterized witnesses, and general recursion.
+Native work and stack/depth limits remain unresolved, as does component-wide demand propagation.
+The complete cold-job budget of 100 executions remains a later acceptance gate.
+
+Reproduce the component measurements with:
+
+```sh
+JEMALLOC_OVERRIDE=/tmp/librerail_jemalloc_check_shim.dylib \
+python3 benchmark/relational-components.py /tmp/rerail-components-reproduction
+```
+
+The driver builds the test binary unless `--binary` supplies one.
+It runs the relational differential suite and preserves raw results, generated SQL, logs, and source hashes.
+Raw component artifacts are in `/tmp/rerail-components-20261022-second`.
+Raw B023 regression artifacts are in `/tmp/rerail-components-b023-20261022`.
+The next kernel starts with three-valued conjunction and withheld captures, then extends that outcome contract to ordered search and count.

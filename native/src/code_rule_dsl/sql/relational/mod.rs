@@ -8,6 +8,8 @@ mod ir;
 pub(super) mod leaves;
 mod lower;
 mod physical;
+mod recursion;
+mod recursion_tests;
 pub(super) mod tests;
 pub(super) mod witness;
 pub(super) mod witness_tests;
@@ -45,7 +47,14 @@ pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
     let plan = physical::plan(&program)?;
     let active = ir::reachable(&program);
     let relations = serde_json::json!({
-        "scope": "capture-free total relations, ancestor closure, and proved subtree demand",
+        "scope": "capture-free total relations, structural components, ancestor closure, and proved subtree demand",
+        "components":plan.iter().enumerate().filter_map(|(id,p)|match p {
+            physical::RelationPlan::Component {leader,members,..} if id==*leader => Some(serde_json::json!({
+                "id":leader,"members":members,"key":["state","file","node"],
+                "termination":"strict common preorder direction", "multiplicity":"set", "storage":"materialized recursive UNION",
+                "demand":"shared complete answers; component-wide demand propagation pending"
+            })),_=>None
+        }).collect::<Vec<_>>(),
         "demandDecisions":program.demand_decisions,
         "regionRoots":active.iter().filter_map(|id|program.relations[*id].domain).collect::<std::collections::BTreeSet<_>>(),
         "key": ["file", "node"],
@@ -57,7 +66,7 @@ pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
             "operator":format!("{:?}",r.expression),
             "domain":r.domain,
             "keyDemand":r.keys,
-            "arms":match &plan[id] {physical::RelationPlan::Joins(arms)=>arms.len(),_=>2},
+            "arms":match &plan[id] {physical::RelationPlan::Joins(arms)|physical::RelationPlan::Component{arms,..}=>arms.len(),_=>2},
             "recursive":match &plan[id] {physical::RelationPlan::Joins(arms)=>arms.iter().any(|a| a.references.iter().any(|(_,r)| *r==id)),_=>true},
         })).collect::<Vec<_>>()
     });

@@ -11,7 +11,6 @@ use std::collections::HashMap;
 pub(super) struct Lowerer {
     pub program: Program,
     utilities: HashMap<(usize, usize), usize>,
-    active: Vec<usize>,
     regexes: HashMap<String, usize>,
     dialect: Option<GrammarDialect>,
 }
@@ -159,12 +158,6 @@ impl Lowerer {
             AstMatcher::Util(util) => {
                 let key = (util.table.as_ptr() as usize, util.index);
                 if let Some(&id) = self.utilities.get(&key) {
-                    if self.active.contains(&id) && self.active.last() != Some(&id) {
-                        return Err(
-                            "relational compiler: mutual recursion needs a component relation"
-                                .into(),
-                        );
-                    }
                     Set::Reference(id)
                 } else {
                     let id = self.program.relations.len();
@@ -175,11 +168,9 @@ impl Lowerer {
                         domain: None,
                         keys: None,
                     });
-                    self.active.push(id);
                     let expression = util
                         .with_target(|r| self.set(r))
                         .ok_or("relational compiler: utility definition is unavailable")??;
-                    self.active.pop();
                     self.program.relations[id].expression = expression;
                     Set::Reference(id)
                 }

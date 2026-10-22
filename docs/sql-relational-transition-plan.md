@@ -1,6 +1,6 @@
 # Transition to direct relational SQL
 
-Status: Milestone 1 implemented and measured; later milestones pending, 2026-10-22.
+Status: Milestone 1 complete; Milestone 2 structural components implemented and measured; remaining gates pending, 2026-10-22.
 Baseline: `a0051ae8`, including the complete B023 reference query.
 This document changes no production behavior.
 
@@ -27,7 +27,15 @@ The complete lowering adds value-keyed exclusions, downward parameter recursion,
 Equivalent probes and regional recursive producers share answers.
 Pure root/value constraints can move through choices; witness selection retains its original boundary.
 
-The next phase is Milestone 2: unknown outcomes, reached failures, enumeration, parameterized witnesses, and broader recursive components.
+Milestone 2 now includes positive structural components, with native and current-engine parity.
+The compiler emits one recursive CTE for mutually recursive utilities, keyed by `(utility, file, node)`.
+Self-recursion uses the same termination proof and retains its narrower `(file, node)` CTE.
+Parent, child, and sibling steps are supported when each component advances in one strict preorder direction.
+The [component evidence](../benchmark/sql-relational-components-evidence.json) includes six scaling cases, EXPLAIN, exact outputs, and source hashes.
+The [generated component SQL](../benchmark/sql-relational-components.sql) shows the three-state diamond query.
+All six kernels use one traced matching statement, zero frame publications, and zero automatic-index rows.
+
+Unknown outcomes, reached failures, enumeration, parameterized witnesses, and general recursive components remain pending.
 Native work and stack/depth budgets also remain unresolved.
 The compiler remains test-only until the semantic coverage and production cutover gates pass.
 The complete-job 100-execution gate remains a separate requirement.
@@ -198,6 +206,33 @@ The existing semantic mutation kit supplies adversarial cases for these kernels.
 Each kernel needs an executable reference shape, native parity, and a scaling experiment.
 Unknown and fallible operations retain sequencing barriers until a rewrite proves equivalence.
 Empty or unreached branches must not acquire errors through speculative evaluation.
+
+The first implemented kernel covers positive structural recursion.
+Dependency components use a tagged `UNION` closure with seed arms before recursive arms.
+Utility views project each state from that shared closure.
+Recursive arms contain one component reference, with indexed AST probes and no path or capture environment.
+Seedless closures are empty; negative, nonlinear, and nonmonotone components fail compilation.
+The compiler also rejects components with more than 128 expanded arms before SQL preparation.
+
+The differential tests cover multiple files, diamonds, external consumers, separate components, empty closures, both directions, and multiple hops.
+A capture-bearing integration case preserves all five native roots and exact witnesses through mutually recursive structural utilities.
+Component members remain shared; demand propagation cannot restrict or inline one member independently.
+Component-wide demand restriction remains pending.
+
+| Scaling case | Sizes | VM instructions | Component rows |
+| --- | --- | --- | --- |
+| Diamond depth | 16 / 64 / 128 | 9,519 / 35,583 / 70,335 | 157 / 589 / 1,165 |
+| Independent regions | 16 / 64 / 256 | 38,790 / 155,046 / 620,070 | 640 / 2,560 / 10,240 |
+
+Component row counts come from separate diagnostic queries.
+They do not represent physical write counts or add to the reported matching executions.
+Statement memory is 12,864 bytes in all six kernels; this excludes the recursive queue and temporary storage.
+The evidence does not establish whole-job memory usage or the 100-execution gate.
+
+The next semantic kernel must represent true, false, and unknown outcomes explicitly.
+Start with the existing conjunction tests for withheld captures, then extend the same contract to ordered search and count.
+Later predicates must not turn an unknown binding into a usable capture or move across a reached failure.
+Milestone 2 remains incomplete until every semantic gate above passes.
 
 Structural recursion uses narrow closure relations like those in B023.
 Eligible mutually recursive linear utilities use a tagged recursive relation.

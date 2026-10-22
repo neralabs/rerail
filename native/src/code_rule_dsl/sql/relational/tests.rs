@@ -24,24 +24,26 @@ pub(in crate::code_rule_dsl::sql) fn measure(
         .map(|(doc, _)| {
             let tree = AstGrep::doc(doc.clone());
             let mut work = usize::MAX;
-            (0..doc.transducer_len() as u32)
-                .filter_map(|id| {
-                    grammar
-                        .match_root(node_at(&tree, id), &mut work)
-                        .unwrap()
-                        .map(|m| {
-                            (
-                                id,
-                                capture_names
-                                    .iter()
-                                    .map(|name| {
-                                        m.get_env().get_match(name).unwrap().node_id() as u32
-                                    })
-                                    .collect(),
-                            )
-                        })
-                })
-                .collect()
+            crate::code_rule_dsl::matcher::with_file_memo(&tree, || {
+                (0..doc.transducer_len() as u32)
+                    .filter_map(|id| {
+                        grammar
+                            .match_root(node_at(&tree, id), &mut work)
+                            .unwrap()
+                            .map(|m| {
+                                (
+                                    id,
+                                    capture_names
+                                        .iter()
+                                        .map(|name| {
+                                            m.get_env().get_match(name).unwrap().node_id() as u32
+                                        })
+                                        .collect(),
+                                )
+                            })
+                    })
+                    .collect()
+            })
         })
         .collect();
     let baseline_start = Started::now();
@@ -95,6 +97,7 @@ pub(in crate::code_rule_dsl::sql) fn measure(
             let counter_start = profiling::frame_snapshot();
             let mut statement = db.prepare(&compiled.sql).unwrap();
             let prepare = started.elapsed();
+            let trace = ExecutionTrace::start(db);
             let mut actual = vec![vec![]; sources.len()];
             {
                 let mut rows = statement.query([]).unwrap();
@@ -107,6 +110,12 @@ pub(in crate::code_rule_dsl::sql) fn measure(
                     ));
                 }
             }
+            let executions = trace.count();
+            drop(trace);
+            assert_eq!(
+                executions, 1,
+                "actual matching SQL executions, including callbacks"
+            );
             let vm = statement.get_status(rusqlite::StatementStatus::VmStep);
             let automatic = statement.get_status(rusqlite::StatementStatus::AutoIndex);
             let scans = statement.get_status(rusqlite::StatementStatus::FullscanStep);
@@ -182,6 +191,22 @@ pub(in crate::code_rule_dsl::sql) fn measure(
                     .collect::<rusqlite::Result<Vec<_>>>()
                     .unwrap();
             }
+            if let Some(components) = compiled.relations["components"].as_array() {
+                let prefix = compiled
+                    .sql
+                    .rsplit_once("SELECT 0,file,node,json_array() FROM r0")
+                    .unwrap()
+                    .0;
+                for component in components {
+                    let name = format!("component{}", component["id"].as_u64().unwrap());
+                    let rows: i64 = db
+                        .query_row(&format!("{prefix}SELECT COUNT(*) FROM {name}"), [], |r| {
+                            r.get(0)
+                        })
+                        .unwrap();
+                    cardinalities.push(json!({"relation":name,"rows":rows,"diagnostic":true}));
+                }
+            }
             (
                 actual,
                 vm,
@@ -195,6 +220,7 @@ pub(in crate::code_rule_dsl::sql) fn measure(
                 pattern_calls,
                 counters,
                 cold,
+                executions,
             )
         })
     });
@@ -213,10 +239,10 @@ pub(in crate::code_rule_dsl::sql) fn measure(
       "baseline":{"diagnosticKernelCpuNs":baseline_time.cpu,"framePublications":baseline_counters[4],"frameAdvances":baseline_counters[2],"matchingStatements":baseline_session.stats().statements},
       "vmSteps":result.1,"automaticIndexRows":result.2,"fullscanSteps":result.3,"statementMemoryBytes":result.4,
       "framePublications":counters[4],"nodeAdvances":counters[11],"nodeFilters":counters[13],
-      "regexRequests":counters[10],"matchingStatements":1,"sql":compiled.sql,"relations":compiled.relations})
+      "regexRequests":counters[10],"matchingStatements":result.12,"sql":compiled.sql,"relations":compiled.relations})
 }
 
-fn policy(rule: Value, utils: Value) -> crate::code_rule_dsl::CompiledCodeRuleDsl {
+pub(super) fn policy(rule: Value, utils: Value) -> crate::code_rule_dsl::CompiledCodeRuleDsl {
     CodeRuleDslRuntime::compile(
         json!({"format":"rerail.policy/v1","id":"relational-subset","revision":1,
       "mode":"steer","scope":{"include":["**/*"],"exclude":[]},"clauses":[{"id":"rule",
@@ -292,11 +318,6 @@ fn relational_unsupported_semantics_fail_closed() {
             json!({"matches":"r"}),
             json!({"r":{"any":[{"kind":"identifier"},{"inside":{"stopBy":"neighbor","not":{"matches":"r"}}}]}}),
             "recursive negation",
-        ),
-        (
-            json!({"matches":"r"}),
-            json!({"r":{"any":[{"kind":"identifier"},{"has":{"stopBy":"neighbor","matches":"r"}}]}}),
-            "ascending",
         ),
         (
             json!({"matches":"r"}),
@@ -403,4 +424,52 @@ fn relational_key_demand_retains_recursive_dependencies_and_shared_answers() {
     );
     let p = policy(json!({"any":[restricted,{"matches":"safe"}]}), utils);
     measure(&grammar_matchers(&p)[0], &sources);
+}
+
+/// Count the matching interval only. Keep the counter at a stable address until callbacks stop.
+struct ExecutionTrace<'a> {
+    db: &'a rusqlite::Connection,
+    count: Box<std::sync::atomic::AtomicUsize>,
+}
+impl<'a> ExecutionTrace<'a> {
+    fn start(db: &'a rusqlite::Connection) -> Self {
+        unsafe extern "C" fn trace(
+            mask: u32,
+            context: *mut std::ffi::c_void,
+            _: *mut std::ffi::c_void,
+            _: *mut std::ffi::c_void,
+        ) -> i32 {
+            if mask == rusqlite::ffi::SQLITE_TRACE_STMT {
+                // SAFETY: ExecutionTrace owns this allocation and unregisters before dropping it.
+                let count = unsafe { &*context.cast::<std::sync::atomic::AtomicUsize>() };
+                count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            0
+        }
+        let count = Box::new(std::sync::atomic::AtomicUsize::new(0));
+        // SAFETY: the connection and stable counter outlive the installed callback.
+        let result = unsafe {
+            rusqlite::ffi::sqlite3_trace_v2(
+                db.handle(),
+                rusqlite::ffi::SQLITE_TRACE_STMT,
+                Some(trace),
+                (&*count as *const std::sync::atomic::AtomicUsize)
+                    .cast_mut()
+                    .cast(),
+            )
+        };
+        assert_eq!(result, rusqlite::ffi::SQLITE_OK);
+        Self { db, count }
+    }
+    fn count(&self) -> usize {
+        self.count.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+impl Drop for ExecutionTrace<'_> {
+    fn drop(&mut self) {
+        // SAFETY: unregister before the counter is freed, including during unwinding.
+        unsafe {
+            rusqlite::ffi::sqlite3_trace_v2(self.db.handle(), 0, None, std::ptr::null_mut());
+        }
+    }
 }

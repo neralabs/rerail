@@ -8,6 +8,7 @@ struct Emitter {
     aliases: usize,
     bound_regions: bool,
     domains: std::collections::HashMap<usize, usize>,
+    component: Option<(usize, Vec<usize>)>,
 }
 
 pub(super) fn emit(program: &Program, plan: &[RelationPlan]) -> Result<String, String> {
@@ -78,6 +79,42 @@ pub(super) fn definitions(program: &Program, plan: &[RelationPlan]) -> Result<Ve
         .enumerate()
         .filter(|(id, _)| active.contains(id))
     {
+        if let RelationPlan::Component {
+            leader, members, ..
+        } = planned
+        {
+            if id == *leader {
+                emitter.component = Some((*leader, members.clone()));
+                let mut seeds = Vec::new();
+                let mut steps = Vec::new();
+                for &member in members {
+                    let RelationPlan::Component { arms, .. } = &plan[member] else {
+                        unreachable!()
+                    };
+                    for arm in arms {
+                        let query = emitter.arm(arm, Some(member), None, false)?;
+                        if arm.references.iter().any(|(_, r)| members.contains(r)) {
+                            steps.push(query);
+                        } else {
+                            seeds.push(query);
+                        }
+                    }
+                }
+                // Seedless positive closures are empty. Keep a nonrecursive SELECT so SQLite
+                // accepts the CTE; do not invent an answer or iterate through native callbacks.
+                if seeds.is_empty() {
+                    seeds.push("SELECT 0,0,0 WHERE 0".into());
+                }
+                seeds.extend(steps);
+                relations.push(format!(
+                    "component{leader}(state,file,node) AS MATERIALIZED (\n{}\n)",
+                    seeds.join("\nUNION\n")
+                ));
+                emitter.component = None;
+            }
+            relations.push(format!("-- {}\nr{id}(file,node) AS (SELECT file,node FROM component{leader} WHERE state={id})",program.relations[id].source));
+            continue;
+        }
         if let RelationPlan::SearchRoots {
             origins,
             filter,
@@ -96,7 +133,7 @@ pub(super) fn definitions(program: &Program, plan: &[RelationPlan]) -> Result<Ve
             relations.push(format!("-- {}\nr{id}(file,node) AS MATERIALIZED (SELECT n.file,n.parent FROM r{seeds} seed CROSS JOIN node n ON n.file=seed.file AND n.id=seed.node WHERE n.parent IS NOT NULL UNION SELECT n.file,n.parent FROM r{id} w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE n.parent IS NOT NULL{stopped})",program.relations[id].source));
             continue;
         };
-        let selects = arms
+        let mut selects = arms
             .iter()
             .map(|arm| {
                 let mut arm = arm.clone();
@@ -111,6 +148,13 @@ pub(super) fn definitions(program: &Program, plan: &[RelationPlan]) -> Result<Ve
                 emitter.arm(&arm, Some(id), None, arms.len() == 1)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        if !arms.is_empty()
+            && arms
+                .iter()
+                .all(|arm| arm.references.iter().any(|(_, r)| *r == id))
+        {
+            selects.insert(0, "SELECT 0,0 WHERE 0".into());
+        }
         let body = if selects.is_empty() {
             "SELECT file,id FROM node WHERE 0".into()
         } else {
@@ -130,6 +174,14 @@ pub(super) fn definitions(program: &Program, plan: &[RelationPlan]) -> Result<Ve
 }
 
 impl Emitter {
+    fn recursive(&self, relation: usize, owner: Option<usize>) -> bool {
+        self.component
+            .as_ref()
+            .map_or(Some(relation) == owner, |(_, members)| {
+                members.contains(&relation)
+            })
+    }
+
     fn absent(&mut self, set: &Set, root: &str) -> Result<String, String> {
         let arms = physical::expand(set)?;
         let queries = arms
@@ -151,6 +203,7 @@ impl Emitter {
         distinct: bool,
     ) -> Result<String, String> {
         if bound.is_none()
+            && self.component.is_none()
             && arm.nodes == 1
             && arm.predicates.is_empty()
             && let [(0, relation)] = arm.references.as_slice()
@@ -178,11 +231,18 @@ impl Emitter {
             .references
             .iter()
             .enumerate()
-            .filter(|(_, (node, r))| !requested || Some(*r) == owner || arm.predicates.iter().any(|p| matches!(p,Predicate::Region(at,domain) if at==node && self.domains.get(r)==Some(domain))))
-            .min_by_key(|(_, (_, r))| if Some(*r) == owner { 0 } else { 1 })
+            .filter(|(_, (node, r))| !requested || self.recursive(*r, owner) || arm.predicates.iter().any(|p| matches!(p,Predicate::Region(at,domain) if at==node && self.domains.get(r)==Some(domain))))
+            .min_by_key(|(_, (_, r))| if self.recursive(*r, owner) { 0 } else { 1 })
         {
             let name = &names[node];
-            sources.push(format!("r{relation} AS seed{serial}"));
+            if let Some((leader, members)) = &self.component
+                && members.contains(&relation)
+            {
+                sources.push(format!("component{leader} AS seed{serial}"));
+                conditions.push(format!("seed{serial}.state={relation}"));
+            } else {
+                sources.push(format!("r{relation} AS seed{serial}"));
+            }
             sources.push(format!(
                 "node AS {name} ON {name}.file=seed{serial}.file AND {name}.id=seed{serial}.node"
             ));
@@ -317,8 +377,13 @@ impl Emitter {
         let projection = if bound.is_some() {
             "1".into()
         } else {
+            let tag = if self.component.is_some() {
+                format!("{},", owner.expect("component arm has an owner"))
+            } else {
+                String::new()
+            };
             format!(
-                "{}{}.file,{}.id",
+                "{}{tag}{}.file,{}.id",
                 if distinct { "DISTINCT " } else { "" },
                 names[0],
                 names[0]
