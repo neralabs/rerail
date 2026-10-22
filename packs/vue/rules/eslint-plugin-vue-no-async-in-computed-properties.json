@@ -1118,20 +1118,7 @@
                 "any": [
                   {
                     "kind": "method_definition",
-                    "any": [
-                      {
-                        "has": {
-                          "field": "type_parameters",
-                          "pattern": "$A"
-                        }
-                      },
-                      {
-                        "has": {
-                          "field": "parameters",
-                          "pattern": "$A"
-                        }
-                      }
-                    ]
+                    "regex": "^async\\s+(?:\\*\\s*)?(?:[\\w$#]+|'(?:[^'\\\\]|\\\\.)*'|\"(?:[^\"\\\\]|\\\\.)*\"|\\[[\\s\\S]*?\\])\\s*(?<A>[<(][\\s\\S]*)$"
                   },
                   {
                     "all": [

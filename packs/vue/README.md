@@ -5,7 +5,8 @@ passing every blocking port readiness gate ([docs/port-readiness.md](../../docs/
 `upstream/eslint-plugin-vue/gates.yaml`'s recording of eslint-plugin-vue's own RuleTester cases and of the pinned
 corpora: 18 on, as `flat/recommended` turns them on, and `no-setup-props-reactivity-loss` off until turned on (no
 recommended configuration of eslint-plugin-vue turns it on). The ports cover `.vue` files only (`rerail.in_scope`), so
-upstream's cases it lints as bare `.js` scripts are not scored. The other 5 are candidates under `candidates/rules/`,
+each upstream case it lints as a bare script is recorded as the component that holds it, wrapped in `<script>` as
+`generate.mjs` writes its fixtures, and scored on upstream's answer there. The other 5 are candidates under `candidates/rules/`,
 scored and reported but never gating a check, until they pass the gates: 3 stop at `matches-upstream-tests` on cases
 no single-file, type-free read can answer as upstream does (a prop type imported from another file, a switch the
 TypeScript checker finds exhaustive, a type the checker infers, a TypeScript `<script setup>` without `lang`), 1 at

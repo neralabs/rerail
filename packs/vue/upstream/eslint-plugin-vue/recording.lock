@@ -21,10 +21,10 @@
   },
   "files": {
     "recording.json": {
-      "sha256": "4c8c0f0e7df2f0388446939a141f45a4351da8ef0cb1d3c90ff2a78ba6ae183d",
-      "size": 2431641,
+      "sha256": "6b647d1783acb886ee2e976f7b16f1a0c5bcc301366f719368a2ca3108730b38",
+      "size": 2427092,
       "format": "rerail.port-readiness-recording/v2",
-      "asset": "vue-eslint-plugin-vue-recording-4c8c0f0e7df2f0388446939a141f45a4351da8ef0cb1d3c90ff2a78ba6ae183d.json.gz"
+      "asset": "vue-eslint-plugin-vue-recording-6b647d1783acb886ee2e976f7b16f1a0c5bcc301366f719368a2ca3108730b38.json.gz"
     },
     "corpus.json": {
       "sha256": "778be77fe4fd81efb90576e058b6b60780915c8ea705bead8084f48da2c7d80a",

@@ -530,6 +530,8 @@ export async function createEslintAdapter(pack: PackManifest, names: string[], c
     fixtureParsers: setup.fixture_parsers ?? {}, namedParsers: setup.parsers ?? {}, eslintPackage, esmTests: setup.esm_tests === true,
     environment: environmentRuntime === null ? null : { runtime: environmentRuntime, package: setup.environment!.package },
     vue: setup.vue === undefined ? null : { scriptParsers: setup.vue.script_parsers, directiveRules: setup.vue.directive_rules },
+    // gates.yaml's narrowing: a script case of a type it leaves out is recorded as a component where it covers them.
+    inScope: pack.rerail.in_scope ?? null,
   };
   // Upstream's tests run where its own test runner runs them, when what they load reads the working directory.
   const cwd = setup.test_cwd === undefined ? runtime : join(upstream.directory, setup.test_cwd);

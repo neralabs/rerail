@@ -213,14 +213,28 @@ export function casePath(rule: string, testFile: string, run: number, kind: "val
  * whatever its file name, and hands the name to the rule only as `context.filename`. A TypeScript name (`.ts`, `.mts`,
  * `.cts`, `.tsx`) for a case a JavaScript parser read, such as @next/eslint-plugin-next's JSX at `pages/index.ts`,
  * would make the engine read TypeScript upstream never parsed, so the case is read in the parser's file type
- * (`extension`) at its own path; undefined when the path's file type is the language upstream read. Where upstream
- * lints `.vue` files as single-file components (`components`), a `.vue` name for a case a script parser read
- * (eslint-plugin-vue's script cases at `test.vue`, which its rules take for a component's script by that name) is
- * read the same way: the engine reads a `.vue` path as a component, and the case's code is a script.
+ * (`extension`) at its own path; undefined when the path's file type is the language upstream read.
  */
-export function parsedAs(path: string, extension: string, components = false): string | undefined {
-  if (components && extension !== ".vue" && /\.vue$/u.test(path)) return extension;
+export function parsedAs(path: string, extension: string): string | undefined {
   return !/^\.tsx?$/u.test(extension) && /\.[cm]?tsx?$/u.test(path) ? extension : undefined;
+}
+
+/** The `<script lang>` wrappedScript gives a script of each file type; JavaScript's needs none. */
+const SCRIPT_LANG: Record<string, string> = { ".ts": "ts", ".mts": "ts", ".cts": "ts", ".tsx": "tsx", ".jsx": "jsx" };
+
+/**
+ * The single-file component that holds a script case, as packs/vue's generate.mjs writes one: `<script>` with the
+ * script's `lang`, the code from the next line, and `</script>` on the line after it, so every position moves one line
+ * down (`lineOffset`). It is named as the case is when that is a `.vue` name, by the case's name with `.vue` for its
+ * extension when it names another file, and `nameless` when it names none.
+ */
+export function wrappedScript(code: string, extension: string, filename: string | undefined, nameless: string): { code: string; filename: string; lineOffset: number } {
+  const lang = SCRIPT_LANG[extension];
+  return {
+    code: `<script${lang === undefined ? "" : ` lang="${lang}"`}>\n${code}\n</script>\n`,
+    filename: filename === undefined ? nameless : /\.vue$/u.test(filename) ? filename : `${filename.replace(/\.[^./\\]*$/u, "")}.vue`,
+    lineOffset: 1,
+  };
 }
 
 /** Every string a value holds, depth first: the values of a message's `data`, whatever their nesting. */

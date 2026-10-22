@@ -27,11 +27,11 @@ import { format, isDeepStrictEqual } from "node:util";
 
 import {
   caseFixture, casePath, caseWords, configNamed, declaresEnvironment, deprecationText, fileType, firstApproved as firstApprovedIn, frozenFileType,
-  modulePackage, parsedAs, parserLanguage, vueReadsAsComponent, vueScriptLangs, vueScriptParser, withoutEnvironment, withSetting, writtenExpectation,
+  modulePackage, parsedAs, parserLanguage, vueReadsAsComponent, vueScriptLangs, vueScriptParser, withoutEnvironment, withSetting, wrappedScript, writtenExpectation,
 } from "./eslint-upstream.ts";
 
 const request = JSON.parse(readFileSync(0, "utf8"));
-const { plugin, configs: approvedNames, release, fixtureParsers, namedParsers, eslintPackage, environment: environmentSetup, vue: vueSetup } = request;
+const { plugin, configs: approvedNames, release, fixtureParsers, namedParsers, eslintPackage, environment: environmentSetup, vue: vueSetup, inScope } = request;
 // Node identifies modules by real path, and the cache may be reached through a symlink.
 const runtime = realpathSync(request.runtime);
 const checkout = realpathSync(request.checkout);
@@ -104,8 +104,20 @@ function lintedExtensions() {
   }
   return CANDIDATE_EXTENSIONS.filter((extension) => linted.has(extension));
 }
-/** Whether upstream lints `.vue` files, as single-file components: a `.vue` name then means a component (parsedAs). */
+/** Whether upstream lints `.vue` files, as single-file components. */
 const lintsComponents = lintedExtensions().includes(".vue");
+
+/**
+ * Whether a case upstream read as one script, of this file type and name, is recorded as the component that holds it
+ * (wrappedScript), where upstream lints components: a case at a `.vue` name (eslint-plugin-vue's script cases at
+ * `test.vue`, which its rules take for a component's script by that name), or a script of a type gates.yaml's
+ * `rerail.in_scope` leaves out where it covers components (a case that names no file, which RuleTester lints as a
+ * script), which the tool-pack's ports would otherwise never be judged on.
+ */
+function recordedAsComponent(extension, filename) {
+  if (!lintsComponents || extension === ".vue") return false;
+  return /\.vue$/u.test(filename ?? "") || (inScope !== null && inScope.includes(".vue") && !inScope.includes(extension));
+}
 
 /**
  * The module files of the parsers the approved configurations lint each file type with: those whose exports are the
@@ -389,6 +401,14 @@ function parserFile(parser) {
   return parserFiles.get(parser);
 }
 
+/** The script parser vue-eslint-parser (loaded from `file`) reads a case that is no component with, espree when none is picked. */
+function vueReadsScriptWith(languageOptions, file, filename) {
+  // vue-eslint-parser loads a script parser named by module from its own location.
+  const picked = vueScriptParser(languageOptions?.parserOptions?.parser, vueScriptLangs(filename));
+  const vueRequire = createRequire(file ?? join(runtime, "package.json"));
+  return interop(typeof picked === "string" || picked === undefined ? vueRequire(picked ?? "espree") : picked);
+}
+
 /**
  * The file type of a case linted with these language options, or why it has none. A parser upstream's tests load from
  * the checkout returns a fixed tree: the tree another parser built for the case's own code, in a directory the
@@ -411,11 +431,7 @@ function languageOf(languageOptions, filename, code) {
   const language = parserLanguage(name, packageName, namedParsers);
   if (language === undefined) return { skipped: `upstream lints it with the parser ${name ?? packageName ?? "(unnamed)"}, a language the engine has no file type for` };
   if (language === "vue" && !vueReadsAsComponent(filename, code ?? "")) {
-    // vue-eslint-parser loads a script parser named by module from its own location, and espree when none is picked.
-    const picked = vueScriptParser(languageOptions?.parserOptions?.parser, vueScriptLangs(filename));
-    const vueRequire = createRequire(file ?? join(runtime, "package.json"));
-    const scriptParser = typeof picked === "string" || picked === undefined ? vueRequire(picked ?? "espree") : picked;
-    return languageOf({ ...languageOptions, parser: interop(scriptParser) }, filename, code);
+    return languageOf({ ...languageOptions, parser: vueReadsScriptWith(languageOptions, file, filename) }, filename, code);
   }
   const sourceType = languageOptions?.sourceType;
   return { extension: fileType({ language, jsx: languageOptions?.parserOptions?.ecmaFeatures?.jsx === true, sourceType }), script: language === "javascript" && sourceType === "script" };
@@ -444,7 +460,9 @@ function withoutLanguage(config) {
  * In a pack's environment, the case is linted as a project in it would lint a file of its name: the environment's
  * entries decide its language (parser, ECMAScript version, source type, globals), the case keeps its code, its name and
  * its rule setting, and a case upstream names no file for is named `nameless(<its own parser's file type>)`, the path
- * the engine evaluates it at.
+ * the engine evaluates it at. A script recordedAsComponent is linted as the component that holds it (wrappedScript),
+ * with the language options it was read with and vue-eslint-parser handing its `<script>` to the parser that read it;
+ * the result carries that component's code and how many lines it moved the script down.
  */
 function lintESLintCase(entry, item, setting, nameless) {
   const named = own(item, "filename") ? item.filename : undefined;
@@ -459,11 +477,12 @@ function lintESLintCase(entry, item, setting, nameless) {
   const itemConfig = { ...item };
   for (const parameter of RULE_TESTER_PARAMETERS) delete itemConfig[parameter];
   const ownEnvironment = declaresEnvironment(entry.testerConfig) || declaresEnvironment(itemConfig);
-  const assemble = (filename, inEnvironment) => {
+  const assemble = (filename, inEnvironment, language) => {
     const strip = (config) => (inEnvironment ? withoutLanguage(withoutEnvironment(config)) : withoutEnvironment(config));
     const configs = new FlatConfigArray(strip(entry.testerConfig), { baseConfig, ...(filename ? { basePath: parsePath(filename).root || undefined } : {}) });
     if (inEnvironment) for (const environmentEntry of environment) configs.push(environmentEntry);
     configs.push(strip(itemConfig));
+    if (language !== undefined) configs.push(language);
     configs.push({ rules: { [`rule-to-test/${entry.ruleName}`]: setting } });
     configs.normalizeSync();
     return configs;
@@ -479,12 +498,29 @@ function lintESLintCase(entry, item, setting, nameless) {
     language = languageOf(configs.getConfig(filename)?.languageOptions, filename, item.code);
     if (language.skipped !== undefined) return { language, filename, ownEnvironment };
   }
+  let code = item.code;
+  let lineOffset = 0;
+  const scriptOptions = configs.getConfig(filename || "__placeholder__.js")?.languageOptions;
+  const scriptParserFile = scriptOptions?.parser === undefined ? null : parserFile(scriptOptions.parser);
+  if (recordedAsComponent(language.extension, filename) && !(scriptParserFile?.startsWith(checkout + sep) ?? false)) {
+    // The component holding the script, linted by vue-eslint-parser with the script parser that read it alone.
+    const scriptParserName = scriptOptions.parser?.meta?.name ?? (typeof scriptOptions.parser?.name === "string" ? scriptOptions.parser.name : undefined);
+    const scriptParser = parserLanguage(scriptParserName, scriptParserFile === null ? undefined : modulePackage(scriptParserFile), namedParsers) === "vue"
+      ? vueReadsScriptWith(scriptOptions, scriptParserFile, filename)
+      : scriptOptions.parser;
+    const wrapped = wrappedScript(item.code, language.extension, named, nameless(".vue"));
+    ({ code, lineOffset } = wrapped);
+    filename = wrapped.filename;
+    configs = assemble(filename, environment.length > 0, { languageOptions: { parser: interop(runtimeRequire("vue-eslint-parser")), parserOptions: { parser: scriptParser } } });
+    language = languageOf(configs.getConfig(filename)?.languageOptions, filename, code);
+    if (language.skipped !== undefined) return { language, filename, ownEnvironment, code, lineOffset };
+  }
   if (typeof item.before === "function") item.before();
   try {
-    return { language, filename, ownEnvironment, messages: new Linter({ configType: "flat" }).verify(item.code, configs, filename), ruleId: `rule-to-test/${entry.ruleName}` };
+    return { language, filename, ownEnvironment, code, lineOffset, messages: new Linter({ configType: "flat" }).verify(code, configs, filename), ruleId: `rule-to-test/${entry.ruleName}` };
   } catch (error) {
     // Upstream's own rule or parser throws on the case: upstream has no answer for it.
-    return { language: { ...language, skipped: `upstream's linter throws on it: ${String(error?.message ?? error).split("\n")[0]}` }, filename, ownEnvironment };
+    return { language: { ...language, skipped: `upstream's linter throws on it: ${String(error?.message ?? error).split("\n")[0]}` }, filename, ownEnvironment, code, lineOffset };
   } finally {
     if (typeof item.after === "function") item.after();
   }
@@ -538,18 +574,18 @@ async function tests(globs, names, caseTesters) {
       items.forEach(({ kind, index, item: raw }, order) => {
         const item = typeof raw === "string" ? { code: raw } : raw;
         const ownOptions = own(item, "options") ? item.options : undefined;
-        const base = { fixture: caseFixture(testFile, run, kind, index), variant: ownOptions === undefined ? "." : `options ${JSON.stringify(ownOptions)}`, code: item.code, findings: [], markup: null };
-        const at = (filename, extension, skipped) => {
+        const base = { fixture: caseFixture(testFile, run, kind, index), variant: ownOptions === undefined ? "." : `options ${JSON.stringify(ownOptions)}`, findings: [], markup: null };
+        const at = (filename, extension, skipped, code = item.code) => {
           const path = casePath(name, testFile, run, kind, index, filename, checkout, cache, extension);
-          const type = parsedAs(path, extension, lintsComponents);
-          return { ...base, path, ...(type === undefined ? {} : { parsedAs: type }), skipped };
+          const type = parsedAs(path, extension);
+          return { ...base, code, path, ...(type === undefined ? {} : { parsedAs: type }), skipped };
         };
         let outcome;
         if (entry.tester === "eslint") {
           const linted = lintESLintCase(entry, item, settingFor(name), (extension) => casePath(name, testFile, run, kind, index, undefined, checkout, cache, extension));
           const extension = linted.language.extension ?? ".js";
-          if (linted.language.skipped !== undefined) return void cases[name].push(at(linted.filename, extension, linted.language.skipped));
-          outcome = { messages: linted.messages, ruleId: linted.ruleId, filename: linted.filename, extension, script: linted.language.script === true, ownEnvironment: linted.ownEnvironment };
+          if (linted.language.skipped !== undefined) return void cases[name].push(at(linted.filename, extension, linted.language.skipped, linted.code));
+          outcome = { messages: linted.messages, ruleId: linted.ruleId, filename: linted.filename, extension, script: linted.language.script === true, ownEnvironment: linted.ownEnvironment, code: linted.code, lineOffset: linted.lineOffset };
         } else {
           if (environment.length > 0) throw new Error(`${testFile}: a pack environment applies to ESLint's RuleTester only, not to ${entry.tester === "case" ? "a case tester" : "typescript-eslint's RuleTester"}`);
           // typescript-eslint's RuleTester names every case's file (file.ts by default); a case tester's case without one
@@ -583,13 +619,18 @@ async function tests(globs, names, caseTesters) {
           }
         }
         const fatal = outcome.messages.find((message) => message.fatal);
-        if (fatal !== undefined) return void cases[name].push(at(outcome.filename, outcome.extension, `upstream's parser rejects it: ${fatal.message}`));
+        if (fatal !== undefined) return void cases[name].push(at(outcome.filename, outcome.extension, `upstream's parser rejects it: ${fatal.message}`, outcome.code));
+        // The written expectation is of the case's own code, which a wrapped script moved lineOffset lines down. A script
+        // recorded as a component under a `.vue` name it did not have is another file than the one its errors describe.
+        const lineOffset = outcome.lineOffset ?? 0;
+        const renamed = lineOffset > 0 && !/\.vue$/u.test(own(item, "filename") ? item.filename : "");
+        const written = writtenExpectation(kind, item.errors, ownOptions, approvedOptions, isDeepStrictEqual);
         cases[name].push({
-          ...at(outcome.filename, outcome.extension, null),
+          ...at(outcome.filename, outcome.extension, null, outcome.code),
           script: outcome.script,
           findings: outcome.messages.filter((message) => message.ruleId === outcome.ruleId).map(position),
           // A case that declares globals or settings was written for an environment other than the approved one.
-          markup: outcome.ownEnvironment ? null : writtenExpectation(kind, item.errors, ownOptions, approvedOptions, isDeepStrictEqual),
+          markup: outcome.ownEnvironment || renamed ? null : written?.map(([line, column, endLine, endColumn]) => [line + lineOffset, column, endLine === null ? null : endLine + lineOffset, endColumn]) ?? null,
         });
       });
     });

@@ -5,7 +5,7 @@ import * as babel from "@babel/parser";
 import ts from "typescript";
 
 import {
-  fileType, parsedAs, parserLanguage, vueReadsAsComponent, vueScriptLangs, vueScriptParser,
+  fileType, parserLanguage, vueReadsAsComponent, vueScriptLangs, vueScriptParser, wrappedScript,
 } from "../../../conformance/recorders/port-readiness/adapters/eslint/eslint-upstream.js";
 import type { BabelParser, TypeScript } from "../../../conformance/recorders/port-readiness/languages/ecmascript.js";
 import { componentParserVerdicts, type SfcCompiler, type SfcParseResult } from "../../../conformance/recorders/port-readiness/languages/vue.js";
@@ -39,14 +39,14 @@ test("a script vue-eslint-parser reads takes the parser its parserOptions.parser
   assert.equal(vueScriptParser(undefined, ["js"]), undefined);
 });
 
-test("where upstream lints components, a script case at a .vue name is read as the script it is", () => {
-  assert.equal(parsedAs("test.vue", ".js", true), ".js");
-  assert.equal(parsedAs("test.vue", ".ts", true), ".ts");
-  assert.equal(parsedAs("test.vue", ".vue", true), undefined);
-  assert.equal(parsedAs("src/a.js", ".js", true), undefined);
-  // Elsewhere a .vue name keeps its path's file type, as before.
-  assert.equal(parsedAs("index.vue", ".js"), undefined);
-  assert.equal(parsedAs("pages/index.ts", ".jsx", true), ".jsx");
+test("a script case becomes the component holding it: a <script> in its lang one line down, at a .vue name", () => {
+  // eslint-plugin-vue's script case at test.vue keeps its name.
+  assert.deepEqual(wrappedScript("export default {}", ".js", "test.vue", "r/input.vue"), { code: "<script>\nexport default {}\n</script>\n", filename: "test.vue", lineOffset: 1 });
+  // A case naming another file takes its name with .vue; one naming none, the nameless path.
+  assert.equal(wrappedScript("let a: number", ".ts", "src/a.ts", "r/input.vue").code, "<script lang=\"ts\">\nlet a: number\n</script>\n");
+  assert.equal(wrappedScript("x", ".ts", "src/a.ts", "r/input.vue").filename, "src/a.vue");
+  assert.equal(wrappedScript("x", ".tsx", undefined, "r/input.vue").code, "<script lang=\"tsx\">\nx\n</script>\n");
+  assert.equal(wrappedScript("x", ".jsx", undefined, "r/input.vue").filename, "r/input.vue");
 });
 
 test("a component's verdicts are its own parse errors and each parser's on its scripts, under the same parsers as every other file", () => {

@@ -2,7 +2,7 @@
 
 Upstream: [vuejs/eslint-plugin-vue](https://github.com/vuejs/eslint-plugin-vue/tree/ec9c53a6fbed637d7b0fbcd6893b0206ae32839f) at tag `v10.11.1` (commit `ec9c53a6fbed637d7b0fbcd6893b0206ae32839f`). License: MIT (Copyright (c) 2017 Toru Nagashima); [`LICENSE`](LICENSE) is the upstream license file, copied verbatim at that tag.
 
-The files listed below are the code of RuleTester cases of the rules the Vue pack ports (`../../conformance.json`), and remain under eslint-plugin-vue's license. Each is one case's `code`, copied verbatim, or wrapped in a `<script>` element when the case is a script (a non-`.vue` filename, a parser other than vue-eslint-parser, or code with no SFC block and no filename), so that it is a `.vue` file. Every other file under `upstream/` is Rerail's, under the Apache License 2.0 (this repository's `LICENSE`): `read_tests.mjs`, `generate.mjs`, `authored.mjs`, `cases.json`, the fixtures `rerail-*.vue` (written by Rerail; `upstream/eslint-plugin-vue/UPSTREAM.md` lists them) and the recordings they write by running ESLint 10.11.0 with eslint-plugin-vue 10.11.1.
+The files listed below are the code of RuleTester cases of the rules the Vue pack ports (`../../conformance.json`), and remain under eslint-plugin-vue's license. Each is one case's `code`, copied verbatim, or wrapped in a `<script>` element when the case is a script (a non-`.vue` filename, a parser other than vue-eslint-parser, or code with no SFC block and no filename), so that it is a `.vue` file. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of eslint-plugin-vue's rules, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. Every other file under `upstream/` is Rerail's, under the Apache License 2.0 (this repository's `LICENSE`): `read_tests.mjs`, `generate.mjs`, `authored.mjs`, `cases.json`, the fixtures `rerail-*.vue` (written by Rerail; `upstream/eslint-plugin-vue/UPSTREAM.md` lists them) and the recordings they write by running ESLint 10.11.0 with eslint-plugin-vue 10.11.1.
 
 This file is written by `upstream/eslint-plugin-vue/generate.mjs fixtures`. Paths are relative to the pack directory (`packs/vue/`).
 
@@ -391,7 +391,7 @@ This file is written by `upstream/eslint-plugin-vue/generate.mjs fixtures`. Path
 | `upstream/eslint-plugin-vue/fixtures/no-template-shadow/invalid-010.vue` | `tests/lib/rules/no-template-shadow.test.ts` case `invalid/10` | verbatim |
 | `upstream/eslint-plugin-vue/fixtures/no-template-shadow/invalid-011.vue` | `tests/lib/rules/no-template-shadow.test.ts` case `invalid/11` | verbatim |
 | `upstream/eslint-plugin-vue/fixtures/no-template-shadow/96a3a1cd166a.vue` | `tests/lib/rules/no-template-shadow.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-template-shadow/e3b0c44298fc.js` | `tests/lib/rules/no-template-shadow.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/no-template-shadow/2de754729dad.vue` | `tests/lib/rules/no-template-shadow.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/no-unused-refs/valid-000.vue` | `tests/lib/rules/no-unused-refs.test.ts` case `valid/0` | verbatim |
 | `upstream/eslint-plugin-vue/fixtures/no-unused-refs/valid-001.vue` | `tests/lib/rules/no-unused-refs.test.ts` case `valid/1` | verbatim |
 | `upstream/eslint-plugin-vue/fixtures/no-unused-refs/valid-002.vue` | `tests/lib/rules/no-unused-refs.test.ts` case `valid/2` | verbatim |
@@ -466,26 +466,7 @@ This file is written by `upstream/eslint-plugin-vue/generate.mjs fixtures`. Path
 | `upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-017.vue` | `tests/lib/rules/no-ref-as-operand.test.ts` case `invalid/17` | verbatim |
 | `upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-018.vue` | `tests/lib/rules/no-ref-as-operand.test.ts` case `invalid/18` | verbatim |
 | `upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-019.vue` | `tests/lib/rules/no-ref-as-operand.test.ts` case `invalid/19` | verbatim |
-| `upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/27f266049d83.js` | `tests/lib/rules/no-ref-as-operand.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/2d63300ed8b2.js` | `tests/lib/rules/no-ref-as-operand.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/336fd17f3d08.js` | `tests/lib/rules/no-ref-as-operand.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/51fce401e969.js` | `tests/lib/rules/no-ref-as-operand.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/52a378b40051.js` | `tests/lib/rules/no-ref-as-operand.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/5aa6ea317cce.js` | `tests/lib/rules/no-ref-as-operand.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/7f7f2a365ded.js` | `tests/lib/rules/no-ref-as-operand.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/9218219971ce.js` | `tests/lib/rules/no-ref-as-operand.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/9f1b3ac4fbf8.js` | `tests/lib/rules/no-ref-as-operand.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/aac0779dd072.js` | `tests/lib/rules/no-ref-as-operand.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/b1c783b1d9a8.js` | `tests/lib/rules/no-ref-as-operand.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/b1dfea10dd73.js` | `tests/lib/rules/no-ref-as-operand.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/c07b88838d26.js` | `tests/lib/rules/no-ref-as-operand.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/ca0a6149b070.js` | `tests/lib/rules/no-ref-as-operand.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/cdc2683309a3.js` | `tests/lib/rules/no-ref-as-operand.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/e0f8bbda3052.js` | `tests/lib/rules/no-ref-as-operand.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/e42547405b98.js` | `tests/lib/rules/no-ref-as-operand.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/f2e73601d105.js` | `tests/lib/rules/no-ref-as-operand.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/f36e215fb3c6.js` | `tests/lib/rules/no-ref-as-operand.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/fe04ebc07cb8.js` | `tests/lib/rules/no-ref-as-operand.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/c39a1e5c17c9.vue` | `tests/lib/rules/no-ref-as-operand.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/no-mutating-props/valid-000.vue` | `tests/lib/rules/no-mutating-props.test.ts` case `valid/0` | verbatim |
 | `upstream/eslint-plugin-vue/fixtures/no-mutating-props/valid-001.vue` | `tests/lib/rules/no-mutating-props.test.ts` case `valid/1` | verbatim |
 | `upstream/eslint-plugin-vue/fixtures/no-mutating-props/valid-002.vue` | `tests/lib/rules/no-mutating-props.test.ts` case `valid/2` | verbatim |
@@ -577,40 +558,11 @@ This file is written by `upstream/eslint-plugin-vue/generate.mjs fixtures`. Path
 | `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-020.vue` | `tests/lib/rules/no-dupe-keys.test.ts` case `invalid/20` | verbatim |
 | `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-021.vue` | `tests/lib/rules/no-dupe-keys.test.ts` case `invalid/21` | verbatim |
 | `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-022.vue` | `tests/lib/rules/no-dupe-keys.test.ts` case `invalid/22` | verbatim |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/080c1c26b9ea.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/092ad6ea02cc.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/0eefb298181c.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/2f55f7f59a18.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/3421ea4ca393.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/374c4af13156.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/403463dedf1b.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/468b3fc017ea.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/52cabafb8064.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/7b0a78abe3d0.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/8d7d11f08678.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/96f93fee2329.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/a636678cf478.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/a6d3c173827b.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/ac7193da1a29.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/ad252c3dcfb1.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/b2a9f6e3cf3b.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/b8a946ee8ee2.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/b8d2a2b3b0fa.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/b8f0c87726d2.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/bb5f2caea9f6.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/bd52102d9696.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/be28e2dc4b3a.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/c360658816fb.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/c6d2ec317b27.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/ceff5a1e3140.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/cfe70a776d7a.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/d506b625657b.vue` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/e19e050c5536.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/edc4e78e5b54.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/efa18d611e3c.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/f01ae360238b.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/f61651c5c9c0.vue` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/fe62cb03428a.js` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/487ac1097c04.vue` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/860797bebe12.vue` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/no-dupe-keys/cf047fde94ee.vue` | `tests/lib/rules/no-dupe-keys.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/valid-000.vue` | `tests/lib/rules/return-in-computed-property.test.ts` case `valid/0` | derived: wrapped in <script> |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/valid-001.vue` | `tests/lib/rules/return-in-computed-property.test.ts` case `valid/1` | derived: wrapped in <script> |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/valid-002.vue` | `tests/lib/rules/return-in-computed-property.test.ts` case `valid/2` | derived: wrapped in <script> |
@@ -635,79 +587,55 @@ This file is written by `upstream/eslint-plugin-vue/generate.mjs fixtures`. Path
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/invalid-034.vue` | `tests/lib/rules/return-in-computed-property.test.ts` case `invalid/34` | derived: wrapped in <script> |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/invalid-035.vue` | `tests/lib/rules/return-in-computed-property.test.ts` case `invalid/35` | derived: wrapped in <script> |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/invalid-036.vue` | `tests/lib/rules/return-in-computed-property.test.ts` case `invalid/36` | derived: wrapped in <script> |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/008d78807bf9.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/05e050c8c755.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/0cf508c1ab3b.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/13a579ca116a.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/147b98ec250f.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/14e7201ff23b.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/1b562501e9b7.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/20d71f3a5dc1.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/237840a438c7.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/2e6d0f1d8cc3.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/2f757ca213fa.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/311c459979fa.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/3179ea993fe4.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/32a74aee129d.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/3375c8e1e0f4.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/38fd8b49d244.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/3b3ca3f0baa4.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/442d476974cb.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/466f5c6dcb73.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/4fd8adbf8778.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/52e61cc7436e.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/53e5bd7345f4.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/540bca8f06c1.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/55f6ffb7376e.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/5a020d9c33e2.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/5ee14b60cda3.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/61a64276afc7.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/63300019196a.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/6e040e23254b.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/782278031ca4.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/7adb71b279b2.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/7b581a3dcbba.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/7db209ab88cc.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/7f0d008c4379.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/8e05b1717141.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/8e685222abdb.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/8f87aa1f797f.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/9092db114323.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/92ba2d0d49ec.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/9591aa794a1c.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/9b98f6089ab2.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/9c603e6d1a8e.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/9ceb857735f6.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/9d54504b391c.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/9f8eec6a7817.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/a077a717c829.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/a788c8abf7e3.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/b27be2d5870c.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/b83472581842.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/bc2e8e9eee06.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/c1355282b49e.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/c2502c514f3a.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/c4abc28ae72f.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/c84163b9cf7b.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/c8f56b229fe8.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/cdec721ad5e1.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/ce0d2869dc5b.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/cf6b93c39c38.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/d0e07233a99b.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/e0366888834d.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/e131c09ed164.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/e1897f137e4c.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/e308c1c45fd0.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/e5f8e89dc3a7.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/e615cbbdd1fc.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/e67c2399e106.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/e949c7f10ff4.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/eb32ea7d3fd7.js` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/eff415963631.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/f01b54e6d4fd.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/f609722b35e8.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/f9bb20dfc025.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/fe881fa7c8df.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/24fe9c03d36a.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/a483665b38d9.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/ac1a3fffdfb5.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/return-in-computed-property/ebd7fa64017d.vue` | `tests/lib/rules/return-in-computed-property.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-000.vue` | `tests/lib/rules/no-async-in-computed-properties.test.ts` case `valid/0` | derived: wrapped in <script> |
 | `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-001.vue` | `tests/lib/rules/no-async-in-computed-properties.test.ts` case `valid/1` | derived: wrapped in <script> |
 | `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-002.vue` | `tests/lib/rules/no-async-in-computed-properties.test.ts` case `valid/2` | derived: wrapped in <script> |
@@ -761,58 +689,12 @@ This file is written by `upstream/eslint-plugin-vue/generate.mjs fixtures`. Path
 | `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-037.vue` | `tests/lib/rules/no-async-in-computed-properties.test.ts` case `invalid/37` | derived: wrapped in <script> |
 | `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-038.vue` | `tests/lib/rules/no-async-in-computed-properties.test.ts` case `invalid/38` | derived: wrapped in <script> |
 | `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-039.vue` | `tests/lib/rules/no-async-in-computed-properties.test.ts` case `invalid/39` | derived: wrapped in <script> |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/06fb9f767c5b.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/0e6cd7cd4f40.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/130e9c02bff8.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/1348c465bb21.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/17d7c484af31.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/18a14a60007e.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/1b8b991c2243.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/218ddd1c3c77.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/241231b4177c.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/2959e4a65278.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/2dda2cf75612.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/32791f7a2b54.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/34eedb0ba56c.vue` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/34f2adda15b9.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/3db5388e4d14.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/5291bc0a4210.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/5322bf7f221a.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/65410522f851.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/6e62754c384c.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/6ea68b8dcaef.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/700460c3d6c9.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/80844f915d89.vue` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/839cef6373ce.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/867b04f57001.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/8f9a555e94db.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/90ceb1cb4fb6.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/91a4f1d6298c.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/93ffdea2cb35.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/94686905d8b9.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/9725500dd959.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/985fb36691a4.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/9f705dede0b0.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/a1bc0c0556c2.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/a1c81da6f00b.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/a30f702ae4a2.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/ad11aab4f6ab.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/bc5fad326393.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/bef308cd289e.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/c635da22e293.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/c6ade39f5980.vue` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/d3f624facdf8.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/d462dc89610f.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/db4e5a1387e3.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/e569c5380b7d.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/e5d3ff503a1b.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/ea151f31a175.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/eb2b7d962fa1.vue` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/ef00a66d826d.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/ef1daf89bab0.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/f0988c934445.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/f1da8639682e.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/f8c4275ad242.js` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/01ce634462cf.vue` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/26196b417c25.vue` | `tests/lib/rules/no-async-in-computed-properties.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/valid-000.vue` | `tests/lib/rules/no-side-effects-in-computed-properties.test.ts` case `valid/0` | derived: wrapped in <script> |
 | `upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/valid-001.vue` | `tests/lib/rules/no-side-effects-in-computed-properties.test.ts` case `valid/1` | derived: wrapped in <script> |
 | `upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/valid-002.vue` | `tests/lib/rules/no-side-effects-in-computed-properties.test.ts` case `valid/2` | derived: wrapped in <script> |
@@ -835,20 +717,6 @@ This file is written by `upstream/eslint-plugin-vue/generate.mjs fixtures`. Path
 | `upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-010.vue` | `tests/lib/rules/no-side-effects-in-computed-properties.test.ts` case `invalid/10` | verbatim |
 | `upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-011.vue` | `tests/lib/rules/no-side-effects-in-computed-properties.test.ts` case `invalid/11` | verbatim |
 | `upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-012.vue` | `tests/lib/rules/no-side-effects-in-computed-properties.test.ts` case `invalid/12` | verbatim |
-| `upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/0001215acb00.js` | `tests/lib/rules/no-side-effects-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/06d570f107cd.js` | `tests/lib/rules/no-side-effects-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/0a825c035d76.js` | `tests/lib/rules/no-side-effects-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/1cdc0445c80b.js` | `tests/lib/rules/no-side-effects-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/1faa4981d6e0.js` | `tests/lib/rules/no-side-effects-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/2296ded499dc.js` | `tests/lib/rules/no-side-effects-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/741b6c6adc4a.js` | `tests/lib/rules/no-side-effects-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/9038b33bab00.js` | `tests/lib/rules/no-side-effects-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/97a593f8ee17.js` | `tests/lib/rules/no-side-effects-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/99cad2c9c6ff.js` | `tests/lib/rules/no-side-effects-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/bf2b806c5216.js` | `tests/lib/rules/no-side-effects-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/bfd6b20d9925.js` | `tests/lib/rules/no-side-effects-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/cd5a83991ef1.ts` | `tests/lib/rules/no-side-effects-in-computed-properties.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/ef8c20f3c7e8.js` | `tests/lib/rules/no-side-effects-in-computed-properties.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/no-export-in-script-setup/valid-000.vue` | `tests/lib/rules/no-export-in-script-setup.test.ts` case `valid/0` | verbatim |
 | `upstream/eslint-plugin-vue/fixtures/no-export-in-script-setup/valid-001.vue` | `tests/lib/rules/no-export-in-script-setup.test.ts` case `valid/1` | verbatim |
 | `upstream/eslint-plugin-vue/fixtures/no-export-in-script-setup/valid-002.vue` | `tests/lib/rules/no-export-in-script-setup.test.ts` case `valid/2` | verbatim |
@@ -899,7 +767,6 @@ This file is written by `upstream/eslint-plugin-vue/generate.mjs fixtures`. Path
 | `upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-022.vue` | `tests/lib/rules/no-setup-props-reactivity-loss.test.ts` case `invalid/22` | verbatim |
 | `upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-023.vue` | `tests/lib/rules/no-setup-props-reactivity-loss.test.ts` case `invalid/23` | verbatim |
 | `upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-024.vue` | `tests/lib/rules/no-setup-props-reactivity-loss.test.ts` case `invalid/24` | verbatim |
-| `upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/fe3b16368f1b.js` | `tests/lib/rules/no-setup-props-reactivity-loss.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/no-watch-after-await/valid-000.vue` | `tests/lib/rules/no-watch-after-await.test.ts` case `valid/0` | verbatim |
 | `upstream/eslint-plugin-vue/fixtures/no-watch-after-await/valid-001.vue` | `tests/lib/rules/no-watch-after-await.test.ts` case `valid/1` | verbatim |
 | `upstream/eslint-plugin-vue/fixtures/no-watch-after-await/valid-002.vue` | `tests/lib/rules/no-watch-after-await.test.ts` case `valid/2` | verbatim |
@@ -914,7 +781,6 @@ This file is written by `upstream/eslint-plugin-vue/generate.mjs fixtures`. Path
 | `upstream/eslint-plugin-vue/fixtures/no-watch-after-await/invalid-000.vue` | `tests/lib/rules/no-watch-after-await.test.ts` case `invalid/0` | verbatim |
 | `upstream/eslint-plugin-vue/fixtures/no-watch-after-await/invalid-001.vue` | `tests/lib/rules/no-watch-after-await.test.ts` case `invalid/1` | verbatim |
 | `upstream/eslint-plugin-vue/fixtures/no-watch-after-await/invalid-002.vue` | `tests/lib/rules/no-watch-after-await.test.ts` case `invalid/2` | verbatim |
-| `upstream/eslint-plugin-vue/fixtures/no-watch-after-await/e32d3b09b69d.js` | `tests/lib/rules/no-watch-after-await.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-000.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` case `valid/0` | derived: wrapped in <script> |
 | `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-001.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` case `valid/1` | derived: wrapped in <script> |
 | `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-002.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` case `valid/2` | derived: wrapped in <script> |
@@ -994,72 +860,65 @@ This file is written by `upstream/eslint-plugin-vue/generate.mjs fixtures`. Path
 | `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-054.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` case `invalid/54` | verbatim |
 | `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-055.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` case `invalid/55` | verbatim |
 | `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-056.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` case `invalid/56` | verbatim |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/001757d5ff3c.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/0854539d2a00.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/0cc637984de6.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/0f818368dfb6.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/11739bd641e0.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/12b6e3a38580.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/167067a228a3.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/193b12167a03.ts` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/1b69fa08e972.tsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/2842b95a0bfa.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/2c19c7444424.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/2e1e587ab8e1.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/308a33e31e0a.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/3379af2eea50.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/3baad3af3e37.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/3d5cd65ae75e.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/3ddd71522d85.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/419e863b9501.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/4237414410ca.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/42e06e3a9e47.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/44fba13ac893.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/47d64eafb58f.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/47dafad87185.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/4be3a6702c26.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/4ed4a436b32a.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/59aee9b4b7d9.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/6021b65d1b31.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/638440bb1060.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/67714fd76512.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/67a1ae766704.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/67b8257edf67.ts` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/6a88b0016ffc.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/6bcc1c0423f6.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/6d93a84c3fe6.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/6e0ba50856eb.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/7079d6d5b63d.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/75d76e019422.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/7675c485496f.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/83e02a704178.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/84091795ae03.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/87a663afd6c1.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/8a735b1ee18c.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/8b19983b909e.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/8b62fe0daa1a.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/93f9610a09d0.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/a6416259a040.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/a8546c5a8bf2.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/aaf4f4daf09d.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/ab563145d8d3.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/abb97da41bbb.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/b43935df3676.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/b790e0be6aa0.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/bac869dc39cd.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/bcda8d7f5327.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/be36a38cd629.ts` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/c59a51c3c5b8.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/c6f72d831cbf.ts` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/c8bccd9d7fb6.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/cbb75a35427d.ts` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
 | `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/cff0a2474030.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/d05eff743688.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/e1c6b696e624.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/e57c983b250d.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/e8357a7b8e19.ts` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/fc4f6cc99f71.ts` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
-| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/fdff4bd671b7.jsx` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/038f6b60e113.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/1342895915c8.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/142801e14b16.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/14f468b04762.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/15399799ef3e.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/192c324f1bd1.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/31908e722dff.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/347bd419963a.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/36b543052880.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/3df2b4ad6ce3.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/432e05f821c8.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/4a4a8d47d34f.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/530b99463267.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/5655e81ebde4.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/59db13f02095.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/5c19364c688a.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/6047649adfe8.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/61488c07853d.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/71574c106bee.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/72719f9b8b4a.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/73914a56f71f.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/73c7ac9dbeb8.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/748620a018f7.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/749fdef07a59.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/755f79c82ed5.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/7f41acdc69ef.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/807fc680dcea.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/8a6e64e36b0e.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/956744c9ee60.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/9b8e27201082.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/9c0ebaa2d950.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/a12f3f6fb8ad.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/a2d28b7904de.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/a2e622ca703b.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/a32562ad21f7.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/a85330302e80.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/ae291dfade60.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/b6bb14568eaf.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/b73947b20d69.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/c49f15223c66.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/cb060465daeb.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/cdf7e21ccb47.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/d74ebe2cfef2.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/e0375f497402.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/e3d4ee16ba60.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/e92083907cde.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/ed3a1d85854d.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/f1cd0abfda18.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/f2134f73e29e.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
+| `upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/f583587dc034.vue` | `tests/lib/rules/require-valid-default-prop.test.ts` | derived |
 
 > `recording.json` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
 > table above: the tool-pack's `recording.lock` names it and a GitHub release holds the bytes (docs/port-readiness.md).

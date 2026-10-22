@@ -3,7 +3,7 @@
   "id": "vue",
   "name": "Vue",
   "category": "framework",
-  "covers": "18 eslint-plugin-vue 10.11.1 rules ported to Rerail, 17 of them on and 1 off until turned on, each scored against eslint-plugin-vue's own recorded findings on its rule tests; 6 more ports are candidates until they pass the port readiness gates.",
+  "covers": "19 eslint-plugin-vue 10.11.1 rules ported to Rerail, 18 of them on and 1 off until turned on, each scored against eslint-plugin-vue's own recorded findings on its rule tests; 5 more ports are candidates until they pass the port readiness gates.",
   "reason": "matches Vue single-file components",
   "match": {
     "any": [
