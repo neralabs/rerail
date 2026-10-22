@@ -178,11 +178,24 @@ export function parseSampleSource(value: unknown, path: string): SampleSource {
   return result.data;
 }
 
+/**
+ * The issue a failed parse reports. Where no branch of a union passes, zod reports only "Invalid input"; this names the
+ * branch the value is shaped as instead: the one branch whose issues all lie in its fields, while the others fail on the
+ * value's own keys. Nested unions are followed the same way.
+ */
+export function reportedIssue(issue: z.core.$ZodIssue): { path: PropertyKey[]; message: string } {
+  if (issue.code !== "invalid_union") return { path: issue.path, message: issue.message };
+  const shaped = issue.errors.filter(branch => branch.length > 0 && branch.every(nested => nested.path.length > 0));
+  if (shaped.length !== 1) return { path: issue.path, message: issue.message };
+  const inner = reportedIssue(shaped[0]![0]!);
+  return { path: [...issue.path, ...inner.path], message: inner.message };
+}
+
 /** Parse one rule, reporting the first failing field as `<path>.<field>: <reason>`. */
 export function parseConversationRule(value: unknown, path = "rule"): ConversationRule {
   const result = conversationRuleSchema.safeParse(value);
   if (result.success) return result.data;
-  const issue = result.error.issues[0]!;
+  const issue = reportedIssue(result.error.issues[0]!);
   const location = [path, ...issue.path.map(String)].join(".");
   throw new TypeError(`${location} ${issue.message}`);
 }
