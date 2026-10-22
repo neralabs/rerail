@@ -27,7 +27,9 @@ import { useTarget } from "./ruff.js";
  * so one that Clippy's default levels leave off is recorded too (in-source `allow`/`expect` still apply).
  *
  * The gates judge every case of an upstream lint for each document, so cases are recorded under that one default
- * configuration: a tests/ui-toml test whose clippy.toml is not tests/clippy.toml is skipped, with the reason.
+ * configuration: a tests/ui-toml test whose clippy.toml is not tests/clippy.toml is skipped, with the reason. So is a
+ * test rustc rejects (`compileError`), for every lint when it stops before Clippy's lint passes run, and for the lints
+ * of its late passes when it stops in analysis, after the early passes (`earlyPassLints`) have reported.
  */
 
 const SPARSE_PATHS = [
@@ -221,6 +223,49 @@ function diagnostics(lines: string): RustcDiagnostic[] {
     .filter((diagnostic) => (diagnostic.$message_type ?? "diagnostic") === "diagnostic");
 }
 
+/**
+ * The first compile error in rustc's diagnostics, with its code when it has one: an `E` code, or none (a syntax error),
+ * not a lint raised to `error` (`deny`, or a Clippy lint upstream's test sets to `deny`), which the lint passes report
+ * beside the code they read, nor rustc's closing "aborting due to" summary. Undefined when rustc rejects nothing.
+ */
+export function compileError(found: readonly Pick<RustcDiagnostic, "level" | "code" | "message">[]): string | undefined {
+  const error = found.find((diagnostic) => diagnostic.level === "error"
+    && !diagnostic.message.startsWith("aborting due to")
+    && (diagnostic.code === null || /^E\d{4}$/u.test(diagnostic.code.code)));
+  return error === undefined ? undefined : `${error.code === null ? "" : `${error.code.code}: `}${error.message.split("\n")[0]}`;
+}
+
+/**
+ * The lints only Clippy's early lint passes check, from clippy_lints' sources: every lint a `declare_lint_pass!` or
+ * `impl_lint_pass!` lists for a pass type, unless a pass that lists it implements `LateLintPass`. rustc runs the early
+ * passes before analysis, so they have reported everything when a test is rejected in type checking; the late passes
+ * run only on a crate that type-checks.
+ */
+export function earlyPassLints(sources: readonly string[]): Set<string> {
+  const listed: [pass: string, lints: string[]][] = [];
+  const late = new Set<string>();
+  for (const source of sources) {
+    const tokens = lexRust(source);
+    tokens.forEach((token, index) => {
+      if ((token.text === "declare_lint_pass" || token.text === "impl_lint_pass") && tokens[index + 1]?.text === "!" && tokens[index + 2]?.text === "(") {
+        const body = tokens.slice(index + 3, closingIndex(tokens, index + 2));
+        const pass = body.find((inner) => inner.kind === "ident")?.text;
+        const open = body.findIndex((inner) => inner.text === "[");
+        if (pass !== undefined && open >= 0) listed.push([pass, body.slice(open + 1, closingIndex(body, open)).filter((inner) => inner.kind === "ident").map((inner) => inner.text.toLowerCase())]);
+      }
+      if (token.text === "impl") {
+        const end = tokens.findIndex((inner, position) => position > index && (inner.text === "{" || inner.text === ";"));
+        const header = tokens.slice(index + 1, end < 0 ? tokens.length : end);
+        const at = header.findIndex((inner) => inner.text === "for");
+        const pass = header.slice(at + 1).find((inner) => inner.kind === "ident")?.text;
+        if (at >= 0 && pass !== undefined && header.slice(0, at).some((inner) => inner.text === "LateLintPass")) late.add(pass);
+      }
+    });
+  }
+  const lateLints = new Set(listed.filter(([pass]) => late.has(pass)).flatMap(([, lints]) => lints));
+  return new Set(listed.flatMap(([, lints]) => lints).filter((lint) => !lateLints.has(lint)));
+}
+
 /** A diagnostic's primary span (the first, as generate.py reads it). */
 function primarySpan(diagnostic: RustcDiagnostic): RustcDiagnostic["spans"][number] | undefined {
   return diagnostic.spans.find((span) => span.is_primary);
@@ -318,12 +363,16 @@ export async function createClippyAdapter(pack: PackManifest, names: string[], c
     return { ...env, RUSTC_BOOTSTRAP: "1", RUSTC_ICE: "0", CLIPPY_CONF_DIR: confDir };
   };
 
-  // Every lint Clippy declares, and its group.
+  // Every lint Clippy declares, and its group; and the lints only its early lint passes check.
   const lints = new Map<string, DeclaredLint>();
+  const lintSources: string[] = [];
   for (const file of filesUnder(join(checkout, LINTS), (path) => path.endsWith(".rs"))) {
     const path = relative(checkout, file).split(sep).join("/");
-    for (const lint of declaredLints(readFileSync(file, "utf8"))) lints.set(lint.name, { ...lint, file: path });
+    const source = readFileSync(file, "utf8");
+    lintSources.push(source);
+    for (const lint of declaredLints(source)) lints.set(lint.name, { ...lint, file: path });
   }
+  const earlyLints = earlyPassLints(lintSources);
   const deprecated = deprecatedLints(read(`${LINTS}/deprecated_lints.rs`));
   const lintNames = new Set(lints.keys());
   const ported = [...new Set(names)].filter((name) => lints.has(name)).sort(byText);
@@ -422,6 +471,8 @@ export async function createClippyAdapter(pack: PackManifest, names: string[], c
     const runnable = caseFixtures.filter((test) => variantReason(test) === null);
     for (const test of runnable) for (const path of auxFiles(test, fixtureText.get(test)!)) await aux(path);
     const caseFindings = new Map<string, Map<string, Span[]>>(ported.map((name) => [name, new Map()]));
+    // A test rustc rejects, and whether its early lint passes ran: rejected only in analysis, after them.
+    const rejected = new Map<string, { reason: string; earlyRan: boolean }>();
     await mapLimit(runnable, 8, async (test) => {
       const text = fixtureText.get(test)!;
       const flags = directives(text).filter(([key]) => key === "compile-flags").map(([, value]) => value).join(" ").split(/\s+/u).filter((flag) => flag !== "");
@@ -433,6 +484,17 @@ export async function createClippyAdapter(pack: PackManifest, names: string[], c
       const run = await runner.run([runtime.driver, ...args], { cwd: checkout, env: driverEnv(uiToml ? posix.dirname(test) : "tests") });
       const found = diagnostics(run.stderr);
       if (run.exitCode !== 0 && !found.some((diagnostic) => diagnostic.level === "error")) throw new Error(`clippy-driver failed on ${test}:\n${run.stderr.split("\n").slice(-20).join("\n")}`);
+      const error = compileError(found);
+      if (error !== undefined) {
+        // rustc stopped by -Zno-analysis has parsed, loaded crates and resolved names, and run no lint pass: an error
+        // there is one before the early passes, which never reported. Otherwise the early passes ran in full.
+        const beforeAnalysis = await runner.run([runtime.driver, ...args, "-Zno-analysis"], { cwd: checkout, env: driverEnv(uiToml ? posix.dirname(test) : "tests") });
+        const early = compileError(diagnostics(beforeAnalysis.stderr));
+        rejected.set(test, early === undefined
+          ? { reason: `rustc rejects it in analysis (${error}), before Clippy's late lint passes run, so this lint has no answer for it`, earlyRan: true }
+          : { reason: `rustc rejects it before Clippy's lint passes run (${early}), so Clippy has no answer for it`, earlyRan: false });
+        if (early !== undefined) return;
+      }
       const seen = new Set<string>();
       for (const diagnostic of found) {
         if (diagnostic.level !== "error" && diagnostic.level !== "warning") continue;
@@ -622,7 +684,7 @@ export async function createClippyAdapter(pack: PackManifest, names: string[], c
         version: pack.upstream.version,
         runtime: `${runtime.clippy}, from the rustup toolchain ${runtime.pin.channel} (\`${runtime.rustc}\`)`,
         invocation: "clippy-driver on each UI test as tests/compile-test.rs (ui_test 0.30.7) runs it: edition 2024 unless //@edition, //@compile-flags, //@aux-build crates and clippy_test_deps passed with --extern, ui_test's crate type, --emit=metadata -Aunused -Ainternal_features -Zui-testing -Zdeduplicate-diagnostics=no, RUSTC_BOOTSTRAP=1, without -Dwarnings",
-        configuration: `Clippy's default lint levels, with -W clippy::<lint> for every ported lint; CLIPPY_CONF_DIR=tests (${DEFAULT_CONF}); a tests/ui-toml test with another clippy.toml is skipped`,
+        configuration: `Clippy's default lint levels, with -W clippy::<lint> for every ported lint; CLIPPY_CONF_DIR=tests (${DEFAULT_CONF}); a tests/ui-toml test with another clippy.toml is skipped, and so is a test rustc rejects with a compile error, for every lint when -Zno-analysis rejects it too and for the lints of late passes otherwise`,
         corpus: `cargo ${toolchain} clippy --keep-going --locked --workspace --all-targets --all-features --message-format=json -- -W clippy::<lint>… in each pinned corpus (RUSTFLAGS unset); a corpus that commits no Cargo.lock is resolved with cargo generate-lockfile --publish-time <its commit's time>; a file no compiled unit read (dep-info) is excluded, and so is one whose leading #![cfg(…)] is false in every unit that read it (the unit's host, feature, test, debug_assertions, build-script and clippy options)`,
         positions: "the primary span of each diagnostic: rustc's 1-based lines and character columns, start and end",
         parsers: `${parserName} (rustc's parser alone: syntax errors, no grammar checks), in the test's or the corpus crate's edition`,
@@ -657,7 +719,8 @@ export async function createClippyAdapter(pack: PackManifest, names: string[], c
       cases(name: string): UpstreamCase[] {
         if (!lints.has(name)) return [];
         return caseFixtures.map((fixture): UpstreamCase => {
-          const skipped = variantReason(fixture);
+          const rejection = rejected.get(fixture);
+          const skipped = variantReason(fixture) ?? (rejection === undefined || (rejection.earlyRan && earlyLints.has(name)) ? null : rejection.reason);
           return {
             fixture,
             variant: fixture.startsWith(UI_TOML) ? posix.dirname(fixture).slice(UI_TOML.length) : ".",

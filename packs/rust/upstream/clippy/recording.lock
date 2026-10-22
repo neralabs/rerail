@@ -15,10 +15,10 @@
   },
   "files": {
     "recording.json": {
-      "sha256": "6a41abf74fc6e2a7859026946a6a096bd65bc691f5d6cfaffef9e17a64f1f3be",
-      "size": 1064165,
+      "sha256": "d030d79870d2943f04dc8a1eaf3547e1f7bf1e5c178f4a5dc8c8c3db0afb5d5a",
+      "size": 1064311,
       "format": "rerail.port-readiness-recording/v2",
-      "asset": "rust-clippy-recording-6a41abf74fc6e2a7859026946a6a096bd65bc691f5d6cfaffef9e17a64f1f3be.json.gz"
+      "asset": "rust-clippy-recording-d030d79870d2943f04dc8a1eaf3547e1f7bf1e5c178f4a5dc8c8c3db0afb5d5a.json.gz"
     },
     "corpus.json": {
       "sha256": "4adfaf09297383f9273cfd1522a8d0db12d9a51dcd45cf197c49ea7565060252",

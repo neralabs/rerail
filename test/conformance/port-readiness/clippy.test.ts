@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
 
-import { annotatedLints, cfgHolds, crateType, declaredLints, deprecatedLints, innerCfgPredicates, namedLint, testEdition } from "../../../conformance/recorders/port-readiness/adapters/clippy.js";
+import { annotatedLints, cfgHolds, compileError, crateType, declaredLints, deprecatedLints, earlyPassLints, innerCfgPredicates, namedLint, testEdition } from "../../../conformance/recorders/port-readiness/adapters/clippy.js";
 import { parseRustToolchainPin } from "../../../conformance/recorders/port-readiness/runtimes.js";
 import { clippySpan, rustcPosition, rustcSpan } from "../../../conformance/port-readiness/span-units/clippy.js";
 
@@ -37,6 +37,22 @@ test("a test compiles as ui_test 0.30.7 compiles it: edition 2024 unless //@edit
   assert.deepEqual(crateType("#[test]\nfn t() {}"), ["--test"]);
   assert.deepEqual(crateType("fn main() {}"), []);
   assert.deepEqual(crateType("pub fn f() {}"), ["--crate-type=lib"]);
+});
+
+test("a test rustc rejects is a compile error, not a lint raised to deny or rustc's closing summary", () => {
+  const aborting = { level: "error", code: null, message: "aborting due to 2 previous errors" };
+  const denied = { level: "error", code: { code: "clippy::double_parens" }, message: "unnecessary parentheses" };
+  const deniedRustc = { level: "error", code: { code: "dead_code" }, message: "function `f` is never used" };
+  assert.equal(compileError([denied, deniedRustc, aborting]), undefined);
+  assert.equal(compileError([denied, { level: "error", code: { code: "E0432" }, message: "unresolved import `aux`\nmore" }, aborting]), "E0432: unresolved import `aux`");
+  assert.equal(compileError([{ level: "error", code: null, message: "expected one of `;` or `}`" }, aborting]), "expected one of `;` or `}`");
+  assert.equal(compileError([{ level: "warning", code: { code: "E0133" }, message: "not an error" }]), undefined);
+});
+
+test("a lint is an early pass's only when no pass that lists it implements LateLintPass", () => {
+  const misc = "use rustc_lint::{EarlyContext, EarlyLintPass, LateLintPass};\ndeclare_lint_pass!(MiscEarlyLints => [\n    BUILTIN_TYPE_SHADOW,\n    ZERO_PREFIXED_LITERAL,\n]);\nimpl EarlyLintPass for MiscEarlyLints {}\n";
+  const attrs = "impl_lint_pass!(Attributes => [INLINE_ALWAYS]);\nimpl_lint_pass!(PostExpansionEarlyAttributes => [ALLOW_ATTRIBUTES, INLINE_ALWAYS]);\nimpl<'tcx> LateLintPass<'tcx> for Attributes {}\nimpl EarlyLintPass for PostExpansionEarlyAttributes {}\n";
+  assert.deepEqual([...earlyPassLints([misc, attrs])].sort(), ["allow_attributes", "builtin_type_shadow", "zero_prefixed_literal"]);
 });
 
 test("declare_clippy_lint! gives each lint's name and group, and deprecated_lints.rs the deprecated ones", () => {
