@@ -746,6 +746,7 @@ dependencies = [
  "parking_lot",
  "regex",
  "rerail-engine",
+ "rerail-facts",
  "rusqlite",
  "rustc-hash",
  "serde",
@@ -2648,6 +2649,17 @@ dependencies = [
  "unicode-normalization",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "rerail-facts"
+version = "0.0.0"
+dependencies = [
+ "blake3",
+ "globset",
+ "regex",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
