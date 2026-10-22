@@ -259,7 +259,7 @@ export function setupIo(args: readonly string[] = []): SetupIo {
   if (args.includes(SETUP_FLAGS.relay) || !process.stdin.isTTY || !process.stdout.isTTY) return { lane: "agent", say, close: () => {} };
   // One reader for the run: lines for the folder and pack prompts, keys for each question's menu, and what is typed
   // ahead of a prompt kept for it.
-  const input = new TerminalInput(process.stdin, text => process.stdout.write(text));
+  const input = new TerminalInput(process.stdin, text => process.stdout.write(text), undefined, () => process.stdout.columns);
   return {
     lane: "terminal",
     say,

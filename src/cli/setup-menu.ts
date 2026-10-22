@@ -76,18 +76,56 @@ export interface TerminalInputStream extends NodeJS.EventEmitter {
 /** Up `rows` lines to the start of the first, then clear to the end of the screen. */
 const redrawFrom = (rows: number): string => `\r\u001b[${rows}A\u001b[J`;
 
+const ANSI_SEQUENCE = /\u001b\[[0-9;?]*[ -/]*[@-~]/gu;
+const ZERO_WIDTH = /^[\p{Mn}\p{Me}\p{Cf}\p{Cc}]$/u;
+const WIDE = /^[\p{Emoji_Presentation}\u1100-\u115f\u2e80-\u303e\u3041-\u33ff\u3400-\u4dbf\u4e00-\u9fff\ua000-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6\u{20000}-\u{3fffd}]$/u;
+
+/**
+ * The columns `text` takes in a terminal: none for colour codes and combining marks, two for East Asian wide characters
+ * and emoji, one for the rest. Ambiguous-width characters (❯ … ’) take one, as terminals draw them by default.
+ */
+export function displayWidth(text: string): number {
+  let width = 0;
+  for (const char of text.replace(ANSI_SEQUENCE, "")) width += ZERO_WIDTH.test(char) ? 0 : WIDE.test(char) ? 2 : 1;
+  return width;
+}
+
+/** The rows `frame` takes on screen: a line wider than `columns` wraps onto more; one row per line when unknown. */
+function frameRows(frame: string, columns: number | undefined): number {
+  const lines = frame.split("\n");
+  if (columns === undefined || columns <= 0) return lines.length;
+  return lines.reduce((rows, line) => rows + Math.max(1, Math.ceil(displayWidth(line) / columns)), 0);
+}
+
 export class TerminalInput {
   private buffer = "";
   private ended = false;
   private listening = false;
   private wake: (() => void) | undefined;
+  /** The last line or key ended on a lone CR: an LF that comes next is the rest of that Enter (CRLF split across reads). */
+  private afterCr = false;
 
   constructor(
     private readonly input: TerminalInputStream,
     private readonly write: (text: string) => void,
     /** Ctrl-C in the menu, after the terminal is put back: what the terminal's own Ctrl-C does. */
     private readonly interrupt: () => void = () => process.kill(process.pid, "SIGINT"),
+    /** The terminal's width, to count the rows a menu's wrapped lines take; undefined when unknown. */
+    private readonly columns: () => number | undefined = () => undefined,
   ) {}
+
+  /** Take `length` characters off the buffer. */
+  private consume(length: number): void {
+    this.afterCr = this.buffer[length - 1] === "\r";
+    this.buffer = this.buffer.slice(length);
+  }
+
+  /** Drop the LF of a CRLF whose CR ended the last line or key. */
+  private settle(): void {
+    if (!this.afterCr || this.buffer === "") return;
+    this.afterCr = false;
+    if (this.buffer.startsWith("\n")) this.buffer = this.buffer.slice(1);
+  }
 
   private readonly onData = (chunk: string): void => {
     this.buffer += chunk;
@@ -115,14 +153,18 @@ export class TerminalInput {
     this.input.pause();
   }
 
-  /** One line, without its line break; at end of input the last unfinished line, or undefined. */
+  /**
+   * One line, without its line break: CR (Enter in raw mode), LF or CRLF. At end of input the last unfinished line, or
+   * undefined.
+   */
   async line(prompt: string): Promise<string | undefined> {
     this.write(prompt);
     for (;;) {
-      const end = this.buffer.indexOf("\n");
+      this.settle();
+      const end = this.buffer.search(/[\r\n]/u);
       if (end >= 0) {
-        const line = this.buffer.slice(0, end).replace(/\r$/u, "");
-        this.buffer = this.buffer.slice(end + 1);
+        const line = this.buffer.slice(0, end);
+        this.consume(end + (this.buffer.startsWith("\r\n", end) ? 2 : 1));
         return line;
       }
       if (this.ended) {
@@ -146,6 +188,7 @@ export class TerminalInput {
     process.once("exit", restore);
     try {
       for (;;) {
+        this.settle();
         const read = readKey(this.buffer);
         if (read === undefined) {
           if (this.ended) {
@@ -155,11 +198,12 @@ export class TerminalInput {
           await this.more();
           continue;
         }
-        this.buffer = this.buffer.slice(read.length);
+        this.consume(read.length);
         const action = menuAction(read.key, highlight, menu.count);
         if (action.type === "move" && action.highlight !== highlight) {
           highlight = action.highlight;
-          const rows = frame.split("\n").length - 1;
+          // The cursor is on the frame's last row: up the rows above it, wrapped lines' included.
+          const rows = frameRows(frame, this.columns()) - 1;
           frame = menu.frame(highlight);
           this.write(`${redrawFrom(rows)}${frame}`);
         } else if (action.type === "pick") {

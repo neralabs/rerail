@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
-import { menuAction, readKey, TerminalInput, type TerminalInputStream } from "../../src/cli/setup-menu.js";
+import { displayWidth, menuAction, readKey, TerminalInput, type TerminalInputStream } from "../../src/cli/setup-menu.js";
 
 describe("the set-up menu's keys", () => {
   it("reads arrows, Enter, digits, j and k, Ctrl-C and Ctrl-D", () => {
@@ -70,6 +70,52 @@ describe("the terminal's input", () => {
     // Up four lines (two rows above the last, the blank line, the prompt) to the first answer, then drawn again.
     expect(written[1]).toBe(`\r\u001b[4A\u001b[J${menu.frame(1)}`);
     expect(written.at(-1)).toBe("\n");
+  });
+
+  it("redraws a menu whose rows wrap at a narrow terminal from its first row, counting the wrapped rows", async () => {
+    const stdin = fakeStdin(["\u001b[B", "\r"]);
+    const written: string[] = [];
+    // At 20 columns: "❯ 1. Yes, scan customer-portal-frontend" (40 wide) takes two rows, each of the others one.
+    const long = {
+      count: 2,
+      frame: (highlight: number) => [`${highlight === 0 ? "\u001b[36m❯\u001b[39m" : " "} 1. Yes, scan customer-portal-frontend`, `${highlight === 1 ? "❯" : " "} 2. No`, "", "> "].join("\n"),
+    };
+    const input = new TerminalInput(stdin, text => { written.push(text); }, () => {}, () => 20);
+    expect(await input.choose(long)).toBe(1);
+    // Up four rows from the prompt's: the blank line, the second answer, and the wrapped first answer's two.
+    expect(written[1]).toBe(`\r\u001b[4A\u001b[J${long.frame(1)}`);
+  });
+
+  it("redraws as one row per line when the terminal's width is unknown", async () => {
+    const written: string[] = [];
+    const input = new TerminalInput(fakeStdin(["\u001b[B", "\r"]), text => { written.push(text); }, () => {}, () => undefined);
+    expect(await input.choose(menu)).toBe(1);
+    expect(written[1]).toBe(`\r\u001b[4A\u001b[J${menu.frame(1)}`);
+  });
+
+  it("measures text as the terminal draws it: no width for colour codes, two columns for wide characters", () => {
+    expect(displayWidth("\u001b[36m❯\u001b[39m 1. Yes")).toBe(8);
+    expect(displayWidth("Scan a different repo… it’s")).toBe(27);
+    expect(displayWidth("日本")).toBe(4);
+    expect(displayWidth("e\u0301")).toBe(1);
+  });
+
+  it("ends a line typed ahead at CR, as raw mode sends Enter, at LF, and at CRLF split across reads", async () => {
+    const input = new TerminalInput(fakeStdin(["1\r~/proj\r"]), () => {});
+    expect(await input.choose(menu)).toBe(0);
+    expect(await input.line("Which folder? ")).toBe("~/proj");
+    expect(await input.line("Which folder? ")).toBeUndefined();
+
+    const split = new TerminalInput(fakeStdin(["~/a\r", "\n~/b\n", "\r\n"]), () => {});
+    expect(await split.line("Which folder? ")).toBe("~/a");
+    expect(await split.line("Which folder? ")).toBe("~/b");
+    expect(await split.line("Which folder? ")).toBe("");
+  });
+
+  it("takes no Enter for a menu from the LF of a CRLF a line ended on", async () => {
+    const input = new TerminalInput(fakeStdin(["~/a\r", "\n", "\u001b[B", "\r"]), () => {});
+    expect(await input.line("Which folder? ")).toBe("~/a");
+    expect(await input.choose(menu)).toBe(1);
   });
 
   it("takes a digit then Enter, and keeps what follows for the next prompt", async () => {
