@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 R=${FACTS_RUNS:-~/rerail-bench/facts/spike-a/runs}/$(date +%Y%m%dT%H%M%S)-repo${FACTS_A3_OFF:+-generic}
 mkdir -p "$R"
-BIN=./spikes/facts-a/target/release/facts-a
+BIN=${FACTS_BIN:-./spikes/facts-a/target/release/facts-a}
 CMD="$BIN repo --threads 4 --out-dir $R"
 {
   echo "$CMD"

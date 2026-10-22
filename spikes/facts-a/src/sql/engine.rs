@@ -190,20 +190,26 @@ impl Distinct {
     fn new(width: usize) -> Distinct {
         Distinct { ids: (0..width).map(|_| FxHashMap::default()).collect(), narrow: Default::default(), wide: Default::default() }
     }
-    /// Whether row `r` of `t` (its first `width` columns) is new; records it.
-    fn insert(&mut self, t: &Table, r: usize) -> bool {
-        let mut key = Vec::with_capacity(self.ids.len());
-        for (c, ids) in self.ids.iter_mut().enumerate() {
-            let n = ids.len() as u32;
-            key.push(*ids.entry(sv::dkey(&t.value(r, c))).or_insert(n));
-        }
+    /// Column `c`'s id for value `v`.
+    fn intern(&mut self, c: usize, v: &V) -> u32 {
+        let ids = &mut self.ids[c];
+        let n = ids.len() as u32;
+        *ids.entry(sv::dkey(v)).or_insert(n)
+    }
+    /// Whether the row of interned ids `key` is new; records it.
+    fn insert_key(&mut self, key: &[u32]) -> bool {
         if key.len() <= 4 {
             let mut k = [0u32; 4];
-            k[..key.len()].copy_from_slice(&key);
+            k[..key.len()].copy_from_slice(key);
             self.narrow.insert(k)
         } else {
-            self.wide.insert(key.into_boxed_slice())
+            self.wide.insert(key.into())
         }
+    }
+    /// Whether row `r` of `t` (its first `width` columns) is new; records it.
+    fn insert(&mut self, t: &Table, r: usize) -> bool {
+        let key: Vec<u32> = (0..self.ids.len()).map(|c| self.intern(c, &t.value(r, c))).collect();
+        self.insert_key(&key)
     }
 }
 
@@ -1177,9 +1183,9 @@ fn expr_refs(e: &Expr, name: &str) -> bool {
     }
 }
 
-fn visit_cols(pe: &PE, f: &mut dyn FnMut(u16, u16)) {
+fn visit_cols(pe: &PE, f: &mut dyn FnMut(u16, u16, u16)) {
     match pe {
-        PE::Col { depth, item, .. } => f(*depth, *item),
+        PE::Col { depth, item, col } => f(*depth, *item, *col),
         PE::Not(x) | PE::Neg(x) | PE::Cast(x, _) | PE::IsNull(x, _) => visit_cols(x, f),
         PE::Cmp(_, l, r, _) | PE::Arith(_, l, r) | PE::Concat(l, r) | PE::And(l, r) | PE::Or(l, r) | PE::Is(l, r, _) | PE::Like(l, r, _) => {
             visit_cols(l, f);
@@ -1248,7 +1254,7 @@ fn has_sub(pe: &PE) -> bool {
 /// item (it may be correlated to any of them).
 fn max_item(pe: &PE) -> Option<usize> {
     let mut m: Option<usize> = None;
-    visit_cols(pe, &mut |d, i| {
+    visit_cols(pe, &mut |d, i, _| {
         if d == 0 {
             m = Some(m.map_or(i as usize, |x| x.max(i as usize)));
         }
@@ -1260,11 +1266,17 @@ fn max_item(pe: &PE) -> Option<usize> {
 }
 fn refs_item(pe: &PE, i: usize) -> bool {
     let mut r = false;
-    visit_cols(pe, &mut |d, it| {
+    visit_cols(pe, &mut |d, it, _| {
         if d == 0 && it as usize == i {
             r = true;
         }
     });
+    r
+}
+/// Whether `pe` reads column `col` of FROM item `i` (depth 0).
+fn reads_col(pe: &PE, i: usize, col: usize) -> bool {
+    let mut r = false;
+    visit_cols(pe, &mut |d, it, c| r |= d == 0 && it as usize == i && c as usize == col);
     r
 }
 fn has_agg(pe: &PE) -> bool {
@@ -1512,7 +1524,10 @@ impl<'d, 'a> Exec<'d, 'a> {
                     self.slots.borrow_mut()[*slot] = Some(Rc::new(t));
                 }
                 PCte::Recursive { slot, batch, init, rec, distinct, schema } => {
-                    let t = self.recursive(*batch, init, rec, *distinct, schema, outer);
+                    let t = match self.closure(*batch, init, rec, *distinct, schema, outer) {
+                        Some(t) => t,
+                        None => self.recursive(*batch, init, rec, *distinct, schema, outer),
+                    };
                     self.slots.borrow_mut()[*slot] = Some(Rc::new(t));
                 }
             }
@@ -1575,6 +1590,156 @@ impl<'d, 'a> Exec<'d, 'a> {
                 }
             }
         }
+    }
+
+    /// A closure: a set-semantics fixpoint whose step joins the previous level `w` to one edge
+    /// relation `e` on `e.(keys, src) = w.(keys, node)`, carries every other column of `w` and
+    /// replaces `node` by `e.dst`; filters read only carried columns of `w` and columns of `e`.
+    /// Recognised on the plan, for any relation. Its rows equal the semi-naive evaluation's, in
+    /// the same order (level by level; within a level by the previous row, then the edge
+    /// relation's order), without evaluating the step as a select per level: a row is (seed,
+    /// node source), carried values are the seed's, and the result columns are gathers.
+    /// `None` when the plan is not of that shape.
+    fn closure(&self, batch: usize, init: &[PBody], rec: &[PBody], distinct: bool, schema: &Schema, outer: Option<&Frame<'_>>) -> Option<Table> {
+        let ([seed_body], [PBody::Select(s)], true) = (init, rec, distinct) else { return None };
+        let w = schema.cols.len();
+        let plain = !s.grouped && s.wins.is_empty() && !s.distinct && s.order_keys.is_empty() && s.konst.is_empty() && s.having.is_none();
+        if !plain || s.items.len() != 2 || s.proj.len() != w || s.post.iter().any(|p| !p.is_empty()) {
+            return None;
+        }
+        let (wi, ei) = (&s.items[0], &s.items[1]);
+        if !matches!(wi.src, Src::Cte(b) if b == batch) || wi.left || wi.lateral || s.probes[0].is_some() || s.or_probes[0].is_some() {
+            return None;
+        }
+        if ei.left || ei.lateral || s.or_probes[1].is_some() || matches!(ei.src, Src::Cte(b) if b == batch) {
+            return None;
+        }
+        let probe = s.probes[1].as_ref()?;
+        // The projection: carried columns in place, and one `e` column as the new node.
+        let mut node = None;
+        for (j, p) in s.proj.iter().enumerate() {
+            match p {
+                PE::Col { depth: 0, item: 0, col } if *col as usize == j => {}
+                PE::Col { depth: 0, item: 1, col } if node.is_none() => node = Some((j, *col as usize)),
+                _ => return None,
+            }
+        }
+        let (nj, dst) = node?;
+        // The probe: `e` columns equal to `w` columns; exactly one of them is `w.node`.
+        let mut from_w = Vec::new();
+        for e in &probe.exprs {
+            let PE::Col { depth: 0, item: 0, col } = e else { return None };
+            from_w.push(*col as usize);
+        }
+        if from_w.iter().filter(|&&c| c == nj).count() != 1 {
+            return None;
+        }
+        // Filters may not read `w.node` (so they are functions of the seed and the edge) and
+        // hold no subquery.
+        if s.level[0].iter().chain(&s.level[1]).any(|c| reads_col(c, 0, nj) || has_sub(c)) {
+            return None;
+        }
+        // Seeds: the initial select, set semantics.
+        let seeds = self.body(seed_body, outer);
+        if self.failed() {
+            return Some(Table::empty(schema.clone()));
+        }
+        let seeds = Table { schema: schema.clone(), ..seeds }.truncate(w);
+        let e = self.table_of(&ei.src, outer);
+        if self.failed() {
+            return Some(Table::empty(schema.clone()));
+        }
+        let ix = self.index(&e, probe, matches!(ei.src, Src::Global(_)));
+        let mut seen = Distinct::new(w);
+        // Per admitted seed: its row and its values' ids.
+        let mut seed_rows: Vec<u32> = Vec::new();
+        let mut seed_ids: Vec<Vec<u32>> = Vec::new();
+        // Walk rows: (seed, node source: `u32::MAX` = the seed's own node, else an edge row).
+        let mut level: Vec<(u32, u32)> = Vec::new();
+        for r in 0..seeds.len() {
+            let key: Vec<u32> = (0..w).map(|c| seen.intern(c, &seeds.value(r, c))).collect();
+            if seen.insert_key(&key) {
+                level.push((seed_rows.len() as u32, u32::MAX));
+                seed_rows.push(r as u32);
+                seed_ids.push(key);
+            }
+        }
+        let node_value = |sr: u32, src: u32| if src == u32::MAX { seeds.value(seed_rows[sr as usize] as usize, nj) } else { e.value(src as usize, dst) };
+        // A seed expands when `w`'s filters hold on its (carried) values.
+        let mut expands: Vec<Option<bool>> = vec![None; seed_rows.len()];
+        let mut all: Vec<(u32, u32)> = Vec::new();
+        let mut steps = 0usize;
+        let mut key = vec![0u32; w];
+        while !level.is_empty() {
+            if self.failed() {
+                break;
+            }
+            steps += level.len();
+            if steps > 50_000_000 {
+                self.fail("recursive CTE exceeded 50M rows".into());
+                break;
+            }
+            let mut next = Vec::new();
+            for &(sr, src) in &level {
+                let seed = RowRef { t: Some(&seeds), r: seed_rows[sr as usize] };
+                let ok = *expands[sr as usize].get_or_insert_with(|| {
+                    let rows = [seed, UNBOUND];
+                    let ctx = EvalCtx { frame: Frame { rows: &rows, parent: outer }, aggs: None, wins: None };
+                    s.level[0].iter().all(|c| sv::truth(&self.eval(c, &ctx)) == Some(true))
+                });
+                if !ok {
+                    continue;
+                }
+                let mut pk = Vec::with_capacity(from_w.len());
+                for (&c, a) in from_w.iter().zip(&probe.expr_affs) {
+                    let v = if c == nj { node_value(sr, src) } else { seed.value(c as u16) };
+                    match sv::key(&sv::compare_affinity(&v, *a)) {
+                        Some(k) => pk.push(k),
+                        None => break,
+                    }
+                }
+                if pk.len() != from_w.len() {
+                    continue;
+                }
+                let Some(hits) = ix.get(&pk) else { continue };
+                for &er in hits {
+                    if !s.level[1].is_empty() {
+                        let rows = [seed, RowRef { t: Some(&e), r: er }];
+                        let ctx = EvalCtx { frame: Frame { rows: &rows, parent: outer }, aggs: None, wins: None };
+                        if !s.level[1].iter().all(|c| sv::truth(&self.eval(c, &ctx)) == Some(true)) {
+                            continue;
+                        }
+                    }
+                    key.copy_from_slice(&seed_ids[sr as usize]);
+                    key[nj] = seen.intern(nj, &e.value(er as usize, dst));
+                    if seen.insert_key(&key) {
+                        next.push((sr, er));
+                    }
+                }
+            }
+            all.append(&mut level);
+            level = next;
+        }
+        // Columns: carried ones gather the seed rows; the node column chains the seeds' nodes
+        // (level 0) and the edges' `dst` (deeper levels).
+        let n = all.len();
+        let seed_idx: Rc<[u32]> = all.iter().map(|&(sr, _)| seed_rows[sr as usize]).collect();
+        let roots = all.iter().take_while(|&&(_, src)| src == u32::MAX).count();
+        let first: Rc<[u32]> = seed_idx[..roots].into();
+        let edge_idx: Rc<[u32]> = all[roots..].iter().map(|&(_, src)| src).collect();
+        let mut memo = FxHashMap::default();
+        let cols = (0..w)
+            .map(|j| {
+                if j == nj {
+                    let a = gather(&seeds.cols[j], &first, &mut memo);
+                    let b = gather(&e.cols[dst], &edge_idx, &mut memo);
+                    chain(&[(&a, roots), (&b, n - roots)])
+                } else {
+                    gather(&seeds.cols[j], &seed_idx, &mut memo)
+                }
+            })
+            .collect();
+        Some(Table { schema: schema.clone(), cols, len: n })
     }
 
     /// Semi-naive fixpoint, level by level. Each level's rows are views (gathers) over the arms'
