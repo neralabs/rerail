@@ -8,6 +8,7 @@ use crate::pyvalue::{self, PyValue};
 use regex::Regex;
 use serde_json::Value as Json;
 use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 
 pub type Name = u16;
 
@@ -101,7 +102,10 @@ impl Env {
 /// A compiled `ast` query.
 pub struct Query {
     pub rule: Rule,
-    pub utils: Vec<Rule>,
+    /// The utility table, shared by the policy set's queries without local utilities.
+    pub utils: Rc<[Rule]>,
+    /// Per utility: it mentions no capture (its verdict is a function of the node).
+    pub util_capture_free: Rc<[bool]>,
     pub syntax: SyntaxMode,
     pub three_valued: bool,
     /// `transform: { NAME: { replace: { source: $STRING, value: true, replace: "\b\B", by: "" } } }`
@@ -143,6 +147,10 @@ pub struct Compiler<'a> {
     pub grammar: &'a rerail_engine::code_rule_dsl::tape::Grammar,
     util_ids: Vec<String>,
     util_json: Vec<Json>,
+    /// The policy set's compiled utility table and capture-freedom, shared by every query
+    /// without local utilities (set by the first such query; callers carry it across
+    /// compilers of one policy set).
+    pub shared: Option<(Rc<[Rule]>, Rc<[bool]>)>,
 }
 
 fn obj<'j>(v: &'j Json, at: &str) -> Result<&'j serde_json::Map<String, Json>, String> {
@@ -165,6 +173,7 @@ impl<'a> Compiler<'a> {
             grammar,
             util_ids: utils.keys().cloned().collect(),
             util_json: utils.values().cloned().collect(),
+            shared: None,
         }
     }
 
@@ -194,12 +203,32 @@ impl<'a> Compiler<'a> {
             Some(o) => return Err(format!("syntax {o}")),
         };
         let rule = self.rule(ast.get("rule").ok_or("ast.rule missing")?, "rule")?;
-        // Utilities reachable from the rule, compiled in id order (indices are stable).
-        let mut utils = Vec::new();
-        for i in 0..self.util_ids.len() {
-            let j = self.util_json[i].clone();
-            utils.push(self.rule(&j, &format!("utils/{}", self.util_ids[i]))?);
-        }
+        // Utilities, compiled in id order (indices are stable). Without query-local utilities
+        // every query of a policy set has the same table, compiled once and shared (`shared`).
+        let local = ast.get("utils").and_then(Json::as_object).is_some_and(|o| !o.is_empty());
+        let (utils, util_capture_free) = match (&self.shared, local) {
+            (Some(s), false) => s.clone(),
+            _ => {
+                let mut utils = Vec::new();
+                for i in 0..self.util_ids.len() {
+                    let j = self.util_json[i].clone();
+                    utils.push(self.rule(&j, &format!("utils/{}", self.util_ids[i]))?);
+                }
+                // Verdicts of capture-free utilities are memoised per node (`Eval::util`).
+                let free: Vec<bool> = (0..utils.len())
+                    .map(|i| {
+                        let mut out = BTreeSet::new();
+                        mentions(&utils[i], &utils, &mut BTreeSet::new(), &mut out);
+                        out.is_empty()
+                    })
+                    .collect();
+                let s: (Rc<[Rule]>, Rc<[bool]>) = (utils.into(), free.into());
+                if !local {
+                    self.shared = Some(s.clone());
+                }
+                s
+            }
+        };
         let mut decoded = Vec::new();
         if let Some(t) = ast.get("transform") {
             for (var, spec) in obj(t, "transform")? {
@@ -222,7 +251,7 @@ impl<'a> Compiler<'a> {
         }
         let three_valued = reads_values(&rule, &utils, &mut BTreeSet::new());
         let root_kinds = root_kinds(&rule, &utils, &mut BTreeSet::new());
-        Ok(Query { rule, utils, syntax, three_valued, decoded, root_kinds })
+        Ok(Query { rule, utils, util_capture_free, syntax, three_valued, decoded, root_kinds })
     }
 
     fn kind(&self, kind: &str) -> Result<Rule, String> {
@@ -827,12 +856,30 @@ pub struct Eval<'a> {
     pub parsed: std::cell::RefCell<Vec<ParsedNode>>,
     parsed_hosts: std::cell::RefCell<rustc_hash::FxHashMap<u32, Option<(u32, u32)>>>,
     pub unsupported: std::cell::RefCell<Option<String>>,
-    util_memo: std::cell::RefCell<rustc_hash::FxHashMap<(usize, u32), bool>>,
-    util_capture_free: Vec<bool>,
-    /// Spike A3: `inside`/`has` with `stopBy: end` over a rule that mentions no capture and
-    /// parses nothing, memoised per node (`RelMemo`), keyed by the rule's address.
-    rel_memo: std::cell::RefCell<rustc_hash::FxHashMap<usize, RelMemo>>,
+    /// Utility verdicts and relation memos; shared by the queries of one policy set over one
+    /// file that have the same utility table and valuedness (`FileMemo`).
+    memo: Rc<MemoSet>,
     pub steps: std::cell::Cell<u64>,
+    /// Refusals so far (`taint`).
+    refusals: std::cell::Cell<u64>,
+}
+
+/// Memoised verdicts over one file's nodes. Capture-free utility verdicts by (utility, node);
+/// relation memos (`RelMemo`) by the rule's address. Both are pure functions of the node for
+/// one utility table and one valuedness (unknown verdicts are never stored as definite), so
+/// queries that share those share the memo.
+#[derive(Default)]
+pub struct MemoSet {
+    util: std::cell::RefCell<rustc_hash::FxHashMap<(usize, u32), bool>>,
+    /// `inside`/`has` with `stopBy: end` over a rule that mentions no capture and parses
+    /// nothing, memoised per node, keyed by the rule's address.
+    rel: std::cell::RefCell<rustc_hash::FxHashMap<usize, RelMemo>>,
+}
+
+/// One file's memo sets for one policy set, by (utility table, valuedness).
+#[derive(Default)]
+pub struct FileMemo {
+    sets: std::cell::RefCell<rustc_hash::FxHashMap<(usize, bool), Rc<MemoSet>>>,
 }
 
 /// Per memoisable rule: whether it qualifies, and per node (0 not yet, 1 true, 2 false, 3
@@ -866,15 +913,21 @@ fn parses(rule: &Rule, utils: &[Rule], seen: &mut BTreeSet<usize>) -> bool {
 
 impl<'a> Eval<'a> {
     pub fn new(f: &'a Facts, path: &'a str, q: &'a Query) -> Self {
-        // Verdicts of capture-free utilities are memoised per node, as natively (a node's value
-        // is a pure function of the node: `follow` is off in batch 6). Unknown verdicts are not.
-        let util_capture_free = (0..q.utils.len())
-            .map(|i| {
-                let mut out = BTreeSet::new();
-                mentions(&q.utils[i], &q.utils, &mut BTreeSet::new(), &mut out);
-                out.is_empty()
-            })
-            .collect();
+        Self::with_memo(f, path, q, Rc::default())
+    }
+
+    /// An evaluation sharing `memo`'s verdicts with the policy set's other queries over this
+    /// file. A query with a `transform` reads decoded values its own way: it memoises alone.
+    pub fn shared(f: &'a Facts, path: &'a str, q: &'a Query, memo: &FileMemo) -> Self {
+        let set = if q.decoded.is_empty() {
+            memo.sets.borrow_mut().entry((Rc::as_ptr(&q.utils) as *const Rule as usize, q.three_valued)).or_default().clone()
+        } else {
+            Rc::default()
+        };
+        Self::with_memo(f, path, q, set)
+    }
+
+    fn with_memo(f: &'a Facts, path: &'a str, q: &'a Query, memo: Rc<MemoSet>) -> Self {
         Self {
             f,
             path,
@@ -885,18 +938,25 @@ impl<'a> Eval<'a> {
             parsed: Default::default(),
             parsed_hosts: Default::default(),
             unsupported: Default::default(),
-            util_memo: Default::default(),
-            util_capture_free,
-            rel_memo: Default::default(),
+            memo,
             steps: Default::default(),
+            refusals: Default::default(),
         }
     }
 
     fn refuse(&self, why: String) {
+        self.refusals.set(self.refusals.get() + 1);
         let mut u = self.unsupported.borrow_mut();
         if u.is_none() {
             *u = Some(why);
         }
+    }
+
+    /// Counts of refusals and of `\N{...}` escapes decoded so far: a verdict whose evaluation
+    /// changed either is not memoised, so a query reusing the memo refuses exactly as its own
+    /// evaluation would.
+    fn taint(&self) -> (u64, u64) {
+        (self.refusals.get(), crate::pyvalue::NAMED_ESCAPES.with(|n| n.get()))
     }
 
     pub fn text_of(&self, b: Bound) -> String {
@@ -1259,21 +1319,22 @@ impl<'a> Eval<'a> {
 
     fn util(&self, i: usize, node: Bound, env: &mut Env) -> bool {
         let memo_key = match node {
-            Bound::Node(n) if self.util_capture_free[i] && !self.each_active() => Some((i, n)),
+            Bound::Node(n) if self.q.util_capture_free[i] && !self.each_active() => Some((i, n)),
             _ => None,
         };
         if let Some(k) = memo_key {
-            if let Some(&v) = self.util_memo.borrow().get(&k) {
+            if let Some(&v) = self.memo.util.borrow().get(&k) {
                 return v;
             }
         }
         // Whether this evaluation itself was unknown decides memoization, not an unknown the
         // caller had already accumulated; the caller's flag is restored on top.
         let saved = self.three && self.unknown.replace(false);
+        let t0 = self.taint();
         let r = self.m(&self.q.utils[i], node, env);
         if let Some(k) = memo_key {
-            if !(self.three && self.unknown.get()) {
-                self.util_memo.borrow_mut().insert(k, r);
+            if !(self.three && self.unknown.get()) && self.taint() == t0 {
+                self.memo.util.borrow_mut().insert(k, r);
             }
         }
         if saved {
@@ -1446,7 +1507,7 @@ impl<'a> Eval<'a> {
             return None;
         }
         let key = rule as *const Rule as usize;
-        let mut memo = self.rel_memo.borrow_mut();
+        let mut memo = self.memo.rel.borrow_mut();
         let e = memo.entry(key).or_insert_with(|| {
             let mut m = BTreeSet::new();
             mentions(rule, &self.q.utils, &mut BTreeSet::new(), &mut m);
@@ -1458,18 +1519,22 @@ impl<'a> Eval<'a> {
     /// The rule's verdict at one node (true, false, unknown), as a relation search tests a
     /// candidate: evaluated once per node, with the caller's unknown flag set aside.
     fn verdict_at(&self, key: usize, rule: &Rule, n: u32) -> u8 {
-        if let Some(&v) = self.rel_memo.borrow()[&key].at.get(n as usize) {
+        if let Some(&v) = self.memo.rel.borrow()[&key].at.get(n as usize) {
             if v != 0 {
                 return v;
             }
         }
         let saved = self.unknown.replace(false);
         let mut env = Env::default();
+        let t0 = self.taint();
         let r = self.m(rule, Bound::Node(n), &mut env);
         let unknown = self.three && self.unknown.get();
         self.unknown.set(saved);
         let v = if r { T } else if unknown { U } else { F };
-        let mut memo = self.rel_memo.borrow_mut();
+        if self.taint() != t0 {
+            return v;
+        }
+        let mut memo = self.memo.rel.borrow_mut();
         let at = &mut memo.get_mut(&key).unwrap().at;
         if at.is_empty() {
             at.resize(self.f.len(), 0);
@@ -1485,9 +1550,10 @@ impl<'a> Eval<'a> {
     fn inside_end_memo(&self, key: usize, rule: &Rule, n: u32) -> u8 {
         let combine = |r: u8, v: u8| if r == T || v == T { T } else if r == U || v == U { U } else { F };
         let mut chain: Vec<(u32, u8)> = Vec::new();
+        let t0 = self.taint();
         let mut c = n;
         let mut v = loop {
-            let known = self.rel_memo.borrow()[&key].inside.get(c as usize).copied().unwrap_or(0);
+            let known = self.memo.rel.borrow()[&key].inside.get(c as usize).copied().unwrap_or(0);
             if known != 0 {
                 break known;
             }
@@ -1502,26 +1568,30 @@ impl<'a> Eval<'a> {
             }
             c = p;
         };
-        let mut memo = self.rel_memo.borrow_mut();
+        let clean = self.taint() == t0;
+        let mut memo = self.memo.rel.borrow_mut();
         let inside = &mut memo.get_mut(&key).unwrap().inside;
         if inside.is_empty() {
             inside.resize(self.f.len(), 0);
         }
         for &(c, r) in chain.iter().rev() {
             v = combine(r, v);
-            inside[c as usize] = v;
+            if clean {
+                inside[c as usize] = v;
+            }
         }
-        inside[n as usize]
+        v
     }
 
     /// `has {rule, stopBy: end}` at `n`: the descendants in preorder until the first true
     /// verdict; a descendant whose own answer is known is not entered again.
     fn has_end_memo(&self, key: usize, rule: &Rule, n: u32) -> u8 {
-        let known = self.rel_memo.borrow()[&key].has.get(n as usize).copied().unwrap_or(0);
+        let known = self.memo.rel.borrow()[&key].has.get(n as usize).copied().unwrap_or(0);
         if known != 0 {
             return known;
         }
         let end = self.f.subtree_end[n as usize];
+        let t0 = self.taint();
         let mut i = n + 1 + crate::mutant::on(3) as u32;
         let mut unknown = false;
         let mut res = F;
@@ -1532,7 +1602,7 @@ impl<'a> Eval<'a> {
                 break;
             }
             unknown |= r == U;
-            match self.rel_memo.borrow()[&key].has.get(i as usize).copied().unwrap_or(0) {
+            match self.memo.rel.borrow()[&key].has.get(i as usize).copied().unwrap_or(0) {
                 0 => i += 1,
                 T => {
                     res = T;
@@ -1547,7 +1617,10 @@ impl<'a> Eval<'a> {
         if res != T && unknown {
             res = U;
         }
-        let mut memo = self.rel_memo.borrow_mut();
+        if self.taint() != t0 {
+            return res;
+        }
+        let mut memo = self.memo.rel.borrow_mut();
         let has = &mut memo.get_mut(&key).unwrap().has;
         if has.is_empty() {
             has.resize(self.f.len(), 0);
@@ -1671,9 +1744,10 @@ impl<'a> Eval<'a> {
     fn field_inside_end_memo(&self, key: usize, rule: &Rule, field: u16, n: u32) -> u8 {
         let combine = |r: u8, v: u8| if r == T || v == T { T } else if r == U || v == U { U } else { F };
         let mut chain: Vec<(u32, u8)> = Vec::new();
+        let t0 = self.taint();
         let mut c = n;
         let mut v = loop {
-            let known = self.rel_memo.borrow()[&key].finside.get(c as usize).copied().unwrap_or(0);
+            let known = self.memo.rel.borrow()[&key].finside.get(c as usize).copied().unwrap_or(0);
             if known != 0 {
                 break known;
             }
@@ -1689,16 +1763,19 @@ impl<'a> Eval<'a> {
             }
             c = p;
         };
-        let mut memo = self.rel_memo.borrow_mut();
+        let clean = self.taint() == t0;
+        let mut memo = self.memo.rel.borrow_mut();
         let fi = &mut memo.get_mut(&key).unwrap().finside;
         if fi.is_empty() {
             fi.resize(self.f.len(), 0);
         }
         for &(c, r) in chain.iter().rev() {
             v = combine(r, v);
-            fi[c as usize] = v;
+            if clean {
+                fi[c as usize] = v;
+            }
         }
-        fi[n as usize]
+        v
     }
 
     fn field_inside_unmemoised(&self, node: Bound, field: u16, rule: &Rule, stop: &Stop, env: &mut Env) -> bool {

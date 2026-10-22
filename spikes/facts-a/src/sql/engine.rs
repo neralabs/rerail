@@ -23,11 +23,254 @@ impl Schema {
     }
 }
 
+/// A gather index entry naming no row: the null-extended row of a LEFT JOIN.
+pub const NULL_ROW: u32 = u32::MAX;
+
+/// One column of a relation. Results of projections, sorts, filters and unions are views
+/// (`Gather`, `Chain`) over the columns they read, so a stage that selects `n.*` stores one row
+/// index per binding, not a copy of every value.
+#[derive(Debug)]
+pub enum Column {
+    /// Stored values.
+    Vals(Vec<V>),
+    /// The rows of `src` named by `idx` (`None`: every row, in order; `NULL_ROW`: NULL), each
+    /// converted by `aff` (CTAS storage; `Aff::None` converts nothing).
+    Gather { src: Rc<Column>, idx: Option<Rc<[u32]>>, aff: Aff },
+    /// Concatenation (UNION ALL): each part with its first row, in order, none empty.
+    Chain(Vec<(u32, Rc<Column>)>),
+    /// Text read from the file: a cell is a byte range of `source` (a node's text, read on
+    /// first use and kept) or a value. Node texts nest, so storing them would cost
+    /// O(nodes × depth) bytes.
+    Text { source: Rc<str>, cells: Vec<TextCell>, cache: Vec<std::cell::OnceCell<Rc<str>>> },
+}
+
+#[derive(Debug)]
+pub enum TextCell {
+    Span(u32, u32),
+    Val(V),
+}
+
+impl Column {
+    pub fn text(source: Rc<str>, cells: Vec<TextCell>) -> Column {
+        let cache = (0..cells.len()).map(|_| std::cell::OnceCell::new()).collect();
+        Column::Text { source, cells, cache }
+    }
+
+    pub fn get(&self, r: u32) -> V {
+        match self {
+            Column::Vals(v) => v[r as usize].clone(),
+            Column::Gather { src, idx, aff } => {
+                let s = match idx {
+                    Some(i) => i[r as usize],
+                    None => r,
+                };
+                if s == NULL_ROW {
+                    return V::Null;
+                }
+                let v = src.get(s);
+                if *aff == Aff::None { v } else { sv::apply_affinity(v, *aff) }
+            }
+            Column::Chain(parts) => {
+                let p = parts.partition_point(|(start, _)| *start <= r) - 1;
+                parts[p].1.get(r - parts[p].0)
+            }
+            Column::Text { source, cells, cache } => match &cells[r as usize] {
+                TextCell::Span(s, e) => V::Text(cache[r as usize].get_or_init(|| Rc::from(&source[*s as usize..*e as usize])).clone()),
+                TextCell::Val(v) => v.clone(),
+            },
+        }
+    }
+
+    /// `col` with every value converted by `aff` on read (CTAS storage).
+    pub fn with_aff(col: &Rc<Column>, aff: Aff) -> Rc<Column> {
+        if aff == Aff::None {
+            return col.clone();
+        }
+        match &**col {
+            Column::Gather { src, idx, aff: Aff::None } => Rc::new(Column::Gather { src: src.clone(), idx: idx.clone(), aff }),
+            _ => Rc::new(Column::Gather { src: col.clone(), idx: None, aff }),
+        }
+    }
+
+    /// Bytes this column holds itself (values, text payloads, indexes); shared parts counted
+    /// once per reference.
+    pub fn bytes(&self) -> usize {
+        match self {
+            Column::Vals(v) => v.len() * std::mem::size_of::<V>() + v.iter().map(|x| if let V::Text(s) = x { s.len() } else { 0 }).sum::<usize>(),
+            Column::Gather { idx, .. } => idx.as_ref().map_or(0, |i| i.len() * 4),
+            Column::Chain(p) => p.len() * 24,
+            Column::Text { cells, cache, .. } => cells.len() * (std::mem::size_of::<TextCell>() + 16) + cache.iter().filter_map(|c| c.get()).map(|s| s.len()).sum::<usize>(),
+        }
+    }
+
+    /// Levels of indirection a read goes through.
+    fn depth(&self) -> usize {
+        match self {
+            Column::Vals(_) | Column::Text { .. } => 0,
+            Column::Gather { src, .. } => 1 + src.depth(),
+            Column::Chain(p) => 1 + p.iter().map(|(_, c)| c.depth()).max().unwrap_or(0),
+        }
+    }
+}
+
+/// Reads deeper than this materialise (a gather over a chain does not compose; recursion could
+/// otherwise nest one level per iteration).
+const MAX_DEPTH: usize = 5;
+
+/// Composes gather indexes: `idx` over a column that is itself a gather reads its source
+/// directly. `memo` shares one composed index among the columns of one source table.
+fn gather(src: &Rc<Column>, idx: &Rc<[u32]>, memo: &mut FxHashMap<(usize, usize), Rc<[u32]>>) -> Rc<Column> {
+    match &**src {
+        Column::Gather { src: s2, idx: i2, aff } => {
+            let composed = match i2 {
+                None => idx.clone(),
+                Some(i2) => memo
+                    .entry((Rc::as_ptr(idx) as *const u32 as usize, Rc::as_ptr(i2) as *const u32 as usize))
+                    .or_insert_with(|| idx.iter().map(|&k| if k == NULL_ROW { NULL_ROW } else { i2[k as usize] }).collect())
+                    .clone(),
+            };
+            Rc::new(Column::Gather { src: s2.clone(), idx: Some(composed), aff: *aff })
+        }
+        _ if src.depth() >= MAX_DEPTH => Rc::new(Column::Vals(idx.iter().map(|&k| if k == NULL_ROW { V::Null } else { src.get(k) }).collect())),
+        _ => Rc::new(Column::Gather { src: src.clone(), idx: Some(idx.clone()), aff: Aff::None }),
+    }
+}
+
+/// UNION ALL of columns of `n` rows each. Adjacent gathers of one source merge into one.
+fn chain(cols: &[(&Rc<Column>, usize)]) -> Rc<Column> {
+    let mut parts: Vec<(u32, Rc<Column>)> = Vec::new();
+    let mut start = 0u32;
+    let mut push = |parts: &mut Vec<(u32, Rc<Column>)>, s: u32, c: &Rc<Column>| {
+        if let (Some((_, last)), Column::Gather { src, idx: Some(i), aff }) = (parts.last_mut(), &**c) {
+            if let Column::Gather { src: ls, idx: Some(li), aff: la } = &**last {
+                if Rc::ptr_eq(src, ls) && aff == la {
+                    let merged: Rc<[u32]> = li.iter().chain(i.iter()).copied().collect();
+                    *last = Rc::new(Column::Gather { src: src.clone(), idx: Some(merged), aff: *aff });
+                    return;
+                }
+            }
+        }
+        parts.push((s, c.clone()));
+    };
+    for (c, n) in cols {
+        if *n == 0 {
+            continue;
+        }
+        match &***c {
+            Column::Chain(ps) => ps.iter().for_each(|(s, p)| push(&mut parts, start + s, p)),
+            _ => push(&mut parts, start, c),
+        }
+        start += *n as u32;
+    }
+    if parts.len() == 1 {
+        return parts.pop().unwrap().1;
+    }
+    if parts.is_empty() {
+        return Rc::new(Column::Vals(Vec::new()));
+    }
+    Rc::new(Column::Chain(parts))
+}
+
+/// UNION ALL of tables (each at least `w` columns wide).
+fn concat(schema: Schema, w: usize, parts: &[Table]) -> Table {
+    let len = parts.iter().map(Table::len).sum();
+    let cols = (0..w).map(|c| chain(&parts.iter().map(|t| (&t.cols[c], t.len())).collect::<Vec<_>>())).collect();
+    Table { schema, cols, len }
+}
+
+/// Set semantics over rows (UNION, recursive UNION): each column's values interned by their
+/// distinctness key, rows compared as tuples of interned ids.
+struct Distinct {
+    ids: Vec<FxHashMap<DKey, u32>>,
+    narrow: rustc_hash::FxHashSet<[u32; 4]>,
+    wide: rustc_hash::FxHashSet<Box<[u32]>>,
+}
+
+impl Distinct {
+    fn new(width: usize) -> Distinct {
+        Distinct { ids: (0..width).map(|_| FxHashMap::default()).collect(), narrow: Default::default(), wide: Default::default() }
+    }
+    /// Column `c`'s id for value `v`.
+    fn intern(&mut self, c: usize, v: &V) -> u32 {
+        let ids = &mut self.ids[c];
+        let n = ids.len() as u32;
+        *ids.entry(sv::dkey(v)).or_insert(n)
+    }
+    /// Whether the row of interned ids `key` is new; records it.
+    fn insert_key(&mut self, key: &[u32]) -> bool {
+        if key.len() <= 4 {
+            let mut k = [0u32; 4];
+            k[..key.len()].copy_from_slice(key);
+            self.narrow.insert(k)
+        } else {
+            self.wide.insert(key.into())
+        }
+    }
+    /// Whether row `r` of `t` (its first `width` columns) is new; records it.
+    fn insert(&mut self, t: &Table, r: usize) -> bool {
+        let key: Vec<u32> = (0..self.ids.len()).map(|c| self.intern(c, &t.value(r, c))).collect();
+        self.insert_key(&key)
+    }
+}
+
+/// A relation: columns of equal length. `cols` may be wider than `schema` (ORDER BY keys of a
+/// select ride along until the sort).
 #[derive(Debug, Default)]
 pub struct Table {
     pub schema: Schema,
-    pub rows: Vec<Box<[V]>>,
+    pub cols: Vec<Rc<Column>>,
+    len: usize,
 }
+
+impl Table {
+    pub fn new(schema: Schema, cols: Vec<Rc<Column>>, len: usize) -> Table {
+        Table { schema, cols, len }
+    }
+    pub fn empty(schema: Schema) -> Table {
+        let cols = schema.cols.iter().map(|_| Rc::new(Column::Vals(Vec::new()))).collect();
+        Table { schema, cols, len: 0 }
+    }
+    /// Rows of `width` = the schema's width (longer rows are cut).
+    pub fn from_rows(schema: Schema, rows: Vec<Box<[V]>>) -> Table {
+        let w = schema.cols.len();
+        let len = rows.len();
+        let mut cols: Vec<Vec<V>> = (0..w).map(|_| Vec::with_capacity(len)).collect();
+        for r in rows {
+            for (c, v) in cols.iter_mut().zip(r.into_vec()) {
+                c.push(v);
+            }
+        }
+        Table { schema, cols: cols.into_iter().map(|c| Rc::new(Column::Vals(c))).collect(), len }
+    }
+    pub fn len(&self) -> usize {
+        self.len
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+    pub fn value(&self, r: usize, c: usize) -> V {
+        self.cols.get(c).map_or(V::Null, |col| col.get(r as u32))
+    }
+    /// One row's values over the schema's columns.
+    pub fn row(&self, r: usize) -> Vec<V> {
+        (0..self.schema.cols.len()).map(|c| self.value(r, c)).collect()
+    }
+    /// The rows named by `idx`, as views.
+    pub fn select(&self, idx: Rc<[u32]>) -> Table {
+        let mut memo = FxHashMap::default();
+        let len = idx.len();
+        Table { schema: self.schema.clone(), cols: self.cols.iter().map(|c| gather(c, &idx, &mut memo)).collect(), len }
+    }
+    /// The first `w` columns.
+    fn truncate(mut self, w: usize) -> Table {
+        self.cols.truncate(w);
+        self
+    }
+    pub fn bytes(&self) -> usize {
+        self.cols.iter().map(|c| c.bytes()).sum()
+    }
+}
+
 
 // ---------------------------------------------------------------------------------------------
 // Plan
@@ -940,9 +1183,9 @@ fn expr_refs(e: &Expr, name: &str) -> bool {
     }
 }
 
-fn visit_cols(pe: &PE, f: &mut dyn FnMut(u16, u16)) {
+fn visit_cols(pe: &PE, f: &mut dyn FnMut(u16, u16, u16)) {
     match pe {
-        PE::Col { depth, item, .. } => f(*depth, *item),
+        PE::Col { depth, item, col } => f(*depth, *item, *col),
         PE::Not(x) | PE::Neg(x) | PE::Cast(x, _) | PE::IsNull(x, _) => visit_cols(x, f),
         PE::Cmp(_, l, r, _) | PE::Arith(_, l, r) | PE::Concat(l, r) | PE::And(l, r) | PE::Or(l, r) | PE::Is(l, r, _) | PE::Like(l, r, _) => {
             visit_cols(l, f);
@@ -1011,7 +1254,7 @@ fn has_sub(pe: &PE) -> bool {
 /// item (it may be correlated to any of them).
 fn max_item(pe: &PE) -> Option<usize> {
     let mut m: Option<usize> = None;
-    visit_cols(pe, &mut |d, i| {
+    visit_cols(pe, &mut |d, i, _| {
         if d == 0 {
             m = Some(m.map_or(i as usize, |x| x.max(i as usize)));
         }
@@ -1023,11 +1266,17 @@ fn max_item(pe: &PE) -> Option<usize> {
 }
 fn refs_item(pe: &PE, i: usize) -> bool {
     let mut r = false;
-    visit_cols(pe, &mut |d, it| {
+    visit_cols(pe, &mut |d, it, _| {
         if d == 0 && it as usize == i {
             r = true;
         }
     });
+    r
+}
+/// Whether `pe` reads column `col` of FROM item `i` (depth 0).
+fn reads_col(pe: &PE, i: usize, col: usize) -> bool {
+    let mut r = false;
+    visit_cols(pe, &mut |d, it, c| r |= d == 0 && it as usize == i && c as usize == col);
     r
 }
 fn has_agg(pe: &PE) -> bool {
@@ -1047,9 +1296,36 @@ pub struct Db<'a> {
     pub tables: FxHashMap<String, Rc<Table>>,
     pub source: &'a str,
     pub path: &'a str,
+    /// Hash indexes over the stored tables, built once and shared by every statement of the
+    /// clause (each entry holds its table, so a table's address is never reused while indexed).
+    indexes: RefCell<FxHashMap<(usize, Vec<u16>, Vec<Aff>), (Rc<Table>, Rc<Index>)>>,
+}
+
+impl<'a> Db<'a> {
+    pub fn new(source: &'a str, path: &'a str) -> Self {
+        Db { tables: Default::default(), source, path, indexes: Default::default() }
+    }
 }
 
 type Index = FxHashMap<Vec<Key>, Vec<u32>>;
+
+/// Row numbers of `t` by their key on `cols` (each value compared under its affinity); a row
+/// with a NULL key part equals nothing and is left out.
+fn build_index(t: &Table, cols: &[u16], affs: &[Aff]) -> Index {
+    let mut ix: Index = FxHashMap::default();
+    let cs: Vec<&Column> = cols.iter().map(|&c| &*t.cols[c as usize]).collect();
+    'rows: for ri in 0..t.len() as u32 {
+        let mut key = Vec::with_capacity(cols.len());
+        for (c, a) in cs.iter().zip(affs) {
+            match sv::key(&sv::compare_affinity(&c.get(ri), *a)) {
+                Some(kk) => key.push(kk),
+                None => continue 'rows,
+            }
+        }
+        ix.entry(key).or_default().push(ri);
+    }
+    ix
+}
 
 /// A join's hash indexes per item: the plain equality probe's, and each OR branch's.
 struct Indexes {
@@ -1061,7 +1337,8 @@ pub struct Exec<'d, 'a> {
     db: &'d Db<'a>,
     stmt: &'d Statement,
     slots: RefCell<Vec<Option<Rc<Table>>>>,
-    indexes: RefCell<FxHashMap<(usize, Vec<u16>, Vec<Aff>), Rc<Index>>>,
+    /// This statement's indexes by (table, probe).
+    indexes: RefCell<FxHashMap<(usize, usize), Rc<Index>>>,
     sub_cache: RefCell<FxHashMap<usize, Rc<SubResult>>>,
     derived: RefCell<FxHashMap<usize, Rc<Table>>>,
     keep: RefCell<Vec<Rc<Table>>>,
@@ -1074,9 +1351,112 @@ enum SubResult {
     Set(rustc_hash::FxHashSet<Key>, bool, bool),
 }
 
+/// One FROM item's binding: a row of a table (`NULL_ROW`: the null-extended row), or nothing
+/// (`t: None`, an item not bound yet). Every column of an unbound or null row reads NULL.
+#[derive(Clone, Copy)]
+struct RowRef<'r> {
+    t: Option<&'r Table>,
+    r: u32,
+}
+
+const UNBOUND: RowRef<'static> = RowRef { t: None, r: NULL_ROW };
+
+impl RowRef<'_> {
+    #[inline]
+    fn value(&self, c: u16) -> V {
+        match self.t {
+            Some(t) if self.r != NULL_ROW => t.cols.get(c as usize).map_or(V::Null, |col| col.get(self.r)),
+            _ => V::Null,
+        }
+    }
+}
+
+/// A binding kept past its join (group representatives, window rows): per item, its table and
+/// row. Every table is held by the select's `tables` or the execution's `keep` until the
+/// execution ends.
+#[derive(Clone, Copy)]
+struct Kept {
+    t: *const Table,
+    r: u32,
+}
+
+impl Kept {
+    fn of(r: &RowRef<'_>) -> Kept {
+        Kept { t: r.t.map_or(std::ptr::null(), |t| t as *const Table), r: r.r }
+    }
+    fn row<'r>(&self) -> RowRef<'r> {
+        // SAFETY: `t` is null or points at a table held by the select's `tables` or by `keep`,
+        // both alive for as long as the kept binding is used (within one `select_rows`).
+        RowRef { t: unsafe { self.t.as_ref() }, r: self.r }
+    }
+}
+
+/// A select's output under construction: per output column, either the (item, column) it reads
+/// — recorded as one row index per binding per item, shared by every column of that item — or
+/// the values its expression evaluated to.
+struct Out<'p> {
+    exprs: Vec<&'p PE>,
+    src: Vec<Option<(usize, usize)>>,
+    idx: Vec<Option<Vec<u32>>>,
+    vals: Vec<Vec<V>>,
+    n: usize,
+}
+
+impl<'p> Out<'p> {
+    fn new(s: &'p PSelect) -> Out<'p> {
+        let exprs: Vec<&PE> = s.proj.iter().chain(&s.order_keys).collect();
+        let src: Vec<Option<(usize, usize)>> = exprs
+            .iter()
+            .map(|p| match p {
+                PE::Col { depth: 0, item, col } if !s.items[*item as usize].lateral => Some((*item as usize, *col as usize)),
+                _ => None,
+            })
+            .collect();
+        let mut idx: Vec<Option<Vec<u32>>> = vec![None; s.items.len()];
+        for (item, _) in src.iter().flatten() {
+            idx[*item] = Some(Vec::new());
+        }
+        let vals = exprs.iter().map(|_| Vec::new()).collect();
+        Out { exprs, src, idx, vals, n: 0 }
+    }
+
+    fn push(&mut self, ex: &Exec<'_, '_>, ctx: &EvalCtx<'_>) {
+        for (item, ix) in self.idx.iter_mut().enumerate() {
+            if let Some(ix) = ix {
+                ix.push(ctx.frame.rows[item].r);
+            }
+        }
+        for (j, src) in self.src.iter().enumerate() {
+            if src.is_none() {
+                self.vals[j].push(ex.eval(self.exprs[j], ctx));
+            }
+        }
+        self.n += 1;
+    }
+
+    fn finish(self, tables: &[Rc<Table>], schema: Schema) -> Table {
+        let idx: Vec<Option<Rc<[u32]>>> = self.idx.into_iter().map(|i| i.map(Rc::from)).collect();
+        let mut memo = FxHashMap::default();
+        let n = self.n;
+        let cols = self
+            .src
+            .iter()
+            .zip(self.vals)
+            .map(|(src, vals)| match src {
+                Some((item, col)) => match tables[*item].cols.get(*col) {
+                    Some(c) => gather(c, idx[*item].as_ref().unwrap(), &mut memo),
+                    None => Rc::new(Column::Vals(vec![V::Null; n])),
+                },
+                None => Rc::new(Column::Vals(vals)),
+            })
+            .collect();
+        Table { schema, cols, len: n }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Frame<'r> {
-    rows: &'r [&'r [V]],
+    rows: &'r [RowRef<'r>],
     parent: Option<&'r Frame<'r>>,
 }
 
@@ -1084,10 +1464,6 @@ struct EvalCtx<'r> {
     frame: Frame<'r>,
     aggs: Option<&'r [V]>,
     wins: Option<&'r [V]>,
-}
-
-fn empty_row<'a>() -> &'a [V] {
-    &[]
 }
 
 pub fn execute(db: &Db<'_>, stmt: &Statement) -> Result<Table, String> {
@@ -1108,8 +1484,8 @@ pub fn execute(db: &Db<'_>, stmt: &Statement) -> Result<Table, String> {
     Ok(t)
 }
 
-/// Evaluates a planned scalar expression (deferred column) over one row.
-pub fn eval_scalar(db: &Db<'_>, stmt: &Statement, pe: &PE, row: &[V]) -> Result<V, String> {
+/// Evaluates a planned scalar expression (deferred column) over row `r` of `t`.
+pub fn eval_scalar(db: &Db<'_>, stmt: &Statement, pe: &PE, t: &Table, r: usize) -> Result<V, String> {
     let ex = Exec {
         db,
         stmt,
@@ -1120,7 +1496,7 @@ pub fn eval_scalar(db: &Db<'_>, stmt: &Statement, pe: &PE, row: &[V]) -> Result<
         keep: Default::default(),
         error: RefCell::new(None),
     };
-    let rows = [row];
+    let rows = [RowRef { t: Some(t), r: r as u32 }];
     let ctx = EvalCtx { frame: Frame { rows: &rows, parent: None }, aggs: None, wins: None };
     let v = ex.eval(pe, &ctx);
     if let Some(e) = ex.error.borrow_mut().take() {
@@ -1148,17 +1524,28 @@ impl<'d, 'a> Exec<'d, 'a> {
                     self.slots.borrow_mut()[*slot] = Some(Rc::new(t));
                 }
                 PCte::Recursive { slot, batch, init, rec, distinct, schema } => {
-                    let t = self.recursive(*batch, init, rec, *distinct, schema, outer);
+                    let t = match self.closure(*batch, init, rec, *distinct, schema, outer) {
+                        Some(t) => t,
+                        None => self.recursive(*batch, init, rec, *distinct, schema, outer),
+                    };
                     self.slots.borrow_mut()[*slot] = Some(Rc::new(t));
                 }
             }
         }
-        let mut rows = self.body(&q.body, outer);
+        let t = self.body(&q.body, outer);
+        let width = q.out.cols.len();
+        let limit = q.limit.as_ref().map(|e| self.const_int(e, outer));
+        let offset = q.offset.as_ref().map(|e| self.const_int(e, outer)).unwrap_or(0).max(0) as usize;
+        if q.order.is_empty() && limit.is_none_or(|l| l < 0) && offset == 0 {
+            return Table { schema: q.out.clone(), ..t }.truncate(width);
+        }
+        let mut perm: Vec<u32> = (0..t.len() as u32).collect();
         if !q.order.is_empty() {
-            let keys = &q.order;
-            rows.sort_by(|a, b| {
-                for (i, desc) in keys {
-                    let o = sv::cmp(&a[*i], &b[*i]);
+            // Stable sort on the key values, read once.
+            let keys: Vec<(Vec<V>, bool)> = q.order.iter().map(|(i, desc)| ((0..t.len()).map(|r| t.value(r, *i)).collect(), *desc)).collect();
+            perm.sort_by(|&a, &b| {
+                for (k, desc) in &keys {
+                    let o = sv::cmp(&k[a as usize], &k[b as usize]);
                     if o != Ordering::Equal {
                         return if *desc { o.reverse() } else { o };
                     }
@@ -1166,30 +1553,17 @@ impl<'d, 'a> Exec<'d, 'a> {
                 Ordering::Equal
             });
         }
-        let width = q.out.cols.len();
-        let limit = q.limit.as_ref().map(|e| self.const_int(e, outer));
-        let offset = q.offset.as_ref().map(|e| self.const_int(e, outer)).unwrap_or(0).max(0) as usize;
-        let mut out: Vec<Box<[V]>> = Vec::new();
-        for (i, r) in rows.into_iter().enumerate() {
-            if i < offset {
-                continue;
-            }
-            if let Some(l) = limit {
-                if l >= 0 && out.len() as i64 >= l {
-                    break;
-                }
-            }
-            if r.len() == width {
-                out.push(r);
-            } else {
-                out.push(r[..width].to_vec().into_boxed_slice());
-            }
-        }
-        Table { schema: q.out.clone(), rows: out }
+        let start = offset.min(perm.len());
+        let end = match limit {
+            Some(l) if l >= 0 => start.saturating_add(l as usize).min(perm.len()),
+            _ => perm.len(),
+        };
+        let idx: Rc<[u32]> = perm[start..end].into();
+        Table { schema: q.out.clone(), ..t.truncate(width) }.select(idx)
     }
 
     fn const_int(&self, e: &PE, outer: Option<&Frame<'_>>) -> i64 {
-        let empty: [&[V]; 0] = [];
+        let empty: [RowRef<'_>; 0] = [];
         let ctx = EvalCtx { frame: Frame { rows: &empty, parent: outer }, aggs: None, wins: None };
         match sv::cast(&self.eval(e, &ctx), Aff::Integer) {
             V::Int(i) => i,
@@ -1197,79 +1571,221 @@ impl<'d, 'a> Exec<'d, 'a> {
         }
     }
 
-    fn body(&self, b: &PBody, outer: Option<&Frame<'_>>) -> Vec<Box<[V]>> {
+    fn body(&self, b: &PBody, outer: Option<&Frame<'_>>) -> Table {
         match b {
             PBody::Select(s) => self.select_rows(s, outer),
-            PBody::Compound(l, op, r, _) => {
-                let mut left = self.body(l, outer);
+            PBody::Compound(l, op, r, schema) => {
+                let left = self.body(l, outer);
                 let right = self.body(r, outer);
+                let w = left.cols.len().min(right.cols.len());
+                let cols: Vec<Rc<Column>> = (0..w).map(|c| chain(&[(&left.cols[c], left.len()), (&right.cols[c], right.len())])).collect();
+                let all = Table { schema: schema.clone(), cols, len: left.len() + right.len() };
                 match op {
-                    SetOp::UnionAll => {
-                        left.extend(right);
-                        left
-                    }
+                    SetOp::UnionAll => all,
                     SetOp::Union => {
-                        let mut seen = rustc_hash::FxHashSet::default();
-                        let mut out = Vec::new();
-                        for row in left.into_iter().chain(right) {
-                            let k: Vec<DKey> = row.iter().map(sv::dkey).collect();
-                            if seen.insert(k) {
-                                out.push(row);
-                            }
-                        }
-                        out
+                        let mut seen = Distinct::new(w);
+                        let keep: Vec<u32> = (0..all.len()).filter(|&r| seen.insert(&all, r)).map(|r| r as u32).collect();
+                        if keep.len() == all.len() { all } else { all.select(keep.into()) }
                     }
                 }
             }
         }
     }
 
-    fn recursive(&self, batch: usize, init: &[PBody], rec: &[PBody], distinct: bool, schema: &Schema, outer: Option<&Frame<'_>>) -> Table {
-        let mut seen = rustc_hash::FxHashSet::default();
-        let mut result: Vec<Box<[V]>> = Vec::new();
-        let mut queue: Vec<Box<[V]>> = Vec::new();
-        let width = schema.cols.len();
-        let mut admit = |row: Box<[V]>, queue: &mut Vec<Box<[V]>>| {
-            let row: Box<[V]> = if row.len() == width { row } else { row[..width].to_vec().into_boxed_slice() };
-            if distinct {
-                let k: Vec<DKey> = row.iter().map(sv::dkey).collect();
-                if !seen.insert(k) {
-                    return;
-                }
-            }
-            queue.push(row);
-        };
-        for arm in init {
-            for row in self.body(arm, outer) {
-                admit(row, &mut queue);
+    /// A closure: a set-semantics fixpoint whose step joins the previous level `w` to one edge
+    /// relation `e` on `e.(keys, src) = w.(keys, node)`, carries every other column of `w` and
+    /// replaces `node` by `e.dst`; filters read only carried columns of `w` and columns of `e`.
+    /// Recognised on the plan, for any relation. Its rows equal the semi-naive evaluation's, in
+    /// the same order (level by level; within a level by the previous row, then the edge
+    /// relation's order), without evaluating the step as a select per level: a row is (seed,
+    /// node source), carried values are the seed's, and the result columns are gathers.
+    /// `None` when the plan is not of that shape.
+    fn closure(&self, batch: usize, init: &[PBody], rec: &[PBody], distinct: bool, schema: &Schema, outer: Option<&Frame<'_>>) -> Option<Table> {
+        let ([seed_body], [PBody::Select(s)], true) = (init, rec, distinct) else { return None };
+        let w = schema.cols.len();
+        let plain = !s.grouped && s.wins.is_empty() && !s.distinct && s.order_keys.is_empty() && s.konst.is_empty() && s.having.is_none();
+        if !plain || s.items.len() != 2 || s.proj.len() != w || s.post.iter().any(|p| !p.is_empty()) {
+            return None;
+        }
+        let (wi, ei) = (&s.items[0], &s.items[1]);
+        if !matches!(wi.src, Src::Cte(b) if b == batch) || wi.left || wi.lateral || s.probes[0].is_some() || s.or_probes[0].is_some() {
+            return None;
+        }
+        if ei.left || ei.lateral || s.or_probes[1].is_some() || matches!(ei.src, Src::Cte(b) if b == batch) {
+            return None;
+        }
+        let probe = s.probes[1].as_ref()?;
+        // The projection: carried columns in place, and one `e` column as the new node.
+        let mut node = None;
+        for (j, p) in s.proj.iter().enumerate() {
+            match p {
+                PE::Col { depth: 0, item: 0, col } if *col as usize == j => {}
+                PE::Col { depth: 0, item: 1, col } if node.is_none() => node = Some((j, *col as usize)),
+                _ => return None,
             }
         }
+        let (nj, dst) = node?;
+        // The probe: `e` columns equal to `w` columns; exactly one of them is `w.node`.
+        let mut from_w = Vec::new();
+        for e in &probe.exprs {
+            let PE::Col { depth: 0, item: 0, col } = e else { return None };
+            from_w.push(*col as usize);
+        }
+        if from_w.iter().filter(|&&c| c == nj).count() != 1 {
+            return None;
+        }
+        // Filters may not read `w.node` (so they are functions of the seed and the edge) and
+        // hold no subquery.
+        if s.level[0].iter().chain(&s.level[1]).any(|c| reads_col(c, 0, nj) || has_sub(c)) {
+            return None;
+        }
+        // Seeds: the initial select, set semantics.
+        let seeds = self.body(seed_body, outer);
+        if self.failed() {
+            return Some(Table::empty(schema.clone()));
+        }
+        let seeds = Table { schema: schema.clone(), ..seeds }.truncate(w);
+        let e = self.table_of(&ei.src, outer);
+        if self.failed() {
+            return Some(Table::empty(schema.clone()));
+        }
+        let ix = self.index(&e, probe, matches!(ei.src, Src::Global(_)));
+        let mut seen = Distinct::new(w);
+        // Per admitted seed: its row and its values' ids.
+        let mut seed_rows: Vec<u32> = Vec::new();
+        let mut seed_ids: Vec<Vec<u32>> = Vec::new();
+        // Walk rows: (seed, node source: `u32::MAX` = the seed's own node, else an edge row).
+        let mut level: Vec<(u32, u32)> = Vec::new();
+        for r in 0..seeds.len() {
+            let key: Vec<u32> = (0..w).map(|c| seen.intern(c, &seeds.value(r, c))).collect();
+            if seen.insert_key(&key) {
+                level.push((seed_rows.len() as u32, u32::MAX));
+                seed_rows.push(r as u32);
+                seed_ids.push(key);
+            }
+        }
+        let node_value = |sr: u32, src: u32| if src == u32::MAX { seeds.value(seed_rows[sr as usize] as usize, nj) } else { e.value(src as usize, dst) };
+        // A seed expands when `w`'s filters hold on its (carried) values.
+        let mut expands: Vec<Option<bool>> = vec![None; seed_rows.len()];
+        let mut all: Vec<(u32, u32)> = Vec::new();
+        let mut steps = 0usize;
+        let mut key = vec![0u32; w];
+        while !level.is_empty() {
+            if self.failed() {
+                break;
+            }
+            steps += level.len();
+            if steps > 50_000_000 {
+                self.fail("recursive CTE exceeded 50M rows".into());
+                break;
+            }
+            let mut next = Vec::new();
+            for &(sr, src) in &level {
+                let seed = RowRef { t: Some(&seeds), r: seed_rows[sr as usize] };
+                let ok = *expands[sr as usize].get_or_insert_with(|| {
+                    let rows = [seed, UNBOUND];
+                    let ctx = EvalCtx { frame: Frame { rows: &rows, parent: outer }, aggs: None, wins: None };
+                    s.level[0].iter().all(|c| sv::truth(&self.eval(c, &ctx)) == Some(true))
+                });
+                if !ok {
+                    continue;
+                }
+                let mut pk = Vec::with_capacity(from_w.len());
+                for (&c, a) in from_w.iter().zip(&probe.expr_affs) {
+                    let v = if c == nj { node_value(sr, src) } else { seed.value(c as u16) };
+                    match sv::key(&sv::compare_affinity(&v, *a)) {
+                        Some(k) => pk.push(k),
+                        None => break,
+                    }
+                }
+                if pk.len() != from_w.len() {
+                    continue;
+                }
+                let Some(hits) = ix.get(&pk) else { continue };
+                for &er in hits {
+                    if !s.level[1].is_empty() {
+                        let rows = [seed, RowRef { t: Some(&e), r: er }];
+                        let ctx = EvalCtx { frame: Frame { rows: &rows, parent: outer }, aggs: None, wins: None };
+                        if !s.level[1].iter().all(|c| sv::truth(&self.eval(c, &ctx)) == Some(true)) {
+                            continue;
+                        }
+                    }
+                    key.copy_from_slice(&seed_ids[sr as usize]);
+                    key[nj] = seen.intern(nj, &e.value(er as usize, dst));
+                    if seen.insert_key(&key) {
+                        next.push((sr, er));
+                    }
+                }
+            }
+            all.append(&mut level);
+            level = next;
+        }
+        // Columns: carried ones gather the seed rows; the node column chains the seeds' nodes
+        // (level 0) and the edges' `dst` (deeper levels).
+        let n = all.len();
+        let seed_idx: Rc<[u32]> = all.iter().map(|&(sr, _)| seed_rows[sr as usize]).collect();
+        let roots = all.iter().take_while(|&&(_, src)| src == u32::MAX).count();
+        let first: Rc<[u32]> = seed_idx[..roots].into();
+        let edge_idx: Rc<[u32]> = all[roots..].iter().map(|&(_, src)| src).collect();
+        let mut memo = FxHashMap::default();
+        let cols = (0..w)
+            .map(|j| {
+                if j == nj {
+                    let a = gather(&seeds.cols[j], &first, &mut memo);
+                    let b = gather(&e.cols[dst], &edge_idx, &mut memo);
+                    chain(&[(&a, roots), (&b, n - roots)])
+                } else {
+                    gather(&seeds.cols[j], &seed_idx, &mut memo)
+                }
+            })
+            .collect();
+        Some(Table { schema: schema.clone(), cols, len: n })
+    }
+
+    /// Semi-naive fixpoint, level by level. Each level's rows are views (gathers) over the arms'
+    /// sources, so a closure over a relation stores row indexes, not values.
+    fn recursive(&self, batch: usize, init: &[PBody], rec: &[PBody], distinct: bool, schema: &Schema, outer: Option<&Frame<'_>>) -> Table {
+        let width = schema.cols.len();
+        let mut seen = Distinct::new(width);
+        let mut admit = |t: Table, queue: &mut Vec<Table>| {
+            let t = Table { schema: schema.clone(), ..t }.truncate(width);
+            let t = if distinct {
+                let keep: Vec<u32> = (0..t.len()).filter(|&r| seen.insert(&t, r)).map(|r| r as u32).collect();
+                if keep.len() == t.len() { t } else { t.select(keep.into()) }
+            } else {
+                t
+            };
+            if !t.is_empty() {
+                queue.push(t);
+            }
+        };
+        let mut queue: Vec<Table> = Vec::new();
+        for arm in init {
+            admit(self.body(arm, outer), &mut queue);
+        }
+        let mut levels: Vec<Table> = Vec::new();
         let mut steps = 0usize;
         while !queue.is_empty() {
             if self.failed() {
                 break;
             }
-            steps += queue.len();
+            let t = Rc::new(concat(schema.clone(), width, &std::mem::take(&mut queue)));
+            steps += t.len();
             if steps > 50_000_000 {
                 self.fail("recursive CTE exceeded 50M rows".into());
                 break;
             }
-            let batch_rows = std::mem::take(&mut queue);
-            let t = Rc::new(Table { schema: schema.clone(), rows: batch_rows });
             self.slots.borrow_mut()[batch] = Some(t.clone());
             // Indexes over a batch table are per batch.
             self.indexes.borrow_mut().retain(|k, _| k.0 != Rc::as_ptr(&t) as usize);
             for arm in rec {
-                for row in self.body(arm, outer) {
-                    admit(row, &mut queue);
-                }
+                admit(self.body(arm, outer), &mut queue);
             }
             self.indexes.borrow_mut().retain(|k, _| k.0 != Rc::as_ptr(&t) as usize);
             self.slots.borrow_mut()[batch] = None;
-            let t = Rc::try_unwrap(t).unwrap_or_else(|rc| Table { schema: rc.schema.clone(), rows: rc.rows.clone() });
-            result.extend(t.rows);
+            levels.push(Rc::try_unwrap(t).unwrap_or_else(|rc| Table { schema: rc.schema.clone(), cols: rc.cols.clone(), len: rc.len }));
         }
-        Table { schema: schema.clone(), rows: result }
+        concat(schema.clone(), width, &levels)
     }
 
     fn table_of(&self, src: &Src, outer: Option<&Frame<'_>>) -> Rc<Table> {
@@ -1302,7 +1818,7 @@ impl<'d, 'a> Exec<'d, 'a> {
                 t
             }
             Src::JsonEach(arg) => {
-                let empty: [&[V]; 0] = [];
+                let empty: [RowRef<'_>; 0] = [];
                 let ctx = EvalCtx { frame: Frame { rows: &empty, parent: outer }, aggs: None, wins: None };
                 let v = self.eval(arg, &ctx);
                 Rc::new(self.json_each_table(v))
@@ -1332,40 +1848,41 @@ impl<'d, 'a> Exec<'d, 'a> {
                 Err(e) => self.fail(format!("malformed JSON: {e}")),
             }
         }
-        Table { schema, rows }
+        Table::from_rows(schema, rows)
     }
 
-    fn index(&self, t: &Rc<Table>, cols: &[u16], affs: &[Aff]) -> Rc<Index> {
-        let k = (Rc::as_ptr(t) as usize, cols.to_vec(), affs.to_vec());
+    /// The hash index of `t` on the probe's columns. A stored table's (`global`) index is built
+    /// once per clause; any other table's once per statement.
+    fn index(&self, t: &Rc<Table>, p: &Probe, global: bool) -> Rc<Index> {
+        let k = (Rc::as_ptr(t) as usize, p as *const Probe as usize);
         if let Some(ix) = self.indexes.borrow().get(&k) {
             return ix.clone();
         }
-        let mut ix: Index = FxHashMap::default();
-        'rows: for (ri, row) in t.rows.iter().enumerate() {
-            let mut key = Vec::with_capacity(cols.len());
-            for (c, a) in cols.iter().zip(affs) {
-                match sv::key(&sv::compare_affinity(&row[*c as usize], *a)) {
-                    Some(kk) => key.push(kk),
-                    None => continue 'rows,
-                }
+        let dk = (k.0, p.cols.clone(), p.col_affs.clone());
+        let shared = if global { self.db.indexes.borrow().get(&dk).map(|(_, ix)| ix.clone()) } else { None };
+        let ix = shared.unwrap_or_else(|| {
+            let ix = Rc::new(build_index(t, &p.cols, &p.col_affs));
+            if global {
+                self.db.indexes.borrow_mut().insert(dk, (t.clone(), ix.clone()));
+            } else {
+                self.keep.borrow_mut().push(t.clone());
             }
-            ix.entry(key).or_default().push(ri as u32);
-        }
-        let ix = Rc::new(ix);
-        self.keep.borrow_mut().push(t.clone());
+            ix
+        });
         self.indexes.borrow_mut().insert(k, ix.clone());
         ix
     }
 
-    /// Runs the join pipeline of `s`, calling `sink` with each binding that passes every
-    /// conjunct.
-    fn join<'o>(&self, s: &PSelect, outer: Option<&'o Frame<'o>>, sink: &mut dyn FnMut(&Frame<'_>) -> ControlFlow<()>) {
+    /// The FROM items' tables (`None` after a failure).
+    fn item_tables(&self, s: &PSelect, outer: Option<&Frame<'_>>) -> Option<Vec<Rc<Table>>> {
         let tables: Vec<Rc<Table>> = s.items.iter().map(|it| self.table_of(&it.src, outer)).collect();
-        if self.failed() {
-            return;
-        }
-        let nulls: Vec<Box<[V]>> = s.items.iter().map(|it| vec![V::Null; it.width].into_boxed_slice()).collect();
-        let mut rows: Vec<&[V]> = vec![empty_row(); s.items.len()];
+        if self.failed() { None } else { Some(tables) }
+    }
+
+    /// Runs the join pipeline of `s` over its item tables, calling `sink` with each binding that
+    /// passes every conjunct.
+    fn join<'t>(&self, s: &PSelect, tables: &'t [Rc<Table>], outer: Option<&Frame<'_>>, sink: &mut dyn FnMut(&Frame<'_>) -> ControlFlow<()>) {
+        let mut rows: Vec<RowRef<'t>> = vec![UNBOUND; s.items.len()];
         // Constant conjuncts.
         {
             let ctx = EvalCtx { frame: Frame { rows: &rows, parent: outer }, aggs: None, wins: None };
@@ -1376,10 +1893,10 @@ impl<'d, 'a> Exec<'d, 'a> {
             }
         }
         let indexes = Indexes {
-            plain: s.probes.iter().zip(&tables).map(|(p, t)| p.as_ref().map(|p| self.index(t, &p.cols, &p.col_affs))).collect(),
-            or: s.or_probes.iter().zip(&tables).map(|(b, t)| b.as_ref().map(|b| b.iter().map(|p| self.index(t, &p.cols, &p.col_affs)).collect())).collect(),
+            plain: s.probes.iter().zip(tables).zip(&s.items).map(|((p, t), it)| p.as_ref().map(|p| self.index(t, p, matches!(it.src, Src::Global(_))))).collect(),
+            or: s.or_probes.iter().zip(tables).zip(&s.items).map(|((b, t), it)| b.as_ref().map(|b| b.iter().map(|p| self.index(t, p, matches!(it.src, Src::Global(_)))).collect())).collect(),
         };
-        let _ = self.level(s, 0, &tables, &nulls, &indexes, &mut rows, outer, sink);
+        let _ = self.level(s, 0, tables, &indexes, &mut rows, outer, sink);
     }
 
     /// The probe's key for the current binding; `None` when a key part is NULL (no row equals).
@@ -1393,9 +1910,8 @@ impl<'d, 'a> Exec<'d, 'a> {
         s: &PSelect,
         i: usize,
         tables: &'t [Rc<Table>],
-        nulls: &'t [Box<[V]>],
         indexes: &Indexes,
-        rows: &mut Vec<&'t [V]>,
+        rows: &mut Vec<RowRef<'t>>,
         outer: Option<&Frame<'_>>,
         sink: &mut dyn FnMut(&Frame<'_>) -> ControlFlow<()>,
     ) -> ControlFlow<()> {
@@ -1407,7 +1923,7 @@ impl<'d, 'a> Exec<'d, 'a> {
             return sink(&f);
         }
         let item = &s.items[i];
-        let lateral_table;
+        let lateral_table: Rc<Table>;
         let t: &'t Table = if item.lateral {
             let Src::JsonEach(arg) = &item.src else { unreachable!() };
             let v = {
@@ -1416,14 +1932,20 @@ impl<'d, 'a> Exec<'d, 'a> {
             };
             lateral_table = Rc::new(self.json_each_table(v));
             let ptr = Rc::as_ptr(&lateral_table);
-            self.keep.borrow_mut().push(lateral_table);
-            // SAFETY: `keep` holds the table until this execution ends, past every borrow of it.
+            if s.grouped || !s.wins.is_empty() {
+                self.keep.borrow_mut().push(lateral_table.clone());
+            }
+            // SAFETY: grouped and window selects keep bindings (`Kept`) past this level, so `keep`
+            // holds the table until the execution ends. Otherwise every binding of this item lives
+            // only below this level: `rows[i]` is reset before `lateral_table` drops, and outputs
+            // copy a lateral item's values (`Out` gathers only non-lateral items).
             unsafe { &*ptr }
         } else {
             &tables[i]
         };
         // Candidate rows, in table order.
-        let cands: Option<Vec<u32>> = {
+        let or_cands: Vec<u32>;
+        let cands: Option<&[u32]> = {
             let ctx = EvalCtx { frame: Frame { rows: rows.as_slice(), parent: outer }, aggs: None, wins: None };
             match (&s.or_probes[i], &indexes.or[i], &s.probes[i], &indexes.plain[i]) {
                 (Some(branches), Some(ixs), _, _) => {
@@ -1435,17 +1957,18 @@ impl<'d, 'a> Exec<'d, 'a> {
                     }
                     c.sort_unstable();
                     c.dedup();
-                    Some(c)
+                    or_cands = c;
+                    Some(&or_cands)
                 }
-                (_, _, Some(p), Some(ix)) => Some(self.probe_key(p, &ctx).and_then(|k| ix.get(&k).cloned()).unwrap_or_default()),
+                (_, _, Some(p), Some(ix)) => Some(self.probe_key(p, &ctx).and_then(|k| ix.get(&k)).map_or(&[][..], |h| &h[..])),
                 _ => None,
             }
         };
-        let n = cands.as_ref().map_or(t.rows.len(), |c| c.len());
+        let n = cands.map_or(t.len(), |c| c.len());
         let mut matched = false;
         for k in 0..n {
-            let r = cands.as_ref().map_or(k, |c| c[k] as usize);
-            rows[i] = &t.rows[r];
+            let r = cands.map_or(k as u32, |c| c[k]);
+            rows[i] = RowRef { t: Some(t), r };
             let ok = {
                 let ctx = EvalCtx { frame: Frame { rows: rows.as_slice(), parent: outer }, aggs: None, wins: None };
                 s.level[i].iter().all(|c| sv::truth(&self.eval(c, &ctx)) == Some(true))
@@ -1459,32 +1982,33 @@ impl<'d, 'a> Exec<'d, 'a> {
                 s.post[i].iter().all(|c| sv::truth(&self.eval(c, &ctx)) == Some(true))
             };
             if post_ok {
-                self.level(s, i + 1, tables, nulls, indexes, rows, outer, sink)?;
+                self.level(s, i + 1, tables, indexes, rows, outer, sink)?;
             }
         }
         if item.left && !matched {
-            rows[i] = &nulls[i];
+            rows[i] = RowRef { t: Some(t), r: NULL_ROW };
             let post_ok = {
                 let ctx = EvalCtx { frame: Frame { rows: rows.as_slice(), parent: outer }, aggs: None, wins: None };
                 s.post[i].iter().all(|c| sv::truth(&self.eval(c, &ctx)) == Some(true))
             };
             if post_ok {
-                self.level(s, i + 1, tables, nulls, indexes, rows, outer, sink)?;
+                self.level(s, i + 1, tables, indexes, rows, outer, sink)?;
             }
         }
-        rows[i] = empty_row();
+        rows[i] = UNBOUND;
         ControlFlow::Continue(())
     }
 
-    /// Output rows of a select (projection, plus ORDER BY keys appended).
-    fn select_rows(&self, s: &PSelect, outer: Option<&Frame<'_>>) -> Vec<Box<[V]>> {
-        let width = s.proj.len() + s.order_keys.len();
-        let mut out: Vec<Box<[V]>> = Vec::new();
+    /// Output of a select: the projection, then the ORDER BY keys as extra columns. A projected
+    /// column of a (non-lateral) FROM item is a gather view of that item's column.
+    fn select_rows(&self, s: &PSelect, outer: Option<&Frame<'_>>) -> Table {
+        let Some(tables) = self.item_tables(s, outer) else { return Table::empty(s.out.clone()) };
+        let mut out = Out::new(s);
         if s.grouped {
-            // Groups in first-seen order: key -> (agg states, representative row values).
+            // Groups in first-seen order: key -> (agg states, representative binding).
             let mut groups: FxHashMap<Vec<DKey>, usize> = FxHashMap::default();
-            let mut states: Vec<(Vec<AggState>, Vec<Vec<V>>)> = Vec::new();
-            self.join(s, outer, &mut |f| {
+            let mut states: Vec<(Vec<AggState>, Vec<Kept>)> = Vec::new();
+            self.join(s, &tables, outer, &mut |f| {
                 let ctx = EvalCtx { frame: *f, aggs: None, wins: None };
                 let key: Vec<DKey> = s.group_by.iter().map(|g| sv::dkey(&self.eval(g, &ctx))).collect();
                 let gi = *groups.entry(key).or_insert_with(|| {
@@ -1503,7 +2027,8 @@ impl<'d, 'a> Exec<'d, 'a> {
                 // Bare columns read the row a lone min()/max() chose, else the last row.
                 let lone_extremum = s.aggs.len() == 1 && matches!(s.aggs[0].f, AggFn::Min | AggFn::Max);
                 if rep.is_empty() || !lone_extremum || extremum_updated {
-                    *rep = f.rows.iter().map(|r| r.to_vec()).collect();
+                    rep.clear();
+                    rep.extend(f.rows.iter().map(Kept::of));
                 }
                 ControlFlow::Continue(())
             });
@@ -1512,44 +2037,33 @@ impl<'d, 'a> Exec<'d, 'a> {
             }
             for (st, rep) in states {
                 let aggs: Vec<V> = st.into_iter().zip(&s.aggs).map(|(a, spec)| a.finish(spec)).collect();
-                let rep_rows: Vec<Box<[V]>> = if rep.is_empty() {
-                    s.items.iter().map(|it| vec![V::Null; it.width].into_boxed_slice()).collect()
-                } else {
-                    rep.into_iter().map(|r| r.into_boxed_slice()).collect()
-                };
-                let refs: Vec<&[V]> = rep_rows.iter().map(|r| &r[..]).collect();
+                let refs: Vec<RowRef<'_>> = if rep.is_empty() { vec![UNBOUND; s.items.len()] } else { rep.iter().map(Kept::row).collect() };
                 let ctx = EvalCtx { frame: Frame { rows: &refs, parent: outer }, aggs: Some(&aggs), wins: None };
                 if let Some(h) = &s.having {
                     if sv::truth(&self.eval(h, &ctx)) != Some(true) {
                         continue;
                     }
                 }
-                let mut row = Vec::with_capacity(width);
-                for p in s.proj.iter().chain(&s.order_keys) {
-                    row.push(self.eval(p, &ctx));
-                }
-                out.push(row.into_boxed_slice());
+                out.push(self, &ctx);
             }
         } else if !s.wins.is_empty() {
-            // Window functions: keep each binding's values, number them, then project.
-            let mut bound: Vec<Vec<Vec<V>>> = Vec::new();
-            self.join(s, outer, &mut |f| {
-                bound.push(f.rows.iter().map(|r| r.to_vec()).collect());
+            // Window functions: keep each binding, number them, then project.
+            let w_items = s.items.len();
+            let mut bound: Vec<Kept> = Vec::new();
+            let mut nb = 0usize;
+            self.join(s, &tables, outer, &mut |f| {
+                bound.extend(f.rows.iter().map(Kept::of));
+                nb += 1;
                 ControlFlow::Continue(())
             });
-            let mut wins = vec![vec![V::Null; s.wins.len()]; bound.len()];
+            let binding = |bi: usize| -> Vec<RowRef<'_>> { bound[bi * w_items..(bi + 1) * w_items].iter().map(Kept::row).collect() };
+            let mut wins = vec![vec![V::Null; s.wins.len()]; nb];
             for (wi, w) in s.wins.iter().enumerate() {
-                let mut keyed: Vec<(Vec<V>, Vec<V>, usize)> = bound
-                    .iter()
-                    .enumerate()
-                    .map(|(bi, b)| {
-                        let refs: Vec<&[V]> = b.iter().map(|r| &r[..]).collect();
+                let mut keyed: Vec<(Vec<V>, Vec<V>, usize)> = (0..nb)
+                    .map(|bi| {
+                        let refs = binding(bi);
                         let ctx = EvalCtx { frame: Frame { rows: &refs, parent: outer }, aggs: None, wins: None };
-                        (
-                            w.partition.iter().map(|e| self.eval(e, &ctx)).collect(),
-                            w.order.iter().map(|(e, _)| self.eval(e, &ctx)).collect(),
-                            bi,
-                        )
+                        (w.partition.iter().map(|e| self.eval(e, &ctx)).collect(), w.order.iter().map(|(e, _)| self.eval(e, &ctx)).collect(), bi)
                     })
                     .collect();
                 keyed.sort_by(|a, b| {
@@ -1576,31 +2090,28 @@ impl<'d, 'a> Exec<'d, 'a> {
                     wins[*bi][wi] = V::Int(n);
                 }
             }
-            for (b, w) in bound.iter().zip(&wins) {
-                let refs: Vec<&[V]> = b.iter().map(|r| &r[..]).collect();
+            for (bi, w) in wins.iter().enumerate() {
+                let refs = binding(bi);
                 let ctx = EvalCtx { frame: Frame { rows: &refs, parent: outer }, aggs: None, wins: Some(w) };
-                let mut row = Vec::with_capacity(width);
-                for p in s.proj.iter().chain(&s.order_keys) {
-                    row.push(self.eval(p, &ctx));
-                }
-                out.push(row.into_boxed_slice());
+                out.push(self, &ctx);
             }
         } else {
-            self.join(s, outer, &mut |f| {
+            self.join(s, &tables, outer, &mut |f| {
                 let ctx = EvalCtx { frame: *f, aggs: None, wins: None };
-                let mut row = Vec::with_capacity(width);
-                for p in s.proj.iter().chain(&s.order_keys) {
-                    row.push(self.eval(p, &ctx));
-                }
-                out.push(row.into_boxed_slice());
+                out.push(self, &ctx);
                 ControlFlow::Continue(())
             });
         }
+        let t = out.finish(&tables, s.out.clone());
         if s.distinct {
             let mut seen = rustc_hash::FxHashSet::default();
-            out.retain(|r| seen.insert(r[..s.proj.len()].iter().map(sv::dkey).collect::<Vec<_>>()));
+            let w = s.proj.len();
+            let keep: Vec<u32> = (0..t.len()).filter(|&r| seen.insert((0..w).map(|c| sv::dkey(&t.value(r, c))).collect::<Vec<_>>())).map(|r| r as u32).collect();
+            if keep.len() != t.len() {
+                return t.select(keep.into());
+            }
         }
-        out
+        t
     }
 
     fn sub(&self, id: usize, ctx: &EvalCtx<'_>, want: SubWant) -> Rc<SubResult> {
@@ -1616,34 +2127,36 @@ impl<'d, 'a> Exec<'d, 'a> {
                 let mut found = false;
                 match &sub.q.body {
                     PBody::Select(s) if !s.grouped && s.wins.is_empty() && sub.q.ctes.is_empty() && sub.q.limit.is_none() => {
-                        self.join(s, Some(&frame), &mut |_| {
-                            found = true;
-                            ControlFlow::Break(())
-                        });
+                        if let Some(tables) = self.item_tables(s, Some(&frame)) {
+                            self.join(s, &tables, Some(&frame), &mut |_| {
+                                found = true;
+                                ControlFlow::Break(())
+                            });
+                        }
                     }
                     _ => {
-                        found = !self.query(&sub.q, Some(&frame)).rows.is_empty();
+                        found = !self.query(&sub.q, Some(&frame)).is_empty();
                     }
                 }
                 SubResult::Exists(found)
             }
             SubWant::Scalar => {
                 let t = self.query(&sub.q, Some(&frame));
-                SubResult::Scalar(t.rows.first().map_or(V::Null, |r| r[0].clone()))
+                SubResult::Scalar(if t.is_empty() { V::Null } else { t.value(0, 0) })
             }
             SubWant::Set(aff) => {
                 let t = self.query(&sub.q, Some(&frame));
                 let mut set = rustc_hash::FxHashSet::default();
                 let mut has_null = false;
-                for r in &t.rows {
-                    match sv::key(&sv::compare_affinity(&r[0], aff)) {
+                for r in 0..t.len() {
+                    match sv::key(&sv::compare_affinity(&t.value(r, 0), aff)) {
                         Some(k) => {
                             set.insert(k);
                         }
                         None => has_null = true,
                     }
                 }
-                SubResult::Set(set, has_null, !t.rows.is_empty())
+                SubResult::Set(set, has_null, !t.is_empty())
             }
         };
         let r = Rc::new(r);
@@ -1661,7 +2174,7 @@ impl<'d, 'a> Exec<'d, 'a> {
                 None => return V::Null,
             }
         }
-        f.rows.get(item as usize).and_then(|r| r.get(col as usize)).cloned().unwrap_or(V::Null)
+        f.rows.get(item as usize).map_or(V::Null, |r| r.value(col))
     }
 
     fn eval(&self, pe: &PE, ctx: &EvalCtx<'_>) -> V {

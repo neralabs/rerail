@@ -14,7 +14,7 @@ cd "$(git rev-parse --show-toplevel)"
 RUNS=${FACTS_RUNS:-~/rerail-bench/facts/spike-a/runs}
 BIN=${FACTS_BIN:-./spikes/facts-a/target/release/facts-a}
 if [ $# -eq 0 ]; then
-  LABEL=repo
+  LABEL=repo${FACTS_A3_OFF:+-generic}
   ARGS=(repo --threads 4)
 else
   LABEL=$1
@@ -26,6 +26,7 @@ mkdir -p "$R"
 CMD="$BIN ${ARGS[*]} --out-dir $R"
 {
   echo "$CMD"
+  echo "env FACTS_A3_OFF=${FACTS_A3_OFF:-}"
   echo "commit $(git rev-parse HEAD)"
   echo "wrapper: ~/rerail-bench/bench-lock bash -c 'uptime; /usr/bin/time -l perl -e alarm(900) <cmd>; uptime'"
   if [ "$LABEL" = repo ]; then

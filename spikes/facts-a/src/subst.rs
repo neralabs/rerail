@@ -615,7 +615,12 @@ pub fn run(k: &Kernel, db: &Db<'_>, out_schema: &Schema) -> Result<Table, String
             store_row(r, &affs);
         }
     }
-    Ok(Table { schema: out_schema.clone(), rows })
+    Ok(Table::from_rows(out_schema.clone(), rows))
+}
+
+/// Column `c` of `t`, read once.
+fn column(t: &Table, c: usize) -> Vec<V> {
+    (0..t.len()).map(|r| t.value(r, c)).collect()
 }
 
 fn nodes(db: &Db<'_>, arms: &[Arm], join: bool, out: &Schema) -> Result<Vec<Box<[V]>>, String> {
@@ -629,8 +634,8 @@ fn nodes(db: &Db<'_>, arms: &[Arm], join: bool, out: &Schema) -> Result<Vec<Box<
     for arm in &arms[..arms.len() - crate::mutant::on(2) as usize] {
         let t = table(db, &arm.table)?;
         let affs = arm.stage_affs.as_deref().map(non_none).unwrap_or_default();
-        u.reserve(t.rows.len());
-        for r in &t.rows {
+        u.reserve(t.len());
+        for r in (0..t.len()).map(|i| t.row(i)) {
             let mut row: Vec<V> = Vec::with_capacity(w + 4);
             for c in &arm.cols {
                 row.push(match c {
@@ -714,7 +719,8 @@ fn nodes(db: &Db<'_>, arms: &[Arm], join: bool, out: &Schema) -> Result<Vec<Box<
 fn edges(db: &Db<'_>) -> Result<Vec<Box<[V]>>, String> {
     let t = table(db, "nodes")?;
     let (p, e, id, o) = (col(&t.schema, "__path")?, col(&t.schema, "edge_parent")?, col(&t.schema, "id")?, col(&t.schema, "ordinal")?);
-    Ok(t.rows.iter().filter(|r| !r[e].is_null() || crate::mutant::on(1)).map(|r| vec![r[p].clone(), r[e].clone(), r[id].clone(), r[o].clone()].into_boxed_slice()).collect())
+    let (pv, ev, idv, ov) = (column(t, p), column(t, e), column(t, id), column(t, o));
+    Ok((0..t.len()).filter(|&r| !ev[r].is_null() || crate::mutant::on(1)).map(|r| vec![pv[r].clone(), ev[r].clone(), idv[r].clone(), ov[r].clone()].into_boxed_slice()).collect())
 }
 
 fn is_text(v: &V, s: &str) -> bool {
@@ -726,14 +732,18 @@ fn ownership(db: &Db<'_>) -> Result<Vec<Box<[V]>>, String> {
     let edges = table(db, "edges")?;
     let (np, nid, nk, ne) = (col(&nodes.schema, "__path")?, col(&nodes.schema, "id")?, col(&nodes.schema, "kind")?, col(&nodes.schema, "edge_parent")?);
     let (ep, es, ed) = (col(&edges.schema, "__path")?, col(&edges.schema, "src")?, col(&edges.schema, "dst")?);
+    let nrows: Vec<[V; 4]> = (0..nodes.len()).map(|r| [nodes.value(r, np), nodes.value(r, nid), nodes.value(r, nk), nodes.value(r, ne)]).collect();
+    let erows: Vec<[V; 3]> = (0..edges.len()).map(|r| [edges.value(r, ep), edges.value(r, es), edges.value(r, ed)]).collect();
+    let (np, nid, nk, ne) = (0, 1, 2, 3);
+    let (ep, es, ed) = (0, 1, 2);
     let mut node_ix: FxHashMap<(sv::Key, sv::Key), Vec<u32>> = FxHashMap::default();
-    for (i, r) in nodes.rows.iter().enumerate() {
+    for (i, r) in nrows.iter().enumerate() {
         if let Some(k) = key2(&r[np], &r[nid]) {
             node_ix.entry(k).or_default().push(i as u32);
         }
     }
     let mut edge_ix: FxHashMap<(sv::Key, sv::Key), Vec<u32>> = FxHashMap::default();
-    for (i, r) in edges.rows.iter().enumerate() {
+    for (i, r) in erows.iter().enumerate() {
         if let Some(k) = key2(&r[ep], &r[es]) {
             edge_ix.entry(k).or_default().push(i as u32);
         }
@@ -741,7 +751,7 @@ fn ownership(db: &Db<'_>) -> Result<Vec<Box<[V]>>, String> {
     const FN: &str = "function_definition";
     const CLS: &str = "class_definition";
     let mut queue: Vec<Box<[V]>> = Vec::new();
-    for r in &nodes.rows {
+    for r in &nrows {
         let has_parent = key2(&r[np], &r[ne]).is_some_and(|k| node_ix.contains_key(&k));
         if has_parent {
             continue;
@@ -762,11 +772,11 @@ fn ownership(db: &Db<'_>) -> Result<Vec<Box<[V]>>, String> {
             let Some(ek) = key2(&o[0], &o[1]) else { continue };
             let Some(es_) = edge_ix.get(&ek) else { continue };
             for &e in es_ {
-                let er = &edges.rows[e as usize];
+                let er = &erows[e as usize];
                 let Some(ck) = key2(&er[ep], &er[ed]) else { continue };
                 let Some(cs) = node_ix.get(&ck) else { continue };
                 for &c in cs {
-                    let ch = &nodes.rows[c as usize];
+                    let ch = &nrows[c as usize];
                     let is_fn = is_text(&ch[nk], FN);
                     let f = if is_fn { ch[nid].clone() } else { o[2].clone() };
                     let cl = if is_text(&ch[nk], CLS) { ch[nid].clone() } else { o[3].clone() };
@@ -797,10 +807,14 @@ fn descendants(db: &Db<'_>, expand: Option<&[String]>) -> Result<Vec<Box<[V]>>, 
     let edges = table(db, "edges")?;
     let (np, nid, nk) = (col(&nodes.schema, "__path")?, col(&nodes.schema, "id")?, col(&nodes.schema, "kind")?);
     let (ep, es, ed) = (col(&edges.schema, "__path")?, col(&edges.schema, "src")?, col(&edges.schema, "dst")?);
+    let nrows: Vec<[V; 3]> = (0..nodes.len()).map(|r| [nodes.value(r, np), nodes.value(r, nid), nodes.value(r, nk)]).collect();
+    let erows: Vec<[V; 3]> = (0..edges.len()).map(|r| [edges.value(r, ep), edges.value(r, es), edges.value(r, ed)]).collect();
+    let (np, nid, nk) = (0, 1, 2);
+    let (ep, es, ed) = (0, 1, 2);
     let mut it = Interner { ids: FxHashMap::default() };
     // Edges by (path, src) key, in table order; `=` never holds for NULL.
     let mut edge_ix: FxHashMap<(u32, u32), Vec<u32>> = FxHashMap::default();
-    for (i, r) in edges.rows.iter().enumerate() {
+    for (i, r) in erows.iter().enumerate() {
         if r[ep].is_null() || r[es].is_null() {
             continue;
         }
@@ -823,7 +837,7 @@ fn descendants(db: &Db<'_>, expand: Option<&[String]>) -> Result<Vec<Box<[V]>>, 
             queue.push(w);
         }
     };
-    for r in &nodes.rows {
+    for r in &nrows {
         let flag = match expand {
             None => V::Null,
             Some(list) => match &r[nk] {
@@ -851,7 +865,7 @@ fn descendants(db: &Db<'_>, expand: Option<&[String]>) -> Result<Vec<Box<[V]>>, 
             }
             let Some(es_) = edge_ix.get(&(w.path, w.node)) else { continue };
             for &e in es_ {
-                let er = &edges.rows[e as usize];
+                let er = &erows[e as usize];
                 let nw = W { path: w.path, root: w.root, node: it.id(&er[ed]), expand: w.expand, vals: [w.vals[0].clone(), w.vals[1].clone(), er[ed].clone()], flag: w.flag.clone() };
                 admit(nw, &mut queue);
             }
@@ -866,11 +880,12 @@ fn descendants(db: &Db<'_>, expand: Option<&[String]>) -> Result<Vec<Box<[V]>>, 
 
 /// Rows equal as the engine's results (`FACTS_A3_CHECK`): same length, order, value types and
 /// values (texts byte-equal, numbers bit-equal).
-pub fn same_rows(a: &[Box<[V]>], b: &[Box<[V]>]) -> Result<(), String> {
+pub fn same_rows(a: &Table, b: &Table) -> Result<(), String> {
     if a.len() != b.len() {
         return Err(format!("{} rows vs {}", a.len(), b.len()));
     }
-    for (i, (x, y)) in a.iter().zip(b).enumerate() {
+    for i in 0..a.len() {
+        let (x, y) = (a.row(i), b.row(i));
         let eq = x.len() == y.len()
             && x.iter().zip(y.iter()).all(|(p, q)| match (p, q) {
                 (V::Null, V::Null) => true,
