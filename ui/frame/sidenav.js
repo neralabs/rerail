@@ -15,23 +15,28 @@ function onCount(section) {
   return `${fmt(all.filter(isRunning).length)} of ${fmt(all.length)} on`;
 }
 
-/** The items the repository adds: its packs, then Created by you. */
-function repositoryItems() {
-  const items = [];
-  for (const section of ruleSections()) {
-    if (section.kind === "pack") {
-      items.push({ hash: `pack/${section.pack.id}`, label: section.pack.name, n: onCount(section), pack: section.pack,
-        current: ui.view === "pack" && ui.pack === section.pack.id });
-    } else if (section.kind === "mine" && section.groups[0].all.length > 0) {
-      items.push({ hash: "created", label: "Created by you", n: onCount(section), mine: true, current: ui.view === "created" });
-    }
-  }
-  // Created by you comes after the packs.
-  return [...items.filter(i => !i.mine), ...items.filter(i => i.mine)];
+/** Where a pack sorts, as v8 ranks it: the packs set-up recommended here in their order, then the rest by name. */
+function packRank(pack) {
+  const at = (data.recommendations ?? []).findIndex(r => r.packId === pack.id);
+  return at < 0 ? Number.MAX_SAFE_INTEGER : at;
 }
 
-function item(hash, label, glyph, { current = ui.view === hash, n = null, cls = "" } = {}) {
-  return h(`button.sn-item${cls}`, { "data-act": "nav", "data-i": hash, "aria-current": current ? "page" : "false" },
+/** The items the repository adds: Created by you first (your own rule pack, beside Rerail's), then its packs. */
+function repositoryItems() {
+  const sections = ruleSections();
+  const mine = sections.find(s => s.kind === "mine");
+  const packs = sections.filter(s => s.kind === "pack")
+    .sort((a, b) => packRank(a.pack) - packRank(b.pack) || a.pack.name.localeCompare(b.pack.name, undefined, { sensitivity: "base" }));
+  return [
+    ...(mine !== undefined && mine.groups[0].all.length > 0
+      ? [{ hash: "created", label: "Created by you", n: onCount(mine), mine: true, current: ui.view === "created" }] : []),
+    ...packs.map(s => ({ hash: `pack/${s.pack.id}`, label: s.pack.name, n: onCount(s), pack: s.pack, current: ui.view === "pack" && ui.pack === s.pack.id })),
+  ];
+}
+
+/** A sidebar item; its tooltip is the full label, which a long pack name truncates ("JavaScript an…"). */
+function item(hash, label, glyph, { current = ui.view === hash, n = null, cls = "", title = label } = {}) {
+  return h(`button.sn-item${cls}`, { "data-act": "nav", "data-i": hash, "aria-current": current ? "page" : "false", title },
     glyph, h("span.t", null, label), n === null ? null : h("span.n", null, n));
 }
 
@@ -41,15 +46,15 @@ export function renderSidenav(root) {
   const items = setUp ? repositoryItems() : [];
   const note = !scoped ? null
     : !setUp ? `${repoName()} is not set up.`
-      : items.length === 0 && data.loaded ? "No rules added yet. Add a rule pack or create a rule." : null;
+      : items.length === 0 && data.loaded ? "No rules added yet. Add a pack or create a rule." : null;
   const signature = JSON.stringify([ui.view, ui.pack, setUp, note, items.map(i => [i.hash, i.label, i.n, i.current])]);
   setContent(root, signature, () => [
     item("overview", "Overview", icon("overview", 14)),
     h("div.sn-h", null, "Rule packs"),
     items.map(i => item(i.hash, i.label, i.mine ? icon("pencil", 14) : packIcon(i.pack), { current: i.current, n: i.n })),
     note === null ? null : h("div.sn-empty", null, note),
-    item("packs", "Add rule packs", icon("plus", 14), { current: ui.view === "packs" || ui.view === "review", cls: ".add" }),
-    setUp ? item("create", "Create a rule", icon("plus", 14), { cls: ".add" }) : null,
+    item("packs", "Add rule packs", icon("plus", 14), { cls: ".add" }),
+    setUp ? item("create", "Create a rule", icon("plus", 14), { cls: ".add", title: "Rules are written with your coding agent. Shows the command to type." }) : null,
     h("div.sn-h", null, "History"),
     item("history", "By rule", icon("rule", 14)),
     item("sessions", "By session", icon("session", 14)),

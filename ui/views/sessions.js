@@ -6,7 +6,7 @@ import { h, setAttr, setText, setClass, chevron, searchIcon, syncChildren } from
 import { fmt, plural, ago, duration, stamp, dayLabel, daysAgo, shortSessionId } from "../format.js";
 import { data, ui } from "../state.js";
 import { ensureTitle, loadSession, loadSessionFindings, loadMoreSessions, loadEarlier } from "../poll.js";
-import { sessionTurns, sessionCorrections, sessionViolationTotal, loadedFrom, placeCorrections, resumeCommand, openState, lastEventAt, isOpen } from "../sessions-model.js";
+import { sessionTurns, sessionCorrections, sessionViolationTotal, loadedFrom, placeCorrections, resumeCommand, openState, lastEventAt, isOpen, violationCounts } from "../sessions-model.js";
 import { copyText, invalidate, loadMore, renderNow, toast } from "../shell.js";
 import { renderTimeline, jumpTo, placeTicks } from "../render/timeline.js";
 
@@ -69,6 +69,8 @@ export function afterPoll() {
 let v = null;
 /** Session whose day group was last revealed; a new selection opens its day once, then the user owns the fold. */
 let revealed = null;
+/** The session list is shown by default; hiding it lasts for the visit. */
+let listHidden = false;
 
 function dayKey(d) {
   if (d < 7) return `d${d}`;
@@ -86,10 +88,14 @@ function build() {
     h("button.chip", { "data-act": "sfilter", "data-i": "all" }, "All"),
     h("button.chip", { "data-act": "sfilter", "data-i": "corr" }, "With violations"),
     h("button.chip", { "data-act": "sfilter", "data-i": "open" }, "In progress"));
-  el.list = h("div.list.slist");
+  el.list = h("div.srows");
+  el.listBox = h("div.list.slist", null, h("div.slhead", null, h("span", null, "Session"), h("span", null, "Violations logged")), el.list);
   el.listEmpty = h("div.empty", { hidden: true }, h("p", null, "No sessions match."));
   el.more = h("div.smore", { hidden: true }, h("button.btn.sm", { "data-act": "sessmore" }));
-  el.title = h("h2");
+  el.title = h("h2.clamp2");
+  el.hpick = h("select", { id: "hpick", "aria-label": "Choose a session" });
+  el.hpickLabel = h("span.m", { "aria-hidden": "true" });
+  el.hpickWrap = h("h2.hpick", { hidden: true }, h("span.sel", null, el.hpickLabel, el.hpick, chevron(12)));
   el.state = h("span", { hidden: true });
   el.started = h("span"); el.dur = h("span"); el.events = h("span"); el.sid = h("span.mono");
   el.copyId = h("button.btn.sm", { "data-act": "copyid" }, "Copy id");
@@ -99,7 +105,9 @@ function build() {
   el.resumeHow = h("p", { style: "margin:0;font-size:13px", hidden: true });
   el.resumeFoot = h("span");
   el.resumeCopy = h("button.btn.sm.solid", { "data-act": "resumecopy" });
-  el.resumeBox = h("div.pask.sresume", { hidden: true }, el.resumeLbl, el.resumeText, el.resumeHow, h("div.foot", null, el.resumeFoot, el.resumeCopy));
+  el.resumeBox = h("div.pask.sresume", { hidden: true },
+    h("button.x", { "data-act": "resumetoggle", "aria-label": "Close", title: "Close" }, "✕"),
+    el.resumeLbl, el.resumeText, el.resumeHow, h("div.foot", null, el.resumeFoot, el.resumeCopy));
   el.tsum = h("span.tsum");
   el.tchips = h("span.tchips", { role: "group", "aria-label": "Event type", hidden: true },
     [["all", "All"], ["changes", "Changes"], ["commands", "Commands"], ["outside", "Outside & asks"], ["failures", "Failures"]].map(([k, l]) =>
@@ -108,21 +116,23 @@ function build() {
   el.rail = h("div.rail", { id: "rail" }, h("div.line"));
   el.tl = h("div.tl", { id: "tl" });
   el.scroll = h("div.scroll", { id: "sscroll" }, h("div.tlwrap", null, el.rail, el.tl));
-  el.empty = h("div.list", { hidden: true }, h("div.empty", null, h("h3", null, "No coding agent sessions yet"), h("p", null, "Your next Claude Code, Cursor, Codex, OMP or Pi session in this repo shows up here.")));
+  el.empty = h("div.list", { hidden: true }, h("div.empty", null, h("h3", null, "No sessions yet"), h("p", null, "Your first coding agent session in this repo shows here, with the violations it logged.")));
+  el.listToggle = h("button.ltoggle", { "data-act": "slisttoggle", "aria-pressed": "true" });
+  el.ltrow = h("div.ltrow", null, el.listToggle);
+  el.aside = h("aside", null,
+    h("div.spick", null, h("label", { for: "spick" }, "Session"), el.pick),
+    h("div.ssearch", null, searchIcon(13), el.search),
+    el.chips, el.listBox, el.listEmpty, el.more);
   el.sess = h("div.sess", null,
-    h("aside", null,
-      h("div.spick", null, h("label", { for: "spick" }, "Session"), el.pick),
-      h("div.ghead", null, h("h2", null, "Sessions"), el.lead),
-      h("div.ssearch", null, searchIcon(13), el.search),
-      el.chips, el.list, el.listEmpty, el.more),
+    el.aside,
     h("section", null, h("div.list", null,
       h("div.shead", null,
-        h("div.l1", null, el.title, el.state),
+        h("div.l1", null, el.title, el.hpickWrap, el.state),
         h("div.l3", null, el.started, el.dur, el.events, el.sid, h("span.acts", null, el.copyId, el.resume)),
         el.resumeBox),
       h("div.tfilter", null, el.tsum, el.tchips, h("label.tall", null, el.showAll, " Show all events")),
       el.scroll)));
-  el.root = h("div", null, el.empty, el.sess);
+  el.root = h("div", null, h("div.ghead.hhead", null, h("h2", null, "History by session"), el.lead), el.ltrow, el.empty, el.sess);
   v = el;
 }
 
@@ -133,7 +143,7 @@ function createListItem(item) {
   const s = item.s;
   return h("button.srow", { "data-act": "ssel", "data-i": s.sessionId, "aria-current": "false" },
     h("span.l", null, h("span.t"), h("span.m", null, h("span.state"), h("span.ev"), h("span.sid"))),
-    h("span.c.num", null, h("b"), h("span")));
+    h("span.c.num", null, h("b"), h("span.st")));
 }
 
 function updateListItem(node, item) {
@@ -153,19 +163,20 @@ function updateListItem(node, item) {
   const st = openState(s), state = node.querySelector(".state");
   setAttr(state, "class", `state ${st ?? ""}`);
   setText(state, rowState(st, s));
-  setAttr(state, "title", st ? "Last event" : "Ended");
+  setAttr(state, "title", "Last event");
   setText(node.querySelector(".ev"), `${fmt(s.eventCount)} events`);
   setText(node.querySelector(".sid"), shortSessionId(s.sessionId, s.host));
-  const c = node.querySelector(".c"), n = s.violationCount;
-  setClass(c, "zero", n === 0);
-  setText(c.firstChild, fmt(n));
-  setText(c.lastChild, plural(n, "violation"));
+  const c = node.querySelector(".c"), { logged, steered } = violationCounts(s);
+  setClass(c, "zero", logged === 0);
+  setText(c.firstChild, fmt(logged));
+  setText(c.lastChild, logged === 0 ? "" : `${fmt(steered)} steered`);
+  setAttr(c, "title", `${fmt(logged)} ${plural(logged, "violation")} logged, ${fmt(steered)} steered`);
 }
 
 function rowState(st, s) {
   if (st === "live") return `in progress · ${ago(lastEventAt(s))}`;
   if (st === "stale") return `no end recorded · ${ago(lastEventAt(s))}`;
-  return ago(s.endedAt ?? s.startedAt);
+  return ago(lastEventAt(s));
 }
 
 /**
@@ -184,7 +195,10 @@ export function render(root) {
   const sess = currentSession();
   setAttr(v.empty, "hidden", sess !== null);
   setAttr(v.sess, "hidden", sess === null);
+  setAttr(v.ltrow, "hidden", sess === null);
+  setAttr(v.lead, "hidden", sess === null);
   if (sess === null) return;
+  renderListToggle();
   renderList(all, sess);
   renderHeader(sess);
   renderTranscript(sess);
@@ -237,6 +251,27 @@ function renderList(all, sess) {
   syncChildren(v.pick, visible.slice(0, 200), s => s.sessionId, s => h("option", { value: s.sessionId }),
     (o, s) => { setText(o, `${titleOf(s.sessionId)} · ${shortSessionId(s.sessionId, s.host)}`); });
   if (v.pick.value !== sess.sessionId) v.pick.value = sess.sessionId;
+  if (listHidden) renderHeadPicker(all, sess);
+}
+
+/** List hidden: the session heading is the picker, over every loaded session (and the selected one, if past them). */
+function renderHeadPicker(all, sess) {
+  const rows = all.some(s => s.sessionId === sess.sessionId) ? all : [sess, ...all];
+  syncChildren(v.hpick, rows, s => s.sessionId, s => h("option", { value: s.sessionId }), (o, s) => { setText(o, titleOf(s.sessionId)); });
+  if (v.hpick.value !== sess.sessionId) v.hpick.value = sess.sessionId;
+  const title = titleOf(sess.sessionId);
+  setText(v.hpickLabel, title); setAttr(v.hpick, "title", title);
+}
+
+function renderListToggle() {
+  setClass(v.sess, "nolist", listHidden);
+  setAttr(v.aside, "hidden", listHidden);
+  setAttr(v.title, "hidden", listHidden);
+  setAttr(v.hpickWrap, "hidden", !listHidden);
+  setAttr(v.listToggle, "aria-pressed", String(!listHidden));
+  const label = listHidden ? "Show the session list" : "Hide the session list";
+  setAttr(v.listToggle, "title", label); setAttr(v.listToggle, "aria-label", label);
+  setText(v.listToggle, listHidden ? "Show list" : "Hide list");
 }
 
 function headerState(st, sess) {
@@ -252,7 +287,8 @@ function resumeLabel(rc, st) {
 
 function renderHeader(sess) {
   ensureTitle(sess);
-  setText(v.title, titleOf(sess.sessionId));
+  const title = titleOf(sess.sessionId);
+  setText(v.title, title); setAttr(v.title, "title", title);
   const st = openState(sess);
   setAttr(v.state, "hidden", st === null);
   setAttr(v.state, "class", st ?? "");
@@ -338,6 +374,7 @@ export const actions = {
   sessmore: () => loadMore(loadMoreSessions),
   earlier: () => { const s = currentSession(); if (s) loadMore(() => loadEarlier(s.sessionId)); },
   resumetoggle: () => { ui.resumeOpen = !ui.resumeOpen; invalidate(); },
+  slisttoggle: () => { listHidden = !listHidden; invalidate(); },
   resumecopy: () => {
     const s = currentSession(); if (!s) return;
     const rc = resumeCommand(s);
@@ -351,7 +388,7 @@ export function onInput(el) {
 
 export function onChange(el) {
   if (el.id === "showAll") { ui.showAll = el.checked; ui.evFilter = "all"; invalidate(); }
-  else if (el.id === "spick") selectSession(el.value);
+  else if (el.id === "spick" || el.id === "hpick") selectSession(el.value);
 }
 
 export function onResize() {

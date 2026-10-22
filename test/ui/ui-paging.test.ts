@@ -32,6 +32,7 @@ beforeEach(() => {
   data.sessionDetail.clear();
   ui.panel = null;
   ui.selectedSession = null;
+  ui.actRule = null;
   setNeeds(currentNeeds);
 });
 
@@ -60,12 +61,22 @@ const paths = () => [...new Set(requested.map(url => url.pathname))].sort();
 describe("a poll", () => {
   beforeEach(() => { answer = emptyDaemon; });
 
-  it("reads only what History shows, besides the shared reads", async () => {
+  it("reads the shown rule's violations in range and the rules' activity on History, besides the shared reads", async () => {
+    ui.view = "history";
+    ui.actRule = "r";
+
+    await refresh();
+
+    expect(paths()).toEqual(["/api/repositories", "/api/repository", "/api/repository/rules", "/api/rule-packs", "/api/rules/activity", "/api/violations", "/healthz"]);
+    expect(requested.filter(url => url.pathname === "/api/violations").map(url => url.searchParams.get("ruleId"))).toEqual(["r"]);
+  });
+
+  it("reads no violations on History while no rule has any to show", async () => {
     ui.view = "history";
 
     await refresh();
 
-    expect(paths()).toEqual(["/api/repositories", "/api/repository", "/api/repository/rules", "/api/rule-packs", "/api/violations", "/healthz"]);
+    expect(paths()).not.toContain("/api/violations");
   });
 
   it("reads only the sessions list and the selected session on Sessions, besides the sidebar's rules and packs", async () => {
@@ -129,6 +140,7 @@ describe("a poll", () => {
 describe("Load more on a paged list", () => {
   it("appends the next cursor page without duplicates, and a first-page refresh keeps the loaded tail and its cursor", async () => {
     ui.view = "history";
+    ui.actRule = "r";
     let first = { violations: [violation(1), violation(2)], total: 3, nextCursor: "c2" };
     answer = url => {
       if (url.pathname !== "/api/violations") return emptyDaemon(url);
@@ -154,6 +166,7 @@ describe("Load more on a paged list", () => {
 
   it("starts over from the fresh first page when more rows arrived than it reaches, and takes a complete page whole", async () => {
     ui.view = "history";
+    ui.actRule = "r";
     let first: { violations: Violation[]; total: number; nextCursor: string | null } = { violations: [violation(5), violation(6)], total: 4, nextCursor: "c6" };
     answer = url => {
       if (url.pathname !== "/api/violations") return emptyDaemon(url);

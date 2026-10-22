@@ -66,7 +66,8 @@ const STOREFRONT_FILES: Readonly<Record<string, string>> = {
   "package.json": `${JSON.stringify({
     name: "storefront",
     private: true,
-    dependencies: { next: "15.0.0", react: "19.1.0" },
+    // No `next` dependency: the installed next pack would be recommended for it.
+    dependencies: { react: "19.1.0" },
     devDependencies: { typescript: "5.9.3" },
   }, null, 2)}\n`,
   "src/cart/cart.ts": "export function total(prices: number[]): number {\n  return prices.reduce((sum, price) => sum + price, 0);\n}\n",
@@ -125,8 +126,11 @@ function installPacks(home: string, packIds: readonly string[]): void {
   writeFileSync(join(prefix, "package.json"), `${JSON.stringify({ dependencies }, null, 2)}\n`);
 }
 
-/** Every pack a scenario adds is installed, plus one more, so the catalog offers a pack nobody added. */
-const INSTALLED_PACKS = ["complexity", "javascript", "python", "typescript"] as const;
+/**
+ * Every pack a scenario adds is installed, plus two nobody adds, so the catalog offers packs not added: python, and
+ * next, a framework pack (the others are language packs) that matches nothing in the scenario checkouts.
+ */
+const INSTALLED_PACKS = ["complexity", "javascript", "next", "python", "typescript"] as const;
 
 // ---------------------------------------------------------------------------------------------------------------
 // Rules created by you
@@ -255,12 +259,15 @@ interface HistoryContext {
   readonly audits: SqliteAuditStore;
   readonly repositoryKey: string;
   readonly checkoutPath: string;
+  /** The seed clock: an open session's latest event is just before it, so the session reads live. */
+  readonly now: number;
 }
 
 /**
  * Records one session the way a coding agent's hooks do: it opens, a prompt and a write are recorded, the touched file
  * is audited against the rules on in the checkout at that instant (each violation carries the mode its rule had then),
- * the violations of rules on Steer or Block are steered, and the session ends unless it is the open one.
+ * the violations of rules on Steer or Block are steered, and the session ends, except the open one, which gets a second
+ * prompt two minutes before the seed clock so it reads live.
  */
 function recordSession(context: HistoryContext, plan: SessionPlan, schedules: readonly RuleSchedule[], violating: Set<string>): void {
   const { sessions, audits, repositoryKey, checkoutPath } = context;
@@ -331,6 +338,12 @@ function recordSession(context: HistoryContext, plan: SessionPlan, schedules: re
   if (steered.length > 0) atTime(auditAt + 3_000, () => sessions.recordSteer(session, `${plan.sessionId}-steer`, steered));
   sessions.append({ sessionId: plan.sessionId, eventId: `${plan.sessionId}-turn`, kind: "turn-end", observedAt: at(6 * MINUTE), payload: { turn: 1 } });
   if (plan.endedAt !== null) sessions.closeSession(plan.sessionId, plan.endedAt);
+  else {
+    sessions.append({
+      sessionId: plan.sessionId, eventId: `${plan.sessionId}-prompt-2`, kind: "user-prompt", observedAt: context.now - 2 * MINUTE,
+      payload: { text: "Now add a test for it." },
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -487,7 +500,9 @@ export function seedScenario(scenario: ScenarioName, folder: string, now: number
     const repositories = plansFor(scenario, catalog, now).map((plan): ScenarioRepository => {
       const checkout = createCheckout(reposRoot, plan.checkout, gitEnvironment);
       const recorded = recordCheckout(db, checkout, plan.recordedAt);
-      const context: HistoryContext = { db, catalog: catalog(), sessions, audits, repositoryKey: recorded.repositoryKey, checkoutPath: recorded.checkoutPath };
+      const context: HistoryContext = {
+        db, catalog: catalog(), sessions, audits, repositoryKey: recorded.repositoryKey, checkoutPath: recorded.checkoutPath, now,
+      };
       const violating = new Set<string>();
       const steps = [
         ...plan.changes.map(change => ({ at: change.at, run: () => atTime(change.at, () => change.apply(db, recorded.repositoryKey, change.at)) })),
@@ -504,11 +519,13 @@ export function seedScenario(scenario: ScenarioName, folder: string, now: number
         packIds: [...new Set(rules.filter(rule => rule.source.kind === "pack").map(rule => rule.source.id))].sort(),
         libraryRuleIds: rules.filter(rule => rule.source.kind === "library_rule").map(rule => rule.source.id).sort(),
         violatingRuleIds: [...violating].sort(),
-        sessionIds: plan.sessions.map(session => session.sessionId),
+        // By start: two sessions of one day are not always planned in start order.
+        sessionIds: [...plan.sessions].sort((left, right) => left.startedAt - right.startedAt).map(session => session.sessionId),
         openSessionIds: plan.sessions.filter(session => session.endedAt === null).map(session => session.sessionId),
       };
     });
-    return { scenario, now, root, rerailHome, userHome, databasePath, primary: repositories[0]!, repositories };
+    const primary = repositories[0]!;
+    return { scenario, now, root, rerailHome, userHome, databasePath, primary, sessionIds: primary.sessionIds, repositories };
   } finally {
     audits.close();
     sessions.close();

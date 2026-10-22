@@ -1,6 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { activityView, data, isAudited, pagedList, summary, ui, type Violation } from "../../ui/state.js";
-import { showMoreActivity } from "../../ui/poll.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { data, isAudited, pagedList, summary, type Violation } from "../../ui/state.js";
 import { violationOutcome } from "../../ui/derive.js";
 
 const NONE = { measured: true, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, loggedViolations: 0, rerails: 0 };
@@ -26,9 +25,6 @@ afterEach(() => {
   data.activityAll = {};
   data.activitySessions = null;
   data.findings = pagedList();
-  ui.actPack = "";
-  ui.actRule = null;
-  ui.recentShown = 50;
   vi.unstubAllGlobals();
 });
 
@@ -72,42 +68,3 @@ describe("whether a rule has been audited", () => {
   });
 });
 
-describe("Activity filtered to one rule", () => {
-  beforeEach(() => {
-    data.rules = new Map([["a", storedRule("a", "steer", true)], ["b", storedRule("b", "steer", true)]]);
-    ui.actRule = "b";
-  });
-
-  it("keeps Show more while the server has pages the filter has not seen, and is not empty yet", () => {
-    data.findings = loaded(Array.from({ length: 50 }, (_, n) => finding(n, "a")), 120, "c50");
-
-    const view = activityView();
-
-    expect(view.none).toBe(false);
-    expect(view.more).toBeTruthy();
-  });
-
-  it("fetches further pages by cursor on Show more until the filter has enough matches or the range runs out", async () => {
-    data.findings = loaded(Array.from({ length: 50 }, (_, n) => finding(n, "a")), 150, "c50");
-    const pages: Record<string, { violations: Violation[]; nextCursor: string | null }> = {
-      c50: { violations: Array.from({ length: 50 }, (_, n) => finding(50 + n, "a")), nextCursor: "c100" },
-      c100: { violations: Array.from({ length: 50 }, (_, n) => finding(100 + n, n < 3 ? "b" : "a")), nextCursor: null },
-    };
-    const requested: URL[] = [];
-    vi.stubGlobal("location", { origin: "http://127.0.0.1:4000" });
-    vi.stubGlobal("fetch", async (input: URL) => {
-      const url = new URL(input);
-      requested.push(url);
-      return new Response(JSON.stringify({ ...pages[url.searchParams.get("cursor") ?? ""], total: 150 }), { status: 200 });
-    });
-
-    await showMoreActivity();
-
-    expect(requested.map(url => url.searchParams.get("cursor"))).toEqual(["c50", "c100"]);
-    expect(requested.some(url => url.searchParams.has("offset"))).toBe(false);
-    const view = activityView();
-    expect(view.shown).toHaveLength(3);
-    expect(view.none).toBe(false);
-    expect(view.more).toBe(false);
-  });
-});

@@ -4,6 +4,7 @@
  * touches the DOM only when called, so modules that import it load in tests; `app.js` connects it to the render
  * pass and the views (`connectShell`) and starts it (`startRouting`).
  */
+import { h } from "./dom.js";
 import { settingWrites } from "./settings-writes.js";
 import { attachmentWrites } from "./attachments.js";
 import { data, ui, panelRuleId, readScope, setScope, repoName } from "./state.js";
@@ -38,17 +39,38 @@ export function renderNow() {
   hooks.render();
 }
 
-/* ---------- toast, clipboard, theme ---------- */
+/* ---------- toast, clipboard, theme ----------
+ * One toast at a time (NER-2012). A success stays long enough to read, one with an action (Undo) a little longer;
+ * a failure stays until it is dismissed with its ✕, so a person who looked away still learns the change did not save. */
 
-const TOAST_MS = 2600;
+const TOAST_MS = 6000;
+const ACTION_TOAST_MS = 10000;
+/** Messages that report a failure, from the writers that only have one `toast` (`attachments.js`, `settings-writes.js`, `poll.js`). */
+const FAILURE = /^(Could not|Couldn’t|Couldn't|Nothing saved)\b/u;
 let toastTimer;
 
-export function toast(message) {
+/**
+ * Show `message`. `error` (default: the message reads as a failure) keeps it until dismissed; `action`
+ * (`{ label, act, id }`) adds a button that runs the common or frame action `act` with `data-i` `id`, then hides the toast.
+ */
+export function toast(message, { error = FAILURE.test(message), action = null } = {}) {
   const el = document.getElementById("toast");
-  el.textContent = message;
+  el.replaceChildren(...[h("span.msg", null, message),
+    action === null ? null : h("button.tact", { "data-act": action.act, "data-i": action.id ?? null }, action.label),
+    error ? h("button.tx", { "data-act": "toastclose", "aria-label": "Dismiss" }, "✕") : null].filter(Boolean));
+  el.classList.toggle("error", error);
+  el.setAttribute("aria-live", error ? "assertive" : "polite");
   el.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove("show"), TOAST_MS);
+  if (!error) toastTimer = setTimeout(hideToast, action === null ? TOAST_MS : ACTION_TOAST_MS);
+}
+
+/** A failure: stays until dismissed. */
+export const toastError = message => toast(message, { error: true });
+
+export function hideToast() {
+  clearTimeout(toastTimer);
+  document.getElementById("toast").classList.remove("show");
 }
 
 /** Copy `text`; where the clipboard is blocked, select it in `field` (when given) and copy that. */
@@ -86,9 +108,12 @@ export async function loadMore(load) {
 
 /* ---------- writes ---------- */
 
-/** Who a change belongs to: the worktree the URL names when the person chose it, else the repository. */
-export const changeOwner = () => (ui.scope?.checkout === undefined ? "repository" : ui.owner);
-export const ownerWords = () => (changeOwner() === "checkout" ? "in this worktree" : "for the repository");
+/**
+ * Who a change belongs to: always the repository (Oct 16: no worktree-or-repository choice), also when the URL names
+ * a worktree. The writers still take an owner, so a test can write as a worktree.
+ */
+export const changeOwner = () => "repository";
+export const ownerWords = () => "for the repository";
 
 /**
  * The page's writes: a rule's or a pack's settings, written as `changeOwner()` (`settings-writes.js`), and rule
@@ -156,10 +181,8 @@ export function syncUrl() {
 
 /** What belongs to one repository's page: its banners, History filters and open sheet. */
 function resetRepositoryView() {
-  ui.recommend = "idle";
   ui.welcomeDismissed = false;
   ui.actRule = null;
-  ui.actPack = "";
   pendingRule = null;
   closePanel();
 }

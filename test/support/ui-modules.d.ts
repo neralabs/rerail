@@ -52,6 +52,11 @@ declare module "*/ui/sessions-model.js" {
   export function sessionCorrections(sessionId: string): Correction[];
   export function sessionViolationTotal(sessionId: string): number | null;
   export function loadedFrom(sessionId: string): number;
+  export const STALE_MIN: number;
+  export interface SessionRow { sessionId: string; startedAt: number; endedAt: number | null; lastEventAt?: number | null; violationCount?: number; steeredViolations?: number }
+  export function lastEventAt(s: SessionRow): number;
+  export function openState(s: SessionRow, now?: number): "live" | "stale" | null;
+  export function violationCounts(s: SessionRow): { logged: number; steered: number };
 }
 
 declare module "*/ui/poll.js" {
@@ -71,7 +76,6 @@ declare module "*/ui/poll.js" {
   export function recommendationsFor(scope: Scope): Promise<Array<{ packId: string; folder: string }>>;
   export function saveFollowGitignore(follow: boolean, page: { toast(message: string): void; invalidate(): void }): Promise<void>;
   export function changeScope(scope: { repository?: string; checkout?: string } | null): void;
-  export function showMoreActivity(): Promise<void>;
   export function refresh(): Promise<void>;
   export function refreshNow(): Promise<void>;
   export function loadMoreFindings(): Promise<boolean>;
@@ -139,13 +143,12 @@ declare module "*/ui/state.js" {
     disconnected: boolean;
   };
   export function setScope(scope: { repository?: string; checkout?: string } | null): void;
-  export const ui: { filter: string; query: string; range: number; actPack: string; actRule: string | null; recentShown: number; view: string; settingUp: boolean; selectedSession: string | null; panel: object | null };
+  export const ui: { filter: string; query: string; range: number; actRule: string | null; view: string; settingUp: boolean; selectedSession: string | null; panel: object | null };
   export function keptPacks(): readonly string[];
   export function isAudited(id: string): boolean;
   export function summary(): { logged: number; triggers: number; on: unknown[]; sessionsInRange: number; sessionsWithTriggers: number };
   export function runningCount(): number;
   export function matches(stored: object): boolean;
-  export function activityView(): { filtered: boolean; list: unknown[]; shown: unknown[]; none: boolean; more: false | { count: number | null; of: number | null } };
   export interface RuleGroup { name: string; all: Array<{ rule: { id: string } }>; shown: Array<{ rule: { id: string } }> }
   export function ruleSections(): Array<{ key: string; kind: "mine" | "pack" | "legacy"; groups: RuleGroup[] }>;
 }
@@ -159,12 +162,35 @@ declare module "*/ui/attachments.js" {
 }
 
 declare module "*/ui/settings-writes.js" {
+  /** One settings write: the folder, the targets and the values it sets (`on: null` clears). */
+  export interface SettingPut { folder: string; targets: Array<{ kind: "rule" | "pack"; id: string }>; setting: { on?: boolean | null; suppressions?: "honour" | "ignore" } }
+  /** The writes the whole-pack switch sends for pack `packId`: per folder, the pack's on, then its rules' own on cleared. */
+  export function packSwitchWrites(packId: string, enabled: boolean): SettingPut[];
   /** The page's rule setting writes; `toast`, `invalidate` and `owner` are the page's. */
   export function settingWrites(page: { toast: (message: string) => void; invalidate: () => void; owner: () => "repository" | "checkout" }): {
     setEnabled(ids: readonly string[], enabled: boolean, label: string): Promise<void>;
+    setPackEnabled(packId: string, enabled: boolean, label: string): Promise<void>;
     setSuppressions(ids: readonly string[], suppressions: "honour" | "ignore", label: string): Promise<void>;
     setPackSuppressions(packId: string, suppressions: "honour" | "ignore", label: string): Promise<void>;
   };
+}
+
+declare module "*/ui/pack-model.js" {
+  type Stored = { rule: { id: string }; enabled: boolean; addedAt?: number | null };
+  type Pack = { id: string; name: string; category: string; covers?: string; rules: Array<{ id: string; title: string; group?: string; on?: boolean }> };
+  export const PAGE_FILTERS: ReadonlyArray<readonly [string, string]>;
+  export const PAGE_SORTS: ReadonlyArray<readonly [string, string]>;
+  export function pageKey(view: string, packId: string | null): string;
+  export function pageRules(key: string): Stored[] | null;
+  export function sortPageRules<R extends Stored>(rules: readonly R[], sort: string): R[];
+  export function shownRules<R extends Stored>(rules: readonly R[]): R[];
+  export function runningOf(rules: readonly Stored[]): number;
+  export function packSwitch(rules: readonly Stored[]): { on: number; total: number; state: "true" | "false" | "mixed" };
+  export function switchTurnsOn(state: "true" | "false" | "mixed"): boolean;
+  export function catalogKinds(packs: readonly Pack[]): Array<[string, string]>;
+  export function catalogPacks<P extends Pack>(packs: readonly P[], kind: string): P[];
+  export const SHEET_FILTER_AT: number;
+  export function sheetRules(pack: Pack, query: string): Pack["rules"];
 }
 
 declare module "*/ui/routes.js" {
@@ -180,4 +206,72 @@ declare module "*/ui/routes.js" {
 declare module "*/ui/views/index.js" {
   /** The need names a poll loads for the page now: the sidebar's, the open view's and an open sheet's. */
   export function currentNeeds(): string[];
+}
+
+declare module "*/ui/history-model.js" {
+  export interface RankedRule { id: string; title: string; origin: string; count: number }
+  export function filterRanked(ranked: RankedRule[], query: string): RankedRule[];
+  export function historyOrigin(id: string): string;
+  export function rankedRules(): RankedRule[];
+  export function historyRuleId(ranked?: RankedRule[]): string | null;
+  export function historyTitle(id: string): string;
+  export type HistoryEmpty = { kind: "noRules" } | { kind: "noSessions" } | { kind: "noViolations"; sessions: number } | { kind: "nothingInRange" };
+  export function historyEmpty(ranked?: RankedRule[]): HistoryEmpty | null;
+}
+
+declare module "*/ui/repo-rules.js" {
+  export interface RuleCounts { total: number; on: number }
+  export function ruleCountsOf(entries: ReadonlyArray<object>): RuleCounts;
+  export function repoTag(counts: RuleCounts | null): string | null;
+  export function repoRuleCounts(key: string): RuleCounts | null;
+  export function loadRepoRuleCounts(keys: readonly string[]): Promise<boolean>;
+}
+
+declare module "*/ui/settings-model.js" {
+  export interface AgentStatus {
+    state: string;
+    tone: "on" | "warn" | "off" | "";
+    command: { text: string; label: string } | null;
+    problem?: string;
+  }
+  export function agentStatus(agent: { id: string; name: string; found: boolean; connected: boolean; problem: string | null }): AgentStatus;
+  export function installedLabel(ms: number | null | undefined): string | null;
+}
+
+declare module "*/ui/render/rule-sheet-model.js" {
+  export type AskIntent = "ask" | "check" | "scope" | "delivery";
+  export const ASK: ReadonlyArray<[AskIntent, string]>;
+  export const ASK_OPEN: Partial<Record<AskIntent, boolean>>;
+  export interface AskRule { id: string; title: string; scope: string; mode: string }
+  export function askPrompt(rule: AskRule, intent: AskIntent): string;
+  export function agentSeesPrompt(id: string, text: string): string;
+  export function fmtDay(t: number | null | undefined): string;
+  export interface LibraryAttachment { sourceKind: "library_rule"; sourceId: string; folder: string }
+  export function libraryAttachments(stored: object): LibraryAttachment[];
+  export function canDelete(stored: object): boolean;
+  export function deleteConsequences(input: { repo: string; pastViolations: number; on: boolean }): string[];
+  export function splitPath(path: string | null | undefined): { file: string; dir: string };
+}
+
+declare module "*/ui/views/create.js" {
+  export interface CreateSuggestion { packId: string; name: string; reason: string }
+  export function createSuggestions(
+    recommendations: ReadonlyArray<{ packId: string; folder: string; reason: string }> | null,
+    attachedPacks: ReadonlyMap<string, unknown>,
+    packs: ReadonlyArray<{ id: string; name: string }>,
+  ): CreateSuggestion[];
+}
+
+declare module "*/ui/first-open.js" {
+  export type FirstOpenState = "no-repo" | "missing" | "not-set-up" | "stopped" | "no-packs" | "packs-no-session" | "mature";
+  export interface RepositoryFacts { scoped: boolean; missing: boolean; setUp: boolean; stopped: boolean; ruleCount: number; sessionsEver: number }
+  export function firstOpenState(facts: RepositoryFacts): FirstOpenState;
+  export function bannerFor(state: FirstOpenState, welcomeDismissed: boolean): "stopped" | "welcome" | null;
+  export function overviewBody(facts: { ruleCount: number; sessionsEver: number; topCount: number }): "no-rules" | "no-sessions" | "no-violations" | "lists";
+  export function steeredTally(activity: Record<string, { measured?: boolean; distinctViolations: number; loggedViolations?: number; rerails?: number }>): { steered: number; total: number };
+  export const TOP_RULES: number;
+  export function topRules<R extends { id: string; title: string; fires: number }>(rules: readonly R[], limit?: number): R[];
+  export function rulesOnSource(packCount: number, mineCount: number): string;
+  export const LIVE_MINUTES: number;
+  export function liveState(session: { endedAt: number | null; startedAt: number; lastEventAt: number | null }, now: number): "live" | "stale" | null;
 }

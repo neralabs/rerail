@@ -29,7 +29,7 @@ export interface ScenarioRepository {
   readonly libraryRuleIds: readonly string[];
   /** Every rule with at least one recorded violation, sorted. */
   readonly violatingRuleIds: readonly string[];
-  /** Every session, oldest first. */
+  /** Every session, by start, oldest first. */
   readonly sessionIds: readonly string[];
   /** Sessions with no end yet. */
   readonly openSessionIds: readonly string[];
@@ -47,5 +47,7 @@ export interface ScenarioManifest {
   readonly databasePath: string;
   /** The repository the daemon is started in and the dashboard is scoped to. */
   readonly primary: ScenarioRepository;
+  /** The primary repository's sessions by start, oldest first (`primary.sessionIds`); empty when it has none. */
+  readonly sessionIds: readonly string[];
   readonly repositories: readonly ScenarioRepository[];
 }

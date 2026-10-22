@@ -17,10 +17,9 @@ export function readScope(search) {
   return repository === undefined && checkout === undefined ? null : { repository, checkout };
 }
 
-/** Show `scope`; a change made on the page belongs to its worktree when the scope names one, else to the repository. */
+/** Show `scope`. A worktree in it narrows what the page reads; every change still belongs to the repository. */
 export function setScope(scope) {
   ui.scope = scope;
-  ui.owner = scope?.checkout === undefined ? "repository" : "checkout";
 }
 
 /**
@@ -52,7 +51,7 @@ export const data = {
   /** `{ started, withViolations }`: sessions in the range, and since install, from the activity answers. */
   activitySessions: null,
   activityAllSessions: null,
-  /** History: the range's violations, newest first, the pages loaded so far (`pagedList`). */
+  /** History: the shown rule's violations in range, newest first, the pages loaded so far (`owner`: the rule id). */
   findings: pagedList(),
   /** The open rule panel's violations in range (`owner`: the rule id). */
   ruleFindings: pagedList(),
@@ -60,8 +59,8 @@ export const data = {
   sessions: pagedList(),
   /** The selected session's violations, all time (`owner`: the session id). */
   sessionFindings: pagedList(),
-  /** The newest session of the repository, or `null`: the welcome banner. */
-  newestSession: null,
+  /** Overview's Recent sessions: the range's five newest sessions (`rows`, rows of GET /api/sessions) and `total` started in range; null until loaded. */
+  recentSessions: null,
   /**
    * sessionId → { head, events, nextAfter, loaded, earlier, loading }: `head` is the session's summary from
    * `GET /api/sessions/{id}`, `events` the transcript loaded so far (the newest page first), `earlier` while older ones may be left.
@@ -96,8 +95,6 @@ export const RANGES = [[0, "Today"], [7, "7 days"], [30, "30 days"], [9999, "Sin
 export const ui = {
   /** Set by `setScope` before the first poll; `null` lists repositories. */
   scope: null,
-  /** Who a rule change belongs to: this worktree or the repository. */
-  owner: "repository",
   settingUp: false,
   /** The open view (`routes.js`), and the pack the `pack` view shows. */
   view: "overview",
@@ -112,19 +109,12 @@ export const ui = {
   backToPack: null,
   askOpen: false,
   askIntent: "ask",
-  recentShown: 50,
-  /** History filters: one rule pack, then one rule. */
-  actPack: "",
+  /** History: the rule chosen (a `?rule=` link or a click); null shows the top-ranked one. */
   actRule: null,
-  /** Rule list folds (Overview and the pack pages): sections hidden, and groups folded ("section:group" → open?). */
-  hiddenSections: new Set(),
-  groupOpen: new Map(),
-  foldedSections: new Set(),
   /** Rule packs page: list or cards, and the pack whose Remove waits for its second click. */
   catView: "list",
   removeAsk: null,
-  /** W0: "loading" while recommendations load, "shown" once asked, "dismissed" after Not now. */
-  recommend: "idle",
+  /** Overview's day-one banner, dismissed for this repository. */
   welcomeDismissed: false,
   selectedSession: null,
   sessQuery: "",
@@ -321,36 +311,6 @@ export function summary() {
     sessionsWithTriggers: data.activitySessions?.withViolations ?? 0,
     // Whether any session was ever recorded here: the overview's "your next session shows here".
     anySessions: (data.activityAllSessions?.started ?? 0) > 0,
-  };
-}
-
-/** History's fallback pack name for a By Rerail rule not added through a pack. */
-const OTHER_RULES = "Other rules";
-/** The rule pack a violation files under on History: the added pack its rule is present through, else Other or Created rules. */
-export const activityPackOf = stored => (stored ? attachedPackOf(stored)?.name ?? (isByRerail(stored) ? OTHER_RULES : "Created rules") : OTHER_RULES);
-
-/**
- * What History shows under its pack and rule filters. The loaded pages are a prefix of the range, so
- * while the server has more (`findings.next`) a filter's matches may lie further back: `more` stays
- * available and an empty filtered list is not yet "none".
- */
-export function activityView() {
-  const findings = data.findings.rows;
-  const filtered = ui.actPack !== "" || ui.actRule !== null;
-  const list = filtered
-    ? findings.filter(x => (!ui.actPack || activityPackOf(data.rules.get(x.ruleId)) === ui.actPack) && (ui.actRule === null || x.ruleId === ui.actRule))
-    : findings;
-  const serverHasMore = data.findings.next !== null;
-  const shown = list.slice(0, ui.recentShown);
-  const loadedLeft = list.length - shown.length;
-  // Unfiltered, the server's total is the exact count; filtered, only the loaded matches are known.
-  const total = filtered ? list.length : Math.max(data.findings.total, list.length);
-  return {
-    filtered, list, shown,
-    none: list.length === 0 && !(filtered && serverHasMore),
-    more: filtered
-      ? (loadedLeft > 0 || serverHasMore) && { count: loadedLeft > 0 ? Math.min(50, loadedLeft) : null, of: serverHasMore ? null : total }
-      : total - shown.length > 0 && { count: Math.min(50, total - shown.length), of: total },
   };
 }
 

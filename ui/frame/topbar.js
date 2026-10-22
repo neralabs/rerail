@@ -1,50 +1,64 @@
 /**
  * The top bar, over the sidebar and content and above the sheet, so nothing in it moves when the sheet opens: the
- * repository the page shows (a menu of the others when Rerail knows more than one), who a change belongs to when the
- * URL names a worktree, the status, and the theme.
+ * sidebar toggle, the wordmark, the repository the page shows (a pill; with a chevron and a menu of the others only
+ * when Rerail knows more than one), and the status. The theme is in Settings → General.
  */
 import { h, setAttr, setText, setContent, icon } from "../dom.js";
-import { ago } from "../format.js";
 import { data, ui, repoName, stateHere } from "../state.js";
-import { applyTheme, invalidate } from "../shell.js";
+import { invalidate } from "../shell.js";
 import { repoOption } from "../render/repos.js";
 
 const $ = id => document.getElementById(id);
 
 /* ---------- status ----------
- * One indicator for the daemon and this repo: quiet while all is well, amber when the page is behind or Rerail is not
- * on here, red once the daemon has not answered for a while. */
+ * One indicator for the daemon and this repo, as v8 words it: "Updating live" while the polls come in, "Updated
+ * 3 min ago" when the page has fallen behind (a hidden tab, a slow answer), amber when Rerail is not on here or the
+ * page is reconnecting, red once the daemon has not answered for a while. The repo is in the pill beside the
+ * wordmark and the install date in Settings: the bar keeps only the dot and how fresh the data is. */
 
 const DOWN_AFTER_MS = 30_000;
-const RECENT_MS = 60_000;
+/** Two missed polls (every 5 s) and the page is no longer live. */
+const LIVE_MS = 12_000;
+const MINUTE = 60_000;
+
+/** "just now", "3 min ago", "2h ago", "4d ago". */
+function updatedAgo(at) {
+  const min = Math.max(0, Math.round((Date.now() - at) / MINUTE));
+  if (min < 1) return "just now";
+  if (min < 60) return `${min} min ago`;
+  if (min < 1440) return `${Math.round(min / 60)}h ago`;
+  return `${Math.round(min / 1440)}d ago`;
+}
 
 function status() {
   if (!data.loaded && !data.disconnected) return { cls: "", text: "Connecting…", title: "" };
-  const from = !data.updatedAt ? "never" : Date.now() - data.updatedAt < RECENT_MS ? "under a minute ago" : ago(data.updatedAt);
+  const rel = data.updatedAt ? updatedAgo(data.updatedAt) : "never";
+  const version = data.health ? ` ${data.health.version}` : "";
   if (data.disconnected) {
     if (!data.updatedAt || Date.now() - data.updatedAt > DOWN_AFTER_MS) {
-      return { cls: "down", text: `Daemon not reachable · data from ${from} · new sessions are not steered`,
-        title: `The daemon at ${location.origin} did not answer. Rules do not steer sessions until it is back; this page keeps retrying.` };
+      return { cls: "down", text: `Daemon not reachable · data from ${rel} · new sessions are not steered`,
+        title: `The local daemon did not answer at ${location.origin}. Rules are not steering sessions until it is back; this page keeps retrying.` };
     }
-    return { cls: "warn", text: `Rerail running · data from ${from} · reconnecting`, title: "The last refresh failed; this page keeps retrying." };
+    return { cls: "warn", text: `Updated ${rel} · reconnecting`, title: "The last refresh failed; this page keeps retrying." };
   }
-  if (ui.scope === null) return { cls: "", text: "Pick a repo", title: "" };
+  if (ui.scope === null) return { cls: "", dot: false, text: "No repo selected", title: "The dashboard shows one repo at a time. Open it from a session, or pick a repo." };
   if (data.missing) return { cls: "warn", text: "Unknown repository", title: "The daemon has no record of this repository or checkout." };
-  const name = repoName() || "this repo", state = stateHere();
-  if (state === "stopped") {
-    return { cls: "warn", text: `Rerail stopped in ${name} · nothing is audited · start it in Settings`, title: "Rules are not audited in this repo while Rerail is stopped." };
+  const name = repoName() || "this repo";
+  if (data.repository?.setUp === false) {
+    return { cls: "warn", text: `${name} is not set up · nothing runs here`, title: `No rule packs have been chosen for ${name}. Run /rerail-start in a session there.` };
   }
-  if (state === "not-set-up") {
-    return { cls: "warn", text: `Started · Not set up in ${name} · no rules run yet`, title: "Sessions are recorded; rules run once the repository is set up." };
+  if (stateHere() === "stopped") {
+    return { cls: "warn", text: `Rerail stopped in ${name}`, title: "Nothing is audited or logged here while Rerail is stopped. Start it from the banner on Overview, in Settings, or with /rerail-start in a session." };
   }
-  const version = data.health ? ` v${data.health.version}` : "";
-  return { cls: "", text: "Rerail running · updating live", title: `Connected to the local daemon${version} · refreshing every 5 s` };
+  if (Date.now() - data.updatedAt < LIVE_MS) return { cls: "", text: "Updating live", title: `Connected to the local daemon${version} · refreshing every 5 s` };
+  return { cls: "", text: `Updated ${rel}`, title: `Connected to the local daemon${version} · last refreshed ${new Date(data.updatedAt).toLocaleString()}` };
 }
 
-/** The status pill; also run on a timer, since "data from 2m ago" ages without a poll. */
+/** The status pill; also run on a timer, since "Updated 2 min ago" ages without a poll. */
 export function renderStatus() {
   const s = status(), el = $("status");
   setAttr(el, "class", `status${s.cls ? ` ${s.cls}` : ""}`);
+  setAttr(el.querySelector(".dot"), "hidden", s.dot === false);
   setText($("statusText"), s.text);
   setAttr(el, "title", s.title || null);
 }
@@ -96,28 +110,30 @@ export function closeRepoMenu(target) {
   return true;
 }
 
-/* ---------- owner and theme ---------- */
+/* ---------- the sidebar toggle ----------
+ * Far left of the bar, icon only, the words in its tooltip; the choice is kept on this computer and applied before
+ * first paint (`index.html`), as `html[data-nav="hidden"]`. */
 
-function renderOwner() {
-  const ctl = $("ownerCtl");
-  setAttr(ctl, "hidden", ui.scope === null || data.missing || ui.scope.checkout === undefined);
-  for (const b of ctl.querySelectorAll("[data-act=owner]")) setAttr(b, "aria-pressed", String(b.dataset.i === ui.owner));
+const NAV_KEY = "rerail-nav-hidden";
+const navHidden = () => document.documentElement.dataset.nav === "hidden";
+
+function toggleNav() {
+  const hide = !navHidden();
+  if (hide) document.documentElement.dataset.nav = "hidden"; else delete document.documentElement.dataset.nav;
+  try { localStorage.setItem(NAV_KEY, hide ? "1" : "0"); } catch { /* private mode: the choice lasts the session */ }
+  invalidate();
 }
 
-const THEMES = ["", "light", "dark"];
-const THEME_NAME = { "": "System", light: "Light", dark: "Dark" };
-
-function renderTheme() {
-  const b = $("themeBtn"), next = THEMES[(THEMES.indexOf(ui.theme) + 1) % THEMES.length];
-  setAttr(b, "title", `Theme: ${THEME_NAME[ui.theme]}. Switch to ${THEME_NAME[next]}.`);
-  setAttr(b, "aria-label", `Theme: ${THEME_NAME[ui.theme]}`);
-  setAttr(b, "data-i", next);
+function renderNavToggle() {
+  const b = $("navToggle"), hidden = navHidden();
+  setAttr(b, "aria-pressed", String(!hidden));
+  setAttr(b, "title", hidden ? "Show the menu" : "Hide the menu");
+  setText(b.querySelector(".lbl"), hidden ? "Show menu" : "Hide menu");
 }
 
 export function renderTopbar() {
+  renderNavToggle();
   renderRepoPick();
-  renderOwner();
-  renderTheme();
   renderStatus();
 }
 
@@ -131,6 +147,5 @@ export function trackTopbarHeight() {
 
 export const topbarActions = {
   repomenu: () => { menuOpen = !menuOpen; invalidate(); },
-  owner: id => { ui.owner = id; invalidate(); },
-  theme: theme => applyTheme(theme),
+  navtoggle: () => toggleNav(),
 };

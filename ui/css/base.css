@@ -14,13 +14,15 @@
  * --steered / --logged: the two outcome marks, shape first (triangle, circle), colour second.
  * --tb: the top bar's height, measured by frame/topbar.js; --sat / --sab: the host's safe-area insets.
  * --gutter: the page's side margin; --sheet-width: the sheet column beside the content.
- * --scrim / --sheet-float: the veil and shadow when the sheet floats over the content (under 1100px). */
+ * --scrim / --sheet-float: the veil and shadow when the sheet floats over the content (under 1100px).
+ * --pill-rest: the repository pill's resting fill, a faint step off the bar in either theme. */
 :root {
   --canvas: linear-gradient(to bottom right, var(--background) 0%, var(--background) 50%, var(--accent) 100%);
   --switch-thumb: var(--card);
   --steered: var(--warning-foreground);
   --logged: var(--info-foreground);
   --pill: 999px;
+  --pill-rest: color-mix(in srgb, var(--foreground) 4%, transparent);
   --tb: 0px;
   --sat: env(safe-area-inset-top, 0px);
   --sab: env(safe-area-inset-bottom, 0px);
@@ -77,8 +79,18 @@ body[data-panel="open"] .frame{grid-template-columns:minmax(0,1fr) var(--sheet-w
 body[data-scrolled="1"] .topbar{box-shadow:var(--shadow-md)}
 .topbar .tbin{flex:1 1 auto;width:100%;display:flex;flex-wrap:wrap;align-items:center;gap:10px 28px;min-width:0}
 .topbar h1{font-size:20px;font-weight:400;margin:0;color:var(--brand-foreground);letter-spacing:-.01em}
+/* The sidebar toggle: far left of the bar, icon only, the words in its tooltip. On desktop the gutter widens to 48px
+ * and the toggle hangs in it, so the wordmark sits on the content edge like everything below it. */
+.navtoggle{display:inline-flex;align-items:center;justify-content:center;flex:none;width:32px;height:32px;margin:0 -2px 0 -8px;border-radius:50%;color:var(--muted-foreground)}
+.navtoggle:hover{background:var(--subtle);color:var(--foreground)}
+.navtoggle .lbl{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+@media (min-width:1100px){ .navtoggle{margin-left:calc(8px - var(--gutter));margin-right:calc(var(--gutter) - 58px)} }
+html[data-nav="hidden"] .cwrap{display:block}
+html[data-nav="hidden"] #sidenav{display:none!important}
+/* The repository as a pill; a chevron and a menu only when Rerail knows another repo to switch to. */
 .repopick{position:relative;display:flex;align-items:center;margin-left:-6px}
-.repopill{display:inline-flex;align-items:center;gap:6px;padding:4px 8px 4px 10px;border-radius:var(--pill);font-size:13px;color:var(--muted-foreground)}
+.repopill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:var(--pill);background:var(--pill-rest);font-size:13px;color:var(--muted-foreground)}
+button.repopill{padding-right:8px}
 .repopill b{font-family:var(--font-mono);font-size:12.5px;font-weight:500;color:var(--foreground)}
 button.repopill:hover,.repopill[aria-expanded="true"]{background:var(--subtle);color:var(--foreground)}
 .repopill .ico{opacity:.7;transition:transform .15s}
@@ -92,13 +104,10 @@ button.repopill:hover,.repopill[aria-expanded="true"]{background:var(--subtle);c
 .repomenu [role="option"] .ico{grid-column:2;grid-row:1 / span 2;visibility:hidden}
 .repomenu [role="option"][aria-selected="true"] .ico{visibility:visible}
 .repomenu .sub{margin:3px 0 0;padding:8px 10px 6px;border-top:1px solid var(--border);font-size:12px;line-height:1.5;color:var(--muted-foreground)}
-.ownerctl{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--muted-foreground)}
 .status{margin-left:auto;display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;color:var(--muted-foreground);font-size:12px;text-align:right}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--success);flex:none}
 .status.warn{color:var(--warning-foreground)} .status.warn .dot{background:var(--warning-foreground)}
 .status.down{color:var(--danger-foreground)} .status.down .dot{background:var(--danger-foreground)}
-.themebtn{display:inline-grid;place-items:center;width:28px;height:28px;margin-left:-14px;border-radius:50%;color:var(--muted-foreground)}
-.themebtn:hover{background:var(--subtle);color:var(--foreground)}
 
 /* ---- sidebar ---- */
 #sidenav{position:sticky;top:calc(var(--tb) + var(--sat) + 8px);max-height:calc(100vh - var(--tb) - var(--sat) - 24px);overflow:auto;overscroll-behavior:contain;padding:8px 4px 24px 0}
@@ -108,7 +117,8 @@ button.repopill:hover,.repopill[aria-expanded="true"]{background:var(--subtle);c
 .sn-item:hover{background:var(--subtle)}
 .sn-item[aria-current="page"]{background:var(--brand-subtle);color:var(--brand-foreground);font-weight:500}
 .sn-item .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sn-item .n{font-size:11.5px;color:var(--muted-foreground);font-variant-numeric:tabular-nums;white-space:nowrap}
+/* The on-count never gives way to a long pack name: the name truncates (its full text is the item's tooltip). */
+.sn-item .n{flex:none;font-size:11.5px;color:var(--muted-foreground);font-variant-numeric:tabular-nums;white-space:nowrap}
 .sn-item[aria-current="page"] .n{color:inherit;opacity:.8}
 /* Pack logos and icons share one 20px box, so every label starts in one column. */
 .sn-item .picon{width:20px;height:20px}
@@ -147,9 +157,6 @@ body[data-panel="open"] .panel{display:flex}
 .btn.ghost.link:hover{text-decoration:underline;text-underline-offset:3px;background:transparent}
 .btn.danger{background:var(--danger-subtle);color:var(--danger-foreground);border-color:transparent}
 .btn.danger:hover{background:var(--danger-subtle);filter:brightness(.97)}
-.seg2{display:inline-flex;gap:2px;background:var(--subtle);border-radius:var(--radius-lg);padding:2px}
-.seg2 button{padding:3px 9px;border-radius:var(--radius-md);font-size:12px;color:var(--muted-foreground);margin:0;border:0}
-.seg2 button[aria-pressed="true"]{background:var(--card);color:var(--foreground);box-shadow:var(--shadow-xs)}
 .rangectl{display:inline-flex;gap:2px;background:var(--subtle);border-radius:var(--pill);padding:3px}
 .rangectl button{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:var(--pill);font-size:12px;color:var(--muted-foreground)}
 .rangectl button[aria-pressed="true"]{background:var(--card);color:var(--foreground);box-shadow:var(--shadow-xs)}
@@ -218,7 +225,7 @@ section.group{margin-bottom:24px}
 .search input{flex:1;border:0;background:none;font:inherit;color:inherit;min-width:0}
 .search input::placeholder{color:var(--muted-foreground)}
 .row{border-top:1px solid var(--border)}
-.list > .row:first-child,.lsub + .row{border-top:0}
+.list > .row:first-child{border-top:0}
 .rmain{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 16px;align-items:center;padding:11px 14px}
 .rtitle{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;min-width:0}
 .rtitle button.t{font-size:14px;font-weight:500;text-align:left}
@@ -233,23 +240,9 @@ section.group{margin-bottom:24px}
 .count b.zero{color:var(--muted-foreground);font-weight:500}
 .row[aria-selected="true"]{background:var(--brand-subtle);box-shadow:inset 0 0 0 1px var(--brand)}
 .row[aria-selected="true"] + .row{border-top-color:transparent}
-.lsub{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:0 16px;align-items:center;padding:10px 14px;background:var(--muted);border-top:1px solid var(--border)}
-.list > .lsub:first-child{border-top:0}
-.lsub[data-open="false"] + .lsub{border-top-color:var(--border)}
-.lsub .lbl{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground)}
-.lsub .lbl .n{display:inline-flex;align-items:center;margin-left:6px;font-size:11.5px;font-weight:500;line-height:16px;color:var(--muted-foreground);background:var(--subtle);padding:1px 7px;border-radius:var(--radius-md);letter-spacing:0;text-transform:none;white-space:nowrap}
-.lsub .lbl .n.mix{color:var(--foreground)}
-.lsub .lside{display:grid;grid-template-columns:minmax(96px,max-content) auto;gap:0 32px;align-items:center}
-.lsub .lside .count b,.lsub .lside .count .u{color:var(--foreground)}
-.lsub .lside .count .u{font-size:11.5px;font-weight:400;margin-left:4px}
-.lsub .lside .sw{margin-left:16px}
 .caret{width:20px;height:20px;margin-left:-6px;display:grid;place-items:center;color:var(--muted-foreground);border-radius:var(--radius-md)}
 .caret:hover{background:var(--subtle)}
 .caret svg{transition:transform .15s}
-.lsub[data-open="true"] .caret svg{transform:rotate(90deg)}
-.empty.mine{padding:22px 18px}
-.empty.mine b{color:var(--foreground)}
-.empty.mine p:last-child{margin-top:12px}
 /* With the frame capped at 1440px an open sheet leaves at most about 1000px for content, so these apply whenever it
  * is open: the number column shrinks to its figure, the gaps close, the meta line clips instead of wrapping. */
 body[data-panel="open"] .rside{grid-template-columns:minmax(40px,max-content) auto;gap:0 14px}
@@ -266,8 +259,14 @@ details[open] summary::before{transform:rotate(45deg)}
 details .in{padding:2px 12px 12px;border-top:1px solid var(--border)}
 pre{margin:8px 0 0;padding:10px;background:var(--subtle);border-radius:var(--radius-md);font-family:var(--font-mono);font-size:11.5px;overflow:auto;white-space:pre-wrap}
 
-/* ---- toast ---- */
-.toast{position:fixed;left:50%;bottom:calc(20px + var(--sab));transform:translate(-50%,20px);background:var(--foreground);color:var(--background);padding:8px 14px;border-radius:6px;font-size:13px;opacity:0;transition:.2s;pointer-events:none;z-index:50;max-width:calc(100% - 32px)}
-.toast.show{opacity:1;transform:translate(-50%,0)}
+/* ---- toast: a success fades after a while; a failure (.error) carries a ✕ and stays until dismissed ---- */
+.toast{position:fixed;left:50%;bottom:calc(20px + var(--sab));transform:translate(-50%,20px);display:flex;align-items:center;gap:12px;background:var(--foreground);color:var(--background);padding:8px 14px;border-radius:6px;font-size:13px;line-height:1.4;opacity:0;transition:.2s;pointer-events:none;z-index:50;max-width:min(640px,calc(100% - 32px))}
+.toast.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}
+.toast.error{border-left:3px solid var(--danger);padding-right:6px}
+.toast .msg{min-width:0;overflow-wrap:anywhere}
+.toast .tact{flex:none;font-weight:600;text-decoration:underline;text-underline-offset:3px}
+.toast .tx{flex:none;width:24px;height:24px;border-radius:4px;display:grid;place-items:center;opacity:.8}
+.toast .tx:hover{opacity:1;background:color-mix(in srgb,var(--background) 18%,transparent)}
+.toast button:focus-visible{outline-color:var(--background)}
 
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}

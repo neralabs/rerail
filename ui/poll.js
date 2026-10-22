@@ -7,12 +7,15 @@
  * are paged with a cursor: a poll refreshes their first page and keeps the further pages the person loaded.
  */
 import { get, send } from "./api.js";
-import { data, ui, sinceFor, setScope, activityView, pagedList, panelRuleId } from "./state.js";
+import { data, ui, sinceFor, setScope, pagedList, panelRuleId } from "./state.js";
+import { historyRuleId } from "./history-model.js";
 
 const INTERVAL = 5_000;
 const MAX_BACKOFF = 30_000;
-/** Page sizes: History's violations, a rule sheet's, the sessions list, the selected session's violations, its transcript. */
-const FINDINGS_PAGE = 200;
+/** Page sizes: History's selected rule's violations, a rule sheet's, the sessions list, the selected session's violations, its transcript. */
+const FINDINGS_PAGE = 25;
+/** Overview's Recent sessions. */
+const RECENT_SESSIONS = 5;
 const RULE_FINDINGS_PAGE = 50;
 const SESSIONS_PAGE = 50;
 const SESSION_FINDINGS_PAGE = 200;
@@ -171,6 +174,8 @@ export function toStoredRules(entries) {
         known.enabled = known.enabled && entry.on;
         known.configError ??= entry.configError ?? null;
         known.mixed = known.folderStates.some(state => state.on !== entry.on || state.mode !== entry.mode) || known.mixed;
+        known.addedAt = earliest(known.addedAt, entry.addedAt ?? null);
+        known.updatedAt = latest(known.updatedAt, entry.updatedAt ?? null);
       }
       continue;
     }
@@ -191,10 +196,17 @@ export function toStoredRules(entries) {
       configSource: entry.configSource,
       configError: entry.configError ?? null,
       revision: entry.revision,
+      addedAt: entry.addedAt ?? null,
+      updatedAt: entry.updatedAt ?? null,
     });
   }
   return rules;
 }
+
+/** When a rule present in several folders was first added: the earliest folder's; `null` where none says. */
+const earliest = (a, b) => (a === null ? b : b === null ? a : Math.min(a, b));
+/** When its settings last changed: the latest folder's. */
+const latest = (a, b) => (a === null ? b : b === null ? a : Math.max(a, b));
 
 /** One folder's own on, mode and suppressions of a rule, what decided its suppressions, and what added it there. */
 const folderState = entry => ({
@@ -299,11 +311,11 @@ async function loadActivity(since, target) {
   return true;
 }
 
-/** The newest session, for the welcome banner: one row, not the list. */
-async function loadNewestSession() {
-  const body = await fetchFresh(`/api/sessions?limit=1${repositoryFilter()}`, "newestSession");
+/** Overview's Recent sessions: the range's newest few, and how many started in it. */
+async function loadRecentSessions(since) {
+  const body = await fetchFresh(`/api/sessions?since=${since}&limit=${RECENT_SESSIONS}${repositoryFilter()}`, "recentSessions");
   if (body === undefined) return false;
-  data.newestSession = body.sessions[0] ?? null;
+  data.recentSessions = { rows: body.sessions, total: body.total };
   return true;
 }
 
@@ -358,17 +370,8 @@ async function loadNextPage(name, field) {
   return true;
 }
 
-/** History: the next page of the range's violations. */
+/** History: the next page of the shown rule's violations. */
 export const loadMoreFindings = () => loadNextPage("findings", "violations");
-
-/**
- * History's "Show more": 50 more rows of what the filters let through, fetching further pages until
- * that many matches are loaded or the range runs out (a filter's matches may all lie further back).
- */
-export async function showMoreActivity() {
-  ui.recentShown += 50;
-  while (activityView().list.length < ui.recentShown && await loadMoreFindings()) { /* next page */ }
-}
 
 /** Sessions view: the next page of the list. */
 export const loadMoreSessions = () => loadNextPage("sessions", "sessions");
@@ -534,8 +537,8 @@ function pumpTitles() {
  * - `rules`: the repository's rules (`data.rules`, `attachedPacks`, `unavailable`).
  * - `packs`: every rule pack that comes with Rerail (`data.packs`).
  * - `activity`: each rule's activity in the range and since install (`data.activity`, `activityAll`, their sessions).
- * - `newestSession`: the repository's newest session (`data.newestSession`).
- * - `findings`: the first page of the range's violations (`data.findings`).
+ * - `recentSessions`: the range's five newest sessions and how many started in it (`data.recentSessions`).
+ * - `findings`: History's shown rule's violations in the range (`data.findings`, owner = rule id); nothing without one.
  * - `ruleFindings`: the open rule sheet's violations in the range (`data.ruleFindings`); nothing without one.
  * - `sessions`: the first page of the sessions list (`data.sessions`).
  * - `selectedSession`: the selected session's head, new transcript events and violations; nothing without one.
@@ -544,8 +547,12 @@ const NEEDS = {
   rules: () => loadRules(),
   packs: () => loadPacks(),
   activity: since => [loadActivity(since, "activity"), since === 0 ? false : loadActivity(0, "activityAll")],
-  newestSession: () => loadNewestSession(),
-  findings: since => loadFirstPage("findings", "violations", `/api/violations?since=${since}&limit=${FINDINGS_PAGE}${repositoryFilter()}`),
+  recentSessions: since => loadRecentSessions(since),
+  findings: since => {
+    const ruleId = historyRuleId();
+    return ruleId === null ? [] : loadFirstPage("findings", "violations",
+      `/api/violations?since=${since}&ruleId=${encodeURIComponent(ruleId)}&limit=${FINDINGS_PAGE}${repositoryFilter()}`, ruleId);
+  },
   ruleFindings: since => {
     const ruleId = panelRuleId();
     return ruleId === null ? [] : loadFirstPage("ruleFindings", "violations",
@@ -653,7 +660,7 @@ export function changeScope(scope) {
   Object.assign(data, {
     repository: null, checkout: null, unavailable: [], rules: new Map(), attachedPacks: new Map(), activity: {}, activityAll: {},
     activitySessions: null, activityAllSessions: null, findings: pagedList(), ruleFindings: pagedList(), sessions: pagedList(),
-    sessionFindings: pagedList(), newestSession: null, recommendations: null, followGitignore: null, loaded: false, missing: false,
+    sessionFindings: pagedList(), recentSessions: null, recommendations: null, followGitignore: null, loaded: false, missing: false,
   });
   data.sessionDetail.clear();
   refreshNow();

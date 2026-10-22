@@ -9,7 +9,7 @@ import { setAttr } from "./dom.js";
 import { ui } from "./state.js";
 import { setNeeds, startPolling } from "./poll.js";
 import { commonActions } from "./actions.js";
-import { afterPoll, closePanel, connectShell, invalidate, loadTheme, startRouting, syncUrl } from "./shell.js";
+import { afterPoll, closePanel, connectShell, hideToast, invalidate, loadTheme, startRouting, syncUrl } from "./shell.js";
 import { renderSheet, sheetActions } from "./sheet.js";
 import { VIEWS, currentNeeds, pageKey, pageModule } from "./views/index.js";
 import { closeRepoMenu, renderStatus, renderTopbar, repoMenuOpen, topbarActions, trackTopbarHeight } from "./frame/topbar.js";
@@ -46,12 +46,13 @@ connectShell({
 
 /* ---------- events ---------- */
 
-const FRAME_ACTIONS = { ...topbarActions };
+const FRAME_ACTIONS = { ...topbarActions, toastclose: () => hideToast() };
 
-/** The actions of the region `el` is in. */
+/** The actions of the region `el` is in. A toast's action (Undo) may be the current page's. */
 function regionActions(el) {
   if (el.closest("#panel")) return sheetActions;
   if (el.closest("#content")) return pageModule().actions ?? {};
+  if (el.closest("#toast")) return { ...pageModule().actions, ...FRAME_ACTIONS };
   return FRAME_ACTIONS;
 }
 
@@ -66,6 +67,7 @@ document.addEventListener("click", e => {
   if (ui.removeAsk !== null && e.target.closest(".rmask") && !answersRemove) return;
   if (ui.removeAsk !== null && !answersRemove) { ui.removeAsk = null; invalidate(); }
   const act = regionActions(b)[name] ?? commonActions[name];
+  if (b.closest("#toast")) hideToast(); // an action's own toast (Undo → "added") replaces it
   if (act) act(b.dataset.i, b);
 });
 

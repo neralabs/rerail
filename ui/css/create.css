@@ -6,3 +6,9 @@
 .cpage > .pintro:first-of-type{margin-top:36px}
 .cpage .cmd{margin-top:22px;max-width:52ch;font-size:14px}
 .cpage .cmd + .pintro{margin-top:22px}
+/* Places to start closes the page under one hairline; each place is a line and its buttons, 36px apart. */
+.cpage .psec{margin:32px 0 0;padding-top:32px;border-top:1px solid var(--border);max-width:52ch}
+.cpage.pbody .psec h3{margin:0 0 12px;font-size:14px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--foreground)}
+.cpage .place .pintro{margin-top:0}
+.cpage .place + .place{margin-top:36px}
+.cpage .place .acts{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-top:14px}

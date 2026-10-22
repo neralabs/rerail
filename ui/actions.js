@@ -5,11 +5,12 @@
  * these. Each is `(id, element) => void`, `id` being the element's `data-i`.
  */
 import { send } from "./api.js";
-import { data, ui, titleOf, packOfRule, rulesArray, reviewing } from "./state.js";
+import { data, ui, titleOf, packOfRule, packById, rulesArray, reviewing } from "./state.js";
 import { refreshNow } from "./poll.js";
 import { packName } from "./attachments.js";
 import { parseRoute } from "./routes.js";
 import { closePanel, copyText, go, invalidate, openPack, openRule, ownerWords, showRepository, toast, writes } from "./shell.js";
+import { restoreRule } from "./rule-remove.js";
 
 function toggleRule(id) {
   const stored = data.rules.get(id);
@@ -18,6 +19,13 @@ function toggleRule(id) {
   writes.setEnabled([id], enabled, enabled
     ? `On ${ownerWords()}. Rerail audits “${titleOf(stored)}” from the coding agent’s next turn.`
     : `Off ${ownerWords()}. Rerail stops auditing “${titleOf(stored)}”.`);
+}
+
+/** What an added pack turns on: its rules, but not the opt-in ones the pack starts off. */
+function addedRulesText(id) {
+  const pack = packById(id);
+  const off = pack ? pack.rules.filter(r => !r.on).length : 0;
+  return off === 0 ? "Its rules are on." : `Its rules are on, except ${off} that start off.`;
 }
 
 /** After a switch in the review. */
@@ -52,7 +60,7 @@ export const commonActions = {
   close: () => closePanel(),
   toggle: id => toggleRule(id),
   // During the review of a repository not set up yet, Add and Remove are the review's switch.
-  addpack: id => (reviewing() ? keepPack(id, true) : writes.addPacks([id], `${packName(id)} added. Its rules are on.`)),
+  addpack: id => (reviewing() ? keepPack(id, true) : writes.addPacks([id], `${packName(id)} added. ${addedRulesText(id)}`)),
   removepack: id => {
     if (ui.removeAsk !== id) { ui.removeAsk = id; invalidate(); return; }
     if (reviewing()) keepPack(id, false);
@@ -61,9 +69,11 @@ export const commonActions = {
   cancelremove: () => { ui.removeAsk = null; invalidate(); },
   session: id => { closePanel(); go({ view: "sessions", session: id, jump: true }); },
   actrule: id => go({ view: "history", filterRule: id }),
-  range: id => { ui.range = Number(id); ui.recentShown = 50; invalidate(); refreshNow(); },
+  range: id => { ui.range = Number(id); invalidate(); refreshNow(); },
   cmdcopy: text => copyText(text, null, `Copied ${text}`),
   pickrepo: key => showRepository(key),
   repostart: key => setRepository(key, "start"),
   repostop: key => setRepository(key, "stop"),
+  /** The Undo on a deleted rule's toast. */
+  ruleundo: id => restoreRule(id),
 };

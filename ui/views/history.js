@@ -1,122 +1,264 @@
 /**
- * History, by rule (`#history`; `#activity` before v8, `?rule=<id>` narrows it): every violation logged in the range,
- * newest first, by day. Narrow to one rule pack with the menu, or to one rule from a row (or from the rule sheet's
- * "See it in History").
+ * History by rule (`#history`; `#activity` before v8): the rules with violations in the range, most first, and the
+ * chosen rule's violations, newest first by day, a page at a time. `?rule=<id>` (a rule's "See all", a steer link)
+ * chooses the rule; without one the top rule shows.
  */
 import { h, setAttr, setText, setContent, syncChildren, icon } from "../dom.js";
-import { fmt, clock, dayLabel, daysAgo, shortSessionId } from "../format.js";
-import { data, ui, rangeLabel, titleOf, activityPackOf, activityView } from "../state.js";
-import { violationOutcome } from "../derive.js";
-import { showMoreActivity } from "../poll.js";
+import { fmt, plural, dayLabel, daysAgo, shortSessionId } from "../format.js";
+import { data, ui, rangeLabel } from "../state.js";
+import { MODE_LABEL, ruleMode, messageText } from "../derive.js";
+import { loadMoreFindings, refreshNow } from "../poll.js";
 import { invalidate, loadMore } from "../shell.js";
 import { rangeControl, syncRange } from "../render/range.js";
+import { rankedRules, filterRanked, historyRuleId, historyTitle, historyOrigin, historyEmpty } from "../history-model.js";
 
-export const needs = ["rules", "packs", "findings"];
+export const needs = ["rules", "packs", "activity", "findings"];
 
+/** The icon and colour of each mode's chip, as the rule sheet shows them. */
+const MODE_OUTCOME = { log: "logged", steer: "steered", block: "blocked" };
+/** A violation's time, 24-hour ("17:35"), as the design reads it. */
+const CLOCK = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+const SVG_NS = "http://www.w3.org/2000/svg";
+/** Phosphor bold glyphs on a 256 grid: the list toggle's lines, the search glass and the picker's caret. */
+const LIST_PATH = "M228,128a12,12,0,0,1-12,12H40a12,12,0,0,1,0-24H216A12,12,0,0,1,228,128ZM40,76H216a12,12,0,0,0,0-24H40a12,12,0,0,0,0,24ZM216,180H40a12,12,0,0,0,0,24H216a12,12,0,0,0,0-24Z";
+const SEARCH_PATH = "M232.49,215.51,185,168a92.12,92.12,0,1,0-17,17l47.53,47.54a12,12,0,0,0,17-17ZM44,112a68,68,0,1,1,68,68A68.07,68.07,0,0,1,44,112Z";
+const CARET_PATH = "M216.49,104.49l-80,80a12,12,0,0,1-17,0l-80-80a12,12,0,0,1,17-17L128,159l71.51-71.52a12,12,0,0,1,17,17Z";
+function glyph(d, size) {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  for (const [k, v] of [["class", "ico"], ["width", String(size)], ["height", String(size)], ["viewBox", "0 0 256 256"], ["fill", "currentColor"], ["aria-hidden", "true"]]) svg.setAttribute(k, v);
+  const path = document.createElementNS(SVG_NS, "path");
+  path.setAttribute("d", d);
+  svg.append(path);
+  return svg;
+}
 let pane = null;
+/** Hide list: the list column folds away, the chosen rule's violations take the width and its heading becomes a picker. */
+let listHidden = false;
+/** The list's search box. */
+let query = "";
 
 function build() {
-  const rows = h("div.list.recent-rows");
-  const empty = h("div.list", { hidden: true }, h("div.empty", null, h("h3", null, "Nothing in this range"), h("p")));
-  const more = h("div.more", { hidden: true }, h("button.btn.sm", { "data-act": "more" }));
   const lead = h("p");
-  const packSelect = h("select", { id: "actpack", "aria-label": "Show one rule pack" });
+  const toggle = h("button.hltoggle", { "data-act": "hlisttoggle" }, glyph(LIST_PATH, 14), h("span"));
   const range = rangeControl();
-  pane = h("section.group.activity", null,
-    h("div.ghead.top", null, h("h2", null, "History"), lead,
-      h("div.act", null, h("label.sortctl", null, h("span", null, "Show"), packSelect), range)),
-    empty, rows, more);
-  pane._a = { rows, empty, more, lead, packSelect, range };
+  const search = h("input", { id: "hq", type: "search", placeholder: "Search rules or packs", "aria-label": "Search rules" });
+  const rows = h("div.hlist");
+  const noMatch = h("div.empty.hnomatch", { hidden: true }, h("p", null, "No rules match."));
+  const title = h("h2.clamp2");
+  const pick = h("select", { id: "hpick", "aria-label": "Choose a rule" });
+  const pickLabel = h("span.m", { "aria-hidden": "true" });
+  const pickWrap = h("h2.hpick", { hidden: true }, h("span.sel", null, pickLabel, pick, glyph(CARET_PATH, 12)));
+  const meta = h("div.l3");
+  const kvs = h("dl.hkv");
+  const summaryLine = h("div.hsum", null, h("span.tsum"));
+  const violations = h("div.hrows");
+  const more = h("div.more", { hidden: true }, h("button.btn.sm", { "data-act": "hmore" }));
+  const nothing = h("div.empty.hnone", { hidden: true }, h("h3", null, "Nothing in this range"), h("p"));
+  const empty = h("div.list.hempty", { hidden: true }, h("div.empty", null, h("h3"), h("p")));
+  const ltrow = h("div.hltrow", null, toggle);
+  const aside = h("aside", null,
+    h("div.hsearch", null, glyph(SEARCH_PATH, 13), search),
+    h("div.list.hlistbox", null, h("div.hlhead", null, h("span", null, "Rule"), h("span", null, "Violations logged")), rows, noMatch));
+  const body = h("div.hist", null, aside,
+    h("section", null, h("div.list", null, h("div.hdetail", null, h("div.l1", null, title, pickWrap), meta, kvs), summaryLine,
+      h("div.hscroll", null, nothing, violations, more))));
+  pane = h("section.group.history", null,
+    h("div.ghead.hh", null, h("h2", null, "History by rule"), lead, h("div.act", null, range)),
+    empty, ltrow, body);
+  pane._a = { lead, range, toggle, search, rows, noMatch, title, pick, pickLabel, pickWrap, meta, kvs, summaryLine, violations, more, nothing, empty, ltrow, body };
 }
 
-function createRow(item) {
+const createListRow = () => h("button.hrow", { "data-act": "hsel" },
+  h("span.l", null, h("span.t"), h("span.m")), h("span.c.num", null, h("b")));
+
+function updateListRow(node, rule, selected) {
+  setAttr(node, "data-i", rule.id);
+  setAttr(node, "aria-current", String(rule.id === selected));
+  const t = node.querySelector(".t");
+  setText(t, rule.title);
+  setAttr(t, "title", rule.title);
+  setText(node.querySelector(".m"), rule.origin);
+  setText(node.querySelector(".c b"), fmt(rule.count));
+}
+
+/** The list column, filtered by the search box. */
+function renderList(a, ranked, id) {
+  if (a.search.value !== query) a.search.value = query;
+  const shown = filterRanked(ranked, query);
+  syncChildren(a.rows, shown, r => r.id, createListRow, (node, r) => updateListRow(node, r, id));
+  setAttr(a.noMatch, "hidden", shown.length > 0);
+}
+
+/** The rule's heading: its title, or with the list hidden a picker over every listed rule (and the shown one). */
+function renderHeading(a, ranked, id) {
+  const title = historyTitle(id);
+  setText(a.title, title);
+  setAttr(a.title, "title", title);
+  setAttr(a.title, "hidden", listHidden);
+  setAttr(a.pickWrap, "hidden", !listHidden);
+  if (!listHidden) return;
+  const options = ranked.some(r => r.id === id) ? ranked : [{ id, title }, ...ranked];
+  syncChildren(a.pick, options, r => r.id, r => h("option", { value: r.id }), (o, r) => setText(o, r.title));
+  if (a.pick.value !== id) a.pick.value = id;
+  setText(a.pickLabel, title);
+  setAttr(a.pick, "title", title);
+}
+
+/** What the coding agent is told on the rule's violations: the newest loaded one's message, else the rule's own. */
+function toldOf(id) {
+  const newest = data.findings.owner === id ? data.findings.rows[0]?.message : undefined;
+  const stored = data.rules.get(id);
+  return newest ?? (stored ? messageText(stored) : "");
+}
+
+/** The line under the title (where from · id · On or Off · Open rule), then the mode and what the agent is told. */
+function renderMeta(a, id, told) {
+  const stored = data.rules.get(id);
+  const origin = historyOrigin(id);
+  const mode = stored ? ruleMode(stored) : null;
+  setContent(a.meta, JSON.stringify([id, stored?.enabled, origin]), () => [
+    h("span", null, origin), h("span.mono", null, id),
+    stored ? h("span", null, stored.enabled ? "On" : "Off") : h("span", null, "Deleted rule"),
+    stored ? h("span.acts", null, h("button.btn.sm", { "data-act": "detail", "data-i": id }, "Open rule")) : null,
+  ]);
+  setAttr(a.kvs, "hidden", mode === null && told === "");
+  setContent(a.kvs, JSON.stringify([mode, told]), () => [
+    mode === null ? null : [h("dt", null, "On a violation"),
+      h("dd", null, h(`span.oc.oc-${MODE_OUTCOME[mode] ?? "steered"}`, null, icon(MODE_OUTCOME[mode] ?? "steered", 14), MODE_LABEL[mode] ?? mode))],
+    told === "" ? null : [h("dt", null, "Agent is told"), h("dd", null, h("span.said2", { title: told }, h("span", null, told)))],
+  ]);
+}
+
+const locationOf = x => (x.path ? `${x.path}${x.span ? `:${x.span.startLine + 1}` : ""}` : "");
+
+function createViolation(item) {
   if (item.day !== undefined) return h("div.day", null, item.day);
-  return h("div.ev", null,
+  return h("div.ev.hr", null,
     h("span.when.num"),
-    h("div.what", null, h("span.oc"), h("span.msg"), h("small", null, h("button.lnk", { "data-act": "actrule" }), h("span.path"))),
-    h("button.open", { "data-act": "session" }));
+    h("div.what", null, h("span.loc.mono"), h("small.diff", { hidden: true })),
+    h("button.open", { "data-act": "session", title: "Open this session" }));
 }
 
-const pathLabel = x => (x.path ? `${x.path}${x.span ? `:${x.span.startLine + 1}` : ""}` : "");
-
-function updateRow(node, item) {
+/** One violation: when (24-hour), where, its session; its message only where it differs from what the header says. */
+function updateViolation(node, item, told) {
   if (item.day !== undefined) return;
-  const x = item.x, stored = data.rules.get(x.ruleId);
-  setText(node.querySelector(".when"), clock(x.at));
-  const outcome = violationOutcome(x);
-  const oc = node.querySelector(".oc");
-  if (oc.dataset.o !== outcome) {
-    oc.dataset.o = outcome;
-    oc.className = `oc oc-${outcome}`;
-    oc.replaceChildren(icon(outcome, 16));
-    setAttr(oc, "title", outcome === "steered" ? "Steered: Rerail told the coding agent" : "Logged: Rerail recorded it; the coding agent wasn’t told");
-  }
-  setText(node.querySelector(".msg"), x.message);
-  const lnk = node.querySelector(".lnk");
-  setText(lnk, stored ? titleOf(stored) : x.ruleId);
-  setAttr(lnk, "data-i", x.ruleId);
-  setAttr(lnk, "title", "Show only this rule");
-  const path = pathLabel(x);
-  setText(node.querySelector(".path"), path ? ` · ${path}` : "");
+  const x = item.x;
+  setText(node.querySelector(".when"), CLOCK.format(x.at));
+  const loc = node.querySelector(".loc");
+  const where = locationOf(x);
+  setText(loc, where || "No path recorded");
+  loc.classList.toggle("muted", where === "");
+  const diff = node.querySelector(".diff");
+  const differs = Boolean(x.message) && x.message !== told;
+  setAttr(diff, "hidden", !differs);
+  setText(diff, differs ? x.message : "");
   const open = node.querySelector(".open");
   setAttr(open, "data-i", x.sessionId);
   setText(open, shortSessionId(x.sessionId, x.host));
 }
 
-function syncPackSelect(select, findings) {
-  const counts = new Map();
-  for (const x of findings) { const n = activityPackOf(data.rules.get(x.ruleId)); counts.set(n, (counts.get(n) ?? 0) + 1); }
-  const options = [["", `All rule packs · ${fmt(findings.length)}`], ...[...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([n, c]) => [n, `${n} · ${fmt(c)}`])];
-  const sig = JSON.stringify(options);
-  if (select.dataset.sig !== sig) {
-    select.dataset.sig = sig;
-    select.replaceChildren(...options.map(([v, l]) => h("option", { value: v }, l)));
-  }
-  if (select.value !== ui.actPack) select.value = ui.actPack;
-}
-
-export function render(root) {
-  if (pane === null) build();
-  if (pane.parentNode !== root) root.replaceChildren(pane);
-  const a = pane._a, label = rangeLabel();
-  syncRange(a.range);
-  syncPackSelect(a.packSelect, data.findings.rows);
-  const ruleName = ui.actRule === null ? null : (data.rules.get(ui.actRule) ? titleOf(data.rules.get(ui.actRule)) : ui.actRule);
-  setContent(a.lead, JSON.stringify([label, ruleName]), () => [`Every violation logged ${label}, newest first.`,
-    ruleName === null ? null : h("button.chip", { "data-act": "actclear", "aria-pressed": "true", title: "Show every rule again" }, `${ruleName} ✕`)]);
-  const { filtered, shown, none, more } = activityView();
-  setAttr(a.empty, "hidden", !none);
-  setText(a.empty.querySelector("p"), `Rerail audited the sessions ${label} and logged no violations${filtered ? " for this filter" : ""}. Widen the range above to see earlier ones.`);
-  setAttr(a.rows, "hidden", none);
+/** The shown rule's loaded violations, by day; empty while its first page is still to come. */
+function violationItems(id) {
+  const slot = data.findings;
+  if (slot.owner !== id) return [];
   const items = [];
   let lastDay = null;
-  for (const x of shown) {
+  for (const x of slot.rows) {
     const day = dayLabel(daysAgo(x.at));
     if (day !== lastDay) { items.push({ key: `day:${day}`, day }); lastDay = day; }
     items.push({ key: `${x.auditId}:${x.id}`, x });
   }
-  syncChildren(a.rows, items, i => i.key, createRow, updateRow);
-  setAttr(a.more, "hidden", !more);
-  if (more) setText(a.more.firstChild, `Show ${more.count === null ? "" : `${fmt(more.count)} `}more${more.of === null ? "" : ` of ${fmt(more.of)}`}`);
+  return items;
 }
 
-/** Entered with a rule (`#history?rule=<id>`, a rule's "See it in History"): narrowed to that rule. */
+function renderViolations(a, id, count, told) {
+  const slot = data.findings, loaded = slot.owner === id && slot.pages > 0, label = rangeLabel();
+  const total = loaded ? slot.total : count;
+  const activity = data.activity[id];
+  const sessions = activity === undefined || activity.measured === false ? 0 : activity.sessions;
+  setContent(a.summaryLine.firstChild, JSON.stringify([total, label, sessions]), () => [
+    h("b", null, fmt(total)), ` ${plural(total, "violation")} logged ${label}`,
+    sessions > 0 ? ` · ${fmt(sessions)} ${plural(sessions, "session")}` : null,
+  ]);
+  const none = loaded && slot.rows.length === 0;
+  setAttr(a.nothing, "hidden", !none);
+  if (none) setText(a.nothing.querySelector("p"), `${historyTitle(id)} logged no violations ${label}. Widen the range above to see earlier ones.`);
+  syncChildren(a.violations, violationItems(id), i => i.key, createViolation, (node, item) => updateViolation(node, item, told));
+  const left = loaded && slot.next !== null ? slot.total - slot.rows.length : 0;
+  setAttr(a.more, "hidden", left <= 0);
+  if (left > 0) setText(a.more.firstChild, `Load more · ${fmt(left)} left`);
+}
+
+const EMPTY_TEXT = {
+  noRules: ["No history yet", () => "Add a rule pack or create a rule, then run a coding agent session. Violations show here, grouped by rule."],
+  noSessions: ["No history yet", () => "Violations show here, grouped by rule, once a rule logs one in a coding agent session."],
+  noViolations: ["No violations yet", e => `Rerail audited ${fmt(e.sessions)} ${plural(e.sessions, "session")} in this repo and logged none. When a rule logs one, it shows here grouped by rule.`],
+  nothingInRange: ["Nothing in this range", () => `No rule logged a violation ${rangeLabel()}. Widen the range above to see earlier ones.`],
+};
+
+export function render(root) {
+  if (pane === null) build();
+  if (pane.parentNode !== root) root.replaceChildren(pane);
+  const a = pane._a;
+  syncRange(a.range);
+  const ranked = rankedRules();
+  const empty = historyEmpty(ranked);
+  const id = historyRuleId(ranked);
+  const showBody = id !== null && (empty === null || ui.actRule !== null);
+  setText(a.lead, empty === null ? `${fmt(ranked.length)} with history · most violations first` : "");
+  // The range only matters once something was logged: before, every range reads the same.
+  setAttr(a.range, "hidden", empty !== null && empty.kind !== "nothingInRange" && !showBody);
+  // Until the activity answers are in (the range's, and since install's for the empty states), nothing is known to be empty.
+  const known = data.activitySessions !== null && (ui.range === 9999 || data.activityAllSessions !== null);
+  setAttr(a.empty, "hidden", showBody || empty === null || !known);
+  if (!showBody && empty !== null && known) {
+    const [title, text] = EMPTY_TEXT[empty.kind];
+    setText(a.empty.querySelector("h3"), title);
+    setText(a.empty.querySelector("p"), text(empty));
+  }
+  setAttr(a.ltrow, "hidden", !showBody);
+  setAttr(a.body, "hidden", !showBody);
+  if (!showBody) return;
+  a.body.classList.toggle("nolist", listHidden);
+  const label = listHidden ? "Show list" : "Hide list";
+  setAttr(a.toggle, "aria-pressed", String(!listHidden));
+  setAttr(a.toggle, "aria-label", label);
+  setText(a.toggle.lastChild, label);
+  renderList(a, ranked, id);
+  renderHeading(a, ranked, id);
+  const told = toldOf(id);
+  renderMeta(a, id, told);
+  renderViolations(a, id, ranked.find(r => r.id === id)?.count ?? 0, told);
+}
+
+/** Entered with a rule (`#history?rule=<id>`, `#activity?rule=<id>`): that rule shows. */
 export function enter(route) {
-  if (route.filterRule === undefined) return;
-  ui.actRule = route.filterRule;
-  ui.actPack = "";
-  ui.recentShown = 50;
+  if (route.filterRule !== undefined) ui.actRule = route.filterRule;
+}
+
+/** The shown rule follows the ranking (the top one, before any is chosen): fetch its violations once it changes. */
+export function afterPoll() {
+  const id = historyRuleId();
+  if (id !== null && data.findings.owner !== id) refreshNow();
+}
+
+/** Show rule `id` and fetch its violations. */
+function selectRule(id) {
+  ui.actRule = id;
+  invalidate();
+  refreshNow();
 }
 
 export const actions = {
-  more: () => loadMore(showMoreActivity),
-  actclear: () => { ui.actRule = null; invalidate(); },
+  hsel: id => selectRule(id),
+  hmore: () => loadMore(loadMoreFindings),
+  hlisttoggle: () => { listHidden = !listHidden; invalidate(); },
 };
 
+export function onInput(el) {
+  if (el.id === "hq") { query = el.value; invalidate(); }
+}
+
 export function onChange(el) {
-  if (el.id !== "actpack") return;
-  ui.actPack = el.value;
-  ui.actRule = null;
-  ui.recentShown = 50;
-  invalidate();
+  if (el.id === "hpick") selectRule(el.value);
 }

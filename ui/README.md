@@ -16,6 +16,10 @@ serves it with client-side routes falling back to `index.html`. It reads only th
   control, the sheet's content, the session timeline.
 - `state.js` holds the state, `poll.js` refreshes it with what the page needs (`setNeeds`), `attachments.js` writes its
   rule pack changes in click order, `settings-writes.js` writes rule settings.
+- `first-open.js` holds the Overview's pure derivations: the repository's first-open state (which banner, which empty
+  block), the Violations steered tally and the Most violations logged ranking.
+- `pack-model.js` holds the pack pages', the catalog's and the pack sheet's pure derivations: a page's rules as
+  filtered and sorted, the whole-pack switch's state (mixed included), the catalog's kinds and order.
 - `css/base.css` styles the frame and the shared pieces, `css/sheet.css` the sheet, and `css/<view>.css` each view.
   `tokens.generated.css` holds the design tokens, generated from Nera's tokens by `scripts/generate/ui/tokens.mjs`;
   `npm run check:ui-tokens` checks them, and that `index.html` links every sheet under `css/`.

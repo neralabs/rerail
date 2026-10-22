@@ -13,9 +13,20 @@ body[data-page="sessions"] #content,body[data-page="sessions"] #content > div{fl
   body[data-page="sessions"] .cmain{flex:1;height:auto}
 }
 
-.sess{display:grid;grid-template-columns:350px minmax(0,1fr);gap:16px 40px;align-items:stretch;margin-top:16px;flex:1;min-height:0}
+.hhead{margin:16px 0 0;flex:none}
+.hhead h2{font-size:20px;letter-spacing:-.01em;line-height:28px}
+.hhead p{margin-top:2px}
+.hhead + .ltrow[hidden] + .list{margin-top:14px}
+/* Hide / Show list: a line of its own at the left edge over the list column, the same place whether the list is shown or hidden. */
+.ltrow{display:flex;flex:none;margin:14px 0 0 -10px}
+.ltrow[hidden]{display:none}
+.ltoggle{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;color:var(--muted-foreground);font-size:12px;white-space:nowrap}
+.ltoggle:hover{background:var(--subtle);color:var(--foreground)}
+.sess{display:grid;grid-template-columns:300px minmax(0,1fr);gap:16px 32px;align-items:stretch;margin-top:8px;flex:1;min-height:0}
+.sess[hidden]{display:none}
+.sess.nolist{grid-template-columns:minmax(0,1fr)}
+.sess.nolist > aside{display:none}
 .sess > aside{display:flex;flex-direction:column;min-height:0}
-.sess > aside .ghead h2{font-size:20px;letter-spacing:-.01em;line-height:28px}
 .sess > aside .slist{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain}
 .sess > section{display:flex;flex-direction:column;min-height:0}
 .sess > section .list{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
@@ -25,7 +36,7 @@ body[data-page="sessions"] #content,body[data-page="sessions"] #content > div{fl
 @media (max-width:900px){
   .sess{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
   .sess > aside,.sess > section{min-width:0}
-  .sess > aside .ghead,.sess > aside .ssearch,.sess > aside .chips,.sess > aside .slist,.sess > aside .empty{display:none}
+  .sess > aside .ssearch,.sess > aside .chips,.sess > aside .slist,.sess > aside .empty{display:none}
   .spick{display:flex;align-items:center;gap:8px;font-size:13px}
   .spick select{flex:1;min-width:0;font:inherit;font-size:13px;color:var(--foreground);background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:6px 8px}
 }
@@ -45,6 +56,9 @@ body[data-panel="open"] .sess > aside{display:none}
 .slist .srow .c b{font-size:16px;color:var(--foreground);font-weight:600}
 .slist .srow .c.zero b{color:var(--muted-foreground);font-weight:400}
 .slist .srow .c.zero{opacity:.7}
+.slist .srow .c .st:empty{display:none}
+.slhead{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground)}
+.slhead + .srows .daygrp:first-child{border-top:1px solid var(--border)}
 .sess .live{display:inline-flex;align-items:center;gap:5px;color:var(--success-foreground);font-size:12px}
 .sess .live::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--success)}
 .sess .stale{display:inline-flex;align-items:center;gap:5px;color:var(--muted-foreground);font-size:12px}
@@ -52,10 +66,23 @@ body[data-panel="open"] .sess > aside{display:none}
 .shead{padding:16px 18px 8px}
 .shead .l1{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 16px}
 .shead .l1 h2{margin:0;font-size:16px;line-height:1.35;font-weight:600;min-width:0;color:var(--header-primary)}
+.shead .l1 h2[hidden]{display:none}
+/* List hidden: the session heading is the picker; a hidden measuring span gives the select the title's own width. */
+.shead .l1 h2.hpick{display:flex;max-width:100%}
+.hpick .sel{position:relative;display:inline-grid;grid-template-columns:minmax(0,auto);min-width:0;max-width:100%;margin:-3px 0 -3px -9px;border-radius:999px}
+.hpick .sel:hover,.hpick .sel:focus-within{background:var(--subtle)}
+.hpick .m{grid-area:1/1;visibility:hidden;white-space:nowrap;overflow:hidden;min-width:0;padding:3px 34px 3px 9px;font:inherit}
+.hpick select{grid-area:1/1;width:100%;min-width:0;appearance:none;-webkit-appearance:none;border:0;background:transparent;font:inherit;color:var(--header-primary);padding:3px 34px 3px 9px;border-radius:999px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hpick select:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
+.hpick .sel svg{position:absolute;right:11px;top:50%;margin-top:-6px;transform:rotate(90deg);opacity:.7;pointer-events:none}
 .shead .l3{display:flex;flex-wrap:wrap;align-items:center;gap:4px 0;margin-top:8px;font-size:12.5px;color:var(--muted-foreground)}
 .shead .l3 > span + span::before{content:"·";margin:0 8px;opacity:.6}
 .shead .l3 .acts{margin-left:auto;display:inline-flex;gap:8px;padding-left:12px}
 .shead .l3 .acts::before{content:none}
+.pask.sresume{position:relative;margin-top:16px;border:0;border-radius:var(--radius-xl);background:var(--muted);padding:20px 18px}
+.pask.sresume .lbl{font-size:14px;font-weight:600;letter-spacing:-.005em;color:var(--foreground);margin:0 0 12px;padding-right:32px}
+.pask.sresume > .x{position:absolute;top:10px;right:10px;width:28px;height:28px;border-radius:6px;display:grid;place-items:center;color:var(--muted-foreground)}
+.pask.sresume > .x:hover{background:var(--subtle);color:var(--foreground)}
 .pask textarea.one{min-height:0;height:54px}
 .tfilter{display:flex;flex-wrap:wrap;gap:6px;padding:10px 16px;border-bottom:1px solid var(--border);align-items:center}
 .tfilter .tsum{font-size:13px;color:var(--muted-foreground);margin-right:6px;white-space:nowrap}

@@ -1,109 +1,128 @@
 /**
- * Settings (`#settings`, W6). General: theme, the status line, the scoped repo's Follow .gitignore, history and the
- * daemon. Repos: each Started or Stopped, with a switch. Coding agents: which are connected. Uninstall: the command
- * and where the backup goes. Rerail starts per repo; there is no every-repo setting. Settings are the machine's: the
- * page shows with or without a repository in scope.
+ * Settings (`#settings`). General: theme, the status line, when Rerail was installed, where history is kept (and
+ * clearing the shown repo's), and the shown repo's Follow .gitignore. Repos: every repo Rerail knows, with how many
+ * rules it has and a switch where it has any. Coding agents: which are connected, with the command that changes it.
+ * Uninstall: the command. Settings are the machine's: the page shows with or without a repository in scope.
  */
 import { h, setContent, icon } from "../dom.js";
 import { andList, fmt, plural } from "../format.js";
 import { send } from "../api.js";
-import { data, ui, runningCount } from "../state.js";
-import { loadAgents, loadPresence, loadFollowGitignore, saveFollowGitignore } from "../poll.js";
+import { data, ui, repoName } from "../state.js";
+import { captureScope, changeScope, inScope, loadAgents, loadPresence, loadFollowGitignore, saveFollowGitignore } from "../poll.js";
 import { applyTheme, invalidate, toast } from "../shell.js";
+import { loadRepoRuleCounts, repoTag } from "../repo-rules.js";
+import { repoCounts } from "../render/repos.js";
+import { agentStatus, installedLabel } from "../settings-model.js";
 
 export const needs = [];
 
 const UNINSTALL_COMMAND = "rerail install --remove";
 
-function row(label, sub, right) {
-  return h("div.srow2", null, h("div.rt", null, label, sub ? h("span.sub", null, sub) : null), right);
+/** Clear history: asked (the row shows the question), then clearing (the request is out). */
+let clearAsk = false;
+let clearing = false;
+/** The poll (`data.updatedAt`) the repos' rule counts were last read after. */
+let countsRound = -1;
+
+function row(label, sub, right, attrs = null) {
+  return h("div.srow2", attrs, h("div.rt", null, label, sub ? h("span.sub", null, sub) : null), right);
 }
 
 function seg(act, options, current) {
   return h("div.rangectl", { role: "group" }, options.map(([v, l]) => h("button", { "data-act": act, "data-i": v, "aria-pressed": String(current === v) }, l)));
 }
 
-const copyButton = (command, label) => h("button.btn.sm.ghost.link", { "data-act": "cmdcopy", "data-i": command, title: command }, icon("copy"), label);
+const copyButton = (command, label) => h("button.btn.sm.ghost.link", { "data-act": "cmdcopy", "data-i": command, title: `${command}, for a terminal` }, icon("copy"), label);
 
-function general() {
-  const health = data.health, live = data.loaded && !data.disconnected;
-  return h("section", null, h("div.ghead", null, h("h2", null, "General")),
-    h("div.list", null,
-      row("Theme", "System follows your OS or editor.", seg("theme", [["", "System"], ["light", "Light"], ["dark", "Dark"]], ui.theme)),
-      row("Status line", "Rerail’s line in your coding agent’s footer: how many rules are on, and how often it steered.",
-        data.presence === null ? h("span.val", null, "…") : seg("presence", [["compact", "Show"], ["silent", "Do not show"]], data.presence)),
-      ui.scope === null ? null : row("Follow .gitignore",
-        ["Files git ignores (", h("code", null, ".gitignore"), ", ", h("code", null, ".git/info/exclude"), ", your global excludes) are not checked in ",
-          data.repository?.name ?? "this repo", ". Applies to sessions started after the change."],
-        data.followGitignore === null ? h("span.val", null, "…") : seg("gitignore", [["on", "On"], ["off", "Off"]], data.followGitignore ? "on" : "off")),
-      row("History", health ? ["Kept in ", h("span.mono", null, health.database.path), " · nothing leaves your computer"] : "Nothing leaves your computer", null),
-      row("Daemon", health ? [h("span.mono", null, location.origin), ` · v${health.version}`] : h("span.mono", null, location.origin),
-        h("span.val", null, live ? "Running" : data.loaded ? "Not answering" : "Connecting…"))));
+/** History stored at: the database path, and for the repo shown, Clear history, which asks first. */
+function historyRow() {
+  const path = data.health ? h("span.mono", null, data.health.database.path) : "…";
+  const name = repoName() || ui.scope?.repository || "this repo";
+  if (ui.scope === null) return row("History stored at", [path, " · stays on this machine"], null);
+  if (!clearAsk) return row("History stored at", [path, " · stays on this machine"], h("button.btn.sm.danger", { "data-act": "clearask" }, "Clear history"));
+  return row("History stored at",
+    h("span.confirm", null, "Clear every recorded session and violation for ", h("span.mono", null, name),
+      "? Rules and settings stay. This cannot be undone. In a terminal this is ", h("code", null, "rerail reset"), "."),
+    h("span.btns", null, h("button.btn.sm", { "data-act": "clearcancel", disabled: clearing }, "Cancel"),
+      h("button.btn.sm.danger.solid", { "data-act": "cleargo", disabled: clearing }, clearing ? "Clearing…" : "Clear history")));
 }
 
-/** One repository (`GET /api/repositories`): set up or not, and a switch that starts or stops every checkout of it. */
+function general() {
+  const installed = installedLabel(data.health?.installedAt);
+  return h("section", null, h("div.ghead", null, h("h2", null, "Settings")),
+    h("div.list", null,
+      row("Theme", null, seg("theme", [["", "System"], ["light", "Light"], ["dark", "Dark"]], ui.theme)),
+      row("Status line", "Rerail’s line in Claude Code’s footer: how many rules are on and how often it steered. Other coding agents have no footer line.",
+        data.presence === null ? h("span.val", null, "…") : seg("presence", [["compact", "Show"], ["silent", "Do not show"]], data.presence)),
+      installed === null ? null : row("Installed", null, h("span.val", null, installed)),
+      historyRow(),
+      ui.scope === null ? null : row("Follow .gitignore",
+        ["Files git ignores (", h("code", null, ".gitignore"), ", ", h("code", null, ".git/info/exclude"), ", your global excludes) are not checked in ",
+          repoName() || "this repo", ". Applies to sessions started after the change."],
+        data.followGitignore === null ? h("span.val", null, "…") : seg("gitignore", [["on", "On"], ["off", "Off"]], data.followGitignore ? "on" : "off"))));
+}
+
+/** One repo: its name (a link to it unless the page shows it), how many rules it has, and On / Off where it has any. */
 function repoRow(repo) {
   const current = repo.repositoryKey === data.repository?.repositoryKey;
-  const on = current ? runningCount() : null;
-  const checkouts = `${fmt(repo.checkoutCount)} ${plural(repo.checkoutCount, "checkout")}`;
-  const detail = !repo.setUp ? "not set up yet" : current ? `${fmt(on)} ${plural(on, "rule")} on` : "set up";
-  const sub = [h("span.mono", null, repo.repositoryKey), ` · ${checkouts} · ${detail}`,
-    current ? h("span.tip", null, h("b", null, "Tip"), "Stopped means nothing is audited or logged here; rules and history are kept. The switch acts on every checkout of the repo; from a session, ",
-      h("code", null, "/rerail-stop"), " and ", h("code", null, "/rerail-start"), " act on that worktree.") : null,
-    !repo.setUp ? h("span.tip", null, h("b", null, "Tip"), "Type ", h("code", null, "/rerail-start"), " in a coding agent session in this repo to set it up.") : null];
-  const right = h("span.swl", null, h("span", null, repo.started ? "Started" : "Stopped"),
-    h("button.sw", { role: "switch", "aria-checked": String(repo.started), "aria-label": `Rerail in ${repo.name}`, "data-act": repo.started ? "repostop" : "repostart", "data-i": repo.repositoryKey }));
+  const counts = repoCounts(repo);
+  const tag = repoTag(counts);
   const name = current ? repo.name : h("button.btn.sm.ghost.link", { "data-act": "pickrepo", "data-i": repo.repositoryKey, title: "Show this repo’s rules" }, repo.name);
-  return row([name, current ? h("span.n", null, "this dashboard") : null], sub, right);
+  const sub = [h("span.mono", null, repo.repositoryKey), ` · ${fmt(repo.checkoutCount)} ${plural(repo.checkoutCount, "checkout")}`];
+  const right = counts === null || counts.total === 0 ? null : h("span.swl", null, h("span", null, repo.started ? "On" : "Off"),
+    h("button.sw", { role: "switch", "aria-checked": String(repo.started), "aria-label": `Rerail in ${repo.name}`, "data-act": repo.started ? "repostop" : "repostart", "data-i": repo.repositoryKey }));
+  return row([name, h("span.n", null, tag ?? "…")], sub, right, { "data-repo": repo.repositoryKey });
 }
 
 function repos() {
   return h("section", null,
-    h("div.ghead", null, h("h2", null, "Repos"), h("p", null, "Rerail is installed once and started per repo. Each repo has its own rule packs; rules you create are kept once on this computer and added to the repos that use them.")),
-    h("div.list", null, data.repositories.length ? data.repositories.map(repoRow) : h("div.empty", null, h("p", null, "No repo has been set up yet."))));
+    h("div.ghead", null, h("h2", null, "Repos"), h("p", null, "Rerail is installed once on this computer. Each repo has its own rules; switch a repo off to pause Rerail there. Its rules and history are kept.")),
+    h("div.list", null, data.repositories.length ? data.repositories.map(repoRow) : h("div.empty", null, h("p", null, "Rerail has not seen a repo yet."))));
 }
 
 function agentRow(agent) {
-  if (agent.connected) return h("div.agent", null, h("div.rt2", null, h("span", null, agent.name)), h("span.st.on", null, "Connected"));
-  if (!agent.found) return h("div.agent", null, h("div.rt2", null, h("span", null, agent.name)), h("span.st", null, "Not found on this computer"));
-  if (agent.problem) {
-    return h("div.agent", null,
-      h("div.rt2", null, h("span", null, agent.name), h("span.tip", null, h("b", null, "Problem"), agent.problem)),
-      h("span.st", null, "Couldn’t check"));
-  }
-  const command = `rerail install --agents ${agent.id}`;
-  return h("div.agent", null,
-    h("div.rt2", null, h("span", null, agent.name), h("span.tip", null, h("b", null, "Tip"), "In a terminal, ", h("code", null, command), ` connects Rerail to ${agent.name}.`)),
-    h("span.stack", null, h("span.st", null, "On this computer, not connected"), copyButton(command, "Copy command")));
+  const status = agentStatus(agent);
+  return h(`div.agent${status.tone === "off" ? ".off" : ""}`, { "data-agent": agent.id },
+    h("div.rt2", null, h("span", null, agent.name), h(`span.st${status.tone && status.tone !== "off" ? `.${status.tone}` : ""}`, null, status.state),
+      status.problem ? h("span.tip", null, status.problem) : null),
+    status.command === null ? null : copyButton(status.command.text, status.command.label));
 }
 
 function agents() {
-  const list = data.agents;
-  if (data.agentsError !== null) return h("section", null, h("div.ghead", null, h("h2", null, "Coding agents"), h("p", null, `Couldn’t check the coding agents: ${data.agentsError}`)));
-  if (list === null) return h("section", null, h("div.ghead", null, h("h2", null, "Coding agents"), h("p", null, "Checking…")));
-  const connected = list.filter(a => a.connected).map(a => a.name);
-  const found = list.filter(a => a.found && !a.connected).map(a => a.name);
-  const lead = [connected.length ? `Connected to ${andList(connected)}.` : "No coding agent connected yet.",
-    found.length ? ` ${andList(found)} ${found.length === 1 ? "is" : "are"} on this computer but not connected.` : ""].join("");
-  return h("section", null, h("div.ghead", null, h("h2", null, "Coding agents"), h("p", null, lead)), h("div.list.agents", null, list.map(agentRow)));
+  const head = lead => h("div.ghead", null, h("h2", null, "Coding agents"), h("p", null, lead));
+  if (data.agentsError !== null) return h("section", null, head(`Couldn’t check the coding agents: ${data.agentsError}`));
+  if (data.agents === null) return h("section", null, head("Checking…"));
+  const connected = data.agents.filter(a => a.connected && !a.problem).map(a => a.name);
+  return h("section", null, head(connected.length ? `Connected to ${andList(connected)}.` : "No coding agent connected yet."),
+    h("div.list.agents", null, data.agents.map(agentRow)));
 }
 
 function uninstall() {
   return h("section", null, h("div.ghead", null, h("h2", null, "Uninstall")),
     h("div.list", null, row("Remove Rerail from this computer",
-      ["Run ", h("code", null, UNINSTALL_COMMAND), " in a terminal. It stops the daemon and removes Rerail from every coding agent. Your rules and history move to a backup folder in your home folder, ",
-        h("code", null, "~/.rerail-clean-<date>"), ", so installing again can restore them."],
+      ["Run ", h("code", null, UNINSTALL_COMMAND), " in a terminal. Rules and history are kept in a backup."],
       copyButton(UNINSTALL_COMMAND, "Copy uninstall command"))));
 }
 
+/** After each poll, read every repo's rule count again (one 304 each when nothing changed). */
+function refreshCounts() {
+  if (data.updatedAt === 0 || countsRound === data.updatedAt) return;
+  countsRound = data.updatedAt;
+  loadRepoRuleCounts(data.repositories.map(r => r.repositoryKey)).then(changed => { if (changed) invalidate(); });
+}
+
 export function render(root) {
-  const sig = JSON.stringify([ui.theme, data.presence, ui.scope, data.followGitignore, data.health?.version, data.health?.database.path, data.loaded,
-    data.disconnected, data.repositories, data.repository?.repositoryKey, data.repository?.name, runningCount(), data.agents, data.agentsError]);
+  refreshCounts();
+  const counts = data.repositories.map(repoCounts);
+  const sig = JSON.stringify([ui.theme, data.presence, ui.scope, data.followGitignore, data.health?.installedAt, data.health?.database.path,
+    data.repositories, data.repository?.repositoryKey, data.repository?.name, counts, data.agents, data.agentsError, clearAsk, clearing]);
   setContent(root, sig, () => h("div.settings", null, general(), repos(), agents(), uninstall()));
 }
 
 /** The coding agents, the status line and Follow .gitignore are read on demand, each time Settings opens. */
 export function enter() {
+  clearAsk = false;
+  countsRound = -1;
   data.agentsError = null;
   loadAgents().catch(error => { data.agentsError = error.message; }).then(invalidate);
   loadPresence().then(invalidate, error => toast(`Could not read the status line setting: ${error.message}`));
@@ -120,8 +139,36 @@ async function savePresence(presence) {
   invalidate();
 }
 
+/** "Cleared 12 sessions from storefront." plus the ones still running, which keep recording. */
+function clearedMessage({ sessions, openSessions }, name) {
+  const running = openSessions === 0 ? "" : ` ${fmt(openSessions)} still running ${plural(openSessions, "keeps", "keep")} recording.`;
+  return `Cleared ${fmt(sessions)} ${plural(sessions, "session")} from ${name}.${running}`;
+}
+
+/** Clear the shown repo's history (`rerail reset`), then read everything of it again. */
+async function clearHistory() {
+  if (clearing) return;
+  const scope = captureScope(), name = repoName() || "this repo";
+  clearing = true; invalidate();
+  try {
+    const { body } = await send("POST", "/api/repository/reset", scope.target);
+    toast(clearedMessage(body, name));
+    if (inScope(scope)) {
+      changeScope(ui.scope);
+      loadFollowGitignore().then(invalidate, () => {});
+    }
+  } catch (error) {
+    toast(`Could not clear the history: ${error.message}`);
+  }
+  clearing = false; clearAsk = false;
+  invalidate();
+}
+
 export const actions = {
   theme: v => applyTheme(v),
   presence: v => savePresence(v),
   gitignore: v => saveFollowGitignore(v === "on", { toast, invalidate }),
+  clearask: () => { clearAsk = true; invalidate(); },
+  clearcancel: () => { clearAsk = false; invalidate(); },
+  cleargo: () => clearHistory(),
 };

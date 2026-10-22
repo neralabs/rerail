@@ -227,11 +227,22 @@ export const resumeCommand = s => {
   return { name, cmd: null, how: `Open ${name} in ${s.cwd} and find this conversation in its history. Session id: ${s.sessionId}` };
 };
 
-/** Last observed event time for a session, when its transcript is loaded. */
+/**
+ * When the session was last heard from: the list row's `lastEventAt` (the daemon's newest event), or the loaded
+ * transcript's newest event when that is later (the row can lag a poll); a session with no events falls back to its
+ * end, then its start.
+ */
 export function lastEventAt(s) {
-  const detail = data.sessionDetail.get(s.sessionId);
-  const last = detail?.events.at(-1);
-  return last ? last.observedAt : s.endedAt ?? s.startedAt;
+  const loaded = data.sessionDetail.get(s.sessionId)?.events.at(-1)?.observedAt ?? null;
+  const row = s.lastEventAt ?? null;
+  if (row === null && loaded === null) return s.endedAt ?? s.startedAt;
+  return Math.max(row ?? -Infinity, loaded ?? -Infinity);
+}
+
+/** A list row's violations: logged in the session, and of those the ones steered (recorded in Steer or Block mode). */
+export function violationCounts(s) {
+  const logged = s.violationCount ?? 0;
+  return { logged, steered: Math.min(logged, s.steeredViolations ?? 0) };
 }
 
 /** What the session's whole transcript says it missed, from the daemon (`GET /api/sessions/{id}`); zeros until it answers. */
@@ -248,9 +259,9 @@ export const codeRulesPendingBoundaries = s => gapsOf(s).codeRulesPendingBoundar
 
 export const isOpen = s => s.endedAt === null;
 /** Open and heard from within STALE_MIN → live; open and silent → "no end recorded". */
-export function openState(s) {
+export function openState(s, now = Date.now()) {
   if (!isOpen(s)) return null;
-  const idleMin = (Date.now() - lastEventAt(s)) / 60_000;
+  const idleMin = (now - lastEventAt(s)) / 60_000;
   return idleMin <= STALE_MIN ? "live" : "stale";
 }
 
