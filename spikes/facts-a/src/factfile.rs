@@ -4,7 +4,9 @@
 //! magic `b"RRFACTS\0"`, u32 schema_version, [u8; 32] blake3 content hash, u32 n_strings, strings
 //! as (u32 len, utf8), u32 n_relations, per relation: u32 name idx, u32 n_rows, u32 n_cols, per
 //! column (u32 name idx, u8 type: 0=u32 1=u16 2=u8 3=sym 4=opt_u32 5=opt_sym), then each column
-//! at native width, zero-padded to 4 bytes. All little-endian; `opt` none is `u32::MAX`.
+//! at native width; a u16 or u8 column is followed by zero bytes up to a 4-byte file offset (the
+//! 4-byte columns are not padded: the 5-byte column headers leave them at any offset). All
+//! little-endian; `opt` none is `u32::MAX`.
 //!
 //! Spike A's relations (schema v0, syntactic part): `node` (row = node id), `identifier`,
 //! `line`, `syntax_error` (one row when the tree has errors). The children CSR and kind postings
@@ -134,8 +136,11 @@ pub fn encode(hash: &[u8; 32], f: &Facts) -> Vec<u8> {
                 Col::U16(v) => v.iter().for_each(|x| out.extend_from_slice(&x.to_le_bytes())),
                 Col::U8(v) => out.extend_from_slice(v),
             }
-            while out.len() % 4 != 0 {
-                out.push(0);
+            // Only the narrow columns pad, to a 4-byte file offset (Spike B's writer and reader).
+            if matches!(col, Col::U16(_) | Col::U8(_)) {
+                while out.len() % 4 != 0 {
+                    out.push(0);
+                }
             }
         }
     }
@@ -206,7 +211,9 @@ pub fn read(bytes: &[u8]) -> Result<([u8; 32], Vec<String>, BTreeMap<String, Rel
                 2 => r.bytes(n)?.iter().map(|&b| b as u32).collect(),
                 t => return Err(format!("column type {t}")),
             };
-            r.pad();
+            if ty == 1 || ty == 2 {
+                r.pad();
+            }
             cols.insert(cn, (ty, v));
         }
         rels.insert(name, Relation { rows, cols });
@@ -300,7 +307,7 @@ struct Stat {
     encode_ns: u64,
     decode_ns: u64,
     mismatch: Option<String>,
-    written: bool,
+    hash: String,
 }
 
 /// `store`: every `.py` file's facts written to the content-addressed store, read back and
@@ -332,13 +339,11 @@ pub fn store(args: &[String]) {
                         let hex = hash.to_hex();
                         let dir = store.join(&hex[..2]);
                         let file = dir.join(format!("{hex}.facts"));
-                        let written = !file.exists();
-                        if written {
-                            std::fs::create_dir_all(&dir).unwrap();
-                            let tmp = dir.join(format!("{hex}.facts.tmp{index}"));
-                            std::fs::write(&tmp, &bytes).unwrap();
-                            std::fs::rename(&tmp, &file).unwrap();
-                        }
+                        // Always (re)written, atomically: a content's facts are a function of it.
+                        std::fs::create_dir_all(&dir).unwrap();
+                        let tmp = dir.join(format!("{hex}.facts.tmp{index}"));
+                        std::fs::write(&tmp, &bytes).unwrap();
+                        std::fs::rename(&tmp, &file).unwrap();
                         let on_disk = std::fs::read(&file).unwrap();
                         let t_dec = Instant::now();
                         let decoded = decode(&on_disk, source.clone());
@@ -347,7 +352,7 @@ pub fn store(args: &[String]) {
                             Ok(d) => same(&f, &d).err().map(str::to_owned),
                             Err(e) => Some(e),
                         };
-                        stats.push(Stat { index: index as u32, source_bytes: source.len() as u32, nodes: f.len() as u32, file_bytes: on_disk.len() as u32, encode_ns, decode_ns, mismatch, written });
+                        stats.push(Stat { index: index as u32, hash: hex.to_string(), source_bytes: source.len() as u32, nodes: f.len() as u32, file_bytes: on_disk.len() as u32, encode_ns, decode_ns, mismatch });
                     }
                     stats
                 })
@@ -368,7 +373,7 @@ pub fn store(args: &[String]) {
     let result = json!({
         "store": store,
         "files": stats.len(),
-        "written": stats.iter().filter(|s| s.written).count(),
+        "distinct_contents": stats.iter().map(|s| s.hash.as_str()).collect::<std::collections::BTreeSet<_>>().len(),
         "wall_ns": wall_ns,
         "fact_file_bytes": summary(stats.iter().map(|s| s.file_bytes as u64).collect()),
         "source_bytes": summary(stats.iter().map(|s| s.source_bytes as u64).collect()),
@@ -379,4 +384,44 @@ pub fn store(args: &[String]) {
     });
     std::fs::write(format!("{out_dir}/results.json"), serde_json::to_string_pretty(&result).unwrap()).unwrap();
     println!("{}", serde_json::to_string_pretty(&result).unwrap());
+}
+
+/// `inspect`: reads every `.facts` and `.xfacts` file of the store with this spike's generic
+/// reader (header, string table, relations), the cross-spike readability check. Prints the files
+/// read per extension, the relations seen with their total rows, and every failure.
+pub fn inspect(args: &[String]) {
+    let home = std::env::var("HOME").unwrap();
+    let store = PathBuf::from(arg(args, "--store").unwrap_or(format!("{home}/rerail-bench/facts/store")));
+    let mut read_ok: BTreeMap<String, u64> = BTreeMap::new();
+    let mut relations: BTreeMap<(String, String), (u64, u64)> = BTreeMap::new();
+    let mut failures = Vec::new();
+    for shard in std::fs::read_dir(&store).unwrap() {
+        let shard = shard.unwrap().path();
+        if !shard.is_dir() {
+            continue;
+        }
+        for entry in std::fs::read_dir(&shard).unwrap() {
+            let path = entry.unwrap().path();
+            let Some(ext) = path.extension().and_then(|e| e.to_str()).filter(|e| *e == "facts" || *e == "xfacts") else { continue };
+            let bytes = std::fs::read(&path).unwrap();
+            match read(&bytes) {
+                Ok((hash, _, rels)) => {
+                    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                    if blake3::Hash::from_bytes(hash).to_hex().as_str() != stem {
+                        failures.push(json!([path, "header hash differs from the file name"]));
+                        continue;
+                    }
+                    *read_ok.entry(ext.to_owned()).or_default() += 1;
+                    for (name, r) in rels {
+                        let e = relations.entry((ext.to_owned(), name)).or_default();
+                        e.0 += 1;
+                        e.1 += r.rows as u64;
+                    }
+                }
+                Err(e) => failures.push(json!([path, e])),
+            }
+        }
+    }
+    let relations: Vec<_> = relations.into_iter().map(|((ext, name), (files, rows))| json!({"ext": ext, "relation": name, "files": files, "rows": rows})).collect();
+    println!("{}", serde_json::to_string_pretty(&json!({"store": store, "read": read_ok, "relations": relations, "failures": failures})).unwrap());
 }
