@@ -1,6 +1,6 @@
 # Spike A report: facts once + in-memory relational evaluation (batch 6)
 
-Status: **in progress** (milestone 1: census). This file is updated at every milestone; § 7 says what is done and what is next.
+Status: **incomplete** (milestones: census, evaluator, recording parity). Gates A2–A5 are not measured yet; the run stopped at the request budget. § 7 lists exactly what remains. This file is updated at every milestone; § 7 says what is done and what is next.
 
 ## 1. Setup
 
@@ -15,15 +15,33 @@ Status: **in progress** (milestone 1: census). This file is updated at every mil
 
 ## 2. Results
 
-Not measured yet.
+| Gate | Target | Measured | Pass/fail | Run dir |
+|---|---|---|---|---|
+| A1 parity, source corpus (1,259 recorded calls) | 0 FP, 0 FN, 0 failures | 0 FP, 2 FN, 6 failures. 1,253/1,259 calls match; every mismatch is `serverplan_quality` / `quality-contracts-1` refusing the `annotation` sub-grammar | **fail** (9/10 checks pass) | `~/rerail-bench/facts/spike-a/runs/20261022T120000-replay` |
+| A1 parity, repository (173 findings, 9,010 files) | 0/0/0 | not run: the `repo` command is a stub | not measured | — |
+| A2 repository CPU | ≤ 40 s | not measured | not measured | — |
+| A3 per (clause, file) | mean ≤ 0.5 ms, p95 ≤ 5 ms | not measured (the timers exist in `eval::Output.clause_samples`) | not measured | — |
+| A4 extraction | p50 ≤ 10 ms, p99 ≤ 100 ms | not measured | not measured | — |
+| A5 peak RSS | ≤ 2 GiB | not measured | not measured | — |
+
+Per check (source corpus): `execution_authority_bypass` 5/5, `impl_direct_execution` 68/68, `legacy_execution_surfaces` 80/80, `raw_execute_regression` 4/4, `serverplan_bypass` 6/6, `serverplan_dispatch_architecture` 59/59, `serverplan_state_tripwires` 79/79, `serverplan_steps` 746/746, `serverplan_target_architecture` 12/12. `serverplan_quality` matches 194/200 calls.
+
+Untimed observation, not a gate number: one process replaying all 1,259 calls (parse + facts + evaluation, `loop` profile, one thread) took about 37 s wall in `~/rerail-bench/facts/spike-a/runs/20261022T120000-replay/stdout.txt`. This is not comparable to the native 393 s repository figure: the corpus and the build profile differ, and no `bench-lock` was used.
+
+Kill criteria: none can be evaluated yet. A2 and A4 are unmeasured. The A1 gap is a schema gap, not a wrong v0 relation: see § 6.
 
 ## 3. How measured
 
-Not measured yet.
+- Build: `CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR=spikes/facts-a/target cargo build --profile loop -p facts-a`. `loop` is the workspace's release profile without LTO. Gate timings must use `--release`.
+- A1 source corpus: `~/rerail-bench/facts/spike-a/runs/20261022T120000-replay/command.txt` (`facts-a replay --recording .../batch-06-recording.json --recording .../batch-06-probes.json --output results.json`). The comparator is `main.rs::replay`, and it follows `replay.ts`:
+  - The config per event is `oracleAnalyzer = !production_scope`, merged with `oracle_config.options`.
+  - The event scope replaces the policy scope unless `production_scope` is set.
+  - Events with a `retained_reason`, `upstream_passed=false` or no `files` are skipped.
+  - Findings are compared as multisets of `[path, line, code]`.
 
 ## 4. Parity artifacts
 
-None yet.
+- `~/rerail-bench/facts/spike-a/runs/20261022T120000-replay/results.json` holds the per-check counts and every mismatching call with its FN, FP and failures.
 
 ## 5. Design notes
 
@@ -123,14 +141,55 @@ Reading the census:
 
 ### 5.2 Evaluator choice
 
-Pending (see § 7).
+The evaluator is not `ascent`. The batch-6 rules are 544 KB of SQL in 404 stages plus 263 AST queries. The SQL uses 58 recursive CTEs, 83 `row_number()` windows, 99 correlated `EXISTS` and 176 subqueries. Hand-translating that to compile-time Datalog could not be verified exactly in the time available. It would also bias the A2 number in exactly the way the scratchpad's open question worries about. The spike therefore implements Phase 2's front end directly, and runs it at run time:
+
+- **Facts** (`facts.rs`): built from the native `TapeDoc` (visibility-only reuse). Node ids, kinds, fields and spans are identical to the engine's: preorder over every node, named and anonymous. The relations are:
+  - `node(kind, parent, start, end, start_line, end_line, subtree_end, flags, field)`
+  - a children CSR
+  - kind postings
+  - the line table
+
+  Persistence in the agreed fact-file format (agreed with SpikeB: magic `RRFACTS\0`, schema version, blake3 hash, string table, columnar relations; SpikeB writes `.xfacts` siblings) is **not written yet**.
+- **AST queries** (`ast.rs`): a port of the native matcher's semantics over the facts. It covers first-success binding, relations with `field` and `stopBy`, three-valued `all`/`any`/`not`, `each` enumeration with exclusion, `nthChild`, `count`, `compare`, `value` and `parse: pythonFString`. Identical evidence queries are evaluated once per file per policy.
+- **Derived (c) facts:**
+  - `pyvalue.rs`: Python string decoding. Operators, calls and containers are refused.
+  - `fstring.rs`: f-string pieces with host spans.
+  - Both are ports of the native `value/python.rs` and `literal/{python_fstring,offsets}.rs`.
+- **SQL** (`sql/`): an own lexer and parser for the SQLite subset. `sqlparser` 0.58 failed on 15 of 452 statements: `trim(x, chars)`, `AS MATERIALIZED`, `CROSS JOIN ... ON`, and others. The plan is fixed by the text:
+  - FROM order, index nested loops;
+  - equality conjuncts against earlier items, outer rows or constants probe hash indexes built lazily once per table;
+  - other conjuncts are placed at the earliest bound level;
+  - correlated subqueries probe the same indexes, and uncorrelated ones are cached per statement;
+  - recursive CTEs run level by level (FIFO-equivalent);
+  - SQLite affinity and comparison rules; CTAS affinity conversion.
+
+  There is no SQLite and no per-statement planner at run time.
+- **Relational clauses** (`rel.rs`):
+  - input tables: `__path, __start, __end` plus projected fields in name order;
+  - `syntax` spec tables built from facts;
+  - deferred columns and all three reachability variants;
+  - final-row anchoring (input anchors, then syntax spans, then `locations`);
+  - duplicate-identity failure;
+  - repository partitions run once per evaluation, including with zero files.
 
 ## 6. Risks found
+
+- **`parse: { grammar: annotation }`** (quality-contracts-1 `quoted_atoms`) depends on Ruff 0.16.9's string-type-definition classification (`scope/python/typedefs.rs`), which needs the scope table's qualified-name resolution. That is a cross-node semantic fact outside v0. The spike refuses it with a failure rather than approximating it, which accounts for all of the A1 gap. Phase 2 needs either a `string_type_definition(host_id)` derived fact from a port of that classifier, or a narrowed scope for quality-contracts-1.
+- **Row-order-sensitive SQL**: `row_number()` ties, `LIMIT 1` with partial `ORDER BY`, and `group_concat` without an ordered subquery depend on SQLite's plan. The spike breaks ties by input order. No replayed call diverged from this.
+- `json_each` over an object enumerates keys sorted (serde_json without `preserve_order`), whereas SQLite enumerates them in text order. This is only used for set-valued lookups in the batch-6 rules.
 
 - The replay harness evaluates every recorded call with `oracleAnalyzer=true`, `entryPoint=<event entry>` and per-event extra options, and replaces the policy scope; the repository suite uses the defaults and production scopes. The spike resolves options per call exactly as `replay.ts` does.
 
 ## 7. Resume notes
 
-- Done: census (this section), crate skeleton with the tape-based fact builder (`spikes/facts-a/src/facts.rs`).
-- Next: evaluator over facts (AST matcher + relational engine), recording replay, repository run.
+- Commits:
+  - `baca38d83`: visibility only, cherry-pickable by SpikeB.
+  - `0f3e1db49`: census.
+  - `19d56c1c1`: evaluator and replay parity.
+- Done: census; fact builder; the full evaluator; the source-corpus comparator with 1,253/1,259 calls matching.
+- Next, in order:
+  1. `repo` command (`main.rs::repo` is a stub). Walk `~/rerail-bench/nera-data-layer-2b1504ad` with 4 threads, each with its own compiled rules. Use the default config and production scopes. Merge `eval::Output` and `RepoAcc`, run `eval::finish`, and compare with `~/rerail-bench/facts/spike-a/work/suite-b6.json` (173 findings), keyed as `[check, path, line, code]`. Record the per-file extraction ns (A4) and `clause_samples` (A3). Wrap the run in `~/rerail-bench/bench-lock /usr/bin/time -l` with `--release` (A2, A5).
+  2. Fact-file writer and reader (format above) plus bytes per file (A4).
+  3. Annotation classifier (§ 6), or narrow quality-contracts-1's scope and recompute the ≥ 70% CPU apportioning from `~/rerail-bench/dl60-split/b6-*.csv`.
+- Half-done: `facts::name` clones strings and `ast::Eval::children` allocates. Both are performance debt to fix before timing.
 - Native semantics specs used by the port (read from source by read-only scouts): `~/rerail-bench/facts/spike-a/work/spec-{ast,rel,clause}.md`.
