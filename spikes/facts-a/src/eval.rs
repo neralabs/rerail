@@ -534,16 +534,114 @@ pub struct Failure {
 pub struct Output {
     pub findings: Vec<Finding>,
     pub failures: Vec<Failure>,
-    /// (rule index, clause index) -> (calls, nanoseconds, per-call ns samples)
+    /// (rule index, clause index) -> (calls, nanoseconds)
     pub clause_ns: BTreeMap<(usize, usize), (u64, u64)>,
-    pub clause_samples: Vec<u64>,
+    /// One sample per (clause, file) evaluation: ((rule index, clause index), nanoseconds).
+    pub clause_samples: Vec<((u16, u16), u64)>,
     pub input_ns: u64,
+}
+
+impl Output {
+    /// Folds another worker's output in (findings and failures are multisets; order is free).
+    pub fn merge(&mut self, other: Output) {
+        self.findings.extend(other.findings);
+        self.failures.extend(other.failures);
+        for (k, (calls, ns)) in other.clause_ns {
+            let e = self.clause_ns.entry(k).or_default();
+            e.0 += calls;
+            e.1 += ns;
+        }
+        self.clause_samples.extend(other.clause_samples);
+        self.input_ns += other.input_ns;
+    }
 }
 
 /// Repository-partition accumulators: per (rule, clause), input tables and anchors.
 #[derive(Default)]
 pub struct RepoAcc {
     pub inputs: BTreeMap<(usize, usize), (Vec<Table>, rustc_hash::FxHashMap<(Rc<str>, u32, u32), u32>, bool)>,
+}
+
+/// A value that may cross threads (`V` shares text through `Rc`).
+pub enum SendV {
+    Null,
+    Int(i64),
+    Real(f64),
+    Text(Box<str>),
+}
+
+/// A worker's `RepoAcc` and budget rows, detached from its `Rc`s so they can reach the
+/// merging thread.
+#[derive(Default)]
+pub struct SendAcc {
+    inputs: Vec<((usize, usize), Vec<(Schema, Vec<Box<[SendV]>>)>, Vec<((Box<str>, u32, u32), u32)>, bool)>,
+    budget: BTreeMap<(usize, usize), Vec<(String, u32)>>,
+}
+
+impl RepoAcc {
+    pub fn detach(self, budget: BTreeMap<(usize, usize), Vec<(String, u32)>>) -> SendAcc {
+        let send_v = |v: &V| match v {
+            V::Null => SendV::Null,
+            V::Int(i) => SendV::Int(*i),
+            V::Real(r) => SendV::Real(*r),
+            V::Text(s) => SendV::Text(Box::from(&**s)),
+        };
+        let inputs = self
+            .inputs
+            .into_iter()
+            .map(|(k, (tables, anchors, flag))| {
+                let tables = tables.into_iter().map(|t| (t.schema, t.rows.iter().map(|r| r.iter().map(send_v).collect()).collect())).collect();
+                let anchors = anchors.into_iter().map(|((p, s, e), l)| ((Box::from(&*p), s, e), l)).collect();
+                (k, tables, anchors, flag)
+            })
+            .collect();
+        SendAcc { inputs, budget }
+    }
+}
+
+/// The merge of every worker's `SendAcc`, back on one thread. Repeated texts (paths, kinds)
+/// share one `Rc` again. Row order within a table is free: `finish` sorts rows by path, stably,
+/// and a file's rows all come from the one worker that evaluated it.
+pub fn attach(parts: Vec<SendAcc>) -> (RepoAcc, BTreeMap<(usize, usize), Vec<(String, u32)>>) {
+    let mut texts: rustc_hash::FxHashMap<Box<str>, Rc<str>> = Default::default();
+    let mut text = |s: Box<str>| -> Rc<str> {
+        if let Some(r) = texts.get(&s) {
+            return r.clone();
+        }
+        let r: Rc<str> = Rc::from(&*s);
+        texts.insert(s, r.clone());
+        r
+    };
+    let mut repo = RepoAcc::default();
+    let mut budget: BTreeMap<(usize, usize), Vec<(String, u32)>> = BTreeMap::new();
+    for part in parts {
+        for (k, tables, anchors, flag) in part.inputs {
+            let n = tables.len();
+            let acc = repo.inputs.entry(k).or_insert_with(|| ((0..n).map(|_| Table::default()).collect(), Default::default(), false));
+            for (slot, (schema, rows)) in acc.0.iter_mut().zip(tables) {
+                slot.schema = schema;
+                slot.rows.extend(rows.into_iter().map(|r| {
+                    r.into_vec()
+                        .into_iter()
+                        .map(|v| match v {
+                            SendV::Null => V::Null,
+                            SendV::Int(i) => V::Int(i),
+                            SendV::Real(x) => V::Real(x),
+                            SendV::Text(s) => V::Text(text(s)),
+                        })
+                        .collect()
+                }));
+            }
+            for ((p, s, e), l) in anchors {
+                acc.1.insert((text(p), s, e), l);
+            }
+            acc.2 |= flag;
+        }
+        for (k, rows) in part.budget {
+            budget.entry(k).or_default().extend(rows);
+        }
+    }
+    (repo, budget)
 }
 
 pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut RepoAcc, budget: &mut BTreeMap<(usize, usize), Vec<(String, u32)>>) {
@@ -681,7 +779,7 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
             let e = out.clause_ns.entry((ri, ci)).or_default();
             e.0 += 1;
             e.1 += ns;
-            out.clause_samples.push(ns);
+            out.clause_samples.push(((ri as u16, ci as u16), ns));
         }
     }
 }

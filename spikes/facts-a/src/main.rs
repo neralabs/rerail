@@ -5,6 +5,7 @@ mod fstring;
 mod policy;
 mod pyvalue;
 mod rel;
+mod repo;
 mod sql;
 
 use serde_json::{Map, Value as Json, json};
@@ -42,7 +43,8 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("replay") => replay(&args),
-        Some("repo") => repo(&args),
+        Some("repo") => repo::repo(&args),
+        Some("repo-compare") => repo::compare(&args),
         Some("parse") => {
             let path = &args[2];
             let source = Arc::new(std::fs::read_to_string(path).unwrap());
@@ -51,7 +53,7 @@ fn main() {
                 facts::Built::Unparsed => println!("unparsed"),
             }
         }
-        _ => eprintln!("usage: facts-a replay|repo ..."),
+        _ => eprintln!("usage: facts-a replay|repo|repo-compare ..."),
     }
 }
 
@@ -77,6 +79,35 @@ fn evaluate(rules: &[eval::Rule], files: &[(String, Arc<String>)]) -> eval::Outp
     }
     eval::finish(rules, repo, budget, &mut out);
     out
+}
+
+/// The call configuration `replay.ts` resolves for a recorded event: `oracleAnalyzer =
+/// !production_scope` where the policy declares that option, merged with
+/// `oracle_config.options`; the event scope replaces the policy scope unless `production_scope`
+/// is set (an empty include list matches nothing).
+fn call_config(doc: &Json, e: &Json) -> (Map<String, Json>, Option<Json>) {
+    let production = e.get("production_scope").and_then(Json::as_bool).unwrap_or(false);
+    let mut config = Map::new();
+    let declares_oracle = doc["clauses"].as_array().unwrap().iter().any(|c| c.get("define").and_then(|d| d.get("options")).and_then(|o| o.get("oracleAnalyzer")).is_some());
+    if declares_oracle {
+        config.insert("oracleAnalyzer".into(), Json::Bool(!production));
+    }
+    if let Some(opts) = e.get("oracle_config").and_then(|c| c.get("options")).and_then(Json::as_object) {
+        for (k, v) in opts {
+            config.insert(k.clone(), v.clone());
+        }
+    }
+    let scope = if production {
+        None
+    } else {
+        let s = e["scope"].clone();
+        if s["include"].as_array().is_none_or(|a| a.is_empty()) {
+            Some(json!({"include": ["**/*"], "exclude": ["**/*"]}))
+        } else {
+            Some(json!({"include": s["include"], "exclude": s.get("exclude").cloned().unwrap_or(json!([]))}))
+        }
+    };
+    (config, scope)
 }
 
 fn replay(args: &[String]) {
@@ -108,27 +139,7 @@ fn replay(args: &[String]) {
             continue;
         }
         let doc = docs.entry(check.clone()).or_insert_with(|| policy_doc(&policies, &check)).clone();
-        let production = e.get("production_scope").and_then(Json::as_bool).unwrap_or(false);
-        let mut config = Map::new();
-        let declares_oracle = doc["clauses"].as_array().unwrap().iter().any(|c| c.get("define").and_then(|d| d.get("options")).and_then(|o| o.get("oracleAnalyzer")).is_some());
-        if declares_oracle {
-            config.insert("oracleAnalyzer".into(), Json::Bool(!production));
-        }
-        if let Some(opts) = e.get("oracle_config").and_then(|c| c.get("options")).and_then(Json::as_object) {
-            for (k, v) in opts {
-                config.insert(k.clone(), v.clone());
-            }
-        }
-        let scope = if production {
-            None
-        } else {
-            let s = e["scope"].clone();
-            if s["include"].as_array().is_none_or(|a| a.is_empty()) {
-                Some(json!({"include": ["**/*"], "exclude": ["**/*"]}))
-            } else {
-                Some(json!({"include": s["include"], "exclude": s.get("exclude").cloned().unwrap_or(json!([]))}))
-            }
-        };
+        let (config, scope) = call_config(&doc, e);
         let key = format!("{check}\0{}\0{}", serde_json::to_string(&config).unwrap(), serde_json::to_string(&scope).unwrap());
         let rules = match compiled.get(&key) {
             Some(r) => r.clone(),
@@ -199,8 +210,4 @@ fn multiset_minus(a: &[String], b: &[String]) -> Vec<String> {
         }
     }
     out
-}
-
-fn repo(_args: &[String]) {
-    eprintln!("repo: not yet");
 }

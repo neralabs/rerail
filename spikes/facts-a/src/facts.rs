@@ -103,6 +103,19 @@ thread_local! {
 }
 
 pub fn build(path: &str, source: Arc<String>) -> Result<Built, String> {
+    build_timed(path, source, &mut BuildNs::default())
+}
+
+/// Nanoseconds of one build: tree-sitter parse plus the engine's tape (`parse`), then the fact
+/// columns copied out of the tape (`extract`).
+#[derive(Default, Clone, Copy)]
+pub struct BuildNs {
+    pub parse: u64,
+    pub extract: u64,
+}
+
+pub fn build_timed(path: &str, source: Arc<String>, ns: &mut BuildNs) -> Result<Built, String> {
+    let t0 = std::time::Instant::now();
     let file = FileInput::new(
         path.to_owned(),
         "python".to_owned(),
@@ -113,11 +126,15 @@ pub fn build(path: &str, source: Arc<String>) -> Result<Built, String> {
     )
     .map_err(|e| e.reason.to_string())?;
     let language = eval::file_language(&file).ok_or("python has no grammar")?;
-    let Some((doc, lines)) = eval::file_tape(language, &file).map_err(|e| e.reason.to_string())?
-    else {
+    let tape = eval::file_tape(language, &file).map_err(|e| e.reason.to_string());
+    ns.parse = t0.elapsed().as_nanos() as u64;
+    let Some((doc, lines)) = tape? else {
         return Ok(Built::Unparsed);
     };
-    Ok(Built::Facts(from_tape(&doc, lines, source)))
+    let t1 = std::time::Instant::now();
+    let facts = from_tape(&doc, lines, source);
+    ns.extract = t1.elapsed().as_nanos() as u64;
+    Ok(Built::Facts(facts))
 }
 
 fn kind_sym(name: &str) -> u32 {
