@@ -59,7 +59,7 @@ fn summary(v: &[f64]) -> serde_json::Value {
 /// multiplicity other than 1 (the result must be a set).
 fn full<F: Clone + Ord + Hash + Eq>(out: &Out<F>, w: W) -> Result<BTreeSet<F>, String> {
     let o = out.borrow();
-    let mut m: BTreeMap<F, isize> = BTreeMap::new();
+    let mut m: BTreeMap<F, flow::R> = BTreeMap::new();
     for ((ww, f), d) in o.iter() {
         if *ww == flow::BASE || *ww == w {
             *m.entry(f.clone()).or_default() += d;
@@ -138,7 +138,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
             members.insert(i as W + 1, to_map(m, &mut world.borrow_mut()));
         }
         let mut divergence: BTreeMap<W, (usize, usize)> = BTreeMap::new();
-        let delta_of = |m: &BTreeMap<Sym, Cid>| -> Vec<((Sym, Cid), isize)> {
+        let delta_of = |m: &BTreeMap<Sym, Cid>| -> Vec<((Sym, Cid), flow::R)> {
             let mut v = Vec::new();
             for (p, c) in m {
                 if base_map.get(p) != Some(c) {
@@ -152,10 +152,10 @@ pub fn run(run_dir: &Path, opts: Opts) {
             }
             v
         };
-        let mut epoch: u64 = 0;
+        let mut epoch: flow::T = 0;
         // Base first, then all deltas, as two timed epochs.
         for (p, c) in &base_map {
-            h.files.insert((flow::BASE, (*p, *c)));
+            h.files.update((flow::BASE, (*p, *c)), 1);
         }
         epoch += 1;
         h.files.advance_to(epoch);
@@ -227,11 +227,32 @@ pub fn run(run_dir: &Path, opts: Opts) {
         let mut edits_done = 0usize;
         let mut rss_samples = vec![json!({"at": "loaded", "rss_mb": mb(rss_loaded.0), "footprint_mb": mb(rss_loaded.1)})];
         let mut fact_load_s = 0.0;
+        // Hot keys (with --track): per ref name, Δc_w(name) for every worktree; the R1 presence
+        // reduce at key `name` holds the base count plus one value per worktree listed here.
+        let mut refc: rustc_hash::FxHashMap<Sym, BTreeMap<W, i32>> = Default::default();
+        let bump = |refc: &mut rustc_hash::FxHashMap<Sym, BTreeMap<W, i32>>, wd: &World, w: W, c: Cid, s: i32| {
+            for n in wd.r1_refs(c) {
+                let e = refc.entry(n).or_default();
+                *e.entry(w).or_default() += s;
+                if e[&w] == 0 {
+                    e.remove(&w);
+                }
+            }
+        };
+        if track_on {
+            let wd = world.borrow();
+            for (w, m) in &members {
+                for ((_, c), s) in delta_of(m) {
+                    bump(&mut refc, &wd, *w, c, s);
+                }
+            }
+        }
+        let mut fanin_lat: Vec<(usize, f64)> = Vec::new();
         for ev in &events {
             let w = ev.worktree;
             // Facts of new contents come from disk before the input is offered (not timed).
             let tl = Instant::now();
-            let mut ups: Vec<((W, (Sym, Cid)), isize)> = Vec::new();
+            let mut ups: Vec<((W, (Sym, Cid)), flow::R)> = Vec::new();
             {
                 let mut wd = world.borrow_mut();
                 if ev.group == "new_worktree" || ev.group == "commit_init" {
@@ -255,6 +276,25 @@ pub fn run(run_dir: &Path, opts: Opts) {
                 }
             }
             fact_load_s += tl.elapsed().as_secs_f64();
+            // fan-in: the widest presence-reduce key this event touches (worktrees at that key).
+            let mut fanin = 0usize;
+            if track_on {
+                let wd = world.borrow();
+                let mut touched: BTreeMap<Sym, i32> = BTreeMap::new();
+                for ((_, (_, c)), s) in &ups {
+                    for n in wd.r1_refs(*c) {
+                        *touched.entry(n).or_default() += s;
+                    }
+                }
+                for ((ww, (_, c)), s) in &ups {
+                    bump(&mut refc, &wd, *ww, *c, *s);
+                }
+                for (n, d) in touched {
+                    if d != 0 {
+                        fanin = fanin.max(refc.get(&n).map(|m| m.len()).unwrap_or(0));
+                    }
+                }
+            }
             let t0 = Instant::now();
             for (r, s) in ups {
                 h.files.update(r, s);
@@ -268,7 +308,10 @@ pub fn run(run_dir: &Path, opts: Opts) {
             if ev.group == "edit" {
                 lat.entry(format!("edit:{}", ev.kind)).or_default().push(ms_);
             }
-            per_event.push(json!([ev.seq, ev.group, ev.kind, w, ev.changes.len(), ms_]));
+            per_event.push(json!([ev.seq, ev.group, ev.kind, w, ev.changes.len(), ms_, fanin]));
+            if track_on && (ev.group == "edit" || ev.group == "new_worktree_edit") {
+                fanin_lat.push((fanin, ms_));
+            }
             if ev.group == "edit" {
                 edits_done += 1;
             }
@@ -326,6 +369,29 @@ pub fn run(run_dir: &Path, opts: Opts) {
         let mut arr: Vec<(String, (isize, isize))> = by_name.into_iter().collect();
         arr.sort_by_key(|x| -x.1 .0);
         let arrangements = json!({"total_records": total_arranged, "by_operator": arr.iter().map(|(n, (r, b))| json!([n, r, b])).collect::<Vec<_>>()});
+        // Hot keys: names whose R1 presence key holds deltas from many worktrees, and the latency
+        // of single-file edits grouped by the widest key they touch.
+        let hot = if track_on {
+            let wd = world.borrow();
+            let mut keys: Vec<(usize, Sym)> = refc.iter().map(|(n, m)| (m.len(), *n)).filter(|x| x.0 > 0).collect();
+            keys.sort_unstable_by(|a, b| b.cmp(a));
+            let mut hist: BTreeMap<usize, usize> = BTreeMap::new();
+            for (k, _) in &keys {
+                *hist.entry(*k).or_default() += 1;
+            }
+            let mut buckets: BTreeMap<&str, Vec<f64>> = BTreeMap::new();
+            for (f, l) in &fanin_lat {
+                let b = match f { 0 => "0", 1..=5 => "1-5", 6..=20 => "6-20", 21..=40 => "21-40", _ => ">40" };
+                buckets.entry(b).or_default().push(*l);
+            }
+            json!({
+                "top": keys.iter().take(25).map(|(k, n)| json!([wd.store.syms.str(*n), k])).collect::<Vec<_>>(),
+                "keys_by_worktree_count": hist,
+                "edit_latency_by_fanin": buckets.iter().map(|(b, v)| (b.to_string(), summary(v))).collect::<serde_json::Map<_, _>>(),
+            })
+        } else {
+            json!(null)
+        };
         let wd = world.borrow();
         let member_hashes: BTreeSet<Cid> = members.values().flat_map(|m| m.values().copied()).chain(base_map.values().copied()).collect();
         let fact_bytes: usize = member_hashes.iter().map(|c| wd.store.contents[*c as usize].bytes()).sum();
@@ -353,6 +419,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
             "per_worktree_load_ms": per_wt_load_ms,
             "resident_facts": {"contents": member_hashes.len(), "bytes": fact_bytes, "interned_strings": wd.store.syms.len(), "interner_bytes": wd.store.syms.bytes()},
             "divergence_initial": divergence.iter().map(|(w, d)| json!([w, d.0, d.1])).collect::<Vec<_>>(),
+            "hot_keys": hot,
         });
         std::fs::write(run_dir.join("results.json"), serde_json::to_string_pretty(&out).unwrap()).unwrap();
         std::fs::write(run_dir.join("events.json"), serde_json::to_string(&per_event).unwrap()).unwrap();

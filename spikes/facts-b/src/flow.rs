@@ -33,11 +33,13 @@ use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 use timely::dataflow::operators::probe::Handle;
 
-pub type T = u64;
+pub type T = u32;
+/// Update multiplicity.
+pub type R = i32;
 pub type W = u32;
 pub const BASE: W = 0;
-type Col<'s, D> = VecCollection<'s, T, D, isize>;
-type Arr<'s, K, V> = Arranged<'s, TraceAgent<ValSpine<K, V, T, isize>>>;
+type Col<'s, D> = VecCollection<'s, T, D, R>;
+type Arr<'s, K, V> = Arranged<'s, TraceAgent<ValSpine<K, V, T, R>>>;
 
 pub trait Rec: ExchangeData + Hash + Default {}
 impl<D: ExchangeData + Hash + Default> Rec for D {}
@@ -64,17 +66,17 @@ pub fn join<'s, K: Rec, V1: Rec, V2: Rec, D: Rec>(a: &BDK<'s, K, V1>, b: &BDK<'s
     a.clone().join_core(b.clone(), move |k, (w1, v1), (w2, v2)| tag(*w1, *w2).map(|w| (w, f(k, v1, v2))))
 }
 
-fn flip(before: isize, after: isize) -> isize {
+fn flip(before: R, after: R) -> R {
     debug_assert!(before >= 0 && after >= 0, "negative multiplicity: {before} -> {after}");
-    (after > 0) as isize - (before > 0) as isize
+    (after > 0) as R - (before > 0) as R
 }
 
 /// Presence of a multiset relation as a tagged keyed relation `x -> (w, ())` with ±1 deltas.
 pub fn presence<'s, D: Rec>(r: BD<'s, D>, name: &str) -> BDK<'s, D, ()> {
     let input: Arr<D, W> = r.map(|(w, x)| (x, w)).arrange_by_key_named(&format!("A:{name}:counts"));
-    input.reduce_abelian::<_, ValBuilder<D, (W, ()), T, isize>, ValSpine<D, (W, ()), T, isize>, _, _>(
+    input.reduce_abelian::<_, ValBuilder<D, (W, ()), T, R>, ValSpine<D, (W, ()), T, R>, _, _>(
         &format!("R:{name}:presence"),
-        |_x, vals: &[(&W, isize)], out: &mut Vec<((W, ()), isize)>| {
+        |_x, vals: &[(&W, R)], out: &mut Vec<((W, ()), R)>| {
             // vals sorted by w: the base count first when present.
             let c = vals.iter().find(|(w, _)| **w == BASE).map(|(_, c)| *c).unwrap_or(0);
             if c > 0 {
@@ -96,6 +98,38 @@ pub fn presence<'s, D: Rec>(r: BD<'s, D>, name: &str) -> BDK<'s, D, ()> {
     )
 }
 
+/// Presence of the keys of an arranged relation, computed on that arrangement (no new input).
+pub fn key_presence<'s, K: Rec, V: Rec>(arr: &BDK<'s, K, V>, name: &str) -> BDK<'s, K, ()> {
+    arr.clone().reduce_abelian::<_, ValBuilder<K, (W, ()), T, R>, ValSpine<K, (W, ()), T, R>, _, _>(
+        &format!("R:{name}:key_presence"),
+        |_k, vals: &[(&(W, V), R)], out: &mut Vec<((W, ()), R)>| {
+            let c: R = vals.iter().filter(|((w, _), _)| *w == BASE).map(|(_, c)| *c).sum();
+            if c > 0 {
+                out.push(((BASE, ()), 1));
+            }
+            let mut i = 0;
+            while i < vals.len() {
+                let w = vals[i].0 .0;
+                let mut d = 0;
+                while i < vals.len() && vals[i].0 .0 == w {
+                    d += vals[i].1;
+                    i += 1;
+                }
+                if w != BASE {
+                    let f = flip(c, c + d);
+                    if f != 0 {
+                        out.push(((w, ()), f));
+                    }
+                }
+            }
+        },
+        |vec, key, upds| {
+            vec.clear();
+            vec.extend(upds.drain(..).map(|(v, t, r)| ((key.clone(), v), t, r)));
+        },
+    )
+}
+
 /// A ▷ K for K given as its presence.
 pub fn antijoin<'s, K: Rec, V: Rec>(a: BD<'s, (K, V)>, a_arr: &BDK<'s, K, V>, present: &BDK<'s, K, ()>) -> BD<'s, (K, V)> {
     let hit = join(a_arr, present, |k: &K, v: &V, _: &()| (k.clone(), v.clone()));
@@ -106,14 +140,14 @@ pub fn antijoin<'s, K: Rec, V: Rec>(a: BD<'s, (K, V)>, a_arr: &BDK<'s, K, V>, pr
 pub fn reduce<'s, K: Rec, V: Rec, V2: Rec>(
     r: BD<'s, (K, V)>,
     name: &str,
-    logic: impl Fn(&K, &[(&V, isize)], &mut Vec<(V2, isize)>) + 'static,
+    logic: impl Fn(&K, &[(&V, R)], &mut Vec<(V2, R)>) + 'static,
 ) -> BD<'s, (K, V2)> {
     let input = arrange(r, &format!("{name}:in"));
     input
-        .reduce_abelian::<_, ValBuilder<K, (W, V2), T, isize>, ValSpine<K, (W, V2), T, isize>, _, _>(
+        .reduce_abelian::<_, ValBuilder<K, (W, V2), T, R>, ValSpine<K, (W, V2), T, R>, _, _>(
             &format!("R:{name}"),
-            move |k, vals: &[(&(W, V), isize)], out: &mut Vec<((W, V2), isize)>| {
-                let base: Vec<(&V, isize)> = vals.iter().filter(|((w, _), _)| *w == BASE).map(|((_, v), c)| (v, *c)).collect();
+            move |k, vals: &[(&(W, V), R)], out: &mut Vec<((W, V2), R)>| {
+                let base: Vec<(&V, R)> = vals.iter().filter(|((w, _), _)| *w == BASE).map(|((_, v), c)| (v, *c)).collect();
                 let mut base_out = Vec::new();
                 if !base.is_empty() {
                     logic(k, &base, &mut base_out);
@@ -130,11 +164,11 @@ pub fn reduce<'s, K: Rec, V: Rec, V2: Rec>(
                     }
                     if w != BASE {
                         // members_w = base + delta_w (vals sorted by (w, v): merge by value)
-                        let mut m: std::collections::BTreeMap<&V, isize> = base.iter().map(|(v, c)| (*v, *c)).collect();
+                        let mut m: std::collections::BTreeMap<&V, R> = base.iter().map(|(v, c)| (*v, *c)).collect();
                         for ((_, v), d) in &vals[i..j] {
                             *m.entry(v).or_default() += d;
                         }
-                        let full: Vec<(&V, isize)> = m.into_iter().filter(|(_, c)| *c != 0).collect();
+                        let full: Vec<(&V, R)> = m.into_iter().filter(|(_, c)| *c != 0).collect();
                         debug_assert!(full.iter().all(|(_, c)| *c > 0), "negative group member");
                         let mut wo = Vec::new();
                         if !full.is_empty() {
@@ -160,7 +194,7 @@ pub fn reduce<'s, K: Rec, V: Rec, V2: Rec>(
         .as_collection(|k, (w, v2)| (*w, (k.clone(), v2.clone())))
 }
 
-pub type Out<F> = Rc<RefCell<FxHashMap<(W, F), isize>>>;
+pub type Out<F> = Rc<RefCell<FxHashMap<(W, F), R>>>;
 
 fn capture<'s, F: Rec + Eq>(r: BD<'s, F>, probe: &Handle<T>) -> Out<F> {
     let out: Out<F> = Rc::default();
@@ -183,7 +217,7 @@ fn capture<'s, F: Rec + Eq>(r: BD<'s, F>, probe: &Handle<T>) -> Out<F> {
 #[derive(Default)]
 pub struct Tracker {
     pub on: bool,
-    pub live: FxHashMap<(&'static str, W, u64), isize>,
+    pub live: FxHashMap<(&'static str, W, u64), R>,
     pub size: FxHashMap<&'static str, usize>,
 }
 pub type TrackerRef = Rc<RefCell<Tracker>>;
@@ -192,7 +226,7 @@ fn track<'s, D: Rec>(t: &TrackerRef, name: &'static str, c: Col<'s, (W, D)>) -> 
     if !t.borrow().on {
         return c;
     }
-    t.borrow_mut().size.insert(name, std::mem::size_of::<((W, D), T, isize)>());
+    t.borrow_mut().size.insert(name, std::mem::size_of::<((W, D), T, R)>());
     let t = t.clone();
     c.inspect(move |((w, d), _, r)| {
         if *w == BASE {
@@ -212,7 +246,7 @@ fn track<'s, D: Rec>(t: &TrackerRef, name: &'static str, c: Col<'s, (W, D)>) -> 
 
 pub struct Handles {
     /// (w, (path, content)); w = 0 for the base membership, w ≥ 1 for signed worktree deltas.
-    pub files: InputSession<T, (W, (Sym, Cid)), isize>,
+    pub files: InputSession<T, (W, (Sym, Cid)), R>,
     pub probe: Handle<T>,
     pub r1: Out<R1F>,
     pub r2: Out<R2F>,
@@ -224,7 +258,7 @@ pub fn build(worker: &mut timely::worker::Worker, world: Rc<RefCell<World>>, tra
     let probe = Handle::new();
     let tracker: TrackerRef = Rc::new(RefCell::new(Tracker { on: track_on, ..Default::default() }));
     worker.dataflow::<T, _, _>(|scope| {
-        let (files_in, files) = scope.new_collection::<(W, (Sym, Cid)), isize>();
+        let (files_in, files) = scope.new_collection::<(W, (Sym, Cid)), R>();
         let files = track(&tracker, "files", files);
         macro_rules! derived {
             ($name:literal, |$p:ident, $c:ident, $wd:ident| $body:expr) => {{
@@ -254,8 +288,8 @@ pub fn build(worker: &mut timely::worker::Worker, world: Rc<RefCell<World>>, tra
         let decl = derived!("r2_decl", |p, c, wd| wd.r2_decl(p, c));
         let bind = derived!("r2_bind", |p, c, wd| wd.r2_bind(p, c));
         let exports = derived!("r2_export", |p, c, wd| wd.r2_export(p, c));
-        let decl_present = presence(decl.clone().map(|(w, (k, _))| (w, k)), "r2_decl_keys");
         let decl = arrange(decl, "r2_decl");
+        let decl_present = key_presence(&decl, "r2_decl_keys");
         let bind = arrange(bind, "r2_bind");
         let mut cur = exports;
         let mut roots: Option<BD<Root>> = None;
@@ -284,7 +318,7 @@ pub fn build(worker: &mut timely::worker::Worker, world: Rc<RefCell<World>>, tra
         let mixed = surf_or.clone().flat_map(|(w, (_, f)): (W, (Option<Surface>, Option<R2F>))| f.map(|f| (w, f)));
         let surfaces = surf_or.flat_map(|(w, (s, _)): (W, (Option<Surface>, Option<R2F>))| s.map(|s| (w, (s.0, s))));
         let wd = world.clone();
-        let fams = reduce(surfaces, "r2_owner", move |owner: &Sym, input: &[(&Surface, isize)], out: &mut Vec<(Family, isize)>| {
+        let fams = reduce(surfaces, "r2_owner", move |owner: &Sym, input: &[(&Surface, R)], out: &mut Vec<(Family, R)>| {
             let ss: Vec<Surface> = input.iter().map(|(s, _)| (*s).clone()).collect();
             for f in rules::owner_families(&wd.borrow(), *owner, &ss) {
                 out.push((f, 1));
@@ -292,7 +326,7 @@ pub fn build(worker: &mut timely::worker::Worker, world: Rc<RefCell<World>>, tra
         });
         let keyed = fams.map(|(w, (owner, (base, imp, ex))): (W, (Sym, Family))| (w, ((base, imp), (owner, ex))));
         let wd = world.clone();
-        let issues = reduce(keyed, "r2_family", move |(base, imp): &(Sym, Vec<(u8, Sym, Sym)>), input: &[(&(Sym, (Sym, Sym)), isize)], out: &mut Vec<(R2F, isize)>| {
+        let issues = reduce(keyed, "r2_family", move |(base, imp): &(Sym, Vec<(u8, Sym, Sym)>), input: &[(&(Sym, (Sym, Sym)), R)], out: &mut Vec<(R2F, R)>| {
             let owners: Vec<(Sym, (Sym, Sym))> = input.iter().map(|(o, _)| (*o).clone()).collect();
             for f in rules::family_issues(&wd.borrow(), *base, imp, &owners) {
                 out.push((f, 1));
@@ -305,9 +339,11 @@ pub fn build(worker: &mut timely::worker::Worker, world: Rc<RefCell<World>>, tra
         let local_edges = derived!("r3_local_edge", |p, c, wd| wd.r3_calls(p, c).0);
         let ext = derived!("r3_callsite", |p, c, wd| wd.r3_calls(p, c).1);
         let seeds = derived!("r3_seed", |p, c, wd| wd.r3_seeds(p, c));
-        let ext_edges = join(&arrange(ext, "r3_callsite"), &arrange(target, "r3_target"), |_k, &caller: &Node, &callee: &Node| (caller, callee));
-        // Edges by callee, base and deltas in one arrangement shared by every iteration.
-        let edges: Arr<Node, (W, Node)> = local_edges.concat(ext_edges).map(|(w, (a, b))| (b, (w, a))).arrange_by_key_named("A:r3_edge_by_callee");
+        // No edge relation is materialized: the iteration walks back from reached nodes through
+        // the targets (node -> key) and the call sites (key -> caller), and through local edges.
+        let tgt_by_node: Arr<Node, (W, (Sym, Sym))> = target.map(|(w, (k, n))| (n, (w, k))).arrange_by_key_named("A:r3_target_by_node");
+        let callsites = arrange(ext, "r3_callsite");
+        let local_by_callee: Arr<Node, (W, Node)> = local_edges.map(|(w, (a, b))| (b, (w, a))).arrange_by_key_named("A:r3_local_by_callee");
         // Worktrees whose file delta carries call-edge or seed facts: R3 materialized for them.
         let wd = world.clone();
         let active = files
@@ -318,7 +354,7 @@ pub fn build(worker: &mut timely::worker::Worker, world: Rc<RefCell<World>>, tra
                 *w != BASE && !ct.has_error && (!ct.calls.is_empty() || !ct.seeds.is_empty())
             })
             .map(|(w, _)| (w, ()))
-            .reduce(|_w, _vals, out: &mut Vec<((), isize)>| out.push(((), 1)))
+            .reduce(|_w, _vals, out: &mut Vec<((), R)>| out.push(((), 1)))
             .map(|(w, ())| w);
         let active = track(&tracker, "r3_active", active.map(|w| (w, ()))).map(|(w, ())| w);
         let (seeds_b, seeds_d) = (seeds.clone().filter(|(w, _)| *w == BASE), seeds.filter(|(w, _)| *w != BASE));
@@ -330,21 +366,34 @@ pub fn build(worker: &mut timely::worker::Worker, world: Rc<RefCell<World>>, tra
             .map(|((), (w, s))| (w, s))
             .concat(seeds_d)
             .concat(seeds_b);
-        let e1 = edges.clone();
+        // One backward step: callers of reached nodes, base facts for every worktree, delta facts
+        // for their own.
+        fn ok(w: W, wf: W) -> bool {
+            wf == BASE || wf == w
+        }
+        macro_rules! step {
+            ($reach:expr, $local:expr, $tgt:expr, $cs:expr) => {{
+                let reach = $reach.arrange_by_key_named("A:r3_step_reach");
+                let via_local = reach.clone().join_core($local, |_n, &(w, f), &(wl, caller)| ok(w, wl).then_some((caller, (w, f))));
+                let keys = reach
+                    .join_core($tgt, |_n, &(w, f), &(wt, k)| ok(w, wt).then_some((k, (w, f))))
+                    .arrange_by_key_named("A:r3_step_keys");
+                let via_ext = keys.join_core($cs, |_k, &(w, f), &(wc, caller)| ok(w, wc).then_some((caller, (w, f))));
+                via_local.concat(via_ext)
+            }};
+        }
+        let (l1, t1, c1) = (local_by_callee.clone(), tgt_by_node.clone(), callsites.clone());
         let sa = seeds_all.clone();
         let reach = seeds_all.map(|(w, (n, f))| (n, (w, f))).iterate(move |inner_scope, inner| {
-            let e = e1.enter(inner_scope);
             let s = sa.enter(inner_scope).map(|(w, (n, f))| (n, (w, f)));
-            inner
-                .join_core(e, |_callee, &(w, f), &(we, caller)| (we == BASE || we == w).then_some((caller, (w, f))))
+            step!(inner, l1.enter(inner_scope), t1.enter(inner_scope), c1.enter(inner_scope))
                 .concat(s)
                 .threshold(|_, c| if *c > 0 { 1 } else { 0 })
         });
         let reach = track(&tracker, "r3_reach", reach.map(|(n, (w, f))| (w, (n, f)))).map(|(w, (n, f))| (n, (w, f)));
-        let reach_arr: Arr<Node, (W, Sym)> = reach.arrange_by_key_named("A:r3_reach");
         let wd = world.clone();
-        let found = edges
-            .join_core(reach_arr, |_callee, &(we, caller), &(w, f)| (we == BASE || we == w).then_some((w, (caller, f))))
+        let found = step!(reach, local_by_callee, tgt_by_node, callsites)
+            .map(|(caller, (w, f))| (w, (caller, f)))
             .threshold_total(|_, c| if *c > 0 { 1 } else { 0 })
             .filter(move |(_, (n, _)): &(W, (Node, Sym))| wd.borrow().info(n.0).r3_scope);
         let found = track(&tracker, "r3_found", found);

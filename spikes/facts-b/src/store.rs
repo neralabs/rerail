@@ -7,33 +7,59 @@ use std::path::{Path, PathBuf};
 pub type Sym = u32;
 pub type Cid = u32; // content id (index into Store::contents)
 
+/// String interner over one owned arena: each string's bytes are stored once; the map goes from
+/// the string's hash to its symbol (colliding hashes spill to `overflow`).
 #[derive(Default)]
 pub struct Interner {
-    map: FxHashMap<Box<str>, Sym>,
-    strs: Vec<Box<str>>,
+    arena: String,
+    spans: Vec<(u32, u32)>,
+    map: FxHashMap<u64, Sym>,
+    overflow: FxHashMap<u64, Vec<Sym>>,
+}
+
+fn hash_str(s: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = rustc_hash::FxHasher::default();
+    s.hash(&mut h);
+    h.finish()
 }
 
 impl Interner {
     pub fn intern(&mut self, s: &str) -> Sym {
-        if let Some(&i) = self.map.get(s) {
+        let h = hash_str(s);
+        if let Some(i) = self.find(h, s) {
             return i;
         }
-        let i = self.strs.len() as Sym;
-        self.strs.push(s.into());
-        self.map.insert(s.into(), i);
+        let i = self.spans.len() as Sym;
+        self.spans.push((self.arena.len() as u32, s.len() as u32));
+        self.arena.push_str(s);
+        if self.map.contains_key(&h) {
+            self.overflow.entry(h).or_default().push(i);
+        } else {
+            self.map.insert(h, i);
+        }
         i
     }
+    fn find(&self, h: u64, s: &str) -> Option<Sym> {
+        let &first = self.map.get(&h)?;
+        if self.str(first) == s {
+            return Some(first);
+        }
+        self.overflow.get(&h)?.iter().copied().find(|&i| self.str(i) == s)
+    }
     pub fn get(&self, s: &str) -> Option<Sym> {
-        self.map.get(s).copied()
+        self.find(hash_str(s), s)
     }
     pub fn str(&self, i: Sym) -> &str {
-        &self.strs[i as usize]
+        let (o, l) = self.spans[i as usize];
+        &self.arena[o as usize..(o + l) as usize]
     }
     pub fn len(&self) -> usize {
-        self.strs.len()
+        self.spans.len()
     }
+    /// Arena + spans (8 B per entry) + map (capacity x 16 B).
     pub fn bytes(&self) -> usize {
-        self.strs.iter().map(|s| s.len() + 16).sum::<usize>() + self.map.capacity() * 24
+        self.arena.capacity() + self.spans.capacity() * 8 + self.map.capacity() * 16
     }
 }
 
