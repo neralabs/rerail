@@ -1023,6 +1023,8 @@ impl NodeCursor<'_> {
 
 unsafe impl VTabCursor for NodeCursor<'_> {
     fn filter(&mut self, _: c_int, idx_str: Option<&str>, args: &Filters<'_>) -> Result<()> {
+        #[cfg(any(test, feature = "unbounded-work"))]
+        super::profiling::frame(super::profiling::FrameEvent::NodeFilter, 1);
         if self.batch.is_none() {
             self.batch = Some(
                 self.slot
@@ -1134,6 +1136,8 @@ unsafe impl VTabCursor for NodeCursor<'_> {
     }
 
     fn next(&mut self) -> Result<()> {
+        #[cfg(any(test, feature = "unbounded-work"))]
+        super::profiling::frame(super::profiling::FrameEvent::NodeNext, 1);
         self.advance();
         Ok(())
     }
@@ -1143,6 +1147,8 @@ unsafe impl VTabCursor for NodeCursor<'_> {
     }
 
     fn column(&self, context: &mut Context, column: c_int) -> Result<()> {
+        #[cfg(any(test, feature = "unbounded-work"))]
+        super::profiling::frame(super::profiling::FrameEvent::NodeColumn, 1);
         let (file, id) = self.current.expect("a row");
         if column == COL_FILE {
             return context.set_result(&i64::from(file));

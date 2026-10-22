@@ -114,6 +114,46 @@ impl Scanner {
 const COL_TERM: c_int = 0;
 const COL_EK: c_int = 1;
 
+/// SQL leaf intrinsic for closed Boolean regions. It tests one node's text, never a rule,
+/// relation, capture environment, or recursive utility. SQLite owns Boolean composition.
+pub(in crate::code_rule_dsl::sql) fn register_predicate(
+    db: &rusqlite::Connection,
+    slot: &Arc<BatchSlot>,
+) -> Result<()> {
+    let slot = Arc::clone(slot);
+    db.create_scalar_function(
+        "node_regex",
+        3,
+        rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+        move |ctx| {
+            let term: usize = ctx.get::<u32>(0)? as usize;
+            let file: usize = ctx.get::<u32>(1)? as usize;
+            let node: u32 = ctx.get(2)?;
+            let batch = slot
+                .current()
+                .ok_or_else(|| Error::ModuleError("node_regex: no batch".into()))?;
+            let Some(Terminal::Regex(regex)) = batch.program.terminals.get(term) else {
+                return Err(Error::ModuleError("node_regex: invalid regex term".into()));
+            };
+            #[cfg(any(test, feature = "unbounded-work"))]
+            crate::code_rule_dsl::sql::profiling::frame(
+                crate::code_rule_dsl::sql::profiling::FrameEvent::Regex,
+                1,
+            );
+            Ok(if let Some(entry) = batch.files.get(file) {
+                node < entry.facts.len()
+                    && regex.is_match(entry.root.root().get_doc().transducer_text_str(node))
+            } else {
+                batch.subfile(file).is_some_and(|sub| {
+                    node < sub.facts.len()
+                        && regex
+                            .is_match(&sub.root.adopt(sub.root.root().get_doc().node(node)).text())
+                })
+            })
+        },
+    )
+}
+
 #[repr(C)]
 pub(in crate::code_rule_dsl::sql) struct TextTable {
     base: sqlite3_vtab,
@@ -242,6 +282,11 @@ unsafe impl VTabCursor for TextCursor<'_> {
         }
         keys.sort_unstable();
         keys.dedup();
+        #[cfg(any(test, feature = "unbounded-work"))]
+        crate::code_rule_dsl::sql::profiling::frame(
+            crate::code_rule_dsl::sql::profiling::FrameEvent::Regex,
+            keys.len(),
+        );
         let mut verdicts = Vec::with_capacity(keys.len());
         // Keys ascend by file: each file's keys at once.
         for group in keys.chunk_by(|a, b| a >> 32 == b >> 32) {

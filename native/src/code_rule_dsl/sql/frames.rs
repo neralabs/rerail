@@ -1308,10 +1308,10 @@ fn compare_mixed(integer: i64, real: f64) -> Ordering {
     if real.is_nan() {
         return Ordering::Greater;
     }
-    if real >= 9.3e18 {
+    if real >= 9223372036854775808.0 {
         return Ordering::Less;
     }
-    if real <= -9.3e18 {
+    if real < -9223372036854775808.0 {
         return Ordering::Greater;
     }
     let truncated = real.trunc() as i64;
@@ -1767,6 +1767,44 @@ unsafe impl<'vtab> VTab<'vtab> for FrameTable {
         if ordered {
             info.set_order_by_consumed(true);
         }
+        if let Key::Rowid(key) = frame.key
+            && !used.iter().any(|&(_, column, _)| column == key)
+        {
+            let bounds = info
+                .constraints()
+                .enumerate()
+                .filter_map(|(at, c)| {
+                    if !c.is_usable()
+                        || c.column() != key as c_int
+                        || info.collation(at).ok() != Some("BINARY")
+                    {
+                        return None;
+                    }
+                    let code = match c.operator() {
+                        Op::SQLITE_INDEX_CONSTRAINT_GT => '>',
+                        Op::SQLITE_INDEX_CONSTRAINT_GE => ']',
+                        Op::SQLITE_INDEX_CONSTRAINT_LT => '<',
+                        Op::SQLITE_INDEX_CONSTRAINT_LE => '[',
+                        _ => return None,
+                    };
+                    Some((at, code))
+                })
+                .collect::<Vec<_>>();
+            if !bounds.is_empty() {
+                let mut codes = String::from("@range:");
+                for (arg, (at, code)) in bounds.iter().enumerate() {
+                    let mut usage = info.constraint_usage(*at);
+                    usage.set_argv_index(arg as c_int + 1);
+                    usage.set_omit(false);
+                    codes.push(*code);
+                }
+                info.set_idx_num(2);
+                info.set_idx_str(&codes);
+                info.set_estimated_cost(40.0);
+                info.set_estimated_rows(10);
+                return Ok(true);
+            }
+        }
         if used.is_empty() {
             info.set_idx_num(0);
             info.set_estimated_cost(scan_cost);
@@ -2087,6 +2125,56 @@ unsafe impl VTabCursor for FrameCursor<'_> {
             self.step();
             return Ok(());
         }
+        if idx_num == 2 {
+            let frame = self.shared.get();
+            let Key::Rowid(key) = frame.key else {
+                return Err(Error::ModuleError("frame: range requires row key".into()));
+            };
+            let order = frame.scan_order()?;
+            let value = |at: usize| {
+                Probe::of(
+                    frame.columns[key].get(order.as_ref().map_or(at, |rows| rows[at] as usize)),
+                )
+            };
+            let mut start = 0;
+            let mut end = frame.len;
+            let codes = idx_str
+                .and_then(|s| s.strip_prefix("@range:"))
+                .ok_or_else(|| Error::ModuleError("frame: invalid range plan".into()))?;
+            for (code, bound) in codes.bytes().zip(args.iter()) {
+                let probe = Probe::of(bound);
+                let probe = if frame.columns[key].integer {
+                    probe.numeric()
+                } else {
+                    probe
+                };
+                if matches!(probe, Probe::Null) {
+                    end = 0;
+                    break;
+                }
+                let less = |at| value(at).compare(probe) == Ordering::Less;
+                let at_most = |at| value(at).compare(probe) != Ordering::Greater;
+                match code {
+                    b'>' => start = start.max(partition(frame.len, at_most)),
+                    b']' => start = start.max(partition(frame.len, less)),
+                    b'<' => end = end.min(partition(frame.len, less)),
+                    b'[' => end = end.min(partition(frame.len, at_most)),
+                    _ => return Err(Error::ModuleError("frame: invalid range".into())),
+                }
+            }
+            let start = start.min(end);
+            self.rows = if let Some(rows) = order {
+                Rows::Listed {
+                    rows,
+                    next: start,
+                    end,
+                }
+            } else {
+                Rows::Range { next: start, end }
+            };
+            self.step();
+            return Ok(());
+        }
         let codes = idx_str
             .and_then(|codes| codes.strip_prefix('@'))
             .ok_or_else(|| Error::ModuleError("frame: bad plan".into()))?;
@@ -2173,6 +2261,125 @@ unsafe impl VTabCursor for FrameCursor<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sparse_recursive_answers_probe_callers_instead_of_scanning_them() {
+        let (db, store) = connection(
+            "/*FRAME*/callers(k INTEGER PRIMARY KEY,file,node,capture); /*FRAME*/demand(id INTEGER PRIMARY KEY,file,node); /*FRAME*/answer(id INTEGER PRIMARY KEY,unk)",
+        );
+        store
+            .program_rows(
+                "callers",
+                (1..=10000)
+                    .map(|k| {
+                        vec![
+                            Value::Integer(k),
+                            Value::Integer(0),
+                            Value::Integer(k),
+                            Value::Text(format!("capture-{k}")),
+                        ]
+                    })
+                    .collect(),
+                false,
+                false,
+            )
+            .unwrap();
+        db.execute_batch("INSERT INTO demand VALUES(17,0,5000); INSERT INTO answer VALUES(17,1)")
+            .unwrap();
+        let project = "SELECT f.k,f.capture,r.unk";
+        let broad = format!(
+            "{project} FROM callers f CROSS JOIN demand d ON d.file=f.file AND d.node=f.node CROSS JOIN answer r ON r.id=d.id"
+        );
+        let sparse = format!(
+            "{project} FROM answer r CROSS JOIN demand d ON d.id=r.id CROSS JOIN callers f ON f.file=d.file AND f.node=d.node"
+        );
+        let (expected, before) = super::super::profiling::frame_counts(|| rows(&db, &broad));
+        let (actual, after) = super::super::profiling::frame_counts(|| rows(&db, &sparse));
+        assert_eq!(actual, expected);
+        assert_eq!(
+            actual,
+            vec![vec![
+                Value::Integer(5000),
+                Value::Text("capture-5000".into()),
+                Value::Integer(1)
+            ]]
+        );
+        assert!(before[2] >= 10000, "{before:?}");
+        assert_eq!(
+            after[2], 3,
+            "only answer, demand, and matching caller advance: {after:?}"
+        );
+        // Hash-index construction still reads callers once and is separately visible.
+        // The traversal reduction is not a claim that all physical work disappears.
+        assert!(after[6] >= 10000, "{after:?}");
+    }
+
+    #[test]
+    fn row_key_ranges_seek_to_bounds_and_match_sqlite_affinity() {
+        let (db, store) = connection("/*FRAME*/a(k INTEGER PRIMARY KEY, v)");
+        db.execute_batch("CREATE TABLE oracle(k INTEGER PRIMARY KEY,v)")
+            .unwrap();
+        for k in [100, -4, 0, 2, 7, 9007199254740993, i64::MIN + 1, i64::MAX] {
+            db.execute("INSERT INTO a VALUES(?1,?1)", [k]).unwrap();
+            db.execute("INSERT INTO oracle VALUES(?1,?1)", [k]).unwrap();
+        }
+        for (lo, hi) in [
+            (Value::Integer(-4), Value::Integer(100)),
+            (Value::Text("2".into()), Value::Real(7.5)),
+            (Value::Null, Value::Integer(100)),
+            (Value::Integer(100), Value::Integer(-4)),
+            (
+                Value::Integer(9007199254740992),
+                Value::Real(9007199254740994.0),
+            ),
+            (Value::Integer(i64::MIN), Value::Real(1e25)),
+            (Value::Integer(i64::MIN), Value::Real(i64::MAX as f64)),
+        ] {
+            for (left, right) in [("<", ">"), ("<=", ">="), ("<", ">="), ("<=", ">")] {
+                let read = |table: &str| {
+                    db.prepare(&format!(
+                        "SELECT k FROM {table} WHERE ?1 {left} k AND ?2 {right} k ORDER BY k"
+                    ))
+                    .unwrap()
+                    .query_map([&lo, &hi], |r| r.get::<_, i64>(0))
+                    .unwrap()
+                    .collect::<Result<Vec<_>>>()
+                    .unwrap()
+                };
+                assert_eq!(read("a"), read("oracle"), "{lo:?} {left} k {right} {hi:?}");
+            }
+        }
+        store.clear("a");
+        store
+            .program_rows(
+                "a",
+                (1..=10000)
+                    .map(|k| vec![Value::Integer(k), Value::Integer(k)])
+                    .collect(),
+                false,
+                false,
+            )
+            .unwrap();
+        let (actual, counts) = super::super::profiling::frame_counts(|| {
+            rows(&db, "SELECT k FROM a WHERE k>5000 AND k<=5008")
+        });
+        assert_eq!(actual.len(), 8);
+        assert_eq!(
+            counts[2], 8,
+            "an eight-row prefix must not scan 10,000 candidates"
+        );
+        let plan = db
+            .prepare("EXPLAIN QUERY PLAN SELECT k FROM a WHERE k>5000 AND k<=5008")
+            .unwrap()
+            .query_map([], |r| r.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        assert!(
+            plan.iter().any(|line| line.contains("INDEX 2:")),
+            "{plan:?}"
+        );
+    }
 
     #[test]
     fn column_deltas_detach_shared_pages_without_changing_other_views() {

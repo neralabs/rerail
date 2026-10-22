@@ -183,6 +183,9 @@ export function actionableSummary(report) {
       frameIndexCpuMs: total(sqlQueries, "frameIndexTimedBuilds") ? ms(total(sqlQueries, "frameIndexCpuNs")) : null,
       frameIndexBuilds: total(sqlQueries, "frameIndexBuilds"), frameIndexTimedBuilds: total(sqlQueries, "frameIndexTimedBuilds"),
       framePublishedRows: total(sqlQueries, "frameInserts"), frameUpdatedCells: total(sqlQueries, "frameUpdatedCells"),
+      nodeCountersAvailable: sqlQueries.some(q => (q.frameCounterWidth ?? 0) >= 14),
+      nodeAdvances: total(sqlQueries, "nodeNext"), nodeColumnReads: total(sqlQueries, "nodeColumns"),
+      nodeFilters: total(sqlQueries, "nodeFilters"), regexNodeRequests: total(sqlQueries, "regexNodeRequests"),
       interpretation: "Recorded spans do not partition apply CPU. Profiling, parsing, preparation outside operators, and report work contribute to the difference. Some setup spans precede apply. These costs are not an unprofiled speedup estimate.",
     },
     rootInput: { ...rootMetrics, publication, mode: publication.executions && !rootMetrics.executions ? "virtual-slices" : rootMetrics.executions ? "per-row-inserts" : "not-observed", prioritized: rootMetrics.cpuMs >= minimumCpuMs && rootMetrics.measuredCpuPercent >= minimumShare, sqlExecutionPercent: percent(rootMetrics.executions, sqlExecutions),
@@ -227,6 +230,9 @@ export function summaryMarkdown(report) {
   }
   for (const cost of summary.costBreakdown) lines.push(`| ${cost.label} | ${fmt(cost.cpuMs)} | ${fmt(cost.measuredCpuPercent)}% | ${fmt(cost.executions)} |`);
   lines.push("", `Frame storage: **${fmt(summary.budget.framePublishedRows)} published rows** and **${fmt(summary.budget.frameUpdatedCells)} updated cells**. Column deltas do not count as complete row publications.`);
+  lines.push("", summary.budget.nodeCountersAvailable
+    ? `Structural and leaf work: **${fmt(summary.budget.nodeAdvances)} node advances**, **${fmt(summary.budget.nodeFilters)} node filters**, **${fmt(summary.budget.nodeColumnReads)} node column reads**, and **${fmt(summary.budget.regexNodeRequests)} regex node requests**. These counters expose work outside frame traversal. Batch scanning can amortize regex requests.`
+    : "Node and regex work counters are unavailable in this capture. Frame reductions alone do not establish lower total traversal.");
   lines.push("", summary.budget.frameIndexCpuMs === null
     ? "Frame index construction was not timed in this capture. Re-run with the current profiler to isolate this cost."
     : `Frame index construction: **${fmt(summary.budget.frameIndexCpuMs)} ms** across ${fmt(summary.budget.frameIndexTimedBuilds)} timed builds (${fmt(summary.budget.frameIndexBuilds)} total). This subcost includes scan-order preparation on lookup cache misses and is already included in SQL CPU.`);

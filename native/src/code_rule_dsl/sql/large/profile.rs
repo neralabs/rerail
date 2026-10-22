@@ -58,7 +58,7 @@ pub(super) fn register(db: &Connection) -> rusqlite::Result<()> {
         })
         .transpose()
         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-    let state = Mutex::new((writer, None::<(i64, i64, i64, Started, [u64; 10])>));
+    let state = Mutex::new((writer, None::<(i64, i64, i64, Started, [u64; 14])>));
     db.create_scalar_function("p_position", 4, FunctionFlags::SQLITE_UTF8, move |ctx| {
         let mut state = state.lock().unwrap();
         if state.0.is_none() {
@@ -70,11 +70,11 @@ pub(super) fn register(db: &Connection) -> rusqlite::Result<()> {
         #[cfg(any(test, feature = "unbounded-work"))]
         let frame = super::super::super::profiling::frame_snapshot();
         #[cfg(not(any(test, feature = "unbounded-work")))]
-        let frame = [0u64; 10];
+        let frame = [0u64; 14];
         if let Some((p, c, t, start, before)) = state.1.take() {
             let elapsed = start.elapsed();
             let published: Option<i64> = ctx.get(3)?;
-            let counters = std::array::from_fn::<_, 10, _>(|i| frame[i].saturating_sub(before[i]));
+            let counters = std::array::from_fn::<_, 14, _>(|i| frame[i].saturating_sub(before[i]));
             writeln!(
                 state.0.as_mut().unwrap(),
                 "{}",

@@ -245,6 +245,7 @@ fn connect(slot: &Arc<BatchSlot>) -> Result<Connection, SqlError> {
     connection.create_module(c"node", &NODE_MODULE, Some(Arc::clone(slot)))?;
     connection.create_module(c"pattern", &PATTERN_MODULE, Some(Arc::clone(slot)))?;
     connection.create_module(c"text_match", &TEXT_MODULE, Some(Arc::clone(slot)))?;
+    super::terminals::register_predicate(&connection, slot)?;
     connection.create_module(c"fact", &FACT_MODULE, Some(Arc::clone(slot)))?;
     connection.create_module(c"nearest", &NEAREST_MODULE, Some(Arc::clone(slot)))?;
     super::fused::register(&connection, slot)?;

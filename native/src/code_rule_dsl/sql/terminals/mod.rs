@@ -23,6 +23,7 @@ pub(super) use leaves::{
 pub(super) use pattern::{PatternRow, PatternTable, fresh_match};
 use regex::Regex;
 pub(super) use text::TextTable;
+pub(super) use text::register_predicate;
 
 /// The most value columns a pattern terminal has (`v0`…): far above any pattern's captures, and
 /// within SQLite's column limit (2000) with the frames' own columns.

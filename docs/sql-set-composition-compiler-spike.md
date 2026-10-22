@@ -1985,3 +1985,261 @@ Raising substitution limits alone does not produce that shape.
 
 The checked-in evidence is `benchmark/sql-frame-publication-evidence.json`.
 It records paired samples, build hashes, complete-job acceptance, rejected fusion, and the remaining limitations.
+
+## Eliminate predicate and frontier traversal — 2026-10-21
+
+The baseline for this investigation is commit `eb9b0d4e`.
+The earlier update changes leave 104,565,549 frame advances on the 138-file workload.
+This investigation targets unnecessary intermediate rows and repeated traversal inside SQL.
+The complete-job limit remains 100 actual SQL executions.
+
+### Re-read ast-index SQL generation
+
+The review uses `neralabs/ast-index-spike` at commit `9449260fea46fa81358fc638bf95a1566d475e27`.
+The local checkout is `/tmp/rerail-ast-index-frontier-20261021`.
+The relevant sources are `bench/sql_rec.py`, `bench/plan_stmt.py`, and `DESIGN.md`.
+
+`_subtree_ctes` collapses each branch to its parent keys and required captures before the upward join.
+`_branch_semijoin_ok` replaces capture-free child products with existence probes.
+`_probe_semi` selects SQLite probe shapes from actual measurements.
+`_mat` distinguishes closed shared relations from correlated readers.
+The planner also uses corpus cardinalities to choose rare anchors.
+
+The current Rerail driver violates the intended shape at many operator boundaries.
+It preserves broad capture frames through total Boolean predicates and structural existence tests.
+Those predicates need only a truth value per input key.
+Its frontier also scans ranked candidates outside the selected prefix.
+A low execution count does not bound that work.
+
+### Reject correlated predicate CTEs
+
+The first candidate lowers capture-free Boolean regions into CTEs at `(key,file,node)` grain.
+Only its final join restores capture columns.
+However, mutable inputs depend on the recursive driver's iteration token.
+SQLite treats the resulting CTEs as correlated and repeats their materialization.
+
+One completed predicate step records 3,003 frame scans and 12,255,243 frame advances.
+That single step spends 4.76 CPU seconds and publishes no rows.
+Its source is clause 36 in the 32-file catalog.
+The full run exceeds its 180-second diagnostic timeout.
+It has no complete native parity or execution-budget acceptance.
+This candidate fails and remains excluded from the engine.
+
+The failed source and patch remain under `/tmp/rerail-key-regions-20261021`.
+Their names are `correlated-predicates.rs` and `correlated-regions.patch`.
+This failure demonstrates why a procedural scheduler inside SQL cannot rely on ordinary closed-CTE caching.
+
+### Compile total predicates directly
+
+The next candidate lowers capture-free kinds, regexes, negations, conjunctions, and alternatives into Boolean SQL.
+Explicit `CASE` expressions preserve short-circuit domains.
+The regex intrinsic evaluates one node's text with the existing compiled Rust regex.
+It implements no relation, capture binding, recursive utility, or rule operator.
+This follows ast-index's leaf-regex UDF boundary.
+
+The compiler also admits total `has` and `inside` predicates with fixed stops.
+Those predicates become bounded existence probes over the node table.
+A count without an output binding becomes bounded existence probes at its lower and upper thresholds.
+Capture bindings, facts, recursive utilities, and unknown-producing stop rules remain barriers.
+
+A complete total predicate can select roots directly from the node table.
+The compiler then omits the broad root frame and the subsequent predicate frames.
+A predicate inside a larger program filters its input and carries captures only once.
+This is one automatic physical choice, with no execution option.
+
+Regex requests, node advances, node column reads, and node filters receive separate profiler counters.
+Those counters expose leaf work and structural probes that frame counters do not measure.
+A lower frame count alone cannot establish a lower total work count.
+
+### Seek frontier prefixes by rank
+
+Ranked frontier storage now contains only `(position,key,parent,order)`.
+A global rank gives each parent's candidates a contiguous interval.
+Parent state stores the interval start and its current prefix length.
+The generated SQL drives from parent state into a bounded rank range.
+A point join restores captures from the original candidate relation.
+
+The storage virtual table now exposes primary-key range constraints to SQLite.
+It seeks to the lower and upper bounds instead of scanning a whole parent domain.
+The lookup implements buffer indexing and executes no SQL or AST operator.
+A regression requires an eight-row interval to advance exactly eight rows from a 10,000-row frame.
+Additional cases compare range affinity and boundary behavior with an ordinary SQLite table.
+
+### Compose nonbinding facts without a verdict frame
+
+A later conjunction term previously creates a full verdict frame for its fact answers.
+Another full frame then combines those answers with the conjunction's unknown flag and capture mask.
+The new emitter combines that metadata in the fact's final join.
+It retains the batched fact-answer relation and its original demanded inputs.
+It omits the intermediate full-width verdict frame.
+
+The transformation admits facts that bind no captures.
+The existing withholding analysis still determines whether a term can run.
+The SQL join carries incoming captures unchanged and combines unknown flags directly.
+This preserves fallible terminal ordering and avoids broader eager fact evaluation.
+
+### Start recursive answer joins from their witnesses
+
+The next profile exposes a separate join-direction error.
+One B023 answer-publication step scans 391,497 caller rows and publishes six results per run.
+Its `CROSS JOIN` order starts from callers, then probes demand and answer tables.
+A canonical capture lookup also runs for each caller.
+
+The candidate starts from existing answers and recovers each demand row by its integer primary key.
+It then probes callers by `(file,node)` and checks capture keys.
+Canonical capture lookups occur only for those candidate callers.
+Demand collection and recursive scheduling retain their original order.
+Unknown answers and capture restoration retain their original expressions.
+
+A storage regression uses 10,000 callers and one answer.
+The original join advances at least 10,000 rows.
+The reverse join advances three rows: one answer, one demand, and one caller.
+Its first caller-index construction still reads 10,000 rows and has a separate counter.
+This result does not establish a whole-job improvement.
+
+The complete 138-file profile confirms this sparse B023 hotspot.
+Frame advances decrease from 783,006 to 194 across two runs.
+Node advances decrease from 391,497 to 180.
+Frame column reads decrease from 3,915,054 to 1,355.
+
+Caller-index construction increases from 288,470 to 391,497 indexed rows.
+Step CPU decreases from 314.2 ms to 28.0 ms under instrumentation.
+Those timings include index construction.
+
+This is an elevenfold local CPU improvement.
+The cursor ratio exceeds 4,000, but index construction prevents that ratio from describing total physical work.
+The complete engine still allocates broad upstream demand and capture relations.
+The answer join fixes a costly consumer of those relations.
+It does not eliminate their production.
+
+Standalone root regexes retain the existing batched text scanner.
+Boolean regions use the direct regex intrinsic to preserve their short-circuit probe domains.
+Regex-request counters count requested node tests, not physical regex-engine invocations.
+The batched scanner can amortize many requests through one file scan.
+
+### Remaining compiler frontier
+
+The current engine still encodes many operator boundaries as mutable frame publications inside one recursive SQL driver.
+The execution limit controls submissions, not this internal work.
+A large statement can still behave like a procedural interpreter.
+The observed improvement does not establish a hundredfold reduction for the complete job.
+
+The next compiler representation needs explicit keys, demanded inputs, required captures, and observable terminal effects for each relation.
+A capture-free branch needs a key set or an existence probe.
+A capture-bearing branch needs only its output captures before the parent join.
+Recursive units need separate demand, witness, and answer relations.
+A consumer must not force full caller traversal merely to find a few answers.
+
+The desired shape resembles this dependency graph:
+
+```sql
+WITH RECURSIVE
+anchors AS MATERIALIZED (
+  SELECT file, id FROM node WHERE kind = :selective_kind
+),
+demand(file, node) AS (
+  SELECT file, id FROM anchors
+  UNION
+  SELECT child.file, child.id
+  FROM demand parent JOIN node child
+    ON child.file = parent.file AND child.parent = parent.node
+  WHERE child.kind IN (:required_kinds)
+),
+witness AS MATERIALIZED (
+  SELECT demand.file, demand.node
+  FROM demand
+  WHERE EXISTS (SELECT 1 FROM eligible_leaf WHERE eligible_leaf.node = demand.node)
+)
+SELECT caller.key, needed_capture
+FROM witness
+JOIN caller ON caller.file = witness.file AND caller.node = witness.node;
+```
+
+This graph illustrates relation grain and join direction.
+It is not a general replacement for capture-sensitive recursion, unknown propagation, or fallible leaves.
+Each recursive dependency needs an explicit proof that its demand expansion preserves terminal reachability and capture semantics.
+Mutually recursive branches also need SQLite-compatible recursive terms or separate closed phases.
+
+The highest-value restriction belongs before demand insertion and candidate-frame publication.
+Applying a selective predicate after publication still pays for the broad relation.
+Existing structural root guards run only on two-valued clauses.
+Extending those guards to three-valued clauses requires proofs about unknown results, stop rules, and observable leaf failures.
+A kind restriction alone does not supply those proofs.
+
+Closed relational regions also need a boundary independent of the driver's iteration token.
+Otherwise, SQLite can rematerialize them for every recursive-driver row, as the rejected candidate demonstrates.
+Increasing ordinary CTE substitution limits does not establish that boundary.
+These representation changes remain necessary after the measured fixes in this entry.
+
+### Whole-job counters and acceptance
+
+The final frozen addon is `engine-final.node` under `/tmp/rerail-key-regions-20261021`.
+Its SHA-256 is `9d5dbc1d4e773bc71422a01a90ae15f3c6d85a706e9fb5eaea6335689d52b571`.
+The source manifest is `build-final.json` in that directory.
+Every Rust source hash matches the manifest after compilation and profiling.
+
+Both workloads use 135 Python policies, 141 grammar matchers, four workers, and the existing three policy exclusions.
+The workloads contain 32 files with 1,318,099 bytes and 138 files with 7,336,001 bytes.
+Compiler partition hints remain 64 and 2, respectively.
+No acceptance scope changes or additional exclusions apply.
+
+Both jobs execute 72 SQL statements across all workers.
+That total includes four setup statements, eight transaction statements, and 60 matching or cleanup statements.
+Both profiles have complete native outcome parity, zero failures, and zero blind files.
+The smaller workload retains 33 findings.
+The larger workload retains 580 findings.
+
+| Counter | 32-file baseline | 32-file final | 138-file baseline | 138-file final |
+|---|---:|---:|---:|---:|
+| VM instructions | 355,316,964 | 321,074,810 | 2,298,657,053 | 2,060,142,394 |
+| Frame advances | 15,061,704 | 12,640,543 | 104,565,549 | 86,522,912 |
+| Frame column reads | 60,137,439 | 53,415,976 | 406,006,109 | 358,804,728 |
+| Published rows | 7,625,537 | 6,679,446 | 49,307,027 | 43,784,220 |
+| Rows read for frame indexes | 3,487,365 | 3,000,202 | 26,269,866 | 23,333,904 |
+| Node advances | 3,813,038 | 4,127,907 | 25,121,199 | 26,315,247 |
+| Node filters | 5,862,614 | 5,858,529 | 37,974,972 | 37,278,636 |
+| Regex node requests | 311,603 | 396,656 | 1,809,348 | 2,207,076 |
+
+Frame advances decrease by 17.3 percent on 138 files.
+Frame and node advances together decrease by 13.0 percent.
+Regex requests increase by 22.0 percent.
+The counters measure different operations and do not form a complete count of physical instructions.
+These results establish an incremental reduction, not a hundredfold whole-job improvement.
+
+The baseline counter addon adds only instrumentation to `eb9b0d4e`.
+Its VM and original frame counters exactly match the previous frozen baseline.
+Its patch is `baseline-instrumentation.patch` in the evidence directory.
+This preserves a comparable baseline for the new node and regex counters.
+
+The final DSL suite passes 1,499 tests, with 44 existing ignored tests and 112 filtered tests.
+The script suite passes 21 tests.
+Clippy passes with and without `unbounded-work`, with warnings denied.
+The generated-plan audit remains unchanged.
+
+### Paired cold measurements
+
+Each variant runs in a fresh Node process without SQL tracing.
+Three repetitions alternate baseline and final builds, with reversed order in the middle repetition.
+Native tests, native compilation, and profiled workloads finish before these samples.
+The host remains busy with unrelated work.
+These are diagnostic CPU measurements with the same allocator override, not production latency measurements.
+
+| Workload | Baseline median apply CPU | Final median apply CPU | CPU reduction |
+|---|---:|---:|---:|
+| 32 files | 8,819.075 ms | 8,440.403 ms | 4.3% |
+| 138 files | 37,631.671 ms | 33,299.889 ms | 11.5% |
+
+Median peak process RSS decreases from 1,299,546,112 to 1,202,257,920 bytes on 32 files.
+It decreases from 2,550,841,344 to 2,357,133,312 bytes on 138 files.
+Every repeated output matches the complete native oracle.
+Input, policy, capabilities, and addon fingerprints remain stable during each sample.
+
+The checked-in evidence is `benchmark/sql-frontier-shape-evidence.json`.
+It includes exact counters, repeated CPU samples, source hashes, complete-job acceptance, the sparse B023 SQL, and the rejected correlated candidate.
+Raw profiles and frozen binaries remain under `/tmp/rerail-key-regions-20261021`.
+The workload metadata records a corrected informational manifest pointer.
+The runner ignores that pointer, and independent source and binary hashes establish the build identity.
+
+The accepted changes reduce the measured job cost.
+They do not yet give the compiler ast-index's compact relation shape throughout the program.
+The remaining 43.8 million publications justify further work on broad demand production and mutable operator boundaries.

@@ -185,8 +185,22 @@ fn walks_read_their_sub_rule_kinds_and_a_double_negation_is_a_semi_join() {
         let walk = statements
             .iter()
             .find(|statement| statement.contains("c.id <= fn.\"last\""))
-            .expect("a has-end walk");
-        assert_eq!(walk.contains("c.kind IN ("), narrowed, "{walk}");
+            .map(|sql| (*sql, false))
+            .or_else(|| {
+                statements
+                    .iter()
+                    .find(|sql| sql.contains("FROM node predicate_node_"))
+                    .map(|sql| (*sql, true))
+            })
+            .expect("a has-end walk or direct predicate probe");
+        let pushed = if walk.1 {
+            regex::Regex::new(r"AND predicate_node_\d+\.kind IN \(")
+                .unwrap()
+                .is_match(walk.0)
+        } else {
+            walk.0.contains("c.kind IN (")
+        };
+        assert_eq!(pushed, narrowed, "{}", walk.0);
         if sub.get("all").is_some_and(|all| all[0] == calls) {
             assert!(
                 !statements
@@ -232,6 +246,14 @@ fn a_walk_s_candidates_hold_only_the_slots_read_after_them() {
             return (eligible.matches(", s").count(), selected);
         }
         if statements.iter().any(|sql| sql.contains(" AND scan = ")) {
+            return (0, selected);
+        }
+        if statements.iter().any(|sql| sql.contains("predicate_node_"))
+            && !statements
+                .iter()
+                .any(|sql| sql.contains("c.id <= fn.\"last\""))
+        {
+            // A capture-free subtree is an existence probe with no candidate frame.
             return (0, selected);
         }
         let walk = statements

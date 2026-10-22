@@ -26,7 +26,7 @@ const STATUSES: [c_int; 4] = [
 ];
 
 thread_local! {
-    static FRAME: Cell<[u64; 10]> = const { Cell::new([0; 10]) };
+    static FRAME: Cell<[u64; 14]> = const { Cell::new([0; 14]) };
     static ACTIVE: Cell<usize> = const { Cell::new(0) };
 }
 
@@ -41,6 +41,10 @@ pub(super) enum FrameEvent {
     IndexBuild,
     IndexedRows,
     Update = 9,
+    Regex = 10,
+    NodeNext = 11,
+    NodeColumn = 12,
+    NodeFilter = 13,
 }
 
 #[inline]
@@ -54,7 +58,7 @@ pub(super) fn frame(event: FrameEvent, count: usize) {
     }
 }
 
-pub(super) fn frame_snapshot() -> [u64; 10] {
+pub(super) fn frame_snapshot() -> [u64; 14] {
     FRAME.get()
 }
 
@@ -71,7 +75,7 @@ pub(super) struct IndexBuild(Option<Started>);
 
 /// Standalone replay measurements use counters without installing a connection trace.
 #[cfg(test)]
-pub(super) fn frame_counts<T>(body: impl FnOnce() -> T) -> (T, [u64; 10]) {
+pub(super) fn frame_counts<T>(body: impl FnOnce() -> T) -> (T, [u64; 14]) {
     struct Active;
     impl Drop for Active {
         fn drop(&mut self) {
@@ -103,7 +107,7 @@ struct Running {
     started: Started,
     start_ns: u64,
     counters: [i64; 4],
-    frame: [u64; 10],
+    frame: [u64; 14],
     changes: i64,
     rows: u64,
     query: usize,

@@ -88,6 +88,27 @@ test("preparation is a subcost and never another SQL execution", async () => {
   } finally {rmSync(directory,{recursive:true,force:true});}
 });
 
+test("node and regex work stays visible alongside frame counters", async () => {
+  const directory=mkdtempSync(join(tmpdir(),"rerail-node-work-")),raw=join(directory,"raw");mkdirSync(raw);
+  try {
+    writeFileSync(join(raw,"profile-9-0.json"),JSON.stringify({version:1,pid:9,events:1,
+      queries:[{id:0,kind:"sql",sql:"SELECT 1",plan:[],bytecode:[]}],
+      executionCoverage:{source:"ast-session",fromSessionStart:true,started:1,completed:1,running:0}}));
+    writeFileSync(join(raw,"profile-9-0.jsonl"),JSON.stringify({kind:"sql",query:0,startNs:0,cpuNs:1,wallNs:1,selfCpuNs:1,selfWallNs:1,rows:1,counters:[2,0,0,0],frame:[0,0,20,30,10,0,0,7,8,4,6,90,150,100]})+"\n");
+    const report=await buildReport(raw,directory);
+    assert.equal(report.queries[0].frameCounterWidth,14);
+    const budget=report.actionableSummary.budget;
+    assert.equal(budget.nodeCountersAvailable,true);
+    assert.equal(budget.framePublishedRows,10);
+    assert.equal(budget.frameUpdatedCells,4);
+    assert.equal(budget.regexNodeRequests,6);
+    assert.equal(budget.nodeAdvances,90);
+    assert.equal(budget.nodeColumnReads,150);
+    assert.equal(budget.nodeFilters,100);
+    assert.match(readFileSync(join(directory,"summary.md"),"utf8"),/90 node advances/);
+  } finally {rmSync(directory,{recursive:true,force:true});}
+});
+
 const capturedJob = (counts = [25, 25, 25, 25]) => ({
   sessions: counts.length,
   queries: [{ kind: "sql", sql: "SELECT 1", runs: counts.reduce((sum, n) => sum + n, 0) }],

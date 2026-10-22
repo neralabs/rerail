@@ -10,7 +10,7 @@ export const thresholds = Object.freeze({ highVmPerRow: 1000, minimumVm: 100_000
   repeatedRuns: 100, smallCpuNs: 1_000_000, expansion: 10, expandedRows: 1000, indexBuilds: 10,
   frameAdvances: 100_000, repeatedScans: 100 });
 const fields = ["runs", "cpuNs", "wallNs", "selfCpuNs", "selfWallNs", "rows", "changes", "vmSteps", "fullscanSteps", "sorts", "autoIndexRows",
-  "frameScans", "frameLookups", "frameNext", "frameColumns", "frameInserts", "frameIndexBuilds", "frameIndexedRows", "frameIndexCpuNs", "frameIndexWallNs", "frameUpdatedCells", "frameIndexTimedBuilds"];
+  "frameScans", "frameLookups", "frameNext", "frameColumns", "frameInserts", "frameIndexBuilds", "frameIndexedRows", "frameIndexCpuNs", "frameIndexWallNs", "frameUpdatedCells", "regexNodeRequests", "nodeNext", "nodeColumns", "nodeFilters", "frameIndexTimedBuilds"];
 const frameFields = fields.slice(11, -1);
 const counterFields = ["vmSteps", "fullscanSteps", "sorts", "autoIndexRows"];
 const ms = ns => (ns / 1e6).toFixed(3);
@@ -116,6 +116,7 @@ export async function buildReport(rawDirectory, outputDirectory, workload = {}) 
         for (const key of fields.slice(1, 8)) query[key] += event[key] ?? 0;
         counterFields.forEach((key, i) => { query[key] += event.counters?.[i] ?? 0; });
         frameFields.forEach((key, i) => { query[key] += event.frame?.[i] ?? 0; });
+        query.frameCounterWidth = Math.max(query.frameCounterWidth ?? 0, event.frame?.length ?? 0);
         if (event.frame?.length >= 9) query.frameIndexTimedBuilds += event.frame[5];
         if (event.kind === "operator" && !event.completed) query.incomplete++;
         const context = { ...(event.context ?? {}) };
@@ -152,7 +153,7 @@ export async function buildReport(rawDirectory, outputDirectory, workload = {}) 
   firstExecutions.sort((a, b) => a.startNs - b.startNs || a.session.localeCompare(b.session));
   const report = { version: 1, workload, thresholds, eventCount, sessions: files.length, summary,
     executionCoverage, firstOverBudget: firstExecutions[JOB_SQL_EXECUTION_LIMIT] ?? null,
-    accounting: "Ranked CPU uses SQL CPU plus operator CPU excluding child SQL. SQL spans exclude preparation; operator spans include preparation. Parsing and other pipeline phases outside these spans are not attributed. Inclusive operator times overlap SQL. Aggregate wall time sums worker spans, not workload latency. Profiling callback and serialization overhead affect timings. EXPLAIN uses unbound NULL parameters after execution. Query plans describe SQLite choices, not actual loop counts. Frame counters cover frame tables; terminal internals are included in SQL time but have no callback breakdown. Rows are returned, changed, or published rows; shared rows are not copies. Summed row counts include operator and SQL observations of the same rows. Threshold flags are review candidates, not correctness failures.",
+    accounting: "Ranked CPU uses SQL CPU plus operator CPU excluding child SQL. SQL spans exclude preparation; operator spans include preparation. Parsing and other pipeline phases outside these spans are not attributed. Inclusive operator times overlap SQL. Aggregate wall time sums worker spans, not workload latency. Profiling callback and serialization overhead affect timings. EXPLAIN uses unbound NULL parameters after execution. Query plans describe SQLite choices, not actual loop counts. Frame counters cover frame tables. Node and regex-request counters expose leaf work when available. Regex requests are not physical regex invocations: the batch scanner can amortize them. Terminal time is included in SQL time without its own timing breakdown. Rows are returned, changed, or published rows; shared rows are not copies. Summed row counts include operator and SQL observations of the same rows. Threshold flags are review candidates, not correctness failures.",
     relationalStages: [...relationalStages.values(), ...await controlStages(rawDirectory,clauseNames)].sort((a, b) => b.cpuNs - a.cpuNs),
     contexts: [...contexts.values()].sort((a, b) => b.selfCpuNs - a.selfCpuNs), queries };
   return writeReport(report, outputDirectory);
@@ -229,6 +230,7 @@ function render(){const filter=el('filter').value.toLowerCase();el('rows').repla
 const a=report.actionableSummary,p=el('priorities'),fmt=n=>n.toLocaleString('en-US',{maximumFractionDigits:n>0&&n<1?3:1});
 for(const [i,s] of (report.relationalStages??[]).slice(0,20).entries()){const d=document.createElement('details'),h=document.createElement('summary'),b=document.createElement('pre');h.textContent='S'+i+(s.source?' · '+(s.source.ruleId?s.source.ruleId+'/'+s.source.clauseId:s.source.scope+':'+s.source.statement):'')+': '+fmt(s.cpuNs/1e6)+' ms, '+s.runs+' runs, '+s.columns.length+' columns'+(s.publishedRows===undefined&&s.updatedRows===undefined?'':', '+fmt(s.publishedRows??0)+' published rows, '+fmt(s.frameNext)+' frame advances, '+fmt(s.frameUpdatedCells??0)+' updated cells')+(s.incomplete?' (incomplete)':'');b.textContent=s.sql+(s.nextSql?'\\n\\n-- Next control state:\\n'+s.nextSql:'');d.append(h,b);el('relational').append(d);}
 p.append(text('p',a.nextStep),text('p',a.budget.interpretation),text('h2','Where recorded CPU goes'));
+if(a.budget.nodeCountersAvailable)p.append(text('p','Structural and leaf work: '+fmt(a.budget.nodeAdvances)+' node advances, '+fmt(a.budget.nodeFilters)+' node filters, '+fmt(a.budget.nodeColumnReads)+' node column reads, '+fmt(a.budget.regexNodeRequests)+' regex node requests. Batch scanning can amortize regex requests.'));
 const costs=document.createElement('table');for(const c of a.costBreakdown){const row=document.createElement('tr');for(const v of [c.label,fmt(c.cpuMs)+' ms',fmt(c.measuredCpuPercent)+'%',fmt(c.executions)+' executions'])row.append(text('td',v));costs.append(row);}if(a.budget.preparationCpuMs!==null&&a.budget.preparationCpuMs!==undefined)p.append(text('p','Measured preparation/cache lookup: '+fmt(a.budget.preparationCpuMs)+' ms (included in operator CPU); largest statement '+fmt(a.budget.largestStatementMemoryBytes/1048576)+' MiB before execution.'));
 p.append(costs,text('p',a.budget.frameIndexCpuMs===null?'Frame index construction was not timed in this capture. Re-run with the current profiler.':'Frame index construction: '+fmt(a.budget.frameIndexCpuMs)+' ms across '+fmt(a.budget.frameIndexTimedBuilds)+' timed builds ('+fmt(a.budget.frameIndexBuilds)+' total), including scan-order preparation on cache misses. Already included in SQL CPU.'),text('h2','Priority actions'),text('p',a.interpretation));
 if(!a.actions.length)p.append(text('p','No action group reaches both 10 ms and 1% of recorded CPU. Use a larger representative capture.'));

@@ -323,37 +323,24 @@ impl<'a> Builder<'a> {
             .get(all)
             .ok_or("program frontier source")?
             .clone();
-        let cols = original.columns.join(",");
         self.schema(
             &ranked,
-            &format!(
-                "{},position INTEGER",
-                original
-                    .columns
-                    .iter()
-                    .map(|c| if c == "k" {
-                        "k INTEGER PRIMARY KEY".into()
-                    } else {
-                        c.clone()
-                    })
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ),
+            "position INTEGER PRIMARY KEY,k INTEGER,pk INTEGER,ord INTEGER,INDEX (k),INDEX (pk)",
         )?;
         self.schema(
             &state,
-            "pk INTEGER PRIMARY KEY,total INTEGER,lim INTEGER,done INTEGER,last_ord INTEGER",
+            "pk INTEGER PRIMARY KEY,start INTEGER,total INTEGER,lim INTEGER,done INTEGER,last_ord INTEGER",
         )?;
         self.action(dml::publish(
             self.schemas,
             &ranked,
-            &format!("SELECT *,ROW_NUMBER() OVER (PARTITION BY pk ORDER BY ord,k) FROM {all}"),
+            &format!("SELECT ROW_NUMBER() OVER (ORDER BY pk,ord,k),k,pk,ord FROM {all}"),
             "replace",
         )?);
         self.action(dml::publish(
             self.schemas,
             &state,
-            &format!("SELECT pk,COUNT(*),0,0,0 FROM {all} GROUP BY pk"),
+            &format!("SELECT pk,MIN(position)-1,COUNT(*),0,0,0 FROM {ranked} GROUP BY pk"),
             "replace",
         )?);
         let head = self.code.len();
@@ -363,8 +350,8 @@ impl<'a> Builder<'a> {
             steps.len()
         ));
         self.statement(&format!("UPDATE {state} SET lim = CASE WHEN done THEN lim WHEN lim=0 THEN MIN(total,8) WHEN total <= lim*4 THEN total ELSE lim*2 END"))?;
-        self.statement(&format!("UPDATE {state} SET done = done OR lim=total, last_ord = COALESCE((SELECT r.ord FROM {ranked} r WHERE r.pk={state}.pk AND r.position={state}.lim),0)"))?;
-        self.action(dml::publish(self.schemas,target,&format!("SELECT {} FROM {ranked} r JOIN {state} s ON r.pk=s.pk WHERE r.position<=s.lim ORDER BY r.k",original.columns.iter().map(|c|format!("r.{c}")).collect::<Vec<_>>().join(",")),"replace")?);
+        self.statement(&format!("UPDATE {state} SET done = done OR lim=total, last_ord = COALESCE((SELECT r.ord FROM {ranked} r WHERE r.position={state}.start+{state}.lim AND {state}.lim>0),0)"))?;
+        self.action(dml::publish(self.schemas,target,&format!("SELECT {} FROM {state} s CROSS JOIN {ranked} r ON r.position>s.start AND r.position<=s.start+s.lim CROSS JOIN {all} a ON a.k=r.k ORDER BY r.k",original.columns.iter().map(|c|format!("a.{c}")).collect::<Vec<_>>().join(",")),"replace")?);
         self.steps(bound, steps)?;
         let unknown = if three
             && mode != "strict"
@@ -375,7 +362,7 @@ impl<'a> Builder<'a> {
             ""
         };
         let count = format!(
-            "(SELECT COUNT(*) FROM {matched} m JOIN {ranked} r ON r.k=m.k WHERE r.pk={state}.pk{unknown})"
+            "(SELECT COUNT(*) FROM {ranked} r CROSS JOIN {matched} m ON m.k=r.k WHERE r.position>{state}.start AND r.position<={state}.start+{state}.lim{unknown})"
         );
         let decided = if mode == "count" {
             if max == "-" {
@@ -404,7 +391,6 @@ impl<'a> Builder<'a> {
             self.schemas,
         );
         self.branch(format!("CASE WHEN {query} THEN {head} ELSE {after} END"));
-        let _ = cols;
         Ok(())
     }
     fn stage(&mut self, stage: usize) -> Result<(), String> {

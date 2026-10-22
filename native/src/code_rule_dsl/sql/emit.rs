@@ -24,6 +24,7 @@ mod inline;
 mod keyed;
 mod leaves;
 mod lineage;
+mod predicates;
 mod scan;
 mod shared_search;
 mod three;
@@ -900,8 +901,11 @@ impl<'s> Emitter<'s> {
             Some(kinds) if kinds.is_empty() => " AND 0".to_owned(),
             Some(kinds) => format!(" AND n.kind IN ({})", list(kinds)),
         };
+        let predicate = predicates::root_condition(op);
         let guard = String::new();
-        let guard = if !self.three {
+        let guard = if let Some(predicate) = &predicate {
+            format!(" AND ({predicate})")
+        } else if !self.three {
             guards::root_guard(op, self.units)
                 .map_or(guard.clone(), |guard| format!(" AND ({guard})"))
         } else {
@@ -926,6 +930,11 @@ impl<'s> Emitter<'s> {
         self.keyed_by(&root, vec![BTreeSet::new()]);
         if let Some(kinds) = &statement.kinds {
             self.kinds_of.insert(root.clone(), kinds.clone());
+        }
+        // A closed total predicate has already selected its matching roots. Do not create
+        // an all-node frame and replay the same predicate through operator frames.
+        if predicate.is_some() {
+            return root;
         }
         if self.units.is_empty() {
             return self.op(op, &root, &live);
@@ -974,7 +983,9 @@ impl<'s> Emitter<'s> {
         }
         let out = self.within(live, |this| match this.keyed(op, input, live) {
             Some(out) => out,
-            None => this.apply(op, input, live),
+            None => this
+                .predicate_region(op, input, true, live)
+                .unwrap_or_else(|| this.apply(op, input, live)),
         });
         let changed = self.touched(op);
         self.inherit(input, &out, &changed);
@@ -1565,8 +1576,8 @@ impl<'s> Emitter<'s> {
         self.frame(
             "x",
             &format!(
-                "SELECT {select} FROM {input} f{key_joins} {join} {demand} d ON d.file = f.file AND d.node = f.node{matched} \
-                 {join} {answer} r ON r.id = d.id"
+                "SELECT {select} FROM {answer} r CROSS JOIN {demand} d ON d.id = r.id \
+                 CROSS JOIN {input} f ON f.file = d.file AND f.node = d.node{key_joins} WHERE 1{matched}"
             ),
             Reads::join(&[input, &demand, &answer]),
         )
