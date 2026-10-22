@@ -3349,6 +3349,71 @@
       "match": "line+column"
     },
     {
+      "id": "ruff-d200-unnecessary-multiline-docstring",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D200"
+      },
+      "policy": "candidates/rules/ruff-d200-unnecessary-multiline-docstring.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d205-missing-blank-line-after-summary",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D205"
+      },
+      "policy": "candidates/rules/ruff-d205-missing-blank-line-after-summary.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d209-new-line-after-last-paragraph",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D209"
+      },
+      "policy": "candidates/rules/ruff-d209-new-line-after-last-paragraph.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d212-multi-line-summary-first-line",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D212"
+      },
+      "policy": "candidates/rules/ruff-d212-multi-line-summary-first-line.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-d215-overindented-section-underline",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "D215"
+      },
+      "policy": "candidates/rules/ruff-d215-overindented-section-underline.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
       "id": "ruff-d300-triple-single-quotes",
       "upstream": {
         "tool": "ruff",
@@ -8421,6 +8486,19 @@
       "policy": "candidates/rules/bandit-b704-markupsafe-markup-xss.json",
       "capabilities": [
         "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "ruff-isc001-single-line-implicit-string-concatenation",
+      "upstream": {
+        "tool": "ruff",
+        "rule": "ISC001"
+      },
+      "policy": "candidates/rules/ruff-isc001-single-line-implicit-string-concatenation.json",
+      "capabilities": [
+        "syntax",
         "suppression"
       ],
       "match": "line+column"
