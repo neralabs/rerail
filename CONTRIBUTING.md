@@ -33,7 +33,7 @@ Do not paste code, data or rules from another project without recording it:
 
 `reuse lint` must pass. Only permissively licensed material is accepted, anywhere in the repository: the licence
 texts in `LICENSES/` must be on the allowlist in `scripts/check/licence-allowlist.json` (Apache-2.0, MIT, BSD-2-Clause,
-BSD-3-Clause, ISC, Zlib, 0BSD, CC0-1.0, Unicode-3.0), so no copyleft file can be committed.
+BSD-3-Clause, CC-BY-4.0, CC0-1.0, ISC, Zlib, 0BSD, Unicode-3.0), so no copyleft file can be committed.
 
 Fixtures (`fixtures/`) and rule packs (`packs/`) follow the same rules; see their READMEs.
 
