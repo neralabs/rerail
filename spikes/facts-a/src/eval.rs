@@ -500,7 +500,7 @@ fn project(p: &Proj, ev: &ast::Eval<'_>, env: &Env, groups: &[(Name, (u32, u32),
             }
         }
         Proj::Kind(n) => match env.get(*n) {
-            Some(Bound::Node(node)) => V::text(&crate::facts::name(f.kind[node as usize])),
+            Some(Bound::Node(node)) => V::Text(crate::facts::name(f.kind[node as usize])),
             _ => V::Null,
         },
         Proj::Start(n) => capture_range(ev, env, groups, *n).map_or(V::Null, |r| V::Int(r.0 as i64)),

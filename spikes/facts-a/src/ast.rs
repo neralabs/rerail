@@ -786,6 +786,29 @@ pub struct ParsedNode {
 
 pub struct Unsupported(pub String);
 
+/// A node's children: borrowed from the facts' CSR for tree nodes (no allocation); parsed
+/// literal trees are small and collected.
+pub enum Kids<'a> {
+    Node(std::slice::Iter<'a, u32>),
+    Parsed(std::vec::IntoIter<Bound>),
+}
+impl Iterator for Kids<'_> {
+    type Item = Bound;
+    fn next(&mut self) -> Option<Bound> {
+        match self {
+            Kids::Node(it) => it.next().map(|&c| Bound::Node(c)),
+            Kids::Parsed(it) => it.next(),
+        }
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            Kids::Node(it) => it.size_hint(),
+            Kids::Parsed(it) => it.size_hint(),
+        }
+    }
+}
+impl ExactSizeIterator for Kids<'_> {}
+
 pub struct Eval<'a> {
     pub f: &'a Facts,
     pub path: &'a str,
@@ -936,17 +959,18 @@ impl<'a> Eval<'a> {
     }
 
     // --- node navigation over facts and parsed literals ---
-    fn children(&self, b: Bound) -> Vec<Bound> {
+    fn children(&self, b: Bound) -> Kids<'a> {
         match b {
-            Bound::Node(n) => self.f.children(n).iter().map(|&c| Bound::Node(c)).collect(),
+            Bound::Node(n) => Kids::Node(self.f.children(n).iter()),
             Bound::Parsed(p) => {
                 let parsed = self.parsed.borrow();
-                parsed
+                let kids: Vec<Bound> = parsed
                     .iter()
                     .enumerate()
                     .filter(|(i, pn)| pn.parent == p && *i as u32 != p)
                     .map(|(i, _)| Bound::Parsed(i as u32))
-                    .collect()
+                    .collect();
+                Kids::Parsed(kids.into_iter())
             }
         }
     }
@@ -1088,7 +1112,7 @@ impl<'a> Eval<'a> {
         if a == b {
             return true;
         }
-        let leaf = |x: Bound| self.named(x) && self.children(x).is_empty();
+        let leaf = |x: Bound| self.named(x) && self.children(x).len() == 0;
         if leaf(a) || leaf(b) {
             return self.text_of(a) == self.text_of(b);
         }
@@ -1101,7 +1125,7 @@ impl<'a> Eval<'a> {
             return false;
         }
         let (ca, cb) = (self.children(a), self.children(b));
-        ca.len() == cb.len() && ca.iter().zip(&cb).all(|(x, y)| self.match_exactly(*x, *y))
+        ca.len() == cb.len() && ca.zip(cb).all(|(x, y)| self.match_exactly(x, y))
     }
 
     fn match_all(&self, items: &[Rule], node: Bound, env: &mut Env) -> bool {
@@ -1511,7 +1535,7 @@ impl<'a> Eval<'a> {
 
     fn nth_child(&self, node: Bound, step: i32, offset: i32, of_rule: Option<&Rule>, reverse: bool, env: &mut Env) -> bool {
         let Some(parent) = self.parent(node) else { return false };
-        let named: Vec<Bound> = self.children(parent).into_iter().filter(|c| self.named(*c)).collect();
+        let named: Vec<Bound> = self.children(parent).filter(|c| self.named(*c)).collect();
         let counted: Vec<Bound> = match of_rule {
             None => named,
             Some(rule) => {
@@ -1658,7 +1682,7 @@ impl<'a> Eval<'a> {
         let value = match node {
             Bound::Node(n) => {
                 let kind = facts::name(self.f.kind[n as usize]);
-                if !pyvalue::EXPRESSION_KINDS.contains(&kind.as_str()) || !self.f.named(n) {
+                if !pyvalue::EXPRESSION_KINDS.contains(&&*kind) || !self.f.named(n) {
                     return Some(false);
                 }
                 match pyvalue::decode(self.f, n) {
@@ -1672,7 +1696,7 @@ impl<'a> Eval<'a> {
             Bound::Parsed(p) => {
                 // A parsed literal's `literal` node has its decoded text as a str value.
                 let pn = self.parsed.borrow()[p as usize].clone();
-                if facts::name(pn.kind) == "literal" {
+                if &*facts::name(pn.kind) == "literal" {
                     PyValue::Str(pn.text)
                 } else {
                     return Some(false);
@@ -1709,7 +1733,7 @@ impl<'a> Eval<'a> {
             }
             ParseGrammar::PythonFString => {
                 let kind = facts::name(self.f.kind[n as usize]);
-                if kind != "string" && kind != "concatenated_string" {
+                if &*kind != "string" && &*kind != "concatenated_string" {
                     return false;
                 }
                 // Cached per host node: Some(root) for a tree, None for NotString, root NONE for

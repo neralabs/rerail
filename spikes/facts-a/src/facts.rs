@@ -4,6 +4,7 @@
 use ast_grep_core::source::SgNode;
 use rerail_engine::code_rule_dsl::{eval, lines::LineTable, model::FileInput, tape::TapeDoc};
 use parking_lot::Mutex;
+use std::rc::Rc;
 use std::sync::{Arc, LazyLock};
 
 pub const NONE: u32 = u32::MAX;
@@ -11,8 +12,8 @@ pub const SCHEMA_VERSION: u32 = 0;
 
 /// Process-wide interner for kind and field names (the contract's `sym`).
 pub struct Symbols {
-    names: Vec<String>,
-    ids: rustc_hash::FxHashMap<String, u32>,
+    names: Vec<Arc<str>>,
+    ids: rustc_hash::FxHashMap<Arc<str>, u32>,
 }
 static SYMBOLS: LazyLock<Mutex<Symbols>> = LazyLock::new(|| {
     Mutex::new(Symbols {
@@ -26,20 +27,23 @@ pub fn intern(name: &str) -> u32 {
         return id;
     }
     let id = s.names.len() as u32;
-    s.names.push(name.to_owned());
-    s.ids.insert(name.to_owned(), id);
+    let shared: Arc<str> = Arc::from(name);
+    s.names.push(shared.clone());
+    s.ids.insert(shared, id);
     id
 }
 pub fn lookup(name: &str) -> Option<u32> {
     SYMBOLS.lock().ids.get(name).copied()
 }
-pub fn name(sym: u32) -> String {
+/// A symbol's name: a reference-count bump on a per-thread copy, no allocation and no lock
+/// after the first use of a symbol on a thread.
+pub fn name(sym: u32) -> Rc<str> {
     NAME_CACHE.with(|c| {
-        let mut c = c.borrow_mut();
-        if let Some(Some(n)) = c.get(sym as usize) {
+        if let Some(Some(n)) = c.borrow().get(sym as usize) {
             return n.clone();
         }
-        let n = SYMBOLS.lock().names[sym as usize].clone();
+        let n: Rc<str> = Rc::from(&*SYMBOLS.lock().names[sym as usize]);
+        let mut c = c.borrow_mut();
         if c.len() <= sym as usize {
             c.resize(sym as usize + 1, None);
         }
@@ -48,7 +52,7 @@ pub fn name(sym: u32) -> String {
     })
 }
 thread_local! {
-    static NAME_CACHE: std::cell::RefCell<Vec<Option<String>>> = const { std::cell::RefCell::new(Vec::new()) };
+    static NAME_CACHE: std::cell::RefCell<Vec<Option<Rc<str>>>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// The patched Python grammar the native engine parses with (field codes and names).

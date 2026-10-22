@@ -165,7 +165,7 @@ impl SyntaxSpec {
             }
             f.children(id).iter().copied().find(|&c| f.field[c as usize] == code)
         };
-        let kind_v = |id: u32| V::Text(Rc::from(facts::name(f.kind[id as usize]).as_str()));
+        let kind_v = |id: u32| V::Text(facts::name(f.kind[id as usize]));
         let mut node_rows = Vec::with_capacity(selected.len());
         for &(id, ord) in &selected {
             let parent = f.parent(id);

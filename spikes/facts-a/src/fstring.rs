@@ -158,8 +158,8 @@ pub enum FParse {
 /// The parsed pieces of `n` (a `string` or `concatenated_string`).
 pub fn parse(f: &Facts, n: u32) -> Result<FParse, String> {
     let kind = facts::name(f.kind[n as usize]);
-    let parts: Vec<u32> = if kind == "concatenated_string" {
-        f.children(n).iter().copied().filter(|&c| facts::name(f.kind[c as usize]) == "string").collect()
+    let parts: Vec<u32> = if &*kind == "concatenated_string" {
+        f.children(n).iter().copied().filter(|&c| &*facts::name(f.kind[c as usize]) == "string").collect()
     } else {
         vec![n]
     };
@@ -177,7 +177,7 @@ pub fn parse(f: &Facts, n: u32) -> Result<FParse, String> {
         *literal_start = end;
     };
     for part in parts {
-        let Some(start) = f.children(part).iter().copied().find(|&c| facts::name(f.kind[c as usize]) == "string_start") else {
+        let Some(start) = f.children(part).iter().copied().find(|&c| &*facts::name(f.kind[c as usize]) == "string_start") else {
             return Ok(FParse::NotString);
         };
         let text = f.text(start);
@@ -188,7 +188,7 @@ pub fn parse(f: &Facts, n: u32) -> Result<FParse, String> {
         }
         formatted |= pref.format;
         for &child in f.children(part) {
-            match facts::name(f.kind[child as usize]).as_str() {
+            match &*facts::name(f.kind[child as usize]) {
                 "string_content" => {
                     if !decode_body(f.text(child), f.start[child as usize] as usize, &pref, &mut d)? || d.text.len() > MAX_STRING_BYTES {
                         return Ok(FParse::Unknown);
@@ -196,7 +196,7 @@ pub fn parse(f: &Facts, n: u32) -> Result<FParse, String> {
                 }
                 "interpolation" => {
                     // Debug form `{x=}`: the expression source, '=' and trailing space are literal.
-                    if f.children(child).iter().any(|&c| facts::name(f.kind[c as usize]) == "=") {
+                    if f.children(child).iter().any(|&c| &*facts::name(f.kind[c as usize]) == "=") {
                         let (rs, re) = (f.start[child as usize] as usize, f.end[child as usize] as usize);
                         let field_end = f
                             .children(child)

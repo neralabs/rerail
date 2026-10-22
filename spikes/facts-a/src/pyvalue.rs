@@ -27,7 +27,8 @@ pub const EXPRESSION_KINDS: &[&str] = &[
 /// The node's value; `Err` where folding needs facts the spike does not have.
 pub fn decode(f: &Facts, n: u32) -> Result<PyValue, String> {
     let kind = facts::name(f.kind[n as usize]);
-    Ok(match kind.as_str() {
+    let kind: &str = &kind;
+    Ok(match kind {
         "integer" | "float" | "true" | "false" | "none" | "ellipsis" => {
             if kind == "integer" || kind == "float" {
                 // A number literal Python refuses is Unknown natively; refuse to guess.
@@ -44,7 +45,7 @@ pub fn decode(f: &Facts, n: u32) -> Result<PyValue, String> {
                 .children(n)
                 .iter()
                 .copied()
-                .filter(|&c| f.named(c) && facts::name(f.kind[c as usize]) != "comment")
+                .filter(|&c| f.named(c) && &*facts::name(f.kind[c as usize]) != "comment")
                 .collect();
             match named.as_slice() {
                 [inner] => decode(f, *inner)?,
@@ -70,7 +71,7 @@ fn number_ok(t: &str) -> bool {
 }
 
 fn has_interpolation(f: &Facts, n: u32) -> bool {
-    f.children(n).iter().any(|&c| facts::name(f.kind[c as usize]) == "interpolation")
+    f.children(n).iter().any(|&c| &*facts::name(f.kind[c as usize]) == "interpolation")
 }
 
 fn string(f: &Facts, n: u32) -> PyValue {
@@ -87,7 +88,7 @@ fn string(f: &Facts, n: u32) -> PyValue {
 fn concatenated(f: &Facts, n: u32) -> PyValue {
     let mut joined: Option<Piece> = None;
     for &part in f.children(n) {
-        if facts::name(f.kind[part as usize]) != "string" {
+        if &*facts::name(f.kind[part as usize]) != "string" {
             continue;
         }
         if has_interpolation(f, part) {
