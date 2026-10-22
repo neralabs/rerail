@@ -2,6 +2,9 @@
 
 Thank you for helping. A few rules keep the project open source and its licensing clean.
 
+Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md). Report a security vulnerability privately, as
+[SECURITY.md](SECURITY.md) describes, never in a public issue or pull request.
+
 ## Getting the code
 
 Install [Git LFS](https://git-lfs.com) before you clone, and run `git lfs install` once. The embedding model's weights
@@ -43,3 +46,15 @@ development-only dependencies and tools, which are never committed or distribute
 ## Pull requests
 
 Open a pull request against `main`. Changes are squash-merged after review.
+
+Before you open it:
+
+- `npm run check` passes: the type check, the layer boundaries, the repository structure gate, Windows-safe paths and
+  no internal ticket IDs.
+- `npm test` passes, with `npm run build` run first (several suites run the built package from `dist/`).
+- `npm run check:licenses` and `reuse lint` pass (`uvx --from 'reuse[charset-normalizer]==6.2.0' reuse lint`, as CI
+  runs it).
+- A change to a pack under `packs/` adds a changeset ([.changeset/README.md](.changeset/README.md)).
+- A change to what the core package ships adds an entry under `## Unreleased` in `CHANGELOG.md`
+  ([release notes](README.md#release)).
+- Tests cover the behavior you changed, and docs that describe it are updated.
