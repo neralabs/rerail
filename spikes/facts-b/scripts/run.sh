@@ -10,7 +10,8 @@ if [ "${1:-}" = "--lock" ]; then lock=1; shift; fi
 [ "${1:-}" = "--" ] && shift
 here=$(cd "$(dirname "$0")/../../.." && pwd)
 bin=${FACTS_B_BIN:-$here/target/release/facts-b}
-dir=$HOME/rerail-bench/facts/spike-b/runs/$(date +%Y%m%d-%H%M%S)-$label
+# FACTS_RUN_ROOT: Phase 2 slices write under ~/rerail-bench/facts/phase-2/<slice>/runs.
+dir=${FACTS_RUN_ROOT:-$HOME/rerail-bench/facts/spike-b/runs}/$(date +%Y%m%d-%H%M%S)-$label
 mkdir -p "$dir"
 cmd=("$bin" "$@" --run-dir "$dir")
 {
