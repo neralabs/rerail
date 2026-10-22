@@ -24,19 +24,14 @@ Run hundreds of complex data-layer rules as edits go out, across ~40 parallel wo
 
 ## Architecture
 
-1. **Per-content functions, memoized fleet-wide.** parse → facts (once per content, schema-versioned) → per-file rules (pattern and relational) → findings + exported facts. Key: `(content hash, schema version, rule digest)`. Never executed twice for the same content anywhere, ever.
-2. **Cross-file rules as incremental dataflow over exported facts.** Base (main) relations once, shared. Per-worktree state ∝ divergence from base (count-based delta rules for non-recursive strata; recursion demand-driven per worktree). Facts resident only for hashes in some worktree's membership.
-3. **One daemon.** Per-worktree state = membership (path → hash) + deltas + findings. Hash-first edit protocol; Git ODB for bulk sync; findings delivered as epoch-stamped deltas (introduced / removed).
-4. **One rule IR, two surfaces.** Pattern DSL (existing rules) and SQL stages (Jeremy's) with a declared partition. The classifier enforces: per-file ⇔ reads only per-file relations. Backends: per-file in-memory relational evaluator; differential dataflow for cross-file; a from-scratch reference evaluator that the gate compares against.
+**SQL in, facts underneath, one algebra in between.** The binding statement is `INVARIANTS.md` (I1–I10); this section is its summary.
 
-### Invariants
-
-- Exact. No approximation; refuse with `Unsupported` instead.
-- Set-based rule semantics.
-- No SQLite, and no per-statement planner, in the per-edit path.
-- Nothing per-worktree that is proportional to the tree.
-- A per-file rule cannot observe cross-file state. Enforced by construction, not by a flag (the `calls` index bug is what a flag costs).
-- Every engine claim is measured with the protocol in `PHASE-1.md` § Measurement; untrusted timings are labelled.
+1. **One logical algebra with SQLite's semantics**, produced by two front ends (SQL stages, pattern DSL). After the parser nothing holds SQL text or stage names: no shape-recognized substitutions, no kernels selected by name, no per-operator fast paths. Speed comes from general, justified rewrites (`REWRITES.md`) and a columnar physical algebra planned once per rule.
+2. **Facts are relations with declared structure** (keys, functional dependencies, preorder order and its interval property); derived relations are SQL views over the syntactic core, compiled like any rule.
+3. **Classification is a type:** per-content iff every leaf is per-content; the declaration is checked, never trusted; a per-content plan physically cannot reach membership relations.
+4. **Memoization by expression digest** `(content hash, schema version, plan digest)`, fleet-wide; **incrementality generated** from the algebra for membership-dependent plans (per-path base, cluster bases, worktree deltas; state ∝ divergence).
+5. **One daemon;** per-worktree state = membership + deltas + findings; hash-first edit protocol; findings as epoch-stamped deltas.
+6. **Exact or refuse; admission by gate.** Every rewrite, operator and generator change lands with its differential test and mutant.
 
 ## Targets
 
