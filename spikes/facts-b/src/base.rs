@@ -28,6 +28,27 @@ pub fn majority_base(ms: &[(String, Membership)]) -> Membership {
     counts.into_iter().filter(|&(_, c)| c >= need).map(|((p, h), _)| (p.to_string(), h)).collect()
 }
 
+/// Per-path plurality: every path held by a strict majority of the worktrees, with its most
+/// frequent content (ties: the smallest hash). Unlike `majority_base`, a path whose content churns
+/// (no single content in a majority) stays in the base.
+pub fn plurality_base(ms: &[(String, Membership)]) -> Membership {
+    let mut counts: BTreeMap<&str, BTreeMap<[u8; 32], usize>> = BTreeMap::new();
+    for (_, m) in ms {
+        for (p, h) in m {
+            *counts.entry(p.as_str()).or_default().entry(*h).or_default() += 1;
+        }
+    }
+    let need = ms.len() / 2 + 1;
+    counts
+        .into_iter()
+        .filter(|(_, hs)| hs.values().sum::<usize>() >= need)
+        .map(|(p, hs)| {
+            let best = hs.iter().max_by(|a, b| a.1.cmp(b.1).then(b.0.cmp(a.0))).unwrap();
+            (p.to_string(), *best.0)
+        })
+        .collect()
+}
+
 /// Signed delta: (path, hash, +1) for entries of `m` not in `base`, (path, hash, -1) for the reverse.
 pub fn delta(base: &Membership, m: &Membership) -> Vec<(String, [u8; 32], i64)> {
     let b: BTreeMap<&str, [u8; 32]> = base.iter().map(|(p, h)| (p.as_str(), *h)).collect();

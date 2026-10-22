@@ -99,6 +99,8 @@ pub struct Opts {
     pub only_r1: bool,
     /// Naive worktree-keyed variant: no shared base; every worktree holds its full membership.
     pub naive: bool,
+    /// Base = per-path plurality (`base-plurality.tsv`) instead of the strict (path, hash) majority.
+    pub plurality: bool,
 }
 
 /// Cluster bases for the two-level variant: contiguous ranges of the 40 worktrees (ordered by
@@ -111,10 +113,12 @@ pub fn run(run_dir: &Path, opts: Opts) {
     let t_load = Instant::now();
     let sd = store::store_dir();
     let mdir = store::spike_dir().join("membership");
-    let base_m = store::read_membership(&mdir.join("base.tsv"));
+    let base_m = store::read_membership(&mdir.join(if opts.plurality { "base-plurality.tsv" } else { "base.tsv" }));
+    // The edit script's "clone of base" is the strict-majority base it was generated against.
+    let script_base_m = store::read_membership(&mdir.join("base.tsv"));
     let ms = base::load_memberships();
     let mut st = Store::default();
-    for (_, h) in &base_m {
+    for (_, h) in base_m.iter().chain(script_base_m.iter()) {
         st.load(&sd, h);
     }
     for (_, m) in &ms {
@@ -134,6 +138,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
     let clusters_on = opts.clusters;
     let only_r1 = opts.only_r1;
     let naive = opts.naive;
+    let opts_plurality = opts.plurality;
     let run_dir = run_dir.to_path_buf();
 
     timely::execute_directly(move |worker| {
@@ -158,6 +163,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
             m.iter().map(|(p, hh)| (wd.path(p), wd.store.by_hash[hh])).collect()
         };
         let base_map = to_map(&base_m, &mut world.borrow_mut());
+        let script_base_map = to_map(&script_base_m, &mut world.borrow_mut());
         let mut members: BTreeMap<W, BTreeMap<Sym, Cid>> = BTreeMap::new();
         for (i, (_, m)) in ms.iter().enumerate() {
             members.insert(i as W + 1, to_map(m, &mut world.borrow_mut()));
@@ -310,12 +316,11 @@ pub fn run(run_dir: &Path, opts: Opts) {
                 let mut wd = world.borrow_mut();
                 if ev.group == "new_worktree" || ev.group == "commit_init" {
                     assert!(!members.contains_key(&w), "worktree {w} exists");
-                    members.insert(w, base_map.clone());
-                    if naive {
-                        // no shared base: the clone's whole membership is its own input
-                        for (p, c) in &base_map {
-                            ups.push(((w, (*p, *c)), 1));
-                        }
+                    // the clone's delta from the dataflow base it sits under: empty for the strict-majority
+                    // base, its whole membership for the naive variant
+                    members.insert(w, script_base_map.clone());
+                    for (rec, s) in delta_of(&script_base_map, below_of(w)) {
+                        ups.push(((w, rec), s));
                     }
                 }
                 let m = members.get_mut(&w).unwrap();
@@ -483,6 +488,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
             "clusters": clusters_on,
             "only_r1": only_r1,
             "naive": naive,
+            "plurality_base": opts_plurality,
             "arrangements": arrangements,
             "per_worktree_load_ms": per_wt_load_ms,
             "resident_facts": {"contents": member_hashes.len(), "bytes": fact_bytes, "interned_strings": wd.store.syms.len(), "interner_bytes": wd.store.syms.bytes()},
