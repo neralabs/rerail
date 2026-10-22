@@ -6,7 +6,13 @@ updates:
       interval: weekly
     open-pull-requests-limit: 3
     groups:
-      # Listed first so vitest packages land here, not in npm-minor-patch:
+      # First match wins, so these come before npm-minor-patch. Each lands in a pull request of its own, so one that
+      # breaks holds back none of the others. Files that pin a version in step with these (the OMP host and its digests,
+      # the playground's SDK, the ast-grep reference version) are brought along by .github/workflows/dependabot-pins.yml.
+      omp-sdk:
+        patterns: ["@oh-my-pi/*"]
+      ast-grep-cli:
+        patterns: ["@ast-grep/cli"]
       # @vitest/* peer-pins vitest exactly, so they must move together.
       vitest:
         patterns: ["vitest", "@vitest/*"]
