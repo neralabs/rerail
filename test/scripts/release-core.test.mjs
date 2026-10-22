@@ -56,6 +56,12 @@ describe("nextCoreVersion", () => {
     expect(nextCoreVersion("0.1.4", "## 0.2.0 (unreleased)\n")).toBe("0.2.0");
     expect(() => nextCoreVersion("0.1.4", "## 0.1.4 (unreleased)\n")).toThrow("not later than core's 0.1.4");
     expect(() => nextCoreVersion("0.1.4", "## soon (unreleased)\n")).toThrow("soon, which is not a version");
+    expect(() => nextCoreVersion("0.1.4", "## v0.2.0 (unreleased)\n")).toThrow("v0.2.0, which is not a version");
+  });
+
+  it("reads a Keep a Changelog `[Unreleased]` heading as unreleased", () => {
+    expect(nextCoreVersion("0.1.0", "# Changelog\n\n## [Unreleased]\n\n- a\n")).toBe("0.1.1");
+    expect(releaseChangelog("## [Unreleased]\n\n- a\n", "0.1.1", "2026-10-23")).toEqual({ text: "## 0.1.1 (2026-10-23)\n\n- a\n", notes: true });
   });
 });
 
@@ -99,6 +105,7 @@ describe("coreTagRefusal", () => {
   });
 
   it("refuses a version already tagged, one moved backwards, and one that is not a version", () => {
+    expect(coreTagRefusal("v0.2.0", tags)).toBe("package.json's version v0.2.0 is not a version");
     expect(coreTagRefusal("0.1.0-next.4", tags)).toBe("v0.1.0-next.4 already exists");
     expect(coreTagRefusal("0.1.0-next.2", tags)).toBe("0.1.0-next.2 is not later than the released 0.1.0-next.4");
     expect(coreTagRefusal("latest", tags)).toBe("package.json's version latest is not a version");

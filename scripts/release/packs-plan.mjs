@@ -19,7 +19,7 @@ const packOf = (id) => packs.find((pack) => pack.id === id);
 
 let held = [];
 if (!all && publish.length > 0) {
-  const distTags = await readDistTags(publish.map((id) => packOf(id).name));
+  const distTags = await readDistTags(publish.map((id) => packOf(id).name), { fresh: true });
   const read = heldPacks(publish.map((id) => packOf(id).name), (name) => distTags.get(name) ?? null);
   if (read.unreadable.length > 0) {
     throw new Error(`could not read the dist-tags of ${read.unreadable.join(", ")} from npm, so whether each is held is unknown`);

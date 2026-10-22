@@ -440,7 +440,7 @@ jobs:
   # publishing, as for publish: core's trusted publisher on npmjs must allow `npm dist-tag` as well as `npm publish`.
   put-back:
     name: Point latest at ${{ inputs.latest }}
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.latest }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.latest && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: release

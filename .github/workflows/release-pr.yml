@@ -61,10 +61,12 @@ jobs:
         run: node scripts/release/core-tag.mjs
 
   # After tag-core, so a version it just tagged counts as released and core is bumped only for later changes. The
-  # pull request is opened with the app's token, not GITHUB_TOKEN, so CI runs on it.
+  # pull request is opened with the app's token, not GITHUB_TOKEN, so CI runs on it. It runs even when tag-core fails, so
+  # a core tag that can't be created never stops the packs' releases: an untagged core version is left alone.
   pull-request:
     name: Release pull request
     needs: tag-core
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -105,7 +107,8 @@ jobs:
         run: |
           set -euo pipefail
           git config user.name "$BOT"
-          git config user.email "$(gh api "/users/${BOT}" --jq .id)+${BOT}@users.noreply.github.com"
+          id="$(gh api "/users/${BOT}" --jq .id)"
+          git config user.email "${id}+${BOT}@users.noreply.github.com"
           git switch --force-create "$RELEASE_BRANCH"
           git add --all
           git commit --quiet --message "Release"

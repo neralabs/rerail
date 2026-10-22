@@ -12,7 +12,7 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { changelogSection, CORE_NAME, coreChanges, coreTag, nextCoreVersion, releaseChangelog, setLockVersion, setPackageVersion } from "./core.mjs";
+import { changelogSection, CORE_NAME, coreChanges, coreTag, coreTagRefusal, nextCoreVersion, releaseChangelog, setLockVersion, setPackageVersion } from "./core.mjs";
 import { listPacks, readChangesets, ROOT } from "./packs.mjs";
 
 /** A changelog section longer than this is linked rather than quoted: a pull request description holds 65,536 characters. */
@@ -33,21 +33,31 @@ const packs = listPacks()
   .map((pack) => ({ ...pack, from: packsBefore.find((before) => before.id === pack.id)?.version ?? null }))
   .filter((pack) => pack.from !== pack.version);
 
+/** Why core's next version can't be released (release-pr.yml's tag-core would refuse its tag), or null. */
+let coreRefusal = null;
+
 /** Core's bump, `{ from, version, notes, changes }`, or null when core is not released by this pull request. */
 function versionCore() {
   const current = JSON.parse(readText("package.json")).version;
   const tag = coreTag(current);
-  if (!git(["tag", "--list", "v*"]).split("\n").includes(tag)) {
+  const tags = git(["tag", "--list", "v*"]).split("\n");
+  if (!tags.includes(tag)) {
     console.log(`core ${current} has no ${tag} tag yet: its release is under way, so core is not bumped`);
     return null;
   }
-  const changed = git(["diff", "--name-only", tag, "HEAD"]).split("\n").filter((path) => path !== "");
+  const changed = git(["diff", "--name-only", "--no-renames", tag, "HEAD"]).split("\n").filter((path) => path !== "");
   const changes = coreChanges(changed, (ref) => git(["show", `${ref === "release" ? tag : "HEAD"}:package-lock.json`]));
   if (changes.length === 0) {
     console.log(`core: nothing it ships has changed since ${tag}`);
     return null;
   }
   const version = nextCoreVersion(current, readText("CHANGELOG.md"));
+  // A version tag-core would refuse is left out, so the packs still release; the description says why.
+  coreRefusal = coreTagRefusal(version, tags);
+  if (coreRefusal !== null) {
+    console.log(`::warning title=Core not released::${coreRefusal}`);
+    return null;
+  }
   const changelog = releaseChangelog(readText("CHANGELOG.md"), version, new Date().toISOString().slice(0, 10));
   writeFileSync(join(ROOT, "package.json"), setPackageVersion(readText("package.json"), version));
   writeFileSync(join(ROOT, "package-lock.json"), `${JSON.stringify(setLockVersion(JSON.parse(readText("package-lock.json")), version), null, 2)}\n`);
@@ -70,6 +80,9 @@ const rows = [
   ...packs.map((pack) => ({ name: pack.name, from: pack.from ?? "new", version: pack.version, how: "release-packs.yml" })),
 ];
 const lines = [];
+if (coreRefusal !== null) {
+  lines.push("> [!WARNING]", `> Core is not released by this pull request: ${coreRefusal}. Name a later version in \`CHANGELOG.md\`'s unreleased heading (\`## <version> (unreleased)\`) on \`main\`.`, "");
+}
 if (rows.length === 0) {
   lines.push("Nothing to release.");
 } else {

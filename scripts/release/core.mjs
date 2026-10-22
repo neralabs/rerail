@@ -73,7 +73,7 @@ function firstSection(text) {
 
 /** The version an unreleased heading (`Unreleased`, `<version> (unreleased)`) names, `""` for none; null if released. */
 function unreleasedVersion(heading) {
-  if (/^unreleased$/iu.test(heading)) return "";
+  if (/^\[?unreleased\]?$/iu.test(heading)) return "";
   const match = /^(\S+) \(unreleased\)$/iu.exec(heading);
   return match === null ? null : match[1];
 }
@@ -88,7 +88,7 @@ export function nextCoreVersion(current, changelog) {
   const section = firstSection(changelog);
   const named = section === null ? null : unreleasedVersion(section.heading);
   if (named === null || named === "") return patch;
-  if (semver.valid(named) === null) throw new Error(`CHANGELOG.md's unreleased heading names ${named}, which is not a version`);
+  if (semver.valid(named) !== named) throw new Error(`CHANGELOG.md's unreleased heading names ${named}, which is not a version (write it without a leading v)`);
   if (!semver.gt(named, current)) throw new Error(`CHANGELOG.md's unreleased heading names ${named}, which is not later than core's ${current}`);
   return named;
 }
@@ -137,7 +137,7 @@ export function setLockVersion(lock, version) {
  * reason it may not, or null.
  */
 export function coreTagRefusal(version, tags) {
-  if (semver.valid(version) === null) return `package.json's version ${version} is not a version`;
+  if (semver.valid(version) !== version) return `package.json's version ${version} is not a version`;
   const released = tags.filter((tag) => tag.startsWith("v")).map((tag) => tag.slice(1)).filter((tagged) => semver.valid(tagged) !== null);
   if (released.includes(version)) return `${coreTag(version)} already exists`;
   const later = released.filter((tagged) => semver.gte(tagged, version)).sort(semver.rcompare);
