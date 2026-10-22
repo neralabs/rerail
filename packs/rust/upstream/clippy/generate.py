@@ -21,7 +21,8 @@ only the level). That run is compared, per test, with the upstream `.stderr` (ea
 line:column) and the `//~` annotations (lint and line); every difference is written to fixtures.upstream-check.json.
 The recording, fixtures.expected.json, is a second run with `-W clippy::<lint>` for every ported lint added, so each
 lint is recorded over every test (in-source `allow`/`expect` still apply): each finding is the lint, test path, and
-the primary span's 1-based line and column (code points), deduplicated.
+the primary span's 1-based line and column (code points), one per distinct primary span (start and end): two
+diagnostics that start at one point, like precedence_bits' outer and nested `^`, are two findings.
 
 `corpus` runs `cargo +1.99.0 clippy --keep-going --locked --workspace --all-targets --all-features
 --message-format=json -- -W clippy::<lint>...` with CARGO_TARGET_DIR=<cargo target root>/clippy-<name> (RUSTFLAGS
@@ -449,8 +450,8 @@ def diagnostics(stderr: str) -> list[dict]:
         code = (message.get("code") or {}).get("code") or "?"
         found.append({"code": code[len("clippy::"):] if code.startswith("clippy::") else code,
                       "file": primary[0]["file_name"], "line": primary[0]["line_start"],
-                      "column": primary[0]["column_start"], "level": message["level"],
-                      "message": message["message"]})
+                      "column": primary[0]["column_start"], "end": (primary[0]["line_end"], primary[0]["column_end"]),
+                      "level": message["level"], "message": message["message"]})
     return found
 
 
@@ -664,7 +665,7 @@ def fixtures(checkout: pathlib.Path, scratch: pathlib.Path) -> None:
             check[test] = differences
         for d in builder.test(test, record_flags):
             if d["code"] in ported and d["file"] == test:
-                key = (d["code"], test, d["line"], d["column"])
+                key = (d["code"], test, d["line"], d["column"], d["end"])
                 findings[key] = {"rule": d["code"], "path": test, "line": d["line"], "column": d["column"]}
     common.write(HERE / "fixtures.expected.json",
                  {"kind": "fixtures", "origin": common.CLIPPY_ORIGIN, "rules": lints, "files": tests},

@@ -65,6 +65,23 @@ describe("the engine sources a rule's key covers", () => {
       "native/src/code_rule_dsl/suppress/clippy.rs",
       "native/src/code_rule_dsl/value/rust.rs",
     ]);
+    assert.deepEqual(split.families.sql, [
+      "languages/sql.json",
+      "native/grammars/tree-sitter-sql/LICENSE",
+      "native/grammars/tree-sitter-sql/PATCHES.md",
+      "native/grammars/tree-sitter-sql/rerail.patch",
+      "native/grammars/tree-sitter-sql/src/grammar.json",
+      "native/grammars/tree-sitter-sql/src/parser.generated.c.gz",
+      "native/grammars/tree-sitter-sql/src/scanner.c",
+      "native/grammars/tree-sitter-sql/src/tree_sitter/alloc.h",
+      "native/grammars/tree-sitter-sql/src/tree_sitter/array.h",
+      "native/grammars/tree-sitter-sql/src/tree_sitter/parser.h",
+      "native/src/code_rule_dsl/language/adapter/sql.rs",
+      "native/src/code_rule_dsl/matcher/arguments_sql.rs",
+      "native/src/code_rule_dsl/scope/sql.rs",
+      "native/src/code_rule_dsl/suppress/sqlfluff.rs",
+      "native/src/code_rule_dsl/value/sql.rs",
+    ]);
     for (const path of ["languages/javascript.json", "languages/typescript.json", "native/src/code_rule_dsl/scope/ecma.rs", "native/src/code_rule_dsl/value/ecma/ops.rs"]) {
       assert.ok(split.families.ecma!.includes(path), `${path} is not ecma's`);
     }
@@ -76,19 +93,24 @@ describe("the engine sources a rule's key covers", () => {
     }
   });
 
-  /** The only family files under the directories every language reads: Rust's adapter and two matchers only it calls. */
-  const RUST_UNDER_SHARED = new Set([
-    "native/src/code_rule_dsl/language/adapter/rust.rs",
-    "native/src/code_rule_dsl/matcher/arguments/rust.rs",
-    "native/src/code_rule_dsl/matcher/format_args/rust.rs",
-  ]);
+  /**
+   * The only family files under the directories every language reads: Rust's adapter and two matchers only it calls,
+   * and SQL's adapter and the call binding only it reads.
+   */
+  const FAMILY_UNDER_SHARED: Record<string, string> = {
+    "native/src/code_rule_dsl/language/adapter/rust.rs": "rust",
+    "native/src/code_rule_dsl/matcher/arguments/rust.rs": "rust",
+    "native/src/code_rule_dsl/matcher/format_args/rust.rs": "rust",
+    "native/src/code_rule_dsl/language/adapter/sql.rs": "sql",
+    "native/src/code_rule_dsl/matcher/arguments_sql.rs": "sql",
+  };
 
   // The engine code every language reads: a change to it can move any verdict, so it must re-judge every rule.
   test("the engine every language reads is shared", () => {
     const shared = new Set(split.shared);
-    for (const path of RUST_UNDER_SHARED) assert.ok(split.families.rust!.includes(path), `${path} is not rust's`);
+    for (const [path, family] of Object.entries(FAMILY_UNDER_SHARED)) assert.ok(split.families[family]!.includes(path), `${path} is not ${family}'s`);
     for (const prefix of ["native/src/code_rule_dsl/matcher/", "native/src/code_rule_dsl/compile/", "native/src/code_rule_dsl/workspace/", "native/src/code_rule_dsl/language/adapter/"]) {
-      const listed = [...keyed].filter((path) => path.startsWith(prefix) && !RUST_UNDER_SHARED.has(path));
+      const listed = [...keyed].filter((path) => path.startsWith(prefix) && FAMILY_UNDER_SHARED[path] === undefined);
       assert.ok(listed.length > 0, `no engine source under ${prefix}`);
       for (const path of listed) assert.ok(shared.has(path), `${path} is not shared`);
     }

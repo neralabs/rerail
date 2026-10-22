@@ -508,7 +508,7 @@ describe("set-up and the repository's own lint config", { timeout: SETUP_TIMEOUT
     expect(rulesOf(setup, [TSLINT_COMMENT])).toEqual({ [TSLINT_COMMENT]: { on: false, config: null } });
   });
 
-  // NER-1789: dolanmiu/docx (PR 3716) sets consistent-type-definitions to "type" in its eslint.config.ts, for its
+  // dolanmiu/docx (PR 3716) sets consistent-type-definitions to "type" in its eslint.config.ts, for its
   // **/src/**/*.ts files, after shared configs; set-up used to leave the option for the person to set by hand.
   it("takes options and folder offs from a flat eslint.config.ts, read as data, and writes them on start", async () => {
     const setup = await fixture();

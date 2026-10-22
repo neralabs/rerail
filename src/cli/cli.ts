@@ -602,7 +602,7 @@ async function runProjectCommand(command: string, args: readonly string[], conte
   if (daemonExit !== undefined) return daemonExit;
   if (command === "start" || command === "stop") return await runRepositoryCommand(command, args, { home, packageRoot, updater });
   if (command === "state") return runStateCommand(args);
-  // Internal testing: `scan`, explicit full-repository and git-diff audits. `settings` is decided in NER-1883.
+  // Internal testing: `scan`, explicit full-repository and git-diff audits. Whether `settings` ships is still open.
   if (command === "scan" || command === "settings") return await runAuditCommand(command, args, { home });
   return undefined;
 }

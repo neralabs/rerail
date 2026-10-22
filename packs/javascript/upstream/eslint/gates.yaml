@@ -1,5 +1,5 @@
 adapter: eslint
-# ESLint core's documents in rerail's javascript pack (NER-1738).
+# ESLint core's documents in rerail's javascript pack.
 rerail:
   pack: javascript
   project: eslint

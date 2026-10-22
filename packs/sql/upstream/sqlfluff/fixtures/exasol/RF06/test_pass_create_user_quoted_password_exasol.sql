@@ -1,0 +1,1 @@
+CREATE USER user_1 IDENTIFIED BY "h12_xhz";

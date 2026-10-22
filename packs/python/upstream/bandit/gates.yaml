@@ -1,5 +1,5 @@
 adapter: bandit
-# Bandit's documents in rerail's python pack (NER-1739).
+# Bandit's documents in rerail's python pack.
 rerail:
   pack: python
   project: bandit

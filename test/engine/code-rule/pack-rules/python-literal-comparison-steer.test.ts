@@ -1,4 +1,4 @@
-/** F632 must suggest value comparison without reversing `is not`, including inside string annotations (NER-2036). */
+/** F632 must suggest value comparison without reversing `is not`, including inside string annotations. */
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";

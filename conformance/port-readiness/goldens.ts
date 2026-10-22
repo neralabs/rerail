@@ -3,9 +3,9 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /**
- * One golden test of `matches-upstream-tests`: a real-code file, imported from NRV, whose source is the pinned corpus
- * file at `task`/`path` (a catalog task, or a rerail corpus as `rerail:<name>`), checked against `sha256`. Its expected
- * answer is not stored here: it is the pinned upstream's findings on that file, in the tool-pack's corpus.json.
+ * One golden test of `matches-upstream-tests`: a real-code file whose source is the pinned corpus file at `task`/`path`
+ * (a catalog task, or a rerail corpus as `rerail:<name>`), checked against `sha256`. Its expected answer is not stored
+ * here: it is the pinned upstream's findings on that file, in the tool-pack's corpus.json.
  */
 export interface Golden {
   task: string;
@@ -15,10 +15,11 @@ export interface Golden {
 
 /**
  * A tool-pack's goldens, by document id: a reviewed list the gates read and never write. A rule's goldens are the files
- * NRV's real-code gate found it differing on (NRV's validation/goldens/<pack>.tsv, under its id there), and, when no
- * upstream test file proves a shipped rule stays silent, a file where upstream reports nothing. A candidate keeps its
- * goldens until it agrees there, unless it differs on so many files that they only restate that it is wrong throughout:
- * then gates.yaml lists it under real_code_gaps instead (SYSTEMATIC_FILES).
+ * a real-code run found it differing on, and, when no upstream test file proves a shipped rule stays silent, a file
+ * where upstream reports nothing. Which run found them is the file's `# Source:` line: NRV's real-code gate (its
+ * validation/goldens/<pack>.tsv, under its id there) for most tool-packs, rerail's own for the ones NRV pins no tool
+ * of. A candidate keeps its goldens until it agrees there, unless it differs on so many files that they only restate
+ * that it is wrong throughout: then gates.yaml lists it under real_code_gaps instead (SYSTEMATIC_FILES).
  */
 export type Goldens = Map<string, Golden[]>;
 
@@ -36,7 +37,9 @@ export function goldensPath(toolPackDirectory: string): string {
   return join(toolPackDirectory, GOLDENS_FILE);
 }
 
-const HEADER = "# matches-upstream-tests goldens, imported from NRV and reviewed, never written by the gates: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256, sorted.";
+const HEADER = "# matches-upstream-tests goldens, reviewed, never written by the gates: a rule id, then each task or rerail corpus indented once, then each file indented twice with its sha256, sorted.";
+/** The second line: where the goldens come from, in words a reviewer can check. */
+const SOURCE = "# Source: ";
 const SHA256 = /^[0-9a-f]{64}$/u;
 const FIELD = /^[^\t\r\n]+$/u;
 
@@ -45,11 +48,12 @@ export const byText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const byPlace = (a: Golden, b: Golden) => byText(a.task, b.task) || byText(a.path, b.path) || byText(a.sha256, b.sha256);
 
 /**
- * The goldens file's text: one golden per line, grouped by rule and then by task or corpus, every level sorted, so the
- * file has one form and an imported golden is one added line.
+ * The goldens file's text: its header, `# Source: <source>`, then one golden per line, grouped by rule and then by task
+ * or corpus, every level sorted, so the file has one form and an imported golden is one added line.
  */
-export function serializeGoldens(goldens: Goldens): string {
-  const lines = [HEADER];
+export function serializeGoldens(goldens: Goldens, source: string): string {
+  if (!FIELD.test(source)) throw new Error(`a goldens file's source cannot be written: ${JSON.stringify(source)}`);
+  const lines = [HEADER, `${SOURCE}${source}`];
   for (const id of [...goldens.keys()].sort(byText)) {
     const entries = [...goldens.get(id)!].sort(byPlace);
     if (entries.length === 0) continue;
@@ -66,14 +70,17 @@ export function serializeGoldens(goldens: Goldens): string {
   return `${lines.join("\n")}\n`;
 }
 
-/** The goldens a file's text holds; it must be exactly what serializeGoldens writes. */
+/** The goldens a file's text holds; it must be exactly what serializeGoldens writes, its source line included. */
 export function parseGoldens(text: string, label: string): Goldens {
   const goldens: Goldens = new Map();
   let id: string | undefined;
   let task: string | undefined;
-  text.split("\n").forEach((line, index) => {
+  const lines = text.split("\n");
+  const source = lines[1]?.startsWith(SOURCE) === true ? lines[1].slice(SOURCE.length) : "";
+  if (source === "") throw new Error(`${label}:2: no "${SOURCE}<where the goldens come from>" line`);
+  lines.forEach((line, index) => {
     const at = `${label}:${index + 1}`;
-    if (line === "" || (index === 0 && line === HEADER)) return;
+    if (line === "" || index < 2) return;
     if (!line.startsWith("\t")) {
       if (!FIELD.test(line)) throw new Error(`${at}: not a rule id`);
       id = line;
@@ -88,7 +95,7 @@ export function parseGoldens(text: string, label: string): Goldens {
       goldens.get(id)!.push({ task, path: fields[0]!, sha256: fields[1]! });
     }
   });
-  if (serializeGoldens(goldens) !== text) throw new Error(`${label} is not in its one form (sorted, grouped, with its header)`);
+  if (serializeGoldens(goldens, source) !== text) throw new Error(`${label} is not in its one form (sorted, grouped, with its header and source line)`);
   return goldens;
 }
 
