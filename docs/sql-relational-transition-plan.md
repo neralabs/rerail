@@ -426,13 +426,24 @@ Missed targets require a documented cost attribution and another focused shape e
 
 ## Next implementation action
 
-Extend the ordered traversal to capture-bearing candidate rules.
-Start with a descendant walk whose stop is unknown before a later candidate binds a capture.
-The native matcher tests that next candidate before it processes the pending unknown stop.
-A successful next candidate can therefore decide the result even in a strict search.
-Preserve that boundary and the exact capture witness in a narrow typed state.
+The node-local capture kernel is implemented and passes its semantic and scaling tests.
+The latest B023 timing check is unresolved: the combined six-pair median is 2.029 times the reference, above the 2.0 limit.
+Its SQL and VM work remain unchanged; keep this timing gate open while the semantic transition continues.
 
-Then admit nested fallible traversal bodies and define failure publication across files and clauses.
+Admit a nested fallible traversal body with explicit child-result and continuation contracts.
+Start with an arguments node whose descendant array binds `A`, then searches for a number that binds `X` and tests a value.
+Use two arrays: a decisive match in the first must prevent a failing value read in the second.
+Also test an unknown first result, an unknown stop, and an inner capture that differs from the outer candidate.
+Compare exact witnesses, unknown roots, and atomic-call traces with the native engine.
+
+The completed node-local kernel reconstructs captures from input witnesses and the current candidate.
+An inner traversal can select another node, so that mask representation cannot encode general nested results.
+Carry typed child outputs across this boundary and prove when the parent resumes.
+Do not precompute fallible bodies for candidates that the parent never reaches.
+Measure increasing inner width, outer width, and root count before broadening admission.
+Require one matching execution and no frame publications for this first nested fixture.
+
+Then define failure publication across files and clauses.
 The current kernel proves atomic reached failures, not full-job diagnostic ordering or partial-result handling.
 Keep native work-budget parity, general recursion, enumeration, catalog coverage, and the complete-job execution gate explicit.
 The journal records each accepted or rejected rewrite and its measurement artifact.

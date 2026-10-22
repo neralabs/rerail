@@ -82,7 +82,7 @@ fn kind_filter(plan: &Plan, alias: &str) -> String {
 }
 
 impl Sql {
-    /// Total node-local operations need no demand/result join. CASE preserves reached work.
+    /// Node-local operations need no demand/result join. CASE preserves reached work.
     fn scalar(plan: &Plan, input: &Demand) -> Result<Option<(String, bool)>, String> {
         Ok(Some(match &plan.op {
             Op::Predicate(set) => (
@@ -525,8 +525,8 @@ pub(super) fn compile(
             "outcomes":{"false":0,"true":1,"unknown":2},"nativeComposition":false,
             "captures":observed.iter().map(|&id|json!({"name":slots[id].name,"slot":id,"kind":if slots[id].count {"count"} else {"node"}})).collect::<Vec<_>>(),
             "relations":sql.profile,
-            "limitations":["Native work and stack/depth budgets remain unproved.","Following values, nested ordered traversal bodies, capture-bearing stops, recursion, and enumeration remain unproved."],
-            "flags":["Candidate outcomes precede ordered reduction only because all admitted operations are total and effect-free.","Counts may evaluate candidates after a native early threshold; resource-limit parity remains pending."]
+            "limitations":["Native work and stack/depth budgets remain unproved.","Following values, nested ordered traversal bodies, recursion, enumeration, and full-file failure publication remain unproved."],
+            "flags":["Ordered node-local capture programs admit at most 61 slots and Boolean depth 16; masks keep recursive state at ten columns.","Only total structural search plans may evaluate candidates before ordered reduction.","Total generic counts may evaluate beyond a native early threshold; native resource-limit parity remains pending."]
         }),
     ))
 }

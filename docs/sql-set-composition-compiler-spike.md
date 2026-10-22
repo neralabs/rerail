@@ -3377,3 +3377,162 @@ The next phase adds capture-bearing ordered traversal, including the pending-unk
 Nested fallible traversal bodies and full-file failure publication follow that contract.
 Native resource budgets, enumeration, general recursion, catalog coverage, and the complete-job 100-execution gate remain pending.
 No production switch or fallback was added.
+
+### Milestone 2: captures in ordered traversal — started 2026-10-22
+
+Node-local binding operations can retain an input witness or replace it with the current candidate.
+The new candidate compiler uses that invariant to track bindings with integer masks.
+Its Boolean states contain truth, bound-slot, and withheld-slot masks, rather than copied capture columns.
+An input equality check runs only before that slot binds to the candidate.
+
+A true candidate result carries its bound-slot mask beside the truth tag in one signed integer.
+False and unknown retain their existing tags and export no captures.
+The completed traversal supplies the exact winning node; output columns reconstruct each capture once.
+The recursive walk keeps its existing ten columns, regardless of capture width.
+The local mask admits at most 61 distinct slots; wider local contracts fail compilation.
+Two truth bits and 61 capture bits fit in a nonnegative signed SQLite integer.
+
+A strict descendant search tests the next candidate before acting on a pending unknown stop.
+A true candidate wins at that boundary.
+A false candidate ends the search unknown before its own stop runs.
+An unknown capture-bearing candidate ends the search immediately.
+Counts discard probe captures and retain their non-strict interval semantics.
+Stop rules start with an empty environment, regardless of caller capture names.
+
+The local candidate program admits predicates, atomic values, whole-node captures, and nested `all`, `any`, and `not`.
+It rejects nested traversal before SQL execution; those bodies need a separate reached-demand contract.
+Each reached Boolean operand has one materialized test result before the next state reads it.
+These scalar barriers preserve failure order and prevent repeated atomic value calls.
+They do not publish mutable frames or serialize capture environments.
+
+For one exported capture, the result tag has this form:
+
+```sql
+-- truth: 0=false, 1=true, 2=unknown; bit 0 represents the local capture slot.
+SELECT CASE WHEN truth=1 THEN 1+((bound&1)<<2) ELSE truth END
+FROM candidate_result
+```
+
+A winning result of 5 exports the candidate node.
+A result of 1 retains the caller's original capture, including an absent optional capture.
+Only the final traversal output expands the mask into capture columns.
+A correlated lookup by demand key supplies incoming witnesses when equality needs them.
+Private stop captures use no caller lookup; count probes discard their result masks.
+
+The first draft passes nine new differential tests, including four fault-injection cases.
+The raw log is `/tmp/rerail-capture-walks-first-tests.log`.
+The final test set adds incoming-witness scaling, all 61 mask bits, and parent/sibling stop boundaries.
+The final generator also omits witness columns from traversals that export no captures.
+
+### Capture-bearing ordered traversal — measured results, 2026-10-22
+
+All 51 relational tests pass, including 11 new tests for this kernel.
+They compare native roots, exact capture witnesses, absent captures, count exports, and unknown roots.
+The cases cover every structural axis, strict unknowns, no backtracking, Boolean capture rollback, withholding, and private stop environments.
+A 61-capture case exercises the highest mask bit and confirms ten recursive columns.
+Wider local masks and nested traversal bodies fail admission before execution.
+
+All 18 fault traces pass, including four new capture-bearing cases.
+Each trace records one matching execution, including reached failures.
+The new traces establish these boundaries:
+
+- A value failure in the next candidate is reached after an unknown descendant stop.
+- A false next candidate ends a strict search before its own failing stop runs.
+- A successful capture-bearing candidate skips its own failing descendant stop.
+- A withheld capture dependency prevents a nested Boolean term from reading its value.
+
+The scaling driver emits SQL, EXPLAIN, source hashes, exact outputs, and separate diagnostic relation counts.
+It also reports local candidate CTEs, which the top-level relation count alone would omit.
+
+| Dimension | Size 16 VM | Size 64 VM | Size 256 VM | Value requests |
+| --- | ---: | ---: | ---: | --- |
+| First candidate matches | 1,258 | 1,258 | 1,258 | 1 at every size |
+| Last candidate matches | 16,283 | 64,043 | 255,083 | 1 at every size |
+| Independent roots | 17,728 | 70,432 | 281,248 | 16 / 64 / 256 |
+| Incoming capture witnesses | 16,948 | 68,452 | 274,468 | 0 at every size |
+
+Every profile uses one traced matching execution and zero frame publications.
+Incoming-witness searches issue 15, 63, and 255 atomic equality checks.
+EXPLAIN shows `SEARCH d USING AUTOMATIC COVERING INDEX (k=?)` for the correlated input lookup.
+The two root-scaling series build 60, 252, and 1,020 automatic-index entries across their query joins.
+This work grows with root count; it does not scan the entire input relation for every candidate.
+
+Known-first search emits six recursive rows and visits two nodes at every width.
+Late-match search emits 96, 384, and 1,536 recursive rows and visits 32, 128, and 512 nodes.
+Independent roots emit the same three row counts.
+Incoming-witness search emits 93, 381, and 1,533 rows, with 31, 127, and 511 visited nodes.
+These are logical CTE cardinalities from diagnostic queries, not physical write or allocation counts.
+
+The queries contain seven to eleven local candidate CTEs and 5,138–5,626 SQL bytes.
+Preparation takes 0.496–0.686 ms in these samples.
+The largest cold kernel sample takes 3.961 ms with counters enabled.
+Cold kernel timing excludes parsing and diagnostic queries; it does not establish a whole-job speedup.
+
+The remaining local cost is visible in the late-match case: about 498 VM instructions per visited node.
+Its Boolean state barriers still execute after a total prefix has already rejected that candidate.
+Atomic values remain guarded, but the later scalar projections still consume VM work.
+A future rewrite can collapse those false-prefix states only if it preserves withholding and reached failures.
+The current measurements establish linear growth and exact semantics, not a minimal instruction count.
+
+The six capture-free ordered profiles were rerun as a regression control.
+Their generated SQL is byte-identical to the previous phase, with unchanged VM counts.
+Known-first remains at 856 VM instructions; unknown-width remains at 9,706, 37,114, and 146,746.
+The raw results are `/tmp/rerail-capture-walks-capture-free-20261022.json`.
+
+The first frozen B023 run passes all correctness tests and the VM gate, but narrowly fails the timing gate.
+The generated query retains SHA-256 `84116309b7048f44b706bb74955b99a1bcb5b512d5b365b30a73f78992026aa1`.
+All 138 file hashes match, and both exact roots retain their expected capture witness.
+Every generated sample uses 2,812,255 VM instructions, one matching execution, and zero frame publications.
+
+| First-run pair | Generated cold kernel CPU | Reference cold kernel CPU |
+| --- | ---: | ---: |
+| 1 | 159.657 ms | 81.792 ms |
+| 2 | 161.847 ms | 79.125 ms |
+| 3 | 164.140 ms | 77.460 ms |
+
+The median ratio is 2.04546 against a maximum of 2.0.
+This is a failed gate, despite unchanged SQL and VM work.
+A separate confirmation run was selected before its results, with the first run retained.
+The final report includes both runs and the combined median; it does not select the faster run.
+
+The confirmation run passes the existing timing gate at a median ratio of 1.90483:
+
+| Confirmation pair | Generated cold kernel CPU | Reference cold kernel CPU |
+| --- | ---: | ---: |
+| 1 | 151.082 ms | 75.742 ms |
+| 2 | 150.389 ms | 81.690 ms |
+| 3 | 166.206 ms | 79.315 ms |
+
+Across all six pairs, the medians are 160.752 ms and 79.220 ms: a ratio of 2.02919.
+The combined result remains above 2.0, so the timing gate stays open.
+The unchanged query and VM count establish unchanged SQL work; they do not establish an acceptable timing ratio.
+No further runs were selected to obtain a passing result.
+This phase completes the node-local capture implementation, with this performance qualification retained for the transition.
+
+Validation totals 62 unique passing correctness tests: 51 relational, nine B023 fixtures, one adversarial test, and the frozen corpus.
+Formatting and both default and `code-rule-profile` Clippy checks pass.
+The profiles and both frozen runs pin the same executable and the matching source hashes.
+
+Artifacts:
+
+- `benchmark/sql-relational-capture-walks-evidence.json`: twelve profiles, eighteen fault traces, capture-free controls, and both frozen runs.
+- `benchmark/sql-relational-capture-walks.sql`: the generated known-first capture query.
+- `/tmp/rerail-capture-walks-20261022-final`: full profiles, SQL, EXPLAIN, and differential logs.
+- `/tmp/rerail-capture-walks-b023-20261022-final`: the retained first frozen run, including its failed timing gate.
+- `/tmp/rerail-capture-walks-b023-20261022-confirmation`: the confirmation run.
+
+Reproduce the capture profiles with:
+
+```sh
+JEMALLOC_OVERRIDE=/tmp/librerail_jemalloc_check_shim.dylib \
+python3 benchmark/relational-capture-walks.py /tmp/rerail-capture-walks-reproduction
+```
+
+The driver builds the test executable unless `--binary` supplies one.
+Use `benchmark/relational-complete-spike.py` with the frozen corpus configuration for the separate B023 gate.
+
+The compiler remains test-only, with no new runtime option or fallback.
+The next semantic kernel is nested fallible traversal with typed child results and explicit parent resumption.
+The transition plan gives its first two-array fixture and required failure boundaries.
+Full-file publication, native resource budgets, general recursion, enumeration, and complete-job execution accounting remain pending.
+The B023 timing gate also remains open; the unchanged VM count does not waive it.

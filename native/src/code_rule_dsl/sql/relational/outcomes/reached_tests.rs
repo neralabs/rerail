@@ -14,7 +14,13 @@ fn parity(rule: Value, source: &str) -> Value {
 }
 
 /// Faults occur in the same atomic native ValueTest in both engines, never in a composition callback.
-fn reached(rule: Value, source: &str, fault: Option<&str>, expected: &[&str], fails: bool) {
+pub(super) fn reached(
+    rule: Value,
+    source: &str,
+    fault: Option<&str>,
+    expected: &[&str],
+    fails: bool,
+) {
     let p = policy(rule, json!({}));
     let grammar = &grammar_matchers(&p)[0];
     let doc = tape(grammar.language, source);
