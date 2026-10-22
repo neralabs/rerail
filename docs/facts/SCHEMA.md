@@ -1,169 +1,185 @@
 # Fact schema v1
 
-Owner: S4. Status: **v1, interface frozen for S2 and S3** (additions only; any change to a defined relation bumps `SCHEMA_VERSION`). Measured decisions (§ 5) and exactness evidence live in `docs/facts/reports/phase-2-s4-schema.md`.
+Owner: S4. Status: **v1, interface frozen for S2 and S3** (additions only; any change to a defined relation bumps `SCHEMA_VERSION`). The Python-derived relations are **SQL views over the syntactic core**, compiled and memoized per content by the same compiler as any rule; the extractor produces only the core and the facts that need a parser (§ 1.3). Measured decisions (§ 5) and exactness evidence live in `docs/facts/reports/phase-2-s4-schema.md`.
 
 Conventions (PHASE-1 § Contract, unchanged):
 
 - One fact set per **content** (blake3-256 of the bytes, lowercase hex). Facts are path-independent; no relation reads the path.
 - Node ids: `u32` preorder over every tree-sitter node of the native tape (named and anonymous), root = 0; descendants of `id` are exactly `id+1 .. subtree_end` (half-open). Byte offsets half-open `[start, end)`. Lines 1-based.
-- Strings: process-interned `u32` symbols (`sym`). Node text is never stored: it is `source[start..end]`. Columns typed `text(node)` below mean "the source slice of that node", recovered on read.
+- Strings: process-interned `u32` symbols (`sym`). Node text is never stored: it is `source[start..end]`; in views, `source_text('', s, e)` is the content's slice `[s, e)` (the compiler's `text` built-in; the empty path means "this content").
 - `opt_X`: `u32::MAX` is none (SQL `NULL`).
 - `SCHEMA_VERSION` = **1** (`facts.rs`, `factfile.rs`).
 
-## 1. Syntactic core (per content; Spike A § 5.3, unchanged in meaning)
+## 1. Syntactic core (extracted; per content)
+
+### 1.1 Stored columns (Spike A § 5.3, unchanged in meaning)
 
 | relation | columns | notes |
 |---|---|---|
-| `node` | `id:u32` (row), `kind:sym`, `parent:opt_u32`, `start:u32`, `end:u32`, `start_line:u32`, `end_line:u32`, `subtree_end:u32`, `flags:u8`, `field:u16` | `flags` = named \| extra<<1 \| missing<<2 \| error<<3; `field` = grammar field code under the parent (0 none) |
-| `child` | CSR over `parent` (`child_offsets`, `children`) | derived on read |
-| kind postings | `kind_keys`, `kind_offsets`, `kind_nodes` | derived on read |
-| `line` | the native `LineTable` (terminators `\r\n`, `\r`, `\n`) | |
+| `node` | `id:u32` (row), `kind:sym`, `parent:opt_u32`, `start:u32`, `end:u32`, `start_line:u32`, `end_line:u32`, `subtree_end:u32`, `flags:u8`, `field:opt_sym` | `flags` = named \| extra<<1 \| missing<<2 \| error<<3; `field` = the grammar field the node hangs under |
+| `identifier` | `id:u32`, `name:sym` | named `identifier` nodes and their text |
+| `line` | `start:u32`, `end:u32` (before the terminator), `indent:u16` | the native `LineTable` (terminators `\r\n`, `\r`, `\n`) |
 | `syntax_error` | 0 or 1 row | the tree has an error or missing node |
-| decoded string value, f-string pieces | per node, on demand (`pyvalue.rs`, `fstring.rs`) | not persisted |
 
-### 1.1 The node set `N` and the shared node vocabulary
+Derived on read, never stored: the children CSR and the kind postings (`facts::index`).
 
-Every derived relation below is defined over **`N`** = the named nodes whose kind is not one of `comment`, `string_start`, `string_content`, `string_end`, `escape_sequence`, `line_continuation`. This is exactly the row set of:
+### 1.2 The core as SQL relations (what views read)
 
-- the `syntax` spec table of `quality-contracts-1/2/3` (`excludeKinds`, rel.rs `SyntaxSpec::tables`), and
-- every dump-built `nodes` stage (`syntax_N` / `raw_nodes` arms unioned by `syntax_rows_k`) **with the clause's shared selection (gate) and its ancestor predicate replaced by `true`**: the arms partition the named kinds and exclude the same six.
+| relation | columns (SQL) | definition |
+|---|---|---|
+| `node` | `id, kind, parent, start, "end", start_line, end_line, subtree_end, named, flags, field` | one row per node, preorder; `kind`, `field` as text; `named` = `flags & 1`; `parent`, `field` `NULL` when none |
+| `child` | `parent, idx, child` | every child, `idx` 0-based in order |
+| `field` | `parent, field, child, rank` | every child that hangs under a field; `rank` 0-based among the parent's children under that field |
+| `identifier` | `id, name` | as stored |
+| `line` | `no, start, "end", indent` | `no` 1-based |
 
-Within `N`, for a node `x`:
+All columns are integers or text with no declared affinity. `descendants(x)` is the id range `x < d < subtree_end(x)`, never a relation.
 
-- `parent(x)`: the tree parent (always named). In dump-built `nodes` this is `parent` and, with the gate `true`, also `edge_parent`.
-- `field(x, f)`: the first child of `x` hanging under grammar field `f`, if it is named (the dump's field captures and `SyntaxSpec`'s `<f>_*` columns; the fields used below are always named when present).
-- `ordinal(x)`: the 0-based position of `x` among the children of `parent(x)` that are in `N`, ordered by `(start, end, kind)` (the `row_number()` of the `nodes` stage; for `N` it equals preorder among `N`-siblings).
-- `text(x)`: `source[start(x)..end(x)]`.
+### 1.3 Facts that need a parser (extracted, per content)
 
-Node identity in the policies' SQL is the text `kind:start:end` (dump convention) or the integer id (syntax-spec convention). The derived relations use `u32` ids; the binder renders either form. (The differential, § 4, also checks that no two nodes of `N` in the corpus share `kind:start:end`, so the two identities coincide.)
-
-## 2. Python-derived relations (per content, over `N`)
-
-Each relation is defined to return **exactly** what the named policy stage text returns when its `nodes` (and `ownership`) are built from all of `N` (§ 1.1). The stage texts are byte-identical after whitespace normalisation across the clauses listed; "stage" columns give the SQL column the fact column renders to. `n.*` (the clause's own `nodes` columns) is **not** stored: it is the column view of the key node, which S2 provides. Row order: the order the stage produces over a `nodes` table in preorder (the relation is stored in that order); a clause whose `nodes` is in arm order gets the same rows, reordered as its arm order dictates (§ 2.13).
-
-### 2.1 `owner` (support for `assignment`, `context`; stage `ownership`, 11 clauses, and the syntax spec's `ownership`)
-
-| column | type | stage column | definition |
+| relation | columns | definition | status |
 |---|---|---|---|
-| `id` | `u32` | `id` | every node of `N`, preorder |
-| `fn` | `opt_u32` | `fn` | nearest ancestor-or-self of kind `function_definition` |
-| `cls` | `opt_u32` | `cls` | nearest ancestor-or-self of kind `class_definition` |
-| `top_fn` | `opt_u32` | `top_fn` | outermost ancestor-or-self of kind `function_definition` |
+| decoded string value | per `string`/`concatenated_string` node | Python literal decoding (`pyvalue.rs`, port of native `value/python.rs`) | on demand, not persisted |
+| f-string parts | per string node | `fstring.rs` (port of native `literal/python_fstring.rs`) | on demand, not persisted |
+| `string_type_definition` | `host:u32` (+ the parsed annotation tree) | the string literals Ruff 0.16.9 reads as type definitions (`string_type_definitions`), as native's scope table computes them (`scope/python/typedefs.rs`, `ScopeTable::annotations`), extracted by **calling** native's builder (visibility only). Per content: the scope table reads one file and never crosses files. | § 6 of the report |
 
-Stored as three columns indexed by node id (`u32::MAX` none), so `owner` is O(1) per node and costs no join.
+## 2. Python-derived relations: views over the core
 
-### 2.2 `function` (stage `functions`: `SELECT n.*,n.name_source AS name FROM nodes n WHERE n.kind='function_definition'`; 13 clauses)
+### 2.1 Rules
 
-| column | type | stage column | definition |
-|---|---|---|---|
-| `id` | `u32` | `id` (+ `n.*`) | nodes of kind `function_definition`, preorder |
-| `name` | `opt_u32` | `name` = `text(name)` | `field(id, name)` |
+- Each view below is **normative SQL** (byte-for-byte the text Spike A's engine runs: `views.rs` reads this file's `-- view:` lines). Views are evaluated per content in document order; a view reads the core and the views above it. Ids are node ids (integers); no view copies node text except where a predicate needs it.
+- `py_node` is the node set **`N`** = the named nodes whose kind is not one of `comment`, `string_start`, `string_content`, `string_end`, `escape_sequence`, `line_continuation`. This is exactly the row set of the `syntax` spec table of `quality-contracts-1/2/3` (`excludeKinds`) and of every dump-built `nodes` stage (`syntax_N`/`raw_nodes` arms unioned by `syntax_rows_k`) **with the clause's shared selection (gate) and ancestor predicate replaced by `true`**.
+- Each view is defined to return exactly what the named policy stage text returns over a `nodes` (and `ownership`) built from all of `N`, after rendering (§ 2.3). The stage texts are byte-identical (after whitespace normalisation) across the clauses listed with each view.
+- Row order: each view's own order (FROM-order nested loops over a preorder `py_node`). A clause whose `nodes` is in arm order sees the same rows ordered by its `nodes` order of the key node(s) (§ 2.3).
 
-### 2.3 `class` (stage `classes`: `… WHERE n.kind='class_definition'`; 7 clauses)
+### 2.2 The views
 
-| column | type | stage column | definition |
-|---|---|---|---|
-| `id` | `u32` | `id` (+ `n.*`) | nodes of kind `class_definition`, preorder |
-| `name` | `opt_u32` | `name` = `text(name)` | `field(id, name)` |
-| `outer` | `opt_u32` | (used by `context`) | `owner(parent(id)).cls`: the nearest enclosing class |
+"Stage" gives the policy stage the view stands for and the clauses that hold that exact text; "renders" gives how the stage's columns follow from the view's.
 
-### 2.4 `method` (stage `methods`; 4 clauses)
+#### `py_node`
 
-`SELECT f.*,c.id AS cls,c.name AS class_name FROM functions f JOIN classes c ON c.__path=f.__path WHERE f.parent=<c.body> OR EXISTS(SELECT 1 FROM nodes d WHERE d.id=f.parent AND d.kind='decorated_definition' AND d.parent=<c.body>)`
+`N` with `ordinal` = 0-based position among `N`-siblings by `(start, end, kind)` (the `nodes` stage's `row_number()`). Stage: `nodes` (dump-built, gate `true`; syntax spec table). Renders: `id`/`parent`/`edge_parent` are `kind:start:end` texts in dump clauses, integers in syntax-spec clauses; `n.*` columns are the binder's column view of the node.
 
-| column | type | stage column | definition |
-|---|---|---|---|
-| `fn` | `u32` | `id` (+ `f.*`) | a `function` row |
-| `cls` | `u32` | `cls`, `class_name` = `text(class.name)` | the `class` whose `field(cls, body)` is `parent(fn)`, or is `parent(parent(fn))` when `parent(fn)` is a `decorated_definition` |
+```sql
+-- view: py_node
+SELECT id, kind, parent, start, "end", row_number() OVER(PARTITION BY parent ORDER BY start,"end",kind)-1 AS ordinal FROM node WHERE named=1 AND kind NOT IN ('comment','string_start','string_content','string_end','escape_sequence','line_continuation')
+```
 
-Order: `fn` preorder (the outer loop); at most one `cls` per `fn`.
+#### `py_field`
 
-### 2.5 `attribute` (stage `attributes`; 12 clauses)
+the first child under each field, when it is named (the dumps' field captures; the syntax spec's `<f>_*` columns). Stage: `<f>_start`, `<f>_end`, `<f>_kind`, `<f>_source`, `<f>_id` columns of `nodes`. Renders: `<f>_source` = text of `child`.
 
-| column | type | stage column | definition |
-|---|---|---|---|
-| `id` | `u32` | `id` (+ `n.*`) | nodes of kind `attribute`, preorder |
-| `attr` | `opt_u32` | `attr` = `text(attr)` | `field(id, attribute)` |
-| `object` | `opt_u32` | `object` = its id, `object_text` = `text(object)` | `field(id, object)` |
+```sql
+-- view: py_field
+SELECT f.parent, f.field, f.child FROM field f JOIN node c ON c.id=f.child WHERE f.rank=0 AND c.named=1
+```
 
-### 2.6 `call` (stage `calls`; 11 clauses)
+#### `py_owner`
 
-`SELECT n.*,f.id AS callee_id,f.kind AS callee_kind,f.text AS full_callee,coalesce(a.attr,f.text) AS callee,a.object AS receiver FROM nodes n JOIN nodes f ON f.id=<n.function> LEFT JOIN attributes a ON a.id=f.id WHERE n.kind='call'`
+per node of `N`: nearest ancestor-or-self `function_definition` (`fn`), `class_definition` (`cls`), outermost `function_definition` (`top_fn`). Stage: `ownership` (11 clauses; syntax spec `ownership` with owners `fn`, `cls`, `top_fn` outermost). Renders: ids rendered.
 
-| column | type | stage column | definition |
-|---|---|---|---|
-| `id` | `u32` | `id` (+ `n.*`) | nodes of kind `call` with `field(id, function)` present, preorder |
-| `function` | `u32` | `callee_id`, `callee_kind`, `full_callee` = `text(function)` | `field(id, function)` |
-| `callee` | `u32` | `callee` = `text(callee)` | `attribute(function).attr` when `function` is an `attribute` with an `attribute` field, else `function` |
-| `receiver` | `opt_u32` | `receiver` (an id) | `attribute(function).object` when `function` is an `attribute`, else none |
+```sql
+-- view: py_owner
+WITH RECURSIVE o(id,fn,cls,top_fn) AS (SELECT id,CASE WHEN kind='function_definition' THEN id END,CASE WHEN kind='class_definition' THEN id END,CASE WHEN kind='function_definition' THEN id END FROM node WHERE parent IS NULL UNION ALL SELECT c.id,CASE WHEN c.kind='function_definition' THEN c.id ELSE o.fn END,CASE WHEN c.kind='class_definition' THEN c.id ELSE o.cls END,CASE WHEN o.top_fn IS NULL AND c.kind='function_definition' THEN c.id ELSE o.top_fn END FROM o JOIN node c ON c.parent=o.id) SELECT n.id,o.fn,o.cls,o.top_fn FROM py_node n JOIN o ON o.id=n.id
+```
 
-### 2.7 `parameter` (stage `parameters`; 7 clauses)
+#### `py_function`
 
-`SELECT f.__path,f.id AS fn,p.id,p.kind,p.text,n.text AS name,<p.type> AS annotation, row_number() OVER(PARTITION BY f.__path,f.id ORDER BY p.__start)-1 AS position FROM functions f JOIN nodes p ON p.parent=<f.parameters> JOIN nodes n ON (n.id=p.id AND p.kind='identifier' OR n.parent=p.id AND n.ordinal=0 AND n.kind='identifier') WHERE p.kind IN ('identifier','typed_parameter','default_parameter','typed_default_parameter')`
+`function_definition` nodes; `name` = the `name` field child. Stage: `functions` = `SELECT n.*,n.name_source AS name FROM nodes n WHERE n.kind='function_definition'` (13 clauses: step-contracts-1..6, state-signatures-1, state-flow-1, state-flow-project-1, state-projection-recovery-2, executor-provenance, quality-conditional-1, legacy-execution-graphs). Renders: `n.*` of `id`; `name` = text.
 
-| column | type | stage column | definition |
-|---|---|---|---|
-| `fn` | `u32` | `fn` | a `function` row |
-| `id` | `u32` | `id`, `kind`, `text` | a child `p ∈ N` of `field(fn, parameters)` of kind `identifier`, `typed_parameter`, `default_parameter` or `typed_default_parameter` |
-| `name` | `u32` | `name` = `text(name)` | `p` itself when `p` is an `identifier`; else the child of `p` in `N` with `ordinal 0` when it is an `identifier`; rows without a name do not exist |
-| `annotation` | `opt_u32` | `annotation` (an id) | `field(p, type)` |
-| `position` | `u32` | `position` | 0-based rank of the row among its `fn`'s rows by `start(p)` |
+```sql
+-- view: py_function
+SELECT n.id, nm.child AS name FROM py_node n LEFT JOIN py_field nm ON nm.parent=n.id AND nm.field='name' WHERE n.kind='function_definition'
+```
 
-Order: `fn` preorder, then `p` in `nodes` order (preorder over a preorder `nodes`).
+#### `py_class`
 
-### 2.8 `assignment` (stage `assignments`; 8 clauses)
+`class_definition` nodes; `name`; `outer` = the nearest enclosing class (`owner(parent).cls`). Stage: `classes` (7 clauses: step-contracts-1..4, state-signatures-1, quality-conditional-1, legacy-execution-graphs). Renders: `n.*` of `id`; `name` = text; `outer` feeds `py_context`.
 
-`SELECT n.*,l.id AS target,l.kind AS target_kind,l.text AS target_text,r.id AS value,r.kind AS expr_kind,r.text AS expr_text,o.fn FROM nodes n JOIN nodes l ON l.id=<n.left> LEFT JOIN nodes r ON r.id=<n.right> LEFT JOIN ownership o ON o.id=n.id WHERE n.kind='assignment'`
+```sql
+-- view: py_class
+SELECT n.id, nm.child AS name, po.cls AS outer FROM py_node n LEFT JOIN py_field nm ON nm.parent=n.id AND nm.field='name' LEFT JOIN py_owner po ON po.id=n.parent WHERE n.kind='class_definition'
+```
 
-| column | type | stage column | definition |
-|---|---|---|---|
-| `id` | `u32` | `id` (+ `n.*`) | nodes of kind `assignment` with `field(id, left)`, preorder |
-| `target` | `u32` | `target`, `target_kind`, `target_text` | `field(id, left)` |
-| `value` | `opt_u32` | `value`, `expr_kind`, `expr_text` | `field(id, right)` |
-| `fn` | `opt_u32` | `fn` | `owner(id).fn` |
+#### `py_method`
 
-### 2.9 `decorator` (stage `decorators`; `legacy-execution-graphs`)
+functions whose parent, or whose `decorated_definition` parent's parent, is a class's `body`. Stage: `methods` (step-contracts-1..3, state-signatures-1). Renders: `f.*` = `functions` row of `fn`; `cls`; `class_name` = text of `py_class.name`.
 
-`SELECT f.__path,f.id AS fn,d.id,coalesce(c.callee,a.attr,child.text) AS name FROM functions f JOIN nodes wrapper ON wrapper.id=f.parent AND wrapper.kind='decorated_definition' JOIN nodes d ON d.parent=wrapper.id AND d.kind='decorator' JOIN nodes child ON child.parent=d.id LEFT JOIN calls c ON c.id=child.id LEFT JOIN attributes a ON a.id=child.id`
+```sql
+-- view: py_method
+SELECT f.id AS fn, c.id AS cls FROM py_function f JOIN py_node fn ON fn.id=f.id LEFT JOIN py_node d ON d.id=fn.parent AND d.kind='decorated_definition' JOIN py_field b ON b.field='body' AND b.child=coalesce(d.parent,fn.parent) JOIN py_node c ON c.id=b.parent AND c.kind='class_definition'
+```
 
-| column | type | stage column | definition |
-|---|---|---|---|
-| `fn` | `u32` | `fn` | a `function` row whose parent is a `decorated_definition` |
-| `id` | `u32` | `id` | a `decorator` child of that wrapper |
-| `child` | `u32` | (row identity) | each child of `id` in `N`, in order |
-| `name` | `u32` | `name` = `text(name)` | `call(child).callee` if `child` has a `call` row; else `attribute(child).attr` if present; else `child` |
+#### `py_attribute`
 
-### 2.10 `import_identifier` (stage `import_identifiers`; `quality-contracts-1`, `-2`)
+`attribute` nodes with their `attribute` and `object` field children. Stage: `attributes` (12 clauses). Renders: `n.*`; `attr` = text; `object` = id; `object_text` = text.
 
-`SELECT n.__path,n.id FROM import_ranges imp JOIN nodes n ON n.__start>=imp.__start AND n.__start<=imp.__end WHERE n.kind='identifier' AND n.__end<=imp.__end`, with `import_ranges` = nodes of kind `import_statement`/`import_from_statement`.
+```sql
+-- view: py_attribute
+SELECT n.id, a.child AS attr, o.child AS object FROM py_node n LEFT JOIN py_field a ON a.parent=n.id AND a.field='attribute' LEFT JOIN py_field o ON o.parent=n.id AND o.field='object' WHERE n.kind='attribute'
+```
 
-| column | type | stage column | definition |
-|---|---|---|---|
-| `id` | `u32` | `id` | `identifier` nodes `n` with `start(imp) ≤ start(n) ≤ end(imp)` and `end(n) ≤ end(imp)` for an import statement `imp`; one row per (imp, n) |
+#### `py_call`
 
-Order: `imp` preorder, then `n` preorder.
+`call` nodes with a `function` field child; `callee` = the function's `attribute` child when it is an attribute that has one, else the function; `receiver` = its `object`. Stage: `calls` (11 clauses). Renders: `n.*`; `callee_id` = id of `function`, `callee_kind`, `full_callee` = its text; `callee` = text; `receiver` = id.
 
-### 2.11 `context` (stage `contexts`, `state-flow-1` and `state-flow-project-1`; rule-private constants, path-free part only)
+```sql
+-- view: py_call
+SELECT n.id, f.id AS function, coalesce(a.attr,f.id) AS callee, a.object AS receiver FROM py_node n JOIN py_field fc ON fc.parent=n.id AND fc.field='function' JOIN py_node f ON f.id=fc.child LEFT JOIN py_attribute a ON a.id=f.id WHERE n.kind='call'
+```
 
-| column | type | stage column | definition |
-|---|---|---|---|
-| `fn` | `u32` | `id` (+ `f.*`) | a `function` row with `owner(fn).top_fn = fn` |
-| `class_name` | `text` (derived) | `class_name` | `coalesce(qual(owner(fn).cls), '')`, `qual(c) = name(c)` if `outer(c)` none, else `qual(outer(c)) || '.' || name(c)` (SQL `NULL` propagation) |
-| `planning`, `preprocess`, `ctx_helper`, `materializer` | `tri` (0, 1, `NULL`) | same | the stage's boolean expressions, SQLite three-valued |
-| `provider_helper_name` | `tri` | `provider_helper` = `__path='impl/common/l2070_server_plan/backend_profiles.py' AND provider_helper_name` | `rx_matches(name, 'component\|components\|score\|scores')`; the path conjunct is the binder's (facts are path-free) |
+#### `py_parameter`
 
-### 2.12 Refused as per-content facts: `special_attributes`, `return_kinds` (and `direct_events`)
+per function: the `identifier`/`typed_parameter`/`default_parameter`/`typed_default_parameter` children of its `parameters`, with a name; `position` among them by start. Stage: `parameters` (7 clauses: step-contracts-2,3,5, state-signatures-1, state-flow-1, state-flow-project-1, quality-conditional-1). Renders: `__path`, `fn`, `id`, `kind`, `text` of `id`, `name` = text, `annotation` = id, `position`.
 
-Their shared texts (`state-flow-1`, `state-flow-project-1`) read `string_values`, which joins the clause's `raw_strings_*` matcher inputs, and `runtime(__path,name)` / `string_values` join rows **by name across the node set** (`r.name=call.callee`, `n.text=a.target_text`). A row's value then depends on which *other* nodes the clause selected, so no per-row selection filter of an all-nodes relation reproduces the stage: `Unsupported: name-keyed join across the clause's node selection`. They stay rule logic (S2's cross-clause sharing).
+```sql
+-- view: py_parameter
+SELECT f.id AS fn, p.id, nm.id AS name, t.child AS annotation, row_number() OVER(PARTITION BY f.id ORDER BY p.start)-1 AS position FROM py_function f JOIN py_field ps ON ps.parent=f.id AND ps.field='parameters' JOIN py_node p ON p.parent=ps.child JOIN py_node nm ON (nm.id=p.id AND p.kind='identifier' OR nm.parent=p.id AND nm.ordinal=0 AND nm.kind='identifier') LEFT JOIN py_field t ON t.parent=p.id AND t.field='type' WHERE p.kind IN ('identifier','typed_parameter','default_parameter','typed_default_parameter')
+```
 
-### 2.13 Binding a stage to a relation (for S2)
+#### `py_assignment`
 
-A row's **support** is the set of nodes whose presence in the clause's `nodes` the stage row needs: the ids in its key and id columns, and for `owner`/`class_name` the ancestor chain up to the owner. Over a clause selection `S`:
+`assignment` nodes with a `left` child in `N`; `value` = `right` child; `fn` = owner. Stage: `assignments` (8 clauses: step-contracts-1,2,4,6, state-signatures-1, state-flow-1, state-projection-recovery-2, state-flow-project-1). Renders: `n.*`; `target`, `target_kind`, `target_text`; `value`, `expr_kind`, `expr_text`; `fn`.
 
-- the stage over `nodes(S)` returns exactly the relation's rows whose support is ⊆ `S`, **provided** `S` is closed under descendants for the nodes of the support (true for the `matches X or inside X` gates) — otherwise `ordinal`, `position`, `owner` and `class_name` are computed over `S`'s siblings and chains and must be recomputed;
-- row order is the clause's `nodes` order of the key node (arm order, preorder within an arm), then the relation's inner order.
+```sql
+-- view: py_assignment
+SELECT n.id, l.id AS target, r.id AS value, o.fn FROM py_node n JOIN py_field lf ON lf.parent=n.id AND lf.field='left' JOIN py_node l ON l.id=lf.child LEFT JOIN py_field rf ON rf.parent=n.id AND rf.field='right' LEFT JOIN py_node r ON r.id=rf.child LEFT JOIN py_owner o ON o.id=n.id WHERE n.kind='assignment'
+```
 
-S2 owns the binding and re-verifies it with `FACTS_A3_CHECK`.
+#### `py_decorator`
+
+per decorated function: each child of each `decorator`; `name` = the child's call callee, else its attribute's `attr`, else the child. Stage: `decorators` (legacy-execution-graphs). Renders: `__path`, `fn`, `id`, `name` = text.
+
+```sql
+-- view: py_decorator
+SELECT f.id AS fn, d.id, child.id AS child, coalesce(c.callee,a.attr,child.id) AS name FROM py_function f JOIN py_node fn ON fn.id=f.id JOIN py_node w ON w.id=fn.parent AND w.kind='decorated_definition' JOIN py_node d ON d.parent=w.id AND d.kind='decorator' JOIN py_node child ON child.parent=d.id LEFT JOIN py_call c ON c.id=child.id LEFT JOIN py_attribute a ON a.id=child.id
+```
+
+#### `py_import_identifier`
+
+identifiers whose start lies in `[start, end]` of an `import_statement`/`import_from_statement` and whose end is at most its end; one row per (import, identifier). Stage: `import_identifiers` (quality-contracts-1, -2; `import_ranges` inlined). Renders: `__path`, `id`.
+
+```sql
+-- view: py_import_identifier
+SELECT n.id, imp.id AS import FROM py_node imp JOIN py_node n ON n.kind='identifier' AND n.start>=imp.start AND n.start<=imp."end" WHERE imp.kind IN ('import_statement','import_from_statement') AND n."end"<=imp."end"
+```
+
+#### `py_context`
+
+state-flow's function contexts: top-level functions (`top_fn = fn`), their dotted class chain and five predicates in SQLite three-valued logic; path-free. Stage: `contexts` (state-flow-1, state-flow-project-1). Renders: `f.*` = `functions` row; `class_name`; `planning`, `preprocess`, `ctx_helper`, `materializer` as is; `provider_helper` = `__path='impl/common/l2070_server_plan/backend_profiles.py' AND provider_helper_name` (the path conjunct is the binder's: facts are path-free).
+
+```sql
+-- view: py_context
+WITH RECURSIVE cn(id,name) AS (SELECT c.id,i.name FROM py_class c LEFT JOIN identifier i ON i.id=c.name WHERE c.outer IS NULL UNION ALL SELECT c.id,p.name||'.'||i.name FROM cn p JOIN py_class c ON c.outer=p.id LEFT JOIN identifier i ON i.id=c.name) SELECT f.id AS fn, coalesce(q.name,'') AS class_name, rx_matches(fname.name,'_lazy$') OR fname.name IN ('compile','lower','post_op','pre_op','preprocess') OR fname.name='pending_pipeline_effects' OR rx_matches(fname.name,'^apply_.*_effect$') OR EXISTS(SELECT 1 FROM py_node w WHERE w.id=fn.parent AND w.kind='decorated_definition' AND rx_matches(source_text('',w.start,w."end"),'(?m)^\s*@(?:[\w.]*\.)?pure_lazy\b')) AS planning, fname.name='preprocess' AS preprocess, substr(fname.name,-11)='sql_builder' AND fname.name NOT IN ('compile','lower','post_op','pre_op','preprocess') AND EXISTS(SELECT 1 FROM py_parameter p JOIN py_node ann ON ann.id=p.annotation WHERE p.fn=f.id AND rx_matches(source_text('',ann.start,ann."end"),'\bCompilationContext\b')) AS ctx_helper, rx_matches(fname.name,'component|components|score|scores') AS provider_helper_name, EXISTS(SELECT 1 FROM py_parameter p JOIN identifier pn ON pn.id=p.name WHERE p.fn=f.id AND pn.name='runtime_refs') AND (rx_matches(fname.name,'^materialize_.*builder$') OR EXISTS(SELECT 1 FROM py_parameter p JOIN py_node ann ON ann.id=p.annotation WHERE p.fn=f.id AND rx_matches(source_text('',ann.start,ann."end"),'\bRuntimeBuilderSpec\b'))) AS materializer FROM py_function f JOIN py_node fn ON fn.id=f.id JOIN py_owner own ON own.id=f.id AND own.top_fn=f.id LEFT JOIN identifier fname ON fname.id=f.name LEFT JOIN cn q ON q.id=own.cls
+```
+
+### 2.3 Binding a stage to a view (for S2)
+
+A view row's **support** is the set of nodes the stage row needs in the clause's `nodes`: the ids in its key and id columns, plus, for `fn`/`cls`/`top_fn`/`outer`/`class_name`, the ancestor chain up to the owner, and for `ordinal`/`position`, the siblings. Over a clause selection `S`, the stage over `nodes(S)` returns exactly the view's rows whose support is ⊆ `S` when `S` is closed under descendants (the `matches X or inside X` gates); otherwise `ordinal`, `position`, `owner` and `class_name` must be recomputed over `S`. Row order is the clause's `nodes` order of the key node (arm order, preorder within an arm), then the view's inner order. S2 owns the binding and re-verifies it with `FACTS_A3_CHECK`.
+
+### 2.4 Not views over the core: `special_attributes`, `return_kinds` (and `direct_events`)
+
+Their shared texts (state-flow-1, state-flow-project-1) read `string_values`, i.e. the clause's `raw_strings_*` **matcher inputs** (decoded strings under the clause's gate), and join rows **by name across the node set** (`runtime(__path,name)`: `r.name=call.callee`; `string_values`: `n.text=a.target_text`). A row then depends on which *other* nodes the clause selected, so no per-row filter of an all-nodes relation reproduces the stage over a gated selection: `Unsupported: name-keyed join across the clause's node selection`. Defining them over all of `N` is possible (the stage chain over these views plus decoded strings) but no clause could bind it; they stay rule-private logic that S2 compiles per clause (cross-clause sharing applies only when two clauses' selections are equal).
 
 ## 3. Exported relations (per content; Spike B § 5.1, v1)
 
@@ -171,7 +187,7 @@ Unchanged from Spike B v0 (`spikes/facts-b/src/facts.rs`): `def(name:sym, kind:s
 
 ## 4. Exactness (the differential)
 
-`facts-a derived-check` builds, per corpus file, the reference: every clause that holds one of the stage texts above, with its gate and ancestor predicate forced `true`, its `nodes` (and stages up to the target) run by the SQL engine; and compares each target stage's rows (values, types and, after the documented reordering, order) with the relation rendered into the stage's columns. Results and per-file cost: report § 2.
+`facts-a derived-check` evaluates the views per corpus file and, for every clause that holds one of the stage texts of § 2.2, runs the reference: the clause's own `nodes` (dump inputs with the gate and ancestor predicate forced `true`, or its syntax-spec tables) and its stages up to the target, by the SQL engine. Each target stage's rows are compared with the view's rows rendered into the stage's columns (§ 2.2 "renders"): values, types, and order after the § 2.3 reordering. Results and per-file cost: report § 2.
 
 ## 5. Fact files v1
 
