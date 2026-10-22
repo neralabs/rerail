@@ -2,4 +2,5 @@
 //! policy `$option` resolution and scopes.
 pub mod ir;
 pub mod policy;
+pub mod reference;
 pub mod sql;
