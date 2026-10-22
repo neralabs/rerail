@@ -32,6 +32,12 @@ Status: **complete; gates measured.**
 | A3 per (clause, file) | mean ≤ 0.5 ms, p95 ≤ 5 ms | mean 0.79 ms, p95 1.30 ms, p50 0.012 ms, p99 12.1 ms, max 1.57 s (228,685 samples) | **fail** (mean); p95 passes | `20261022T130531-repo` (other runs: mean 0.83 / 0.79 ms, p95 1.36 / 1.30 ms) |
 | A4 extraction | p50 ≤ 10 ms, p99 ≤ 100 ms; bytes per file reported | Parse + extract: p50 0.53 ms, p99 10.5 ms, max 74.9 ms. Extraction from the tape alone: p50 0.045 ms, p99 1.06 ms. Fact-file bytes per file: p50 51.0 KB, p95 407 KB, p99 1.02 MB, mean 116 KB, 1.05 GB in total (8.3× the source at p50). In memory: p50 57 KB. Fact-file round trip: 0 mismatches over 9,010 files. | **pass** | `20261022T130531-repo`, `20261022T131227-store` |
 | A5 peak RSS, 4 workers | ≤ 2 GiB | 8.46 GB (7.88 GiB); 8.44–8.46 GB across runs. 3.57 GB at the end of the file phase; the repository partitions (`eval::finish`) raise it to the peak. | **fail** | `20261022T130531-repo` (`max_rss_bytes` in `results.json`, `/usr/bin/time -l` in `stderr.txt`) |
+| A1 parity after A3, source corpus | unchanged | 1,253/1,259 calls; 0 FP, 2 FN, 6 failures, all `quality-contracts-1` `annotation`. Mismatch list and per-check counts identical to `…131243-replay`. | unchanged | `20261022T135635-replay` |
+| A1 parity after A3, repository | unchanged | 173/173; 0 FP, 0 FN, 38 failures, all `quality-contracts-1` | unchanged | `20261022T142444-repo/parity.json` (identical in `…142306-repo`, `…142355-repo`) |
+| A2 (i) after A3 (§ 8) | ≤ 10% | 152.6 s CPU, median of 150.5 / 152.6 / 153.2 s; 38.8% of native. Wall 48.8 s (48.3–49.3). | **fail**; kill band > 25% | `20261022T142444-repo` (median), `…142306-repo`, `…142355-repo`; `a2.json`, `a3.json` in `…142444-repo` |
+| A2 (ii) after A3 | ≤ 10% | 127.8 s facts vs 364.7 s native: 35.0% (full-probe sensitivity 35.3%) | **fail** | same |
+| A3 after A3 | mean ≤ 0.5 ms, p95 ≤ 5 ms | mean 0.548 ms, p95 0.765 ms, p50 0.011 ms, p99 7.24 ms, max 1.43 s | **fail** (mean, by 0.05 ms); p95 passes | `20261022T142444-repo` (others: mean 0.539 / 0.550 ms) |
+| A5 after A3 | ≤ 2 GiB | Peak 5.86 GB (5.858–5.861). End of the per-file phase: 52 MB current RSS; the per-file phase's own peak 2.55 GB (one large file per worker). The peak is `quality-conditional-1`'s repository partition in `finish`. | **fail** (peak); the per-file phase passes | same (`cur_rss_bytes`, `max_rss_bytes` in `results.json`) |
 
 Per check, source corpus: `execution_authority_bypass` 5/5, `impl_direct_execution` 68/68, `legacy_execution_surfaces` 80/80, `raw_execute_regression` 4/4, `serverplan_bypass` 6/6, `serverplan_dispatch_architecture` 59/59, `serverplan_state_tripwires` 79/79, `serverplan_steps` 746/746, `serverplan_target_architecture` 12/12. `serverplan_quality` matches 194/200 calls.
 
@@ -297,8 +303,123 @@ Strings are per file. The reader re-interns kinds and maps field names back to g
   - `96168e00a`: OR probes. This is the commit of the gate timing runs.
   - `5fa7ace5a`: fact-file padding per Spike B, and `inspect`. `repo` is unchanged.
 - Production change in this run: visibility only. `native/src/code_rule_dsl/lines.rs` makes `Terminators`, `LineTable::new`, `start` and `end` `pub`, so the fact-file reader can rebuild a `LineTable`.
-- Done: every gate measured (§ 2) and every kill criterion evaluated (§ 2).
+- Done: every gate measured (§ 2) and every kill criterion evaluated (§ 2). Spike A3 (§ 8): substitution measured; its resume notes are in § 8.6.
 - Not done, by decision: the annotation classifier for quality-contracts-1.
-- Not done, out of scope: substituting the (a) SQL stages with fact relations. That is Phase 2's compiler, and § 6 explains why A2 needs it.
 - Reproduce: build (§ 1), then follow § 3. The comparator outputs and `a2.json` are in the run directories.
 - Native semantics specs used by the port: `~/rerail-bench/facts/spike-a/work/spec-{ast,rel,clause}.md`.
+
+## 8. Spike A3: substitution
+
+Status: **measured.** A2 (i) 38.8%, A2 (ii) 35.0% of native CPU: **kill band > 25%.** Parity unchanged. Gate runs at `f5feb80d6`: `~/rerail-bench/facts/spike-a/runs/20261022T142306-repo`, `…142355-repo`, `…142444-repo` (median). Load during the runs 3.2–4.9, trusted.
+
+### 8.1 Inventory (step 1)
+
+Correction to the brief: the median Spike A run is `20261022T130531-repo` (212.9 s), not `…130638-repo` (222.7 s, the slowest). The 36.6 s and 70.5 s of § 6 are from `…130531-repo`: confirmed there (36.64 s of stages named `nodes`, `descendants`, `ownership`, `edges`, `node_ordinals`, `syntax_rows_*`; 70.50 s in the 176 `syntax_N`/`raw_nodes` inputs, each used only by its clause's `syntax_rows_k` or `nodes`). `…130638-repo` gives 38.6 s and 73.1 s.
+
+Per clause, from `20261022T133153-repo` (commit `e19366495`: Spike A plus per-clause stage timing only; one run, CPU 212.2 s, within the Spike A spread). Seconds, thread time.
+
+| clause | dump inputs | inputs (s) | `syntax_rows_*` | `node_ordinals` | `nodes` | `edges` | `ownership` | `descendants` | total |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| `quality-conditional-1` (repository) | 20 | 30.22 | 0.66 | 2.25 | 2.11 | 0.23 | 2.34 | 0.24 (reach) | 38.04 |
+| `state-flow-1` | 25 | 10.64 | 0.90 | | 4.76 | 0.52 | 2.90 | 5.72 | 25.44 |
+| `state-signatures-1` | 25 | 5.73 | 0.19 | | 1.01 | 0.14 | 0.88 | 2.49 | 10.44 |
+| `legacy-execution-graphs` | 25 | 4.58 | 0.37 | | 2.27 | 0.34 | 1.86 | | 9.41 |
+| `state-flow-project-1` (repository) | 25 | 8.65 | 0.00 | | 0.00 | 0.00 | 0.00 | 0.00 | 8.65 |
+| `state-projection-recovery-2` | 25 | 2.48 | 0.06 | | 0.28 | 0.04 | 0.21 | 0.44 | 3.52 |
+| `step-contracts-1` … `-6` | 1 each (`raw_nodes`) | 7.51 | | | 0.38 | 0.03 | 0.17 | 0.38 | 8.47 |
+| `executor-provenance` | 25 | 0.50 | 0.01 | | 0.02 | 0.00 | 0.01 | 0.04 | 0.58 |
+| `quality-contracts-1` | 0 | | | | | | | 1.77 (reach over the `syntax` spec) | 1.77 |
+| `runtime-reference-summaries` | 0 | | | | 0.18 | 0.09 | | | 0.27 |
+| **total** | 177 | 70.32 | | | | | | | 106.6 |
+
+Two rows are not tree rebuilding: `runtime-reference-summaries`' `nodes`/`edges` build a value-flow graph from its edge inputs, and `quality-contracts-1`'s `descendants` is a `reachability` stage over the `syntax` spec, already built from facts (`rel.rs`). Without them the tree-rebuilding SQL is 34.2 s.
+
+What the inventory hid: the `syntax_N` inputs are not plain node dumps. Each is `all[own kinds/regex, shared selection, $NODE, parent capture, field captures]`. The shared selection (the "gate") is rule logic: `matches state-signature-source or inside it` (state-tripwires, dispatch), or a 6 KB `any` of 22 structural alternatives (`quality-conditional-1-selection`), and the `raw_nodes`/`quality-conditional-1` dumps also capture `ANCESTOR`, the nearest proper ancestor satisfying the selection. The selection decides which nodes `nodes` holds, so it cannot be dropped; § 8.4 separates its cost from the dump's.
+
+### 8.2 Substitutions (step 2)
+
+Fixed rules, chosen at compile time by exact shape (`subst.rs::plan_clause`): the stage SQL, whitespace-normalised, must equal the template byte for byte (`syntax_rows_k`: a `UNION ALL` of `SELECT col | NULL AS col … FROM <input>`), the stage has no deferred columns, and every table a substituted stage absorbs is read by nothing else. `FACTS_A3_OFF=1` turns every substitution off; `FACTS_A3_PLAN=1` prints why a dump group was refused.
+
+| shape | served as | stages covered | before (s) | after (s, median run) |
+|---|---|---|--:|--:|
+| node-dumping inputs `syntax_N`, `raw_nodes` (one dump group per clause) | `eval::dump_rows`: per member its own conjuncts over its candidate roots in preorder; the shared selection once per node (one evaluator, one utility memo); the captures read from the facts: `$NODE` named, `PARENT` the parent when named, per field the first child with that field when named, `ANCESTOR` the nearest proper ancestor where the selection holds (memoised up the parent chain); projections from the source slice | 177 inputs in 13 clauses (all of § 8.1) | 70.32 | rows 1.41 + selection 28.31 + ancestor 0.21 |
+| `syntax_rows_k` and `node_ordinals` | absorbed: never materialised; `nodes` reads the inputs through each arm's column map and stored affinities | 14 + 1 | 2.48 | 0 |
+| `nodes` (window over `raw_nodes` or the `syntax_rows` union; and the `node_ordinals` join variant) | `subst::nodes`: the union rows, `id`/`parent`/`edge_parent` as the engine's `||`, `row_number()` by the engine's window rule (partition, order, ties in union order), the join variant as a hash join in table order | 13 | 10.7 | 5.20 |
+| `edges` | filter + projection of `nodes` | 13 | 1.4 | 0.36 |
+| `ownership` (recursive, `UNION ALL`) | level by level as `Exec::recursive`, hash probes on (path, id) and (path, src) in table order, the same `CASE`s | 11 | 8.4 | 4.08 |
+| `descendants` (recursive `UNION`, plain and `expand` variants) | level by level, distinct on interned (path, root, node[, expand]), the 50M-row cap kept | 9 | 9.1 | 4.08 |
+
+Kept as SQL, with the reason: `runtime-reference-summaries` `nodes`/`edges` (a value-flow graph over its own edge inputs, not the tree); `quality-contracts-1` `descendants` (a `reachability` stage, already over facts); `quality-conditional-1` `descendants` (a `reachability` stage whose roots and demanded edges are clause SQL). All substituted SQL shapes in the clause list of § 8.1 were otherwise substitutable.
+
+One matcher change was needed to make the dumps cheap, and it applies to every AST input: `inside`, `has` and field-restricted `inside` with `stopBy: end`, over a rule that mentions no capture and parses nothing, are memoised per node as a tri-state (true / false / unknown), walking only as far as the unmemoised search would first evaluate (`ast.rs::inside_end_memo`, `has_end_memo`, `field_inside_end_memo`). Same verdicts, same unknown propagation, same first evaluation order, so the same refusals.
+
+Exactness evidence, beyond parity: `FACTS_A3_CHECK=1` runs the original path next to every substitution and panics on any difference. It compares each dump member's rows (order, value types, bytes) and anchors with `Input::rows`; each kernel's table and schema (columns and affinities) with the engine's stored result; and each memoised relation's answer and unknown flag with the unmemoised walk. It passed on all 9,010 files and all 1,259 recorded calls at `f5feb80d6` (`~/rerail-bench/facts/spike-a/work/a3/check6/`), and at every intermediate commit (`check1`–`check5`).
+
+Parity after each step (commits `05ec4db9a` dumps + kernels + spill, `1e65c89de` memo, `aaf919104` field memo, `f5feb80d6` timing split): replay 1,253/1,259, 0 FP, the same 6 `quality-contracts-1` calls; repository 173/173, 0 FP, 0 FN, 38 failures, all `quality-contracts-1`. Runs: `20261022T135635-replay`, the `check*` directories, and the three gate runs.
+
+### 8.3 Per-file phase at O(one file) (step 3)
+
+Repository-partition rows no longer accumulate. During the file phase each worker writes every repository clause's per-file input rows and anchors to `$TMPDIR/facts-a-spill-<pid>/w<worker>-r<rule>-c<clause>.spill` (`spill.rs`: a tagged binary row format; the record's path is one tag). `finish` loads one clause at a time (files in path order, rows in file order: the order `finish` used to sort into), runs it, drops it, and removes the directory. 285 MB is spilled; reading it back takes 0.48 s. `replay` keeps the rows in memory (`spill::Memory`).
+
+RSS: 52 MB current at the end of the per-file phase (Spike A: 1.87 GB current, 3.61 GB peak at that point, `…133153-repo`). The per-file phase's own peak is 2.55 GB: one large file per worker at once (the largest is 764 KB with 148,502 nodes; its `descendants` and `n.*` stage copies are O(nodes × depth) rows). Overall peak 5.86 GB (8.46 GB before), reached in `finish` by `quality-conditional-1`.
+
+`quality-conditional-1`'s repository clause: its `nodes` is now substituted (the `node_ordinals` join variant, 1.79 s over all files), and its dump runs per file in the workers. It still builds `nodes` with each node's full text over every file, because 30 later stages read `n.*`. Its cost in `finish`: 13.4 s, of which `view:nodes` 1.79, `view:ownership` 0.94, `view:edges` 0.08, spill load ~0.4, and the rest its own SQL (largest `conditional_findings_0` 1.14, `parameters` 1.03, `function_colors` 0.81). Its per-file dump costs 13.3 s (selection 12.72 s). Clause total 27.0 s (48.5 + 18.0 = 66.5 s before).
+
+### 8.4 Measurement (step 4)
+
+Three `run-repo.sh` runs at `f5feb80d6`, median `20261022T142444-repo`. Tools: `tools/a2.py` (apportioning unchanged, § 3) and `tools/a3.py` (breakdown); outputs `a2.json` and `a3.json` in the median run's directory.
+
+| | Spike A median `…130531-repo` | brief's `…130638-repo` | A3 median `…142444-repo` |
+|---|--:|--:|--:|
+| CPU user + sys (s) | 212.9 | 222.7 | **152.6** (150.5 / 152.6 / 153.2) |
+| A2 (i) vs 393 s | 54.2% | 56.7% | **38.8%** |
+| A2 (ii) vs 364.7 s | 51.6% | | **35.0%** (sensitivity 35.3%) |
+| wall (s) | 67.6 | 70.3 | 48.8 |
+| A3 mean / p95 per (clause, file) (ms) | 0.79 / 1.30 | 0.83 / 1.36 | 0.548 / 0.765 |
+| extraction: read + parse + extract (s) | 11.4 | | 11.0 |
+| AST inputs still on the matcher (s) | 78.0 (70.5 dumps) | 81.1 | 6.9 |
+| dump selection logic: select + ancestor (s) | (in the 70.5) | | 28.5 |
+| substituted views: dump rows, `nodes`, `edges`, `ownership`, `descendants` (s) | | | 15.1 |
+| tree-rebuilding SQL (s) | 36.6 | 38.6 | 2.3 (the three stages kept, § 8.2) |
+| remaining SQL incl. final queries (s) | 115.2 | | 82.4 |
+| `finish` (s) | 18.0 | | 13.4 |
+| RSS end of per-file phase, current | (1.87 GB, `…133153`) | | 52 MB |
+| RSS per-file phase peak | 3.57 GB | 3.57 GB | 2.55 GB |
+| RSS peak | 8.46 GB | 8.44 GB | 5.86 GB |
+
+Per rule (evaluation thread time, s; Spike A median → A3 median): `serverplan-state-tripwires` 84.9 → 57.2, `serverplan-quality` 83.4 → 62.2 (of which `quality-contracts-1` 24.9), `legacy-execution-surfaces` 15.6 → 9.2, `serverplan-steps` 12.3 → 7.3; the other six are unchanged (0.04–0.97 s each).
+
+Kill band: **> 25% of native CPU** (38.8% (i), 35.0% (ii)). Substitution with the memo removed 60 s (28%) of Spike A's CPU. The 10% gate needs another ~113 s off.
+
+### 8.5 What remains (step 5)
+
+Of the 82.4 s of remaining SQL (median run, `a3.json` → `remaining_sql`), 34.9 s is in stages whose text is byte-identical (after whitespace normalisation) to a stage of another clause. Identity up to input and stage names adds 0.01 s: the shared stages are literally the same text. No two clauses have the same inputs, so none of that SQL computes the same rows twice. It computes the same relation (`parameters`, `calls`, `assignments`, `import_identifiers`, ...) over each clause's own gated node set. Cross-clause sharing in Phase 2 therefore means one fact relation over all nodes, filtered per clause by its selection, not a cache of a clause's result.
+
+| clause | SQL (s) | top stages (s, shared?) |
+|---|--:|---|
+| `state-flow-1` | 23.9 | `direct_events` 6.75 (byte-identical in 1 other clause); `return_kinds` 2.51 (1); `contexts` 1.48 (1) |
+| `quality-contracts-1` | 23.1 | `descendants` 1.79 (own); `import_identifiers` 1.53 (1); `ir_names` 1.36 (own) |
+| `quality-conditional-1` | 9.9 | `conditional_findings_0` 1.14 (own); `parameters` 1.03 (6); `function_colors` 0.81 (own) |
+| `quality-contracts-2` | 7.3 | `import_identifiers` 3.05 (1); `py_names` 0.98 (own); `assignments` 0.59 (own) |
+| `legacy-execution-graphs` | 5.8 | final query 1.86 (own); `decorators` 0.77 (own); `receiver_edges` 0.54 (own) |
+| `state-signatures-1` | 4.0 | `annotations` 0.69; `signature_parameters` 0.55; `shape_attributes` 0.50 (all own) |
+| `state-projection-recovery-2` | 3.2 | final query 2.91 (own); `string_values` 0.10 (2); `assignments` 0.08 (7) |
+| `runtime-reference-summaries` | 1.4 | `contexts` 0.83; `nodes` 0.19; `locals` 0.13 (all own) |
+| `quality-contracts-3` | 0.9 | `ordered_limits` 0.40; `assignments` 0.22; `attributes` 0.07 (all own) |
+| 30 other clauses | 3.0 | |
+
+Shared-text seconds by stage name: `direct_events` 6.7, `import_identifiers` 4.6, `parameters` 3.0, `return_kinds` 2.5, `contexts` 1.5, `methods` 1.3, `special_attributes` 1.3, `calls` 0.5.
+
+Where the remaining 152.6 s goes, for Phase 2's speed gate:
+
+- **Remaining SQL, 82.4 s (54%).** These are the policies' Python-derived relations and rule logic, run by an interpreter that materialises every row as `Box<[V]>`: `n.*` copies about 40 columns per node per stage. The kernels show the scale of the fixed rule: the same algorithm on the same rows ran 2–3× faster (`nodes` 10.7 → 5.2 s, `ownership` 8.4 → 4.1 s, `descendants` 9.1 → 4.1 s). They are still bound by row materialisation, which a column view over facts would remove. Two engine costs show in the profile and are not substitution: `Regex::new` per file in SQL `rx_*` calls (~3% of samples; the regex cache is per `Db`, so per clause per file) and per-statement index and table drops (~5%).
+- **Dump selection, 28.5 s (19%).** This is rule logic, (b) not (a): `quality-conditional-1-selection` alone is 12.7 s over 28.2M nodes (0.45 µs per node for 22 alternatives); the state-tripwires gates take 3.5–2.0 s per clause. A compiled predicate or a per-node fact (e.g. "inside a ServerPlanStep module") is Phase 2's lever here.
+- **Substituted views, 15.1 s (10%); extraction 11.0 s (7%); AST inputs 6.9 s (5%); compile ~3 s.**
+
+### 8.6 Resume notes (A3)
+
+- Commits (local, not pushed): `e19366495` instrumentation; `05ec4db9a` dumps, kernels, spill; `1e65c89de` relation memo; `aaf919104` field-restricted memo; `f5feb80d6` dump timing split and `tools/a3.py` (gate runs); this report.
+- Code: `src/subst.rs` (shape recognition, dump-group plan, kernels, `FACTS_A3_CHECK`), `src/eval.rs::dump_rows`, `src/spill.rs`, memo in `src/ast.rs`, dispatch in `src/rel.rs::run`. Native engine and policies untouched.
+- Reproduce: build (§ 1); `spikes/facts-a/tools/run-repo.sh` ×3; `python3 spikes/facts-a/tools/a2.py <3 results.json>`; `python3 spikes/facts-a/tools/a3.py <3 results.json> --sql packs/data-layer/candidates/rules`. Exactness: `FACTS_A3_CHECK=1 facts-a repo --threads 4 --out-dir <dir>` and the same variable on `replay` (§ 3 command); both take about 2× a normal run.
+- Not measured, by budget: separate attribution of the relation memo versus the substitution. Before the memo, `20261022T135804-repo` measured 221.4 s CPU, but load was 12, so the run is untrusted; its dumps took 69.5 s, about the original inputs' 70.5 s. One-pass evaluation alone therefore saved little, and the memo made the dumps cheap.
+- Next levers, in size order: Python-derived relations as facts over all nodes, filtered per clause (§ 8.5); a column view so kernels and SQL stop copying `n.*` rows; compiled selection predicates; the per-`Db` regex cache.
