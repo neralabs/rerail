@@ -7,7 +7,8 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
 - `check/`: the checks `npm run check` and `check:*` run, including the layer boundary lint
   (`check-boundaries.mjs`), the Windows checkout check (`check-windows-paths.mjs`: every tracked path short
   enough and named so Windows can check it out) and the licence allowlist.
-- `dev/`: a development install from this checkout (`just rerail-dev`), its restore, nuke and smoke runs.
+- `dev/`: a development install from this checkout (`just rerail-dev`), its restore, nuke and smoke runs, and the
+  dashboard scenario launcher for design review (`ui-scenario.ts`, `just ui-scenario <scenario>`).
 - `dsl/`: the code-rule DSL benchmark.
 - `generate/`: generators of committed engine and host data and the DSL reference page (manifest: `generate/README.md`).
 - `host/`: real-host runs: OMP install, host smoke, lifecycle and auth checks, the Windows install smoke.
