@@ -136,3 +136,46 @@ fn r3(w: &mut World, files: &[(Sym, Cid)]) -> BTreeSet<R3F> {
     }
     out
 }
+
+/// R2 hop census: for every export root, the number of re-export hops its resolution follows
+/// (unbounded, up to 64, cycle-safe). Returns (hops -> resolved targets, unresolved after 64).
+pub fn r2_hop_census(w: &mut World, files: &[(Sym, Cid)]) -> (BTreeMap<usize, usize>, usize) {
+    let mut decl: BTreeSet<(Sym, Sym)> = BTreeSet::new();
+    let mut bind: BTreeMap<(Sym, Sym), BTreeSet<(Sym, Sym)>> = BTreeMap::new();
+    let mut exports: Vec<(Sym, Sym)> = Vec::new();
+    for &(p, c) in files {
+        for (k, _) in w.r2_decl(p, c) {
+            decl.insert(k);
+        }
+        for (k, v) in w.r2_bind(p, c) {
+            bind.entry(k).or_default().insert(v);
+        }
+        exports.extend(w.r2_export(p, c).into_iter().map(|(t, _)| t));
+    }
+    let mut hist: BTreeMap<usize, usize> = BTreeMap::new();
+    let mut open = 0;
+    for t in exports {
+        let mut frontier: BTreeSet<(Sym, Sym)> = BTreeSet::from([t]);
+        let mut seen = frontier.clone();
+        let mut hop = 0;
+        let mut deepest = None;
+        while !frontier.is_empty() && hop <= 64 {
+            let mut next = BTreeSet::new();
+            for t in &frontier {
+                if decl.contains(t) {
+                    deepest = Some(hop);
+                } else if let Some(bs) = bind.get(t) {
+                    next.extend(bs.iter().copied().filter(|x| seen.insert(*x)));
+                }
+            }
+            frontier = next;
+            hop += 1;
+        }
+        match deepest {
+            Some(h) => *hist.entry(h).or_default() += 1,
+            None if !frontier.is_empty() => open += 1,
+            None => *hist.entry(usize::MAX).or_default() += 1,
+        }
+    }
+    (hist, open)
+}

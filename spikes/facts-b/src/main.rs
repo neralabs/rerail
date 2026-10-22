@@ -46,6 +46,7 @@ fn main() {
             &store::home().join("tempo-qe/workspaces47"),
             arg(&args, "--commits-repo").map(PathBuf::from).as_deref(),
         ),
+        "hops" => hops(),
         "divergence" => divergence(&PathBuf::from(arg(&args, "--run-dir").expect("--run-dir")), args.iter().any(|a| a == "--plurality")),
         "dump" => {
             let p = args.get(2).expect("file");
@@ -136,4 +137,31 @@ fn sym_diff(a: &[(u8, [u32; 4])], b: &[(u8, [u32; 4])]) -> usize {
         }
     }
     n + (a.len() - i) + (b.len() - j)
+}
+
+/// R2 hop census over the base and the 40 worktrees' initial memberships.
+fn hops() {
+    let ms = base::load_memberships();
+    let b = store::read_membership(&store::spike_dir().join("membership/base.tsv"));
+    let mut st = store::Store::default();
+    let sd = store::store_dir();
+    for (_, h) in b.iter().chain(ms.iter().flat_map(|(_, m)| m.iter())) {
+        st.load(&sd, h);
+    }
+    let mut world = derive::World::new(st);
+    let mut total: std::collections::BTreeMap<String, usize> = Default::default();
+    let mut open_total = 0;
+    for (name, m) in std::iter::once(("base".to_string(), &b)).chain(ms.iter().map(|(n, m)| (n.clone(), m))) {
+        let files: Vec<(u32, u32)> = m.iter().map(|(p, h)| (world.path(p), world.store.by_hash[h])).collect();
+        let (hist, open) = oracle::r2_hop_census(&mut world, &files);
+        for (k, v) in &hist {
+            let key = if *k == usize::MAX { "unresolved".to_string() } else { format!("{k}") };
+            *total.entry(key).or_default() += v;
+        }
+        open_total += open;
+        if name == "base" || name == "01" || name == "40" {
+            println!("{name}: {hist:?} open {open}");
+        }
+    }
+    println!("all 41 memberships: hops -> roots {total:?}, cut off after 64: {open_total}");
 }
