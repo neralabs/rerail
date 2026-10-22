@@ -1,0 +1,1 @@
+const x = () => ({ bar: 5 }) as Foo;

@@ -1,0 +1,1 @@
+const bar = <Foo style={{ bar: 5 } as Bar} />;

@@ -1,0 +1,1 @@
+type Generic<ReadonlyArray> = { array: ReadonlyArray };

@@ -1,0 +1,1 @@
+var z = bar(foo(z => z));

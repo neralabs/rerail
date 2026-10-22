@@ -1,0 +1,1 @@
+let ya = [[1, '2']] as [number, string][];

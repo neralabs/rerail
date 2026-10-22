@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// Which pack versions a promotion moves from `next` to `latest` (promotionRequest and planPromotions in packs.mjs).
-// With no pack id, every pack whose package.json version is released (its `<name>@<version>` tag exists) and is not
-// `latest` yet, less any pack held at its `latest` (put back on purpose). With an id, that pack alone, at the version
-// given or else its package.json one; naming an older version holds the pack there. Writes `promote` (a JSON list
+// Which pack versions a promotion points `latest` at (promotionRequest and planPromotions in packs.mjs). Packs publish
+// under `latest`, so this is for putting one back, or for a version a publish left under `next`. With no pack id,
+// every pack whose package.json version is released (its `<name>@<version>` tag exists) and is not `latest` yet, less
+// any pack held at its `latest` (put back on purpose). With an id, that pack alone, at the version given or else its
+// package.json one; naming an older version holds the pack there. Writes `promote` (a JSON list
 // for packs-promote.mjs) to $GITHUB_OUTPUT and a table to $GITHUB_STEP_SUMMARY when they are set, so the run shows
 // what the promote job will move before anyone approves it.
 //
@@ -13,24 +14,9 @@
 //
 //   node scripts/release/packs-promote-plan.mjs [<id> [<version>]]   (an empty argument is no value; GH_REPO or the
 //   checkout's remote names the repository)
-import { execFile } from "node:child_process";
 import { appendFileSync } from "node:fs";
-import { promisify } from "node:util";
-import { HOLD_TAG, listPacks, planPromotions, promotionRequest, REGISTRY, releaseTag, releaseTags } from "./packs.mjs";
-
-/** Each name's dist-tags, read in parallel; null for one npm could not give, with why on stderr. */
-async function readDistTags(names) {
-  const read = async (name) => {
-    try {
-      const { stdout } = await promisify(execFile)("npm", ["view", name, "dist-tags", "--json", "--registry", REGISTRY]);
-      return [name, JSON.parse(stdout)];
-    } catch (error) {
-      console.error(`${name}: ${error instanceof Error ? error.message : String(error)}`);
-      return [name, null];
-    }
-  };
-  return new Map(await Promise.all(names.map(read)));
-}
+import { readDistTags } from "./dist-tags.mjs";
+import { HOLD_TAG, listPacks, planPromotions, promotionRequest, releaseTag, releaseTags } from "./packs.mjs";
 
 // The workflow passes both inputs, empty when not given: read them by position.
 const [id, version] = process.argv.slice(2, 4).map((argument) => (argument === "" ? undefined : argument));

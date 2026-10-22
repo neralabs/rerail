@@ -1,0 +1,1 @@
+print?.call({ bar: 5 } as Foo);

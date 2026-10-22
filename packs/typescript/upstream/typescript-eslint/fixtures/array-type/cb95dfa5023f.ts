@@ -1,0 +1,1 @@
+let x: Array<number> = [1] as number[];

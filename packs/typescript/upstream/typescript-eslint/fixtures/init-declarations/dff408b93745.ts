@@ -1,0 +1,4 @@
+
+for (var foo in []) {
+}
+      

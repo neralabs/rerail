@@ -1,0 +1,1 @@
+const foo: ReadonlyArray<new (...args: any[]) => void> = [];

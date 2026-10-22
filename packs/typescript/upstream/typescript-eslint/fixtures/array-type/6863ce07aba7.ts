@@ -1,0 +1,1 @@
+let a: { foo: Array<Bar> }[] = [];

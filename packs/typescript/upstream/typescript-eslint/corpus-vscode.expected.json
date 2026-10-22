@@ -15,12 +15,14 @@
       "@typescript-eslint/no-dupe-class-members",
       "@typescript-eslint/no-duplicate-enum-values",
       "@typescript-eslint/no-empty-function",
+      "@typescript-eslint/no-empty-object-type",
       "@typescript-eslint/no-extra-non-null-assertion",
       "@typescript-eslint/no-import-type-side-effects",
       "@typescript-eslint/no-namespace",
       "@typescript-eslint/no-non-null-asserted-optional-chain",
       "@typescript-eslint/no-non-null-assertion",
       "@typescript-eslint/no-unnecessary-type-constraint",
+      "@typescript-eslint/no-unsafe-declaration-merging",
       "@typescript-eslint/no-unsafe-function-type",
       "@typescript-eslint/no-unused-expressions",
       "@typescript-eslint/no-useless-empty-export",
@@ -28,7 +30,8 @@
       "@typescript-eslint/prefer-as-const",
       "@typescript-eslint/prefer-enum-initializers",
       "@typescript-eslint/prefer-literal-enum-member",
-      "@typescript-eslint/prefer-namespace-keyword"
+      "@typescript-eslint/prefer-namespace-keyword",
+      "@typescript-eslint/triple-slash-reference"
     ],
     "skipped": [
       "src/vs/platform/files/test/node/fixtures/resolver/examples/employee.js",
@@ -67,6 +70,12 @@
       "path": "src/typings/base-common.d.ts",
       "line": 35,
       "column": 60
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/typings/thenable.d.ts",
+      "line": 12,
+      "column": 11
     },
     {
       "rule": "@typescript-eslint/prefer-enum-initializers",
@@ -657,6 +666,18 @@
       "column": 8
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/browser/ui/grid/grid.ts",
+      "line": 212,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/browser/ui/grid/grid.ts",
+      "line": 213,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/consistent-type-definitions",
       "path": "src/vs/base/browser/ui/grid/grid.ts",
       "line": 868,
@@ -679,6 +700,12 @@
       "path": "src/vs/base/browser/ui/grid/grid.ts",
       "line": 915,
       "column": 59
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/browser/ui/grid/gridview.ts",
+      "line": 20,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/no-empty-function",
@@ -987,6 +1014,12 @@
       "column": 101
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/browser/ui/progressbar/progressAccessibilitySignal.ts",
+      "line": 8,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/no-empty-function",
       "path": "src/vs/base/browser/ui/progressbar/progressAccessibilitySignal.ts",
       "line": 13,
@@ -1183,6 +1216,60 @@
       "path": "src/vs/base/browser/ui/splitview/splitview.ts",
       "line": 994,
       "column": 3
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/browser/ui/table/table.ts",
+      "line": 27,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/browser/ui/table/table.ts",
+      "line": 29,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/browser/ui/table/table.ts",
+      "line": 30,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/browser/ui/table/table.ts",
+      "line": 31,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/browser/ui/table/table.ts",
+      "line": 32,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/browser/ui/table/table.ts",
+      "line": 33,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/browser/ui/table/tableWidget.ts",
+      "line": 147,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/browser/ui/table/tableWidget.ts",
+      "line": 148,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/browser/ui/table/tableWidget.ts",
+      "line": 149,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/no-non-null-assertion",
@@ -1539,6 +1626,18 @@
       "column": 109
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/browser/ui/tree/asyncDataTree.ts",
+      "line": 502,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/browser/ui/tree/asyncDataTree.ts",
+      "line": 503,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/no-unused-expressions",
       "path": "src/vs/base/browser/ui/tree/asyncDataTree.ts",
       "line": 582,
@@ -1815,6 +1914,12 @@
       "column": 16
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/browser/ui/tree/indexTree.ts",
+      "line": 13,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/default-param-last",
       "path": "src/vs/base/browser/ui/tree/indexTreeModel.ts",
       "line": 165,
@@ -1891,6 +1996,12 @@
       "path": "src/vs/base/browser/ui/tree/objectTree.ts",
       "line": 274,
       "column": 13
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/browser/ui/tree/objectTreeModel.ts",
+      "line": 19,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/no-non-null-assertion",
@@ -2203,6 +2314,30 @@
       "path": "src/vs/base/common/async.ts",
       "line": 2665,
       "column": 10
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/common/buffer.ts",
+      "line": 310,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/common/buffer.ts",
+      "line": 312,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/common/buffer.ts",
+      "line": 314,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/common/buffer.ts",
+      "line": 316,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/no-non-null-assertion",
@@ -2743,6 +2878,18 @@
       "path": "src/vs/base/common/jsonEdit.ts",
       "line": 80,
       "column": 81
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/common/jsonSchema.ts",
+      "line": 179,
+      "column": 23
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/common/jsonSchema.ts",
+      "line": 180,
+      "column": 4
     },
     {
       "rule": "@typescript-eslint/prefer-enum-initializers",
@@ -5229,6 +5376,18 @@
       "column": 6
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/common/objects.ts",
+      "line": 292,
+      "column": 37
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/common/observableInternal/base.ts",
+      "line": 15,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/no-namespace",
       "path": "src/vs/base/common/observableInternal/debugLocation.ts",
       "line": 8,
@@ -5298,6 +5457,12 @@
       "rule": "@typescript-eslint/consistent-type-definitions",
       "path": "src/vs/base/common/observableInternal/logging/debugger/debuggerApi.d.ts",
       "line": 6,
+      "column": 13
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/common/observableInternal/logging/debugger/debuggerApi.d.ts",
+      "line": 12,
       "column": 13
     },
     {
@@ -6541,6 +6706,12 @@
       "path": "src/vs/base/parts/ipc/test/node/testApp.ts",
       "line": 23,
       "column": 67
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/parts/sandbox/electron-browser/electronTypes.ts",
+      "line": 14,
+      "column": 36
     },
     {
       "rule": "@typescript-eslint/no-unsafe-function-type",
@@ -10119,6 +10290,12 @@
       "column": 21
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/base/test/common/mock.ts",
+      "line": 22,
+      "column": 76
+    },
+    {
       "rule": "@typescript-eslint/no-empty-function",
       "path": "src/vs/base/test/common/objects.test.ts",
       "line": 92,
@@ -10633,6 +10810,12 @@
       "path": "src/vs/code/electron-main/app.ts",
       "line": 1773,
       "column": 10
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/code/electron-main/app.ts",
+      "line": 1784,
+      "column": 34
     },
     {
       "rule": "@typescript-eslint/consistent-type-definitions",
@@ -12331,6 +12514,12 @@
       "path": "src/vs/editor/browser/widget/diffEditor/features/revertButtonsFeature.ts",
       "line": 98,
       "column": 19
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/editor/browser/widget/diffEditor/utils.ts",
+      "line": 188,
+      "column": 37
     },
     {
       "rule": "@typescript-eslint/no-non-null-assertion",
@@ -14073,6 +14262,12 @@
       "column": 8
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/editor/common/editorFeatures.ts",
+      "line": 11,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/no-duplicate-enum-values",
       "path": "src/vs/editor/common/encodedTokenAttributes.ts",
       "line": 90,
@@ -14311,6 +14506,24 @@
       "path": "src/vs/editor/common/languages.ts",
       "line": 1670,
       "column": 8
+    },
+    {
+      "rule": "@typescript-eslint/no-unsafe-declaration-merging",
+      "path": "src/vs/editor/common/languages.ts",
+      "line": 1776,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-unsafe-declaration-merging",
+      "path": "src/vs/editor/common/languages.ts",
+      "line": 1783,
+      "column": 23
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/editor/common/languages.ts",
+      "line": 1992,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/no-namespace",
@@ -15003,6 +15216,12 @@
       "column": 14
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/editor/common/services/editorWebWorker.ts",
+      "line": 41,
+      "column": 37
+    },
+    {
       "rule": "@typescript-eslint/no-empty-function",
       "path": "src/vs/editor/common/services/editorWebWorker.ts",
       "line": 79,
@@ -15097,6 +15316,12 @@
       "path": "src/vs/editor/common/services/textModelSync/textModelSync.impl.ts",
       "line": 342,
       "column": 15
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/editor/common/services/treeViewsDndService.ts",
+      "line": 11,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/no-non-null-assertion",
@@ -15223,6 +15448,12 @@
       "path": "src/vs/editor/common/textModelEditSource.ts",
       "line": 282,
       "column": 8
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/editor/common/textModelEvents.ts",
+      "line": 36,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/prefer-enum-initializers",
@@ -16305,6 +16536,18 @@
       "column": 16
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/editor/contrib/find/browser/findState.ts",
+      "line": 38,
+      "column": 98
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/editor/contrib/find/browser/findState.ts",
+      "line": 67,
+      "column": 90
+    },
+    {
       "rule": "@typescript-eslint/no-non-null-assertion",
       "path": "src/vs/editor/contrib/find/browser/findWidget.ts",
       "line": 868,
@@ -17199,6 +17442,12 @@
       "column": 80
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/editor/contrib/inlayHints/browser/inlayHintsController.ts",
+      "line": 64,
+      "column": 11
+    },
+    {
       "rule": "@typescript-eslint/consistent-type-definitions",
       "path": "src/vs/editor/contrib/inlayHints/browser/inlayHintsController.ts",
       "line": 87,
@@ -17263,6 +17512,12 @@
       "path": "src/vs/editor/contrib/inlineCompletions/browser/hintsWidget/hoverParticipant.ts",
       "line": 65,
       "column": 74
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/editor/contrib/inlineCompletions/browser/hintsWidget/hoverParticipant.ts",
+      "line": 106,
+      "column": 37
     },
     {
       "rule": "@typescript-eslint/no-non-null-assertion",
@@ -21465,6 +21720,12 @@
       "column": 20
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/editor/standalone/browser/standaloneServices.ts",
+      "line": 1022,
+      "column": 54
+    },
+    {
       "rule": "@typescript-eslint/no-empty-function",
       "path": "src/vs/editor/standalone/browser/standaloneServices.ts",
       "line": 1022,
@@ -23271,6 +23532,18 @@
       "column": 25
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/monaco.d.ts",
+      "line": 1949,
+      "column": 19
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/monaco.d.ts",
+      "line": 2970,
+      "column": 19
+    },
+    {
       "rule": "@typescript-eslint/consistent-type-definitions",
       "path": "src/vs/monaco.d.ts",
       "line": 7703,
@@ -23289,10 +23562,22 @@
       "column": 14
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/monaco.d.ts",
+      "line": 8388,
+      "column": 19
+    },
+    {
       "rule": "@typescript-eslint/no-wrapper-object-types",
       "path": "src/vs/monaco.d.ts",
       "line": 8741,
       "column": 11
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/monaco.d.ts",
+      "line": 8807,
+      "column": 38
     },
     {
       "rule": "@typescript-eslint/no-empty-function",
@@ -25767,10 +26052,34 @@
       "column": 34
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/common/state/protocol/channels-automation/commands.ts",
+      "line": 118,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/common/state/protocol/channels-chat/commands.ts",
+      "line": 232,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/no-non-null-assertion",
       "path": "src/vs/platform/agentHost/common/state/protocol/channels-chat/reducer.ts",
       "line": 927,
       "column": 16
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/common/state/protocol/channels-session/commands.ts",
+      "line": 111,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/common/state/protocol/channels-session/commands.ts",
+      "line": 158,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/prefer-literal-enum-member",
@@ -25801,6 +26110,72 @@
       "path": "src/vs/platform/agentHost/common/state/protocol/channels-session/state.ts",
       "line": 52,
       "column": 2
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/common/state/protocol/channels-terminal/commands.ts",
+      "line": 57,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/common/state/protocol/common/commands.ts",
+      "line": 337,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/common/state/protocol/common/commands.ts",
+      "line": 348,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/common/state/protocol/common/commands.ts",
+      "line": 376,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/common/state/protocol/common/commands.ts",
+      "line": 773,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/common/state/protocol/common/commands.ts",
+      "line": 861,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/common/state/protocol/common/commands.ts",
+      "line": 896,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/common/state/protocol/common/commands.ts",
+      "line": 950,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/common/state/protocol/common/commands.ts",
+      "line": 991,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/common/state/protocol/common/commands.ts",
+      "line": 1119,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/common/state/protocol/common/commands.ts",
+      "line": 1205,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/prefer-enum-initializers",
@@ -30933,10 +31308,64 @@
       "column": 62
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/test/common/agentHostFileSystemProvider.test.ts",
+      "line": 303,
+      "column": 34
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/test/common/agentHostFileSystemProvider.test.ts",
+      "line": 304,
+      "column": 33
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/test/common/agentHostFileSystemProvider.test.ts",
+      "line": 305,
+      "column": 35
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/test/common/agentHostFileSystemProvider.test.ts",
+      "line": 306,
+      "column": 33
+    },
+    {
       "rule": "@typescript-eslint/no-non-null-assertion",
       "path": "src/vs/platform/agentHost/test/common/agentHostFileSystemProvider.test.ts",
       "line": 308,
       "column": 73
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/test/common/agentHostFileSystemProvider.test.ts",
+      "line": 311,
+      "column": 34
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/test/common/agentHostFileSystemProvider.test.ts",
+      "line": 516,
+      "column": 34
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/test/common/agentHostFileSystemProvider.test.ts",
+      "line": 517,
+      "column": 33
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/test/common/agentHostFileSystemProvider.test.ts",
+      "line": 518,
+      "column": 35
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/test/common/agentHostFileSystemProvider.test.ts",
+      "line": 519,
+      "column": 33
     },
     {
       "rule": "@typescript-eslint/no-non-null-assertion",
@@ -30945,10 +31374,76 @@
       "column": 73
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/test/common/agentHostFileSystemProvider.test.ts",
+      "line": 525,
+      "column": 34
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/test/common/agentHostFileSystemProvider.test.ts",
+      "line": 723,
+      "column": 34
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/test/common/agentHostFileSystemProvider.test.ts",
+      "line": 727,
+      "column": 33
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/test/common/agentHostFileSystemProvider.test.ts",
+      "line": 731,
+      "column": 35
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/test/common/agentHostFileSystemProvider.test.ts",
+      "line": 735,
+      "column": 33
+    },
+    {
       "rule": "@typescript-eslint/no-non-null-assertion",
       "path": "src/vs/platform/agentHost/test/common/agentHostFileSystemProvider.test.ts",
       "line": 741,
       "column": 73
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/test/common/agentHostFileSystemProvider.test.ts",
+      "line": 744,
+      "column": 34
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/test/common/agentHostFileSystemProvider.test.ts",
+      "line": 896,
+      "column": 34
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/test/common/agentHostFileSystemProvider.test.ts",
+      "line": 897,
+      "column": 35
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/test/common/agentHostFileSystemProvider.test.ts",
+      "line": 898,
+      "column": 33
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/test/common/agentHostFileSystemProvider.test.ts",
+      "line": 899,
+      "column": 59
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/test/common/agentHostFileSystemProvider.test.ts",
+      "line": 907,
+      "column": 61
     },
     {
       "rule": "@typescript-eslint/no-empty-function",
@@ -45357,10 +45852,28 @@
       "column": 57
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/test/node/protocolServerHandler.test.ts",
+      "line": 325,
+      "column": 34
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/test/node/protocolServerHandler.test.ts",
+      "line": 326,
+      "column": 32
+    },
+    {
       "rule": "@typescript-eslint/no-empty-function",
       "path": "src/vs/platform/agentHost/test/node/protocolServerHandler.test.ts",
       "line": 347,
       "column": 41
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/agentHost/test/node/protocolServerHandler.test.ts",
+      "line": 348,
+      "column": 44
     },
     {
       "rule": "@typescript-eslint/no-non-null-assertion",
@@ -46443,6 +46956,18 @@
       "column": 23
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/backup/node/backup.ts",
+      "line": 69,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/browserView/common/browserHistory.ts",
+      "line": 36,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/no-empty-function",
       "path": "src/vs/platform/browserView/common/browserHistory.ts",
       "line": 59,
@@ -46746,6 +47271,12 @@
       "rule": "@typescript-eslint/no-non-null-assertion",
       "path": "src/vs/platform/browserView/electron-main/browserViewGroup.ts",
       "line": 307,
+      "column": 11
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/browserView/electron-main/browserViewInspector.ts",
+      "line": 29,
       "column": 11
     },
     {
@@ -47625,6 +48156,12 @@
       "column": 8
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/customizationMarketplace/common/customizationMarketplaceService.ts",
+      "line": 221,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/no-non-null-assertion",
       "path": "src/vs/platform/customizationMarketplace/common/customizationMarketplaceService.ts",
       "line": 361,
@@ -47839,6 +48376,12 @@
       "path": "src/vs/platform/editor/common/editor.ts",
       "line": 184,
       "column": 2
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/encryption/common/encryptionService.ts",
+      "line": 15,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/no-non-null-assertion",
@@ -48073,6 +48616,12 @@
       "path": "src/vs/platform/extensionManagement/common/extensionManagement.ts",
       "line": 376,
       "column": 2
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/extensionManagement/common/extensionManagement.ts",
+      "line": 380,
+      "column": 29
     },
     {
       "rule": "@typescript-eslint/prefer-literal-enum-member",
@@ -48459,6 +49008,18 @@
       "column": 8
     },
     {
+      "rule": "@typescript-eslint/no-unsafe-declaration-merging",
+      "path": "src/vs/platform/files/browser/webFileSystemAccess.ts",
+      "line": 46,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-unsafe-declaration-merging",
+      "path": "src/vs/platform/files/browser/webFileSystemAccess.ts",
+      "line": 89,
+      "column": 22
+    },
+    {
       "rule": "@typescript-eslint/prefer-literal-enum-member",
       "path": "src/vs/platform/files/common/files.ts",
       "line": 573,
@@ -48607,6 +49168,24 @@
       "path": "src/vs/platform/files/common/files.ts",
       "line": 980,
       "column": 2
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/files/common/files.ts",
+      "line": 1286,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/files/common/files.ts",
+      "line": 1337,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/files/common/files.ts",
+      "line": 1366,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/prefer-enum-initializers",
@@ -50163,6 +50742,12 @@
       "column": 6
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/github/common/pullRequestMutationService.ts",
+      "line": 53,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/no-non-null-assertion",
       "path": "src/vs/platform/github/common/pullRequestMutationService.ts",
       "line": 465,
@@ -50793,6 +51378,12 @@
       "column": 113
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/ipc/common/mainProcessService.ts",
+      "line": 12,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/consistent-type-definitions",
       "path": "src/vs/platform/ipc/electron-browser/services.ts",
       "line": 14,
@@ -51049,6 +51640,12 @@
       "path": "src/vs/platform/keyboardLayout/common/keyboardConfig.ts",
       "line": 14,
       "column": 2
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/keyboardLayout/electron-main/keyboardLayoutMainService.ts",
+      "line": 16,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/no-non-null-assertion",
@@ -51399,6 +51996,24 @@
       "column": 8
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/mcp/common/modelContextProtocol.ts",
+      "line": 1019,
+      "column": 19
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/mcp/common/modelContextProtocol.ts",
+      "line": 1079,
+      "column": 19
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/mcp/common/modelContextProtocol.ts",
+      "line": 1111,
+      "column": 19
+    },
+    {
       "rule": "@typescript-eslint/no-namespace",
       "path": "src/vs/platform/mcp/common/modelContextProtocolApps.ts",
       "line": 14,
@@ -51409,6 +52024,114 @@
       "path": "src/vs/platform/mcp/common/modelContextProtocolApps.ts",
       "line": 79,
       "column": 8
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/mcp/common/modelContextProtocolApps.ts",
+      "line": 292,
+      "column": 11
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/mcp/common/modelContextProtocolApps.ts",
+      "line": 501,
+      "column": 11
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/mcp/common/modelContextProtocolApps.ts",
+      "line": 517,
+      "column": 10
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/mcp/common/modelContextProtocolApps.ts",
+      "line": 519,
+      "column": 11
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/mcp/common/modelContextProtocolApps.ts",
+      "line": 521,
+      "column": 11
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/mcp/common/modelContextProtocolApps.ts",
+      "line": 523,
+      "column": 14
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/mcp/common/modelContextProtocolApps.ts",
+      "line": 525,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/mcp/common/modelContextProtocolApps.ts",
+      "line": 527,
+      "column": 23
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/mcp/common/modelContextProtocolApps.ts",
+      "line": 536,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/mcp/common/modelContextProtocolApps.ts",
+      "line": 538,
+      "column": 15
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/mcp/common/modelContextProtocolApps.ts",
+      "line": 550,
+      "column": 13
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/mcp/common/modelContextProtocolApps.ts",
+      "line": 563,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/mcp/common/modelContextProtocolApps.ts",
+      "line": 572,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/mcp/common/modelContextProtocolApps.ts",
+      "line": 627,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/mcp/common/modelContextProtocolApps.ts",
+      "line": 651,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/mcp/common/modelContextProtocolApps.ts",
+      "line": 653,
+      "column": 16
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/mcp/common/modelContextProtocolApps.ts",
+      "line": 655,
+      "column": 17
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/mcp/common/modelContextProtocolApps.ts",
+      "line": 657,
+      "column": 20
     },
     {
       "rule": "@typescript-eslint/no-non-null-assertion",
@@ -51567,6 +52290,12 @@
       "column": 2
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/native/common/native.ts",
+      "line": 478,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/consistent-type-definitions",
       "path": "src/vs/platform/native/electron-main/auth.ts",
       "line": 24,
@@ -51583,6 +52312,12 @@
       "path": "src/vs/platform/native/electron-main/auth.ts",
       "line": 227,
       "column": 31
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/native/electron-main/nativeHostMainService.ts",
+      "line": 56,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/no-non-null-assertion",
@@ -52026,6 +52761,12 @@
       "rule": "@typescript-eslint/no-non-null-assertion",
       "path": "src/vs/platform/quickinput/browser/quickInputController.ts",
       "line": 1061,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/quickinput/browser/quickInputController.ts",
+      "line": 1170,
       "column": 18
     },
     {
@@ -52615,6 +53356,12 @@
       "path": "src/vs/platform/remoteTunnel/test/node/tunnelProcessCoordinator.test.ts",
       "line": 330,
       "column": 19
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/request/common/request.ts",
+      "line": 210,
+      "column": 34
     },
     {
       "rule": "@typescript-eslint/no-non-null-assertion",
@@ -53745,10 +54492,28 @@
       "column": 2
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/terminal/common/terminal.ts",
+      "line": 1259,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/prefer-literal-enum-member",
       "path": "src/vs/platform/terminal/common/terminalRecorder.ts",
       "line": 10,
       "column": 2
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/terminal/common/xterm/shellIntegrationAddon.ts",
+      "line": 442,
+      "column": 39
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/terminal/common/xterm/shellIntegrationAddon.ts",
+      "line": 459,
+      "column": 40
     },
     {
       "rule": "@typescript-eslint/no-non-null-assertion",
@@ -54793,6 +55558,12 @@
       "path": "src/vs/platform/userDataSync/common/userDataSync.ts",
       "line": 634,
       "column": 13
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/userDataSync/common/userDataSync.ts",
+      "line": 654,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/no-non-null-assertion",
@@ -56853,6 +57624,12 @@
       "column": 54
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/window/common/window.ts",
+      "line": 107,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/prefer-enum-initializers",
       "path": "src/vs/platform/window/electron-browser/window.ts",
       "line": 15,
@@ -57003,6 +57780,12 @@
       "column": 2
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/windows/electron-main/windows.ts",
+      "line": 121,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/no-non-null-assertion",
       "path": "src/vs/platform/windows/electron-main/windows.ts",
       "line": 255,
@@ -57049,6 +57832,12 @@
       "path": "src/vs/platform/windows/test/electron-main/windowsFinder.test.ts",
       "line": 81,
       "column": 20
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/platform/workspace/common/workspace.ts",
+      "line": 138,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/prefer-enum-initializers",
@@ -57525,6 +58314,12 @@
       "column": 37
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/sessions/browser/parts/sessionView.ts",
+      "line": 39,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/no-unused-expressions",
       "path": "src/vs/sessions/browser/parts/sessionView.ts",
       "line": 325,
@@ -57559,6 +58354,12 @@
       "path": "src/vs/sessions/browser/parts/sessionsPart.ts",
       "line": 53,
       "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/sessions/browser/parts/sessionsPart.ts",
+      "line": 53,
+      "column": 39
     },
     {
       "rule": "@typescript-eslint/consistent-type-definitions",
@@ -57631,6 +58432,12 @@
       "path": "src/vs/sessions/browser/workbench.ts",
       "line": 93,
       "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/sessions/browser/workbench.ts",
+      "line": 153,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/no-empty-function",
@@ -73341,6 +74148,12 @@
       "column": 26
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/api/browser/mainThreadLanguageModels.ts",
+      "line": 219,
+      "column": 171
+    },
+    {
       "rule": "@typescript-eslint/consistent-type-definitions",
       "path": "src/vs/workbench/api/browser/mainThreadMcp.ts",
       "line": 548,
@@ -73683,6 +74496,12 @@
       "column": 29
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/api/common/extHost.protocol.ts",
+      "line": 120,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/consistent-type-definitions",
       "path": "src/vs/workbench/api/common/extHost.protocol.ts",
       "line": 839,
@@ -73797,6 +74616,30 @@
       "column": 2
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/api/common/extHost.protocol.ts",
+      "line": 1359,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/api/common/extHost.protocol.ts",
+      "line": 1362,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/api/common/extHost.protocol.ts",
+      "line": 1408,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/api/common/extHost.protocol.ts",
+      "line": 1460,
+      "column": 165
+    },
+    {
       "rule": "@typescript-eslint/consistent-type-definitions",
       "path": "src/vs/workbench/api/common/extHost.protocol.ts",
       "line": 1726,
@@ -73809,6 +74652,12 @@
       "column": 13
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/api/common/extHost.protocol.ts",
+      "line": 3054,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/consistent-type-definitions",
       "path": "src/vs/workbench/api/common/extHost.protocol.ts",
       "line": 3362,
@@ -73819,6 +74668,12 @@
       "path": "src/vs/workbench/api/common/extHost.protocol.ts",
       "line": 3571,
       "column": 13
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/api/common/extHost.protocol.ts",
+      "line": 3611,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/prefer-enum-initializers",
@@ -73837,6 +74692,12 @@
       "path": "src/vs/workbench/api/common/extHost.protocol.ts",
       "line": 3842,
       "column": 13
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/api/common/extHost.protocol.ts",
+      "line": 3859,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/consistent-type-definitions",
@@ -73897,6 +74758,12 @@
       "path": "src/vs/workbench/api/common/extHostApiDeprecationService.ts",
       "line": 50,
       "column": 8
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/api/common/extHostAuthentication.ts",
+      "line": 33,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/no-non-null-assertion",
@@ -73983,6 +74850,12 @@
       "column": 8
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/api/common/extHostCommands.ts",
+      "line": 347,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/no-non-null-assertion",
       "path": "src/vs/workbench/api/common/extHostComments.ts",
       "line": 284,
@@ -74035,6 +74908,12 @@
       "path": "src/vs/workbench/api/common/extHostConfiguration.ts",
       "line": 123,
       "column": 41
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/api/common/extHostConfiguration.ts",
+      "line": 347,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/no-empty-function",
@@ -74109,6 +74988,12 @@
       "column": 59
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/api/common/extHostDecorations.ts",
+      "line": 121,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/no-non-null-assertion",
       "path": "src/vs/workbench/api/common/extHostDiagnostics.ts",
       "line": 98,
@@ -74161,6 +75046,18 @@
       "path": "src/vs/workbench/api/common/extHostDocumentsAndEditors.ts",
       "line": 126,
       "column": 26
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/api/common/extHostDocumentsAndEditors.ts",
+      "line": 196,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/api/common/extHostExtensionActivator.ts",
+      "line": 26,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/consistent-type-definitions",
@@ -74251,6 +75148,12 @@
       "path": "src/vs/workbench/api/common/extHostExtensionService.ts",
       "line": 1202,
       "column": 11
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/api/common/extHostFileSystemConsumer.ts",
+      "line": 259,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/no-non-null-assertion",
@@ -74421,10 +75324,22 @@
       "column": 150
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/api/common/extHostLanguageModels.ts",
+      "line": 32,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/consistent-type-definitions",
       "path": "src/vs/workbench/api/common/extHostLanguageModels.ts",
       "line": 36,
       "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/api/common/extHostLocalizationService.ts",
+      "line": 109,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/prefer-enum-initializers",
@@ -74559,6 +75474,18 @@
       "column": 2
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/api/common/extHostOutput.ts",
+      "line": 306,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/api/common/extHostProgress.ts",
+      "line": 18,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/no-non-null-assertion",
       "path": "src/vs/workbench/api/common/extHostQuickDiff.ts",
       "line": 106,
@@ -74649,6 +75576,12 @@
       "column": 37
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/api/common/extHostSecretState.ts",
+      "line": 41,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/no-non-null-assertion",
       "path": "src/vs/workbench/api/common/extHostStatusBar.ts",
       "line": 114,
@@ -74671,6 +75604,12 @@
       "path": "src/vs/workbench/api/common/extHostStatusBar.ts",
       "line": 274,
       "column": 90
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/api/common/extHostStorage.ts",
+      "line": 74,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/no-empty-function",
@@ -75933,6 +76872,12 @@
       "column": 25
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/api/common/extHostUrls.ts",
+      "line": 69,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/no-non-null-assertion",
       "path": "src/vs/workbench/api/common/extHostWorkspace.ts",
       "line": 350,
@@ -75997,6 +76942,12 @@
       "path": "src/vs/workbench/api/common/jsonValidationExtensionPoint.ts",
       "line": 179,
       "column": 19
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/api/common/shared/tasks.ts",
+      "line": 37,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/no-empty-function",
@@ -80655,6 +81606,12 @@
       "column": 18
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/browser/editor.ts",
+      "line": 26,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/consistent-type-definitions",
       "path": "src/vs/workbench/browser/layout.ts",
       "line": 2764,
@@ -80863,6 +81820,12 @@
       "path": "src/vs/workbench/browser/parts/editor/editorStatus.ts",
       "line": 1298,
       "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/browser/parts/editor/editorStatus.ts",
+      "line": 1352,
+      "column": 65
     },
     {
       "rule": "@typescript-eslint/no-empty-function",
@@ -81555,6 +82518,12 @@
       "column": 43
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/common/composite.ts",
+      "line": 49,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/consistent-type-definitions",
       "path": "src/vs/workbench/common/configuration.ts",
       "line": 61,
@@ -81583,6 +82552,12 @@
       "path": "src/vs/workbench/common/contextkeys.ts",
       "line": 65,
       "column": 44
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/common/contributions.ts",
+      "line": 20,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/no-namespace",
@@ -81637,6 +82612,12 @@
       "path": "src/vs/workbench/common/editor.ts",
       "line": 267,
       "column": 2
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/common/editor.ts",
+      "line": 406,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/prefer-enum-initializers",
@@ -81759,6 +82740,12 @@
       "column": 2
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/common/editor.ts",
+      "line": 1220,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/prefer-enum-initializers",
       "path": "src/vs/workbench/common/editor.ts",
       "line": 1235,
@@ -81853,6 +82840,18 @@
       "path": "src/vs/workbench/common/editor.ts",
       "line": 1254,
       "column": 2
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/common/editor.ts",
+      "line": 1271,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/common/editor.ts",
+      "line": 1278,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/prefer-enum-initializers",
@@ -81997,6 +82996,12 @@
       "path": "src/vs/workbench/common/views.ts",
       "line": 53,
       "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/common/views.ts",
+      "line": 209,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/no-non-null-assertion",
@@ -82693,6 +83698,12 @@
       "path": "src/vs/workbench/contrib/browserView/common/browserView.ts",
       "line": 187,
       "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/browserView/common/browserView.ts",
+      "line": 187,
+      "column": 52
     },
     {
       "rule": "@typescript-eslint/consistent-type-definitions",
@@ -84453,6 +85464,12 @@
       "column": 109
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/chat/browser/chat.ts",
+      "line": 394,
+      "column": 88
+    },
+    {
       "rule": "@typescript-eslint/no-non-null-assertion",
       "path": "src/vs/workbench/contrib/chat/browser/chatDebug/agentHostChatDebugProvider.ts",
       "line": 1332,
@@ -84517,6 +85534,12 @@
       "path": "src/vs/workbench/contrib/chat/browser/chatDebug/chatDebugEditor.ts",
       "line": 52,
       "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/chat/browser/chatDebug/chatDebugEditor.ts",
+      "line": 459,
+      "column": 37
     },
     {
       "rule": "@typescript-eslint/no-non-null-assertion",
@@ -85159,6 +86182,12 @@
       "path": "src/vs/workbench/contrib/chat/browser/chatUserInteractionTelemetry.ts",
       "line": 284,
       "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/chat/browser/contextContrib/chatContextService.ts",
+      "line": 21,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/no-non-null-assertion",
@@ -85839,6 +86868,12 @@
       "column": 13
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/chat/browser/voiceClient/voiceTelemetry.ts",
+      "line": 35,
+      "column": 45
+    },
+    {
       "rule": "@typescript-eslint/consistent-type-definitions",
       "path": "src/vs/workbench/contrib/chat/browser/voiceClient/voiceTelemetry.ts",
       "line": 36,
@@ -86181,6 +87216,12 @@
       "column": 6
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/chat/browser/widget/chatContentParts/chatCodeCitationContentPart.ts",
+      "line": 53,
+      "column": 37
+    },
+    {
       "rule": "@typescript-eslint/consistent-type-definitions",
       "path": "src/vs/workbench/contrib/chat/browser/widget/chatContentParts/chatCollapsibleContentPart.ts",
       "line": 218,
@@ -86449,6 +87490,12 @@
       "path": "src/vs/workbench/contrib/chat/browser/widget/chatContentParts/chatTodoListWidget.ts",
       "line": 501,
       "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/chat/browser/widget/chatContentParts/chatToolInputOutputContentPart.ts",
+      "line": 57,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/no-empty-function",
@@ -86901,6 +87948,12 @@
       "column": 23
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/chat/browser/widget/input/chatInputNoticeHost.ts",
+      "line": 93,
+      "column": 11
+    },
+    {
       "rule": "@typescript-eslint/no-non-null-assertion",
       "path": "src/vs/workbench/contrib/chat/browser/widget/input/chatInputNoticeHost.ts",
       "line": 184,
@@ -87235,6 +88288,12 @@
       "path": "src/vs/workbench/contrib/chat/browser/widgetHosts/viewPane/chatViewPane.ts",
       "line": 112,
       "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/chat/browser/widgetHosts/viewPane/chatViewPane.ts",
+      "line": 370,
+      "column": 36
     },
     {
       "rule": "@typescript-eslint/no-non-null-assertion",
@@ -88111,6 +89170,12 @@
       "path": "src/vs/workbench/contrib/chat/common/promptSyntax/service/promptsService.ts",
       "line": 47,
       "column": 13
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/chat/common/promptSyntax/service/promptsService.ts",
+      "line": 73,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/no-namespace",
@@ -103845,6 +104910,12 @@
       "column": 23
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/chat/test/common/promptSyntax/testUtils/mockFilesystem.test.ts",
+      "line": 21,
+      "column": 11
+    },
+    {
       "rule": "@typescript-eslint/no-unused-expressions",
       "path": "src/vs/workbench/contrib/chat/test/common/promptSyntax/utils/mock.test.ts",
       "line": 60,
@@ -105867,6 +106938,132 @@
       "column": 20
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/debug/common/debugProtocol.d.ts",
+      "line": 102,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/debug/common/debugProtocol.d.ts",
+      "line": 116,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/debug/common/debugProtocol.d.ts",
+      "line": 488,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/debug/common/debugProtocol.d.ts",
+      "line": 559,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/debug/common/debugProtocol.d.ts",
+      "line": 563,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/debug/common/debugProtocol.d.ts",
+      "line": 587,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/debug/common/debugProtocol.d.ts",
+      "line": 609,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/debug/common/debugProtocol.d.ts",
+      "line": 628,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/debug/common/debugProtocol.d.ts",
+      "line": 658,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/debug/common/debugProtocol.d.ts",
+      "line": 679,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/debug/common/debugProtocol.d.ts",
+      "line": 959,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/debug/common/debugProtocol.d.ts",
+      "line": 989,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/debug/common/debugProtocol.d.ts",
+      "line": 1013,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/debug/common/debugProtocol.d.ts",
+      "line": 1038,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/debug/common/debugProtocol.d.ts",
+      "line": 1059,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/debug/common/debugProtocol.d.ts",
+      "line": 1079,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/debug/common/debugProtocol.d.ts",
+      "line": 1103,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/debug/common/debugProtocol.d.ts",
+      "line": 1122,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/debug/common/debugProtocol.d.ts",
+      "line": 1306,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/debug/common/debugProtocol.d.ts",
+      "line": 1334,
+      "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/debug/common/debugProtocol.d.ts",
+      "line": 1374,
+      "column": 12
+    },
+    {
       "rule": "@typescript-eslint/no-non-null-assertion",
       "path": "src/vs/workbench/contrib/debug/common/debugSchemas.ts",
       "line": 266,
@@ -107025,6 +108222,12 @@
       "column": 11
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/editSessions/browser/editSessions.contribution.ts",
+      "line": 364,
+      "column": 42
+    },
+    {
       "rule": "@typescript-eslint/consistent-type-definitions",
       "path": "src/vs/workbench/contrib/editSessions/browser/editSessions.contribution.ts",
       "line": 365,
@@ -107035,6 +108238,12 @@
       "path": "src/vs/workbench/contrib/editSessions/browser/editSessions.contribution.ts",
       "line": 476,
       "column": 11
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/editSessions/browser/editSessions.contribution.ts",
+      "line": 476,
+      "column": 24
     },
     {
       "rule": "@typescript-eslint/consistent-type-definitions",
@@ -107149,6 +108358,12 @@
       "path": "src/vs/workbench/contrib/editSessions/browser/editSessionsStorageService.ts",
       "line": 259,
       "column": 70
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/editSessions/common/editSessions.ts",
+      "line": 47,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/no-empty-function",
@@ -107991,6 +109206,12 @@
       "column": 9
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/extensions/browser/extensionsWorkbenchService.ts",
+      "line": 793,
+      "column": 37
+    },
+    {
       "rule": "@typescript-eslint/no-non-null-assertion",
       "path": "src/vs/workbench/contrib/extensions/browser/extensionsWorkbenchService.ts",
       "line": 878,
@@ -108001,6 +109222,12 @@
       "path": "src/vs/workbench/contrib/extensions/browser/extensionsWorkbenchService.ts",
       "line": 964,
       "column": 109
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/extensions/browser/extensionsWorkbenchService.ts",
+      "line": 1164,
+      "column": 38
     },
     {
       "rule": "@typescript-eslint/consistent-type-definitions",
@@ -109239,6 +110466,12 @@
       "column": 27
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/files/browser/views/explorerView.ts",
+      "line": 731,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/no-empty-function",
       "path": "src/vs/workbench/contrib/files/browser/views/explorerView.ts",
       "line": 880,
@@ -110331,6 +111564,12 @@
       "column": 2
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/issue/browser/issueTroubleshoot.ts",
+      "line": 57,
+      "column": 14
+    },
+    {
       "rule": "@typescript-eslint/no-non-null-assertion",
       "path": "src/vs/workbench/contrib/issue/browser/issueTroubleshoot.ts",
       "line": 165,
@@ -110539,6 +111778,12 @@
       "path": "src/vs/workbench/contrib/markdown/common/markedKatexExtension.ts",
       "line": 14,
       "column": 8
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/markdown/common/markedKatexExtension.ts",
+      "line": 19,
+      "column": 19
     },
     {
       "rule": "@typescript-eslint/no-empty-function",
@@ -111303,6 +112548,12 @@
       "column": 18
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/mcp/common/mcpServerRequestHandler.ts",
+      "line": 407,
+      "column": 49
+    },
+    {
       "rule": "@typescript-eslint/consistent-type-definitions",
       "path": "src/vs/workbench/contrib/mcp/common/mcpService.ts",
       "line": 24,
@@ -111427,6 +112678,12 @@
       "path": "src/vs/workbench/contrib/mcp/common/mcpTypes.ts",
       "line": 566,
       "column": 2
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/mcp/common/mcpTypes.ts",
+      "line": 587,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/prefer-literal-enum-member",
@@ -112273,6 +113530,42 @@
       "path": "src/vs/workbench/contrib/mergeEditor/browser/model/modifiedBaseRange.ts",
       "line": 422,
       "column": 8
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/mergeEditor/browser/telemetry.ts",
+      "line": 216,
+      "column": 36
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/mergeEditor/browser/telemetry.ts",
+      "line": 224,
+      "column": 36
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/mergeEditor/browser/telemetry.ts",
+      "line": 234,
+      "column": 36
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/mergeEditor/browser/telemetry.ts",
+      "line": 245,
+      "column": 36
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/mergeEditor/browser/utils.ts",
+      "line": 84,
+      "column": 37
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/mergeEditor/browser/utils.ts",
+      "line": 88,
+      "column": 37
     },
     {
       "rule": "@typescript-eslint/no-non-null-assertion",
@@ -113575,6 +114868,12 @@
       "path": "src/vs/workbench/contrib/notebook/browser/diff/notebookDiffEditor.ts",
       "line": 945,
       "column": 12
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/notebook/browser/diff/notebookDiffEditorBrowser.ts",
+      "line": 66,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/no-non-null-assertion",
@@ -116361,6 +117660,12 @@
       "column": 13
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/notebook/test/browser/testNotebookEditor.ts",
+      "line": 471,
+      "column": 9
+    },
+    {
       "rule": "@typescript-eslint/no-empty-function",
       "path": "src/vs/workbench/contrib/notebook/test/browser/testNotebookEditor.ts",
       "line": 503,
@@ -118791,10 +120096,28 @@
       "column": 6
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/searchEditor/browser/searchEditorActions.ts",
+      "line": 142,
+      "column": 31
+    },
+    {
       "rule": "@typescript-eslint/no-non-null-assertion",
       "path": "src/vs/workbench/contrib/searchEditor/browser/searchEditorActions.ts",
       "line": 149,
       "column": 69
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/searchEditor/browser/searchEditorActions.ts",
+      "line": 203,
+      "column": 4
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/searchEditor/browser/searchEditorInput.ts",
+      "line": 187,
+      "column": 5
     },
     {
       "rule": "@typescript-eslint/consistent-type-definitions",
@@ -120369,6 +121692,12 @@
       "column": 8
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/tasks/common/taskConfiguration.ts",
+      "line": 2005,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/no-non-null-assertion",
       "path": "src/vs/workbench/contrib/tasks/common/taskConfiguration.ts",
       "line": 2039,
@@ -120415,6 +121744,12 @@
       "path": "src/vs/workbench/contrib/tasks/common/taskDefinitionRegistry.ts",
       "line": 179,
       "column": 5
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/tasks/common/taskService.ts",
+      "line": 102,
+      "column": 79
     },
     {
       "rule": "@typescript-eslint/prefer-enum-initializers",
@@ -120873,6 +122208,18 @@
       "column": 2
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/terminal/browser/terminal.ts",
+      "line": 738,
+      "column": 18
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/terminal/browser/terminal.ts",
+      "line": 741,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/no-non-null-assertion",
       "path": "src/vs/workbench/contrib/terminal/browser/terminalActions.ts",
       "line": 1179,
@@ -120957,6 +122304,12 @@
       "column": 35
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/terminal/browser/terminalInstance.ts",
+      "line": 1835,
+      "column": 37
+    },
+    {
       "rule": "@typescript-eslint/no-non-null-assertion",
       "path": "src/vs/workbench/contrib/terminal/browser/terminalInstance.ts",
       "line": 2017,
@@ -121009,6 +122362,12 @@
       "path": "src/vs/workbench/contrib/terminal/browser/terminalProcessManager.ts",
       "line": 63,
       "column": 2
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/terminal/browser/terminalProcessManager.ts",
+      "line": 401,
+      "column": 42
     },
     {
       "rule": "@typescript-eslint/no-non-null-assertion",
@@ -121209,10 +122568,22 @@
       "column": 10
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/terminal/browser/xterm/xtermTerminal.ts",
+      "line": 1030,
+      "column": 39
+    },
+    {
       "rule": "@typescript-eslint/consistent-type-definitions",
       "path": "src/vs/workbench/contrib/terminal/browser/xterm/xtermTerminal.ts",
       "line": 1032,
       "column": 11
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/terminal/browser/xterm/xtermTerminal.ts",
+      "line": 1036,
+      "column": 40
     },
     {
       "rule": "@typescript-eslint/no-non-null-assertion",
@@ -121387,6 +122758,12 @@
       "path": "src/vs/workbench/contrib/terminal/terminalContribExports.ts",
       "line": 69,
       "column": 2
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/terminal/test/browser/agentHostPty.test.ts",
+      "line": 75,
+      "column": 44
     },
     {
       "rule": "@typescript-eslint/no-empty-function",
@@ -124521,6 +125898,12 @@
       "column": 17
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/testing/browser/testResultsView/testResultsTree.ts",
+      "line": 633,
+      "column": 33
+    },
+    {
       "rule": "@typescript-eslint/no-non-null-assertion",
       "path": "src/vs/workbench/contrib/testing/browser/testResultsView/testResultsTree.ts",
       "line": 1007,
@@ -126133,6 +127516,24 @@
       "path": "src/vs/workbench/contrib/userDataProfile/browser/userDataProfilesEditor.ts",
       "line": 1665,
       "column": 78
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/userDataProfile/browser/userDataProfilesEditor.ts",
+      "line": 1977,
+      "column": 88
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/userDataProfile/browser/userDataProfilesEditor.ts",
+      "line": 1982,
+      "column": 42
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/contrib/userDataProfile/browser/userDataProfilesEditor.ts",
+      "line": 1986,
+      "column": 74
     },
     {
       "rule": "@typescript-eslint/no-empty-function",
@@ -128655,6 +130056,12 @@
       "column": 22
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/services/extensionManagement/browser/extensionBisect.ts",
+      "line": 51,
+      "column": 14
+    },
+    {
       "rule": "@typescript-eslint/consistent-type-definitions",
       "path": "src/vs/workbench/services/extensionManagement/browser/extensionEnablementService.ts",
       "line": 42,
@@ -128841,6 +130248,12 @@
       "column": 11
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/services/extensionManagement/common/extensionManagementService.ts",
+      "line": 651,
+      "column": 37
+    },
+    {
       "rule": "@typescript-eslint/consistent-type-definitions",
       "path": "src/vs/workbench/services/extensionManagement/common/extensionManagementService.ts",
       "line": 843,
@@ -128871,6 +130284,18 @@
       "column": 15
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/services/extensionManagement/common/extensionManagementService.ts",
+      "line": 1312,
+      "column": 36
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/services/extensionManagement/common/extensionManagementService.ts",
+      "line": 1329,
+      "column": 36
+    },
+    {
       "rule": "@typescript-eslint/no-empty-function",
       "path": "src/vs/workbench/services/extensionManagement/common/webExtensionManagementService.ts",
       "line": 233,
@@ -128887,6 +130312,12 @@
       "path": "src/vs/workbench/services/extensionManagement/electron-browser/extensionGalleryAccountService.ts",
       "line": 40,
       "column": 6
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/services/extensionManagement/electron-browser/extensionGalleryManifestService.ts",
+      "line": 155,
+      "column": 8
     },
     {
       "rule": "@typescript-eslint/no-empty-function",
@@ -130383,6 +131814,12 @@
       "column": 2
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/services/preferences/common/preferences.ts",
+      "line": 210,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/no-non-null-assertion",
       "path": "src/vs/workbench/services/preferences/common/preferencesModels.ts",
       "line": 60,
@@ -131311,6 +132748,12 @@
       "path": "src/vs/workbench/services/search/common/search.ts",
       "line": 272,
       "column": 2
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/services/search/common/search.ts",
+      "line": 453,
+      "column": 17
     },
     {
       "rule": "@typescript-eslint/prefer-enum-initializers",
@@ -132429,6 +133872,12 @@
       "column": 14
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/services/textMate/browser/backgroundTokenization/threadedBackgroundTokenizerFactory.ts",
+      "line": 106,
+      "column": 39
+    },
+    {
       "rule": "@typescript-eslint/no-non-null-assertion",
       "path": "src/vs/workbench/services/textMate/browser/backgroundTokenization/worker/textMateTokenizationWorker.worker.ts",
       "line": 124,
@@ -133503,6 +134952,12 @@
       "column": 33
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/services/workingCopy/common/storedFileWorkingCopy.ts",
+      "line": 38,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/prefer-enum-initializers",
       "path": "src/vs/workbench/services/workingCopy/common/storedFileWorkingCopy.ts",
       "line": 188,
@@ -133539,6 +134994,12 @@
       "column": 2
     },
     {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/services/workingCopy/common/untitledFileWorkingCopy.ts",
+      "line": 23,
+      "column": 18
+    },
+    {
       "rule": "@typescript-eslint/prefer-literal-enum-member",
       "path": "src/vs/workbench/services/workingCopy/common/workingCopy.ts",
       "line": 24,
@@ -133549,6 +135010,12 @@
       "path": "src/vs/workbench/services/workingCopy/common/workingCopy.ts",
       "line": 31,
       "column": 2
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/services/workingCopy/common/workingCopyFileService.ts",
+      "line": 142,
+      "column": 18
     },
     {
       "rule": "@typescript-eslint/default-param-last",
@@ -135901,6 +137368,12 @@
       "path": "src/vs/workbench/test/browser/componentFixtures/sessions/aiCustomizationManagementEditor.fixture.ts",
       "line": 1611,
       "column": 62
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vs/workbench/test/browser/componentFixtures/sessions/aiCustomizationManagementEditor.fixture.ts",
+      "line": 1622,
+      "column": 39
     },
     {
       "rule": "@typescript-eslint/no-empty-function",
@@ -139711,6 +141184,36 @@
       "path": "src/vs/workbench/test/electron-browser/workbenchTestServices.ts",
       "line": 397,
       "column": 83
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vscode-dts/vscode.d.ts",
+      "line": 5796,
+      "column": 19
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vscode-dts/vscode.d.ts",
+      "line": 16681,
+      "column": 19
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vscode-dts/vscode.d.ts",
+      "line": 16688,
+      "column": 19
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vscode-dts/vscode.d.ts",
+      "line": 16695,
+      "column": 19
+    },
+    {
+      "rule": "@typescript-eslint/no-empty-object-type",
+      "path": "src/vscode-dts/vscode.d.ts",
+      "line": 21239,
+      "column": 11
     },
     {
       "rule": "@typescript-eslint/consistent-type-definitions",

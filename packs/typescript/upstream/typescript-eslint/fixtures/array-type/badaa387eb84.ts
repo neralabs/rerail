@@ -1,0 +1,1 @@
+type Generic<Array extends unknown[]> = { array: Array };

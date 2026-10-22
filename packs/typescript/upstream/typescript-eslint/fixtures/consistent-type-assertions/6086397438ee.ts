@@ -1,0 +1,1 @@
+new print(<Foo>{ bar: 5 });

@@ -1,0 +1,1 @@
+var z = boo(bar(foo(z => z)));

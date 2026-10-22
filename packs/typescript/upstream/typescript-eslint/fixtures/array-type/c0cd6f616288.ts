@@ -1,0 +1,1 @@
+type Unwrap<T> = T extends (infer E)[] ? E : T;

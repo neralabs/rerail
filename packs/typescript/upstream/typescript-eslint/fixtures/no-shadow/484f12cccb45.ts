@@ -1,0 +1,1 @@
+const person = { ...people.find(person => person.firstName.startsWith('s')) };
