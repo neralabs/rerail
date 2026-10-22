@@ -67,7 +67,49 @@ fn refuse(what: &str) {
     REFUSALS.with(|r| *r.borrow_mut().0.entry(what.to_owned()).or_default() += 1);
 }
 
+/// A refusal raised outside the operators (a per-file producer's failure for a content).
+pub fn refuse_external(what: &str) {
+    refuse(what)
+}
+
 pub type Out = Rc<RefCell<FxHashMap<(W, Row), R>>>;
+
+// Per-tag state (measurement, `--track`): live records of every operator output, per (operator,
+// tag, record hash), and the in-memory size of each live record.
+thread_local! {
+    static TRACK: RefCell<FxHashMap<(usize, W, u64), (R, u32)>> = RefCell::new(FxHashMap::default());
+}
+
+/// (records, bytes) per tag over every tracked operator output.
+pub fn tracked() -> FxHashMap<W, (u64, u64)> {
+    TRACK.with(|t| {
+        let mut per: FxHashMap<W, (u64, u64)> = FxHashMap::default();
+        for ((_, w, _), (_, b)) in t.borrow().iter() {
+            let e = per.entry(*w).or_default();
+            e.0 += 1;
+            e.1 += *b as u64;
+        }
+        per
+    })
+}
+
+fn track<'s>(c: C<'s, T>, node: usize) -> C<'s, T> {
+    c.inspect(move |((w, row), _t, d)| {
+        use std::hash::{Hash, Hasher};
+        let mut h = rustc_hash::FxHasher::default();
+        row.hash(&mut h);
+        let k = (node, *w, h.finish());
+        let size = (std::mem::size_of::<((W, Row), T, R)>() + row.capacity() * std::mem::size_of::<Val>()) as u32;
+        TRACK.with(|t| {
+            let mut t = t.borrow_mut();
+            let e = t.entry(k).or_insert((0, size));
+            e.0 += d;
+            if e.0 == 0 {
+                t.remove(&k);
+            }
+        })
+    })
+}
 
 // --------------------------------------------------------------------------------------------
 // Per-record evaluation
@@ -439,12 +481,25 @@ pub struct Built {
     pub outputs: Vec<(String, Out)>,
 }
 
+/// A stage's stored row: each column under its declared affinity (CTAS).
+fn affinity(row: &[Val], affs: &[rerail_facts::ir::Aff]) -> Row {
+    row.iter()
+        .enumerate()
+        .map(|(i, v)| match affs.get(i) {
+            Some(a) if *a != rerail_facts::ir::Aff::None => val::from_v(&sv::apply_affinity(val::to_v(*v), *a)),
+            _ => *v,
+        })
+        .collect()
+}
+
 struct Lower<'s> {
     scope: Scope<'s, T>,
     g: Rc<Graph>,
     files: VecCollection<'s, T, (W, (Sym, Cid)), R>,
     src: Source,
     done: Vec<Option<C<'s, T>>>,
+    /// `Some(graph offset)`: count every operator output's live records per tag.
+    track: Option<usize>,
 }
 
 /// Does node `n` read the fixpoint variable `var` (directly or below)?
@@ -452,7 +507,7 @@ fn reads_var(g: &Graph, n: NodeId, var: u32) -> bool {
     match &g.nodes[n] {
         Op::Var(v) => *v == var,
         Op::Exported(_) | Op::Const(_) => false,
-        Op::Map { input, .. } | Op::Filter { input, .. } | Op::Distinct { input } | Op::Group { input, .. } | Op::Window { input, .. } | Op::DistinctPrefix { input, .. } => reads_var(g, *input, var),
+        Op::Map { input, .. } | Op::Filter { input, .. } | Op::Distinct { input } | Op::Group { input, .. } | Op::Window { input, .. } | Op::DistinctPrefix { input, .. } | Op::Affinity { input, .. } => reads_var(g, *input, var),
         Op::Join { l, r, .. } | Op::Semi { l, r, .. } => reads_var(g, *l, var) || reads_var(g, *r, var),
         Op::Concat { inputs } => inputs.iter().any(|i| reads_var(g, *i, var)),
         Op::Fix { init, step, .. } => init.iter().chain(step).any(|i| reads_var(g, *i, var)),
@@ -469,7 +524,7 @@ fn boundary(g: &Graph, n: NodeId, var: u32, out: &mut Vec<NodeId>) {
     }
     match &g.nodes[n] {
         Op::Var(_) => {}
-        Op::Map { input, .. } | Op::Filter { input, .. } | Op::Distinct { input } | Op::Group { input, .. } | Op::Window { input, .. } | Op::DistinctPrefix { input, .. } => boundary(g, *input, var, out),
+        Op::Map { input, .. } | Op::Filter { input, .. } | Op::Distinct { input } | Op::Group { input, .. } | Op::Window { input, .. } | Op::DistinctPrefix { input, .. } | Op::Affinity { input, .. } => boundary(g, *input, var, out),
         Op::Join { l, r, .. } | Op::Semi { l, r, .. } => {
             boundary(g, *l, var, out);
             boundary(g, *r, var, out)
@@ -520,6 +575,10 @@ impl<'s> Lower<'s> {
             Op::Filter { input, pred } => {
                 let pred = pred.clone();
                 self.node(*input).filter(move |(_, row)| ev(&pred, &val::row_to_v(row)).and_then(|v| sv::truth(&v)) == Some(true))
+            }
+            Op::Affinity { input, affs } => {
+                let affs = affs.clone();
+                self.node(*input).map(move |(w, row)| (w, affinity(&row, &affs)))
             }
             Op::Join { l, r, lk, rk } => {
                 let la = keyed(self.node(*l), lk.clone());
@@ -583,6 +642,10 @@ impl<'s> Lower<'s> {
                 group(arr, distinct_prefix_logic(p), false)
             }
             Op::Fix { var, init, step } => self.fix(*var, init.clone(), step.clone()),
+        };
+        let c = match self.track {
+            Some(off) => track(c, off + n),
+            None => c,
         };
         self.done[n] = Some(c.clone());
         c
@@ -702,6 +765,10 @@ impl<'i> ViewLower<'i> {
                 let pred = pred.clone();
                 self.node(*input).filter(move |(_, row)| ev(&pred, &val::row_to_v(row)).and_then(|v| sv::truth(&v)) == Some(true))
             }
+            Op::Affinity { input, affs } => {
+                let affs = affs.clone();
+                self.node(*input).map(move |(w, row)| (w, affinity(&row, &affs)))
+            }
             Op::Concat { inputs } => {
                 let mut it = inputs.clone().into_iter();
                 let first = self.node(it.next().unwrap());
@@ -773,13 +840,14 @@ impl<'i> ViewLower<'i> {
 }
 
 /// Build one dataflow evaluating every graph's outputs over the tagged `files` input.
-pub fn build(worker: &mut timely::worker::Worker, graphs: Vec<(String, Rc<Graph>)>, src: Source, probe: &Handle<T>) -> Built {
+pub fn build(worker: &mut timely::worker::Worker, graphs: Vec<(String, Rc<Graph>)>, src: Source, probe: &Handle<T>, track_on: bool) -> Built {
     worker.dataflow::<T, _, _>(|scope| {
         let (files_in, files) = scope.new_collection::<(W, (Sym, Cid)), R>();
         let mut outputs = Vec::new();
         for (name, g) in graphs {
             let n = g.nodes.len();
-            let mut lw = Lower { scope, g: g.clone(), files: files.clone(), src: src.clone(), done: vec![None; n] };
+            let gi = outputs.len();
+            let mut lw = Lower { scope, g: g.clone(), files: files.clone(), src: src.clone(), done: vec![None; n], track: track_on.then_some(gi * 100_000) };
             for (clause, node, _) in &g.outputs {
                 let c = lw.node(*node);
                 let out: Out = Rc::default();

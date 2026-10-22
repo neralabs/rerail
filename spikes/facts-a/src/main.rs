@@ -12,6 +12,7 @@ mod repo;
 mod spill;
 mod sql;
 mod subst;
+mod xexport;
 
 use serde_json::{Map, Value as Json, json};
 use std::collections::{BTreeMap, HashMap};
@@ -54,6 +55,7 @@ fn main() {
         Some("store") => factfile::store(&args),
         Some("inspect") => factfile::inspect(&args),
         Some("census") => census(&args),
+        Some("xexport") => xexport::main(&args),
         Some("parse") => {
             let path = &args[2];
             let source = Arc::new(std::fs::read_to_string(path).unwrap());

@@ -1,11 +1,15 @@
 //! `facts-b greplay`: the generated dataflow over the membership model, driven by Spike B's edit
-//! replay. Every plan is an IR repository plan lowered by the generator; after every event the
-//! edited worktree (and every worktree each 100 edits) is compared with the from-scratch
-//! evaluation (the vectors: Spike B's oracle; IR plans with a reference: `rerail_facts::reference`).
-use super::lower::{self, Out, Refusals, Source, T};
+//! replay. Every plan is an IR repository plan lowered by the generator: the test vectors
+//! (Spike B's R1/R3 as IR, `vectors`) and real plans compiled by `rerail_facts::compile`
+//! (`real`). After every event the edited worktree (and every worktree each 100 edits) is
+//! compared with a from-scratch evaluation: the vectors with Spike B's oracle, real plans with
+//! the reference evaluator (`rerail_facts::reference::evaluate_repository`) over the worktree's
+//! member exported rows.
+use super::lower::{self, Refusals, Source, T};
 use super::norm;
+use super::real::{self, Real};
 use super::tags::{self, W, BASE};
-use super::val::{self, Row};
+use super::val::{self, Row, Val};
 use super::vectors;
 use crate::derive::World;
 use crate::membership::{self, Members, Resident};
@@ -26,7 +30,12 @@ pub struct Opts {
     pub fail_fast: bool,
     pub clusters: bool,
     pub track: bool,
+    /// Test vectors to run (`r1`, `r3`); `none` for none.
     pub plans: Vec<String>,
+    /// Real plans: spec JSON (`gen::real::load`).
+    pub real: Option<PathBuf>,
+    /// One worktree from a jobs file (path, hash, source) instead of the 40: parity runs.
+    pub parity: Option<PathBuf>,
 }
 
 fn mb(b: u64) -> f64 {
@@ -51,26 +60,61 @@ fn show(r: &Row) -> String {
     format!("({})", parts.join(", "))
 }
 
-/// Exported rows per (export, path, content), computed once and held while some tag holds the
-/// (path, content): eviction follows the membership model's resident counts.
+/// Exported rows per (export, path, content), computed (vectors) or read (real plans) when a tag
+/// first holds the (path, content), evicted when none does.
 struct Facts {
     world: Rc<RefCell<World>>,
+    real: Option<Rc<Real>>,
     rows: FxHashMap<(u32, Sym, Cid), Rc<[Row]>>,
+    /// Exported row count per (path, content), for the membership model's weights.
+    counts: FxHashMap<(Sym, Cid), u64>,
     exports: Vec<u32>,
 }
 
 impl Facts {
+    fn compute(&self, e: u32, p: Sym, c: Cid) -> Vec<Row> {
+        if e < real::STRIDE {
+            return vectors::rows(&mut self.world.borrow_mut(), e, p, c);
+        }
+        let (path, hash) = {
+            let w = self.world.borrow();
+            (w.store.syms.str(p).to_owned(), crate::facts::hex(&w.store.contents[c as usize].hash))
+        };
+        match self.real.as_ref().unwrap().rows(e, &path, &hash) {
+            Ok(r) => r,
+            Err(m) => {
+                lower::refuse_external(&m);
+                Vec::new()
+            }
+        }
+    }
     fn get(&mut self, e: u32, p: Sym, c: Cid) -> Rc<[Row]> {
         if let Some(r) = self.rows.get(&(e, p, c)) {
             return r.clone();
         }
-        let r: Rc<[Row]> = vectors::rows(&mut self.world.borrow_mut(), e, p, c).into();
+        let r: Rc<[Row]> = self.compute(e, p, c).into();
         self.rows.insert((e, p, c), r.clone());
         r
     }
+    /// Make a (path, content)'s rows resident before its records enter (not timed).
+    fn prefetch(&mut self, p: Sym, c: Cid) {
+        for e in self.exports.clone() {
+            self.get(e, p, c);
+        }
+    }
     fn weight(&mut self, p: Sym, c: Cid) -> u64 {
-        let ex = self.exports.clone();
-        1 + ex.iter().map(|e| self.get(*e, p, c).len() as u64).sum::<u64>()
+        if let Some(n) = self.counts.get(&(p, c)) {
+            return *n;
+        }
+        let mut n = 1;
+        for e in self.exports.clone() {
+            n += match self.rows.get(&(e, p, c)) {
+                Some(r) => r.len() as u64,
+                None => self.compute(e, p, c).len() as u64,
+            };
+        }
+        self.counts.insert((p, c), n);
+        n
     }
     fn evict(&mut self, p: Sym, c: Cid) {
         for e in self.exports.clone() {
@@ -78,8 +122,23 @@ impl Facts {
         }
     }
     fn bytes(&self) -> usize {
-        self.rows.values().map(|r| r.iter().map(|x| 24 + x.capacity() * std::mem::size_of::<val::Val>()).sum::<usize>() + 16).sum()
+        self.rows.values().map(|r| r.iter().map(|x| 24 + x.capacity() * std::mem::size_of::<Val>()).sum::<usize>() + 16).sum()
     }
+}
+
+fn read_jobs(p: &Path) -> store::Membership {
+    let mut m: store::Membership = std::fs::read_to_string(p)
+        .unwrap()
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| {
+            let mut it = l.split('\t');
+            let path = it.next().unwrap().to_owned();
+            (path, store::parse_hex(it.next().unwrap()))
+        })
+        .collect();
+    m.sort();
+    m
 }
 
 pub fn run(run_dir: &Path, opts: Opts) {
@@ -87,9 +146,15 @@ pub fn run(run_dir: &Path, opts: Opts) {
     let t_load = Instant::now();
     let sd = store::store_dir();
     let mdir = store::spike_dir().join("membership");
+    let vector_names: Vec<String> = if opts.plans.is_empty() && opts.real.is_none() { vec!["r1".into(), "r3".into()] } else { opts.plans.iter().filter(|p| *p != "none").cloned().collect() };
     let script_base_m = store::read_membership(&mdir.join("base.tsv"));
-    let ms = crate::base::load_memberships();
-    let mut st = Store::default();
+    let ms: Vec<(String, store::Membership)> = match &opts.parity {
+        Some(j) => vec![("parity".into(), read_jobs(j))],
+        None => crate::base::load_memberships(),
+    };
+    // v0 facts only for the vectors (Spike B's derivations read them); real plans read their
+    // producers' exports, contents need ids only.
+    let mut st = Store { ids_only: vector_names.is_empty(), ..Default::default() };
     for (_, h) in script_base_m.iter() {
         st.load(&sd, h);
     }
@@ -98,7 +163,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
             st.load(&sd, h);
         }
     }
-    let events: Vec<Event> = opts.events.as_ref().map(|p| read_events(p)).unwrap_or_default();
+    let events: Vec<Event> = if opts.parity.is_some() { Vec::new() } else { opts.events.as_ref().map(|p| read_events(p)).unwrap_or_default() };
     let events: Vec<Event> = match opts.limit {
         Some(n) => events.into_iter().take(n).collect(),
         None => events,
@@ -109,21 +174,25 @@ pub fn run(run_dir: &Path, opts: Opts) {
     timely::execute_directly(move |worker| {
         let world = Rc::new(RefCell::new(World::new(st)));
         // Plans: IR repository plans, normalised by the generator.
-        let all: Vec<(&str, rerail_facts::ir::Plan<rerail_facts::ir::RepoSource>)> = vec![("r1", vectors::r1()), ("r3", vectors::r3())];
-        let exported = vectors::exported();
         let mut graphs = Vec::new();
         let mut refusals_static = Vec::new();
-        for (name, p) in all {
-            if !opts.plans.is_empty() && !opts.plans.iter().any(|x| x == name) {
+        let vexp = vectors::exported();
+        for (name, p) in [("r1", vectors::r1()), ("r3", vectors::r3())] {
+            if !vector_names.iter().any(|x| x == name) {
                 continue;
             }
-            match norm::plan(&p, &exported) {
+            match norm::plan(&p, &vexp) {
                 Ok(g) => graphs.push((name.to_string(), Rc::new(g))),
                 Err(r) => refusals_static.push(json!({"plan": name, "refused": r.iter().map(|x| json!({"at": x.at, "construct": x.construct})).collect::<Vec<_>>()})),
             }
         }
+        let real: Option<Rc<Real>> = opts.real.as_ref().map(|p| Rc::new(real::load(p)));
+        if let Some(r) = &real {
+            graphs.extend(r.graphs.iter().cloned());
+            refusals_static.extend(r.refused.iter().cloned());
+        }
         if !refusals_static.is_empty() {
-            eprintln!("refused at compile time: {}", serde_json::to_string_pretty(&refusals_static).unwrap());
+            eprintln!("refused at compile time: {}", serde_json::to_string(&refusals_static).unwrap());
         }
         let exports: Vec<u32> = {
             let mut s = BTreeSet::new();
@@ -136,7 +205,8 @@ pub fn run(run_dir: &Path, opts: Opts) {
             }
             s.into_iter().collect()
         };
-        let facts = Rc::new(RefCell::new(Facts { world: world.clone(), rows: FxHashMap::default(), exports }));
+        let rss_store = rss();
+        let facts = Rc::new(RefCell::new(Facts { world: world.clone(), real: real.clone(), rows: FxHashMap::default(), counts: FxHashMap::default(), exports }));
         let fs = facts.clone();
         let src: Source = Rc::new(move |e, p, c| fs.borrow_mut().get(e, p, c));
 
@@ -152,7 +222,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
         let t_model = Instant::now();
         let order: Vec<(W, &Members)> = members.iter().map(|(w, m)| (*w, m)).collect();
         let weight = |p: Sym, c: Cid| facts.borrow_mut().weight(p, c);
-        let mut model = if opts.clusters {
+        let mut model = if opts.clusters && members.len() > 1 {
             membership::model(&order, &weight)
         } else {
             let all: Vec<&Members> = members.values().collect();
@@ -163,14 +233,12 @@ pub fn run(run_dir: &Path, opts: Opts) {
         model.install();
         let model_s = t_model.elapsed().as_secs_f64();
         eprintln!("model: {} clusters, cost {} (flat {}), {:.2}s", model.clusters.len(), model.cost, model.flat_cost, model_s);
-        // Nothing is resident until a record holds it.
-        facts.borrow_mut().rows.clear();
 
         let probe = timely::dataflow::operators::probe::Handle::new();
-        let mut built = lower::build(worker, graphs.clone(), src, &probe);
+        let mut built = lower::build(worker, graphs.clone(), src, &probe, opts.track);
         let mut resident = Resident::default();
         let mut epoch: T = 0;
-        let mut offer = |built: &mut lower::Built, resident: &mut Resident, ups: Vec<((W, (Sym, Cid)), i32)>, epoch: &mut T, worker: &mut timely::worker::Worker| {
+        let offer = |built: &mut lower::Built, resident: &mut Resident, ups: Vec<((W, (Sym, Cid)), i32)>, epoch: &mut T, worker: &mut timely::worker::Worker| {
             let (mut acq, mut rel) = (Vec::new(), Vec::new());
             for ((w, (p, c)), d) in &ups {
                 resident.update(*w, *p, *c, *d, &mut acq, &mut rel);
@@ -188,6 +256,11 @@ pub fn run(run_dir: &Path, opts: Opts) {
         let mut per_level_ms = Vec::new();
         for (t, recs) in model.level_records() {
             let t0 = Instant::now();
+            for ((p, c), d) in &recs {
+                if *d > 0 {
+                    facts.borrow_mut().prefetch(*p, *c);
+                }
+            }
             let ups = recs.into_iter().map(|((p, c), d)| ((t, (p, c)), d)).collect();
             let rel = offer(&mut built, &mut resident, ups, &mut epoch, worker);
             for (p, c) in rel {
@@ -201,6 +274,11 @@ pub fn run(run_dir: &Path, opts: Opts) {
             let paths: BTreeSet<Sym> = d.iter().map(|((p, _), _)| *p).collect();
             let rows: u64 = d.iter().map(|((p, c), _)| facts.borrow_mut().weight(*p, *c) - 1).sum();
             divergence.push(json!({"worktree": w, "parent": tags::parent(*w), "delta_paths": paths.len(), "delta_entries": d.len(), "delta_rows": rows}));
+            for ((p, c), s) in &d {
+                if *s > 0 {
+                    facts.borrow_mut().prefetch(*p, *c);
+                }
+            }
             let t0 = Instant::now();
             let ups = d.into_iter().map(|((p, c), s)| ((*w, (p, c)), s)).collect();
             let rel = offer(&mut built, &mut resident, ups, &mut epoch, worker);
@@ -213,25 +291,56 @@ pub fn run(run_dir: &Path, opts: Opts) {
         let rss_loaded = rss();
         eprintln!("loaded: {:.2}s, rss {:.1} MB, resident (path, content) {}", load_s, mb(rss_loaded.0), resident.held());
 
-        // ---- checks
+        // ---- checks: the dataflow's view of worktree w against a from-scratch evaluation.
         let mut checks = 0usize;
         let mut worktree_checks = 0usize;
         let mut differences: Vec<serde_json::Value> = Vec::new();
         let mut oracle_s = 0.0;
+        let plan_of: FxHashMap<String, usize> = real.as_ref().map(|r| r.plans.iter().enumerate().map(|(i, (n, ..))| (n.clone(), i)).collect()).unwrap_or_default();
         let mut check = |w: W, members: &BTreeMap<W, Members>, built: &lower::Built, at: usize, differences: &mut Vec<serde_json::Value>| {
             let t = Instant::now();
             let files: Vec<(Sym, Cid)> = members[&w].iter().map(|(p, c)| (*p, *c)).collect();
-            let f = crate::oracle::evaluate(&mut world.borrow_mut(), &files);
+            let vf = if vector_names.is_empty() { None } else { Some(crate::oracle::evaluate(&mut world.borrow_mut(), &files)) };
+            // Member files in path order (the IR's union order for exported relations).
+            let mut ordered: Vec<(String, Sym, Cid)> = files.iter().map(|(p, c)| (world.borrow().store.syms.str(*p).to_owned(), *p, *c)).collect();
+            ordered.sort();
             for (name, out) in &built.outputs {
                 let plan = name.split(':').next().unwrap();
-                let want: BTreeMap<Row, i32> = vectors::oracle_rows(&world.borrow(), &f, plan).into_iter().map(|r| (r, 1)).collect();
+                let want: Result<BTreeMap<Row, i32>, String> = if let Some(&i) = plan_of.get(plan) {
+                    let r = real.as_ref().unwrap();
+                    let (_, k, p, _) = &r.plans[i];
+                    let exported = |id: u32| -> Result<Vec<Vec<rerail_facts::sql::value::V>>, String> {
+                        let e = (*k as u32 + 1) * real::STRIDE + id;
+                        let mut rows = Vec::new();
+                        for (_, ps, c) in &ordered {
+                            rows.extend(facts.borrow_mut().compute(e, *ps, *c).iter().map(|x| val::row_to_v(x)));
+                        }
+                        Ok(rows)
+                    };
+                    rerail_facts::reference::evaluate_repository(p, &exported).map(|rows| {
+                        let mut m = BTreeMap::new();
+                        for r in rows {
+                            *m.entry(r.iter().map(val::from_v).collect::<Row>()).or_default() += 1;
+                        }
+                        m
+                    })
+                } else {
+                    Ok(vectors::oracle_rows(&world.borrow(), vf.as_ref().unwrap(), plan).into_iter().map(|r| (r, 1)).collect())
+                };
+                let want = match want {
+                    Ok(x) => x,
+                    Err(e) => {
+                        differences.push(json!({"event": at, "worktree": w, "plan": name, "reference_error": e}));
+                        continue;
+                    }
+                };
                 match lower::full(out, w) {
                     Err(e) => differences.push(json!({"event": at, "worktree": w, "plan": name, "error": e})),
                     Ok(got) => {
                         if got != want {
                             let extra: Vec<String> = got.iter().filter(|(r, c)| want.get(*r) != Some(c)).take(5).map(|(r, c)| format!("{} x{c}", show(r))).collect();
-                            let missing: Vec<String> = want.keys().filter(|r| !got.contains_key(*r)).take(5).map(show).collect();
-                            differences.push(json!({"event": at, "worktree": w, "plan": name, "dataflow_only_or_multiplicity": extra, "oracle_only": missing, "dataflow": got.len(), "oracle": want.len()}));
+                            let missing: Vec<String> = want.iter().filter(|(r, c)| got.get(*r) != Some(c)).take(5).map(|(r, c)| format!("{} x{c}", show(r))).collect();
+                            differences.push(json!({"event": at, "worktree": w, "plan": name, "dataflow_only": extra, "reference_only": missing, "dataflow": got.len(), "reference": want.len()}));
                         }
                     }
                 }
@@ -243,11 +352,13 @@ pub fn run(run_dir: &Path, opts: Opts) {
             for w in members.keys().copied().collect::<Vec<_>>() {
                 check(w, &members, &built, 0, &mut differences);
                 worktree_checks += 1;
-                initial.push(json!([w, built.outputs.iter().map(|(n, o)| (n.clone(), lower::full(o, w).map(|m| m.len()).unwrap_or(usize::MAX))).collect::<BTreeMap<_, _>>()]));
+                initial.push(json!([w, built.outputs.iter().map(|(n, o)| (n.clone(), lower::full(o, w).map(|m| m.values().map(|c| *c as usize).sum::<usize>()).unwrap_or(usize::MAX))).collect::<BTreeMap<_, _>>()]));
             }
             checks += 1;
             eprintln!("initial check: {} differences", differences.len());
         }
+        // Parity runs: the findings rows of the one worktree.
+        let parity_rows: Option<BTreeMap<String, Vec<String>>> = opts.parity.as_ref().map(|_| built.outputs.iter().map(|(n, o)| (n.clone(), lower::full(o, 1).unwrap_or_default().into_iter().flat_map(|(r, c)| std::iter::repeat_n(show(&r), c as usize)).collect())).collect());
 
         // ---- replay
         let mut lat: BTreeMap<String, Vec<f64>> = BTreeMap::new();
@@ -263,19 +374,17 @@ pub fn run(run_dir: &Path, opts: Opts) {
             let w = ev.worktree;
             let tl = Instant::now();
             let mut ups: Vec<((W, (Sym, Cid)), i32)> = Vec::new();
+            if ev.group == "new_worktree" || ev.group == "commit_init" {
+                assert!(!members.contains_key(&w), "worktree {w} exists");
+                let weight = |p: Sym, c: Cid| facts.borrow_mut().weight(p, c);
+                model.attach(w, &script_base_map, &weight);
+                for (rec, s) in membership::delta(&script_base_map, model.below(w)) {
+                    ups.push(((w, rec), s));
+                }
+                members.insert(w, script_base_map.clone());
+            }
             {
                 let mut wd = world.borrow_mut();
-                if ev.group == "new_worktree" || ev.group == "commit_init" {
-                    assert!(!members.contains_key(&w), "worktree {w} exists");
-                    drop(wd);
-                    let weight = |p: Sym, c: Cid| facts.borrow_mut().weight(p, c);
-                    model.attach(w, &script_base_map, &weight);
-                    for (rec, s) in membership::delta(&script_base_map, model.below(w)) {
-                        ups.push(((w, rec), s));
-                    }
-                    members.insert(w, script_base_map.clone());
-                    wd = world.borrow_mut();
-                }
                 let m = members.get_mut(&w).unwrap();
                 for (path, old, new) in &ev.changes {
                     let p = wd.path(path);
@@ -292,10 +401,10 @@ pub fn run(run_dir: &Path, opts: Opts) {
                     }
                 }
             }
-            // Exported rows of contents the event introduces are computed before the clock.
+            // Exported rows of contents the event introduces are made resident before the clock.
             for ((_, (p, c)), d) in &ups {
                 if *d > 0 {
-                    facts.borrow_mut().weight(*p, *c);
+                    facts.borrow_mut().prefetch(*p, *c);
                 }
             }
             fact_load_s += tl.elapsed().as_secs_f64();
@@ -343,13 +452,34 @@ pub fn run(run_dir: &Path, opts: Opts) {
         lat_summary.insert("single_file_all".into(), summary(&single));
         let Refusals(runtime_refusals) = lower::refusals();
         let (nsyms, sym_bytes) = val::syms_footprint();
+        // Per-worktree state (with --track): live records per tag over every operator output.
+        let state = if opts.track {
+            let per = lower::tracked();
+            let mut rows = Vec::new();
+            for (w, m) in &members {
+                let d = membership::delta(m, model.below(*w));
+                let drows: u64 = d.iter().map(|((p, c), _)| facts.borrow_mut().weight(*p, *c) - 1).sum();
+                let (recs, bytes) = per.get(w).copied().unwrap_or((0, 0));
+                rows.push(json!({"worktree": w, "parent": tags::parent(*w), "delta_entries": d.len(), "delta_rows": drows, "records": recs, "bytes": bytes}));
+            }
+            for (t, (_, cb)) in &model.clusters {
+                let d = membership::delta(cb, &model.base);
+                let (recs, bytes) = per.get(t).copied().unwrap_or((0, 0));
+                rows.push(json!({"cluster": t, "delta_entries": d.len(), "records": recs, "bytes": bytes}));
+            }
+            let (recs, bytes) = per.get(&BASE).copied().unwrap_or((0, 0));
+            rows.push(json!({"base": 0, "records": recs, "bytes": bytes}));
+            json!(rows)
+        } else {
+            json!(null)
+        };
         let out = json!({
             "plans": graphs.iter().map(|(n, g)| json!({"plan": n, "nodes": g.nodes.len()})).collect::<Vec<_>>(),
             "refused_static": refusals_static,
             "runtime_refusals": runtime_refusals,
             "events": events.len(),
             "model": {"clusters": model.clusters.iter().map(|(t, (ws, m))| json!({"tag": t, "worktrees": ws, "paths": m.len()})).collect::<Vec<_>>(), "cost": model.cost, "flat_cost": model.flat_cost, "seconds": model_s, "base_paths": model.base.len()},
-            "load": {"store_seconds": load_store_s, "levels_and_deltas_seconds": load_s, "rss_loaded_mb": mb(rss_loaded.0), "per_level_ms": per_level_ms},
+            "load": {"store_seconds": load_store_s, "levels_and_deltas_seconds": load_s, "rss_store_mb": mb(rss_store.0), "rss_loaded_mb": mb(rss_loaded.0), "per_level_ms": per_level_ms},
             "divergence_initial": divergence,
             "latency": lat_summary,
             "fact_load_seconds_total": fact_load_s,
@@ -357,10 +487,11 @@ pub fn run(run_dir: &Path, opts: Opts) {
             "resident": {"pairs": resident.held(), "contents": resident.contents(), "exported_row_bytes": facts.borrow().bytes(), "interned": nsyms, "interned_bytes": sym_bytes},
             "exactness": {"checks": checks, "worktree_checks": worktree_checks, "differences": differences.len(), "first_differences": differences.iter().take(20).collect::<Vec<_>>(), "oracle_seconds": oracle_s, "stopped_early": stopped},
             "initial_findings_per_worktree": initial,
+            "state": state,
+            "parity_rows": parity_rows,
         });
         std::fs::write(run_dir.join("results.json"), serde_json::to_string_pretty(&out).unwrap()).unwrap();
         std::fs::write(run_dir.join("events.json"), serde_json::to_string(&per_event).unwrap()).unwrap();
-        println!("{}", serde_json::to_string_pretty(&json!({"latency": out["latency"], "rss": out["rss"], "exactness": out["exactness"], "load": out["load"]["levels_and_deltas_seconds"], "runtime_refusals": out["runtime_refusals"]})).unwrap());
-        let _: &Out = &built.outputs[0].1;
+        println!("{}", serde_json::to_string_pretty(&json!({"latency": out["latency"]["single_file_all"], "rss": out["rss"], "exactness": out["exactness"], "load": out["load"]["levels_and_deltas_seconds"], "runtime_refusals": out["runtime_refusals"], "refused_static": out["refused_static"]})).unwrap());
     });
 }

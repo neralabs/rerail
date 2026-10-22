@@ -60,6 +60,8 @@ pub enum Op {
     /// per partition at run time): output = input ++ the function's column.
     Window { input: NodeId, part: Key, order: Vec<(X, bool)>, kind: WindowKind<RepoSource> },
     DistinctPrefix { input: NodeId, prefix: usize },
+    /// Storage affinity of a stage's columns (CTAS), per record.
+    Affinity { input: NodeId, affs: Vec<Aff> },
     /// Set fixpoint: result = distinct(init ∪ step(result)).
     Fix { var: u32, init: Vec<NodeId>, step: Vec<NodeId> },
 }
@@ -884,22 +886,14 @@ pub fn plan(p: &ir::Plan<RepoSource>, exported: &[ir::ExportedRelation]) -> Resu
     for (si, st) in p.stages.iter().enumerate() {
         ctx.at = format!("{}/{}", p.clause, st.name);
         let r = match &st.def {
-            StageDef::Query { rel, deferred } => ctx.rel(rel).and_then(|n| {
-                if deferred.is_empty() {
-                    return Ok(n);
+            StageDef::Query { rel } => ctx.rel(rel).map(|n| {
+                // A stage stores its rows with its columns' affinities (CTAS).
+                let affs: Vec<Aff> = st.schema.iter().map(|c| c.aff).collect();
+                if affs.iter().all(|a| *a == Aff::None) {
+                    return n;
                 }
-                let w = ctx.width(n);
-                let mut exprs: Vec<X> = (0..w).map(col).collect();
-                for (c, e) in deferred {
-                    let c = *c as usize;
-                    if c < exprs.len() {
-                        exprs[c] = e.clone();
-                    } else {
-                        exprs.push(e.clone());
-                    }
-                }
-                let wn = exprs.len();
-                Ok(ctx.add(Op::Map { input: n, exprs }, wn, Vec::new()))
+                let (w, p) = (ctx.width(n), ctx.g.poison[n].clone());
+                ctx.add(Op::Affinity { input: n, affs }, w, p)
             }),
             StageDef::Reach { roots, edges, graph } => match graph {
                 ir::Graph::Directed => (|| {

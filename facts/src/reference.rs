@@ -735,6 +735,7 @@ impl<'a, S> Evaluator<'a, S> {
     fn func(&self, f: Func, args: &[Expr<S>], stack: &[&[V]]) -> Result<V, Error> {
         let a = |i: usize| -> Result<V, Error> { args.get(i).map_or(Ok(V::Null), |x| self.expr(x, stack)) };
         Ok(match f {
+            Func::Printf | Func::JsonArray => return Err(format!("reference: {f:?} not evaluated yet")),
             Func::Coalesce | Func::Ifnull => {
                 for x in args {
                     let v = self.expr(x, stack)?;
@@ -887,22 +888,12 @@ pub fn evaluate_plan<S: Clone>(plan: &Plan<S>, stage_of: impl Fn(&S) -> Option<S
     let ev = Evaluator::new(&source);
     for st in &plan.stages {
         let rows = match &st.def {
-            StageDef::Query { rel, deferred } => {
+            StageDef::Query { rel } => {
                 let mut rows = ev.rel(rel, &[])?;
-                let stored = width(rel);
                 for row in rows.iter_mut() {
-                    for (c, col) in st.schema.iter().enumerate().take(stored) {
-                        if c < row.len() && !deferred.iter().any(|(d, _)| *d as usize == c) {
-                            row[c] = sv::apply_affinity(std::mem::replace(&mut row[c], V::Null), col.aff);
-                        }
-                    }
-                    for (c, e) in deferred {
-                        let v = ev.expr(e, &[row.as_slice()])?;
-                        let c = *c as usize;
+                    for (c, col) in st.schema.iter().enumerate() {
                         if c < row.len() {
-                            row[c] = v;
-                        } else {
-                            row.push(v);
+                            row[c] = sv::apply_affinity(std::mem::replace(&mut row[c], V::Null), col.aff);
                         }
                     }
                 }
