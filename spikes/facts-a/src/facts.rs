@@ -34,7 +34,32 @@ pub fn lookup(name: &str) -> Option<u32> {
     SYMBOLS.lock().ids.get(name).copied()
 }
 pub fn name(sym: u32) -> String {
-    SYMBOLS.lock().names[sym as usize].clone()
+    NAME_CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        if let Some(Some(n)) = c.get(sym as usize) {
+            return n.clone();
+        }
+        let n = SYMBOLS.lock().names[sym as usize].clone();
+        if c.len() <= sym as usize {
+            c.resize(sym as usize + 1, None);
+        }
+        c[sym as usize] = Some(n.clone());
+        n
+    })
+}
+thread_local! {
+    static NAME_CACHE: std::cell::RefCell<Vec<Option<String>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The patched Python grammar the native engine parses with (field codes and names).
+pub static GRAMMAR: LazyLock<Arc<rerail_engine::code_rule_dsl::tape::Grammar>> = LazyLock::new(|| {
+    let file = FileInput::new("g.py".into(), "python".into(), Arc::new(String::new()), None, None, "grammar")
+        .unwrap_or_else(|e| panic!("{}", e.reason));
+    let language = eval::file_language(&file).expect("python grammar");
+    rerail_engine::code_rule_dsl::tape::Grammar::new(language).expect("grammar")
+});
+pub fn field_name(code: u16) -> String {
+    GRAMMAR.kinds.field_name(code).unwrap_or("").to_owned()
 }
 
 /// One file's facts. Columns are indexed by node id.
