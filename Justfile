@@ -87,6 +87,10 @@ rerail-sql-loop-tool *args:
 rerail-sql-gate *args:
     @scripts/check/rerail-sql-gate.sh {{ args }}
 
+# The facts engine's gate (Phase 2, G2.6), one command: facts-a replay and repository parity, FACTS_A3_CHECK and the FACTS_A3_OFF reference on the deterministic subset, Spike B's edit-replay exactness, and the classifier's leak test; --mutants also runs every seeded mutant (FACTS_MUTANT) and fails unless each is killed. Output format: scripts/check/facts-gate.py.
+facts-gate *args:
+    @scripts/check/facts-gate.sh {{ args }}
+
 # Dashboard history load: seed a throwaway database with N audits, then time each history read, a poll, and /healthz under polling (--audits 4000).
 rerail-dashboard-history *args:
     @node --import tsx benchmark/dashboard-history.ts {{ args }}
