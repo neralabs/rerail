@@ -244,7 +244,23 @@
                 "kind": "type_parameter"
               },
               {
-                "kind": "tuple"
+                "kind": "tuple",
+                "any": [
+                  {
+                    "matches": "sole-slice"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": {
+                        "not": {
+                          "kind": "parenthesized_expression"
+                        }
+                      },
+                      "kind": "parenthesized_expression",
+                      "matches": "sole-slice"
+                    }
+                  }
+                ]
               },
               {
                 "kind": "union_type"
@@ -282,6 +298,88 @@
               },
               "matches": "top-union"
             }
+          },
+          "sole-slice": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "nthChild": {
+                      "position": 1,
+                      "reverse": true,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "nthChild": {
+                      "position": 2,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "precedes": {
+                        "stopBy": "neighbor",
+                        "regex": "^,$"
+                      }
+                    }
+                  }
+                ],
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "subscript"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "type",
+                  "all": [
+                    {
+                      "nthChild": {
+                        "position": 1,
+                        "reverse": true,
+                        "ofRule": {
+                          "not": {
+                            "kind": "comment"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "nthChild": {
+                        "position": 1,
+                        "ofRule": {
+                          "not": {
+                            "kind": "comment"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "precedes": {
+                          "stopBy": "neighbor",
+                          "regex": "^,$"
+                        }
+                      }
+                    }
+                  ],
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "type_parameter"
+                  }
+                }
+              }
+            ]
           }
         }
       }
@@ -344,7 +442,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PYI041",
-        "message": "Remove `int` and `float` from this parameter union where `complex` is also listed; `complex` already accepts both.",
+        "message": "Drop the `int` and `float` members from this parameter union and keep `complex`, which already accepts both.",
         "suppress": {
           "noqa": {
             "codes": [

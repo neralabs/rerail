@@ -260,34 +260,76 @@
             }
           },
           "transform": {
-            "YS": {
+            "YD": {
               "replace": {
                 "source": "$Y",
-                "replace": "\\s+",
-                "by": "",
+                "replace": "([0-9])\\s+([0-9])",
+                "by": "${1}\u0001${2}",
                 "value": true
+              }
+            },
+            "YS": {
+              "replace": {
+                "source": "$YD",
+                "replace": "\\s+",
+                "by": ""
+              }
+            },
+            "YA": {
+              "replace": {
+                "source": "$YS",
+                "replace": "([\ue000-\uffff])",
+                "by": "\ud7ff${1}"
+              }
+            },
+            "YU": {
+              "replace": {
+                "source": "$YA",
+                "replace": "_",
+                "by": "Zz\uffff"
               }
             },
             "YT": {
               "replace": {
-                "source": "$YS",
-                "replace": "_",
-                "by": "Zz\uffff"
+                "source": "$YU",
+                "replace": "(^|[^0-9])0([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?",
+                "by": "${1}0\u0004${2}\u0004${3}\u0004${4}\u0004${5}\u0004${6}\u0004${7}\u0004${8}\u0004${9}\u0004${10}\u0004${11}\u0001"
+              }
+            },
+            "XD": {
+              "replace": {
+                "source": "$X",
+                "replace": "([0-9])\\s+([0-9])",
+                "by": "${1}\u0001${2}",
+                "value": true
               }
             },
             "XS": {
               "replace": {
-                "source": "$X",
+                "source": "$XD",
                 "replace": "\\s+",
-                "by": "",
-                "value": true
+                "by": ""
+              }
+            },
+            "XA": {
+              "replace": {
+                "source": "$XS",
+                "replace": "([\ue000-\uffff])",
+                "by": "\ud7ff${1}"
+              }
+            },
+            "XU": {
+              "replace": {
+                "source": "$XA",
+                "replace": "_",
+                "by": "Zz\uffff"
               }
             },
             "XT": {
               "replace": {
-                "source": "$XS",
-                "replace": "_",
-                "by": "Zz\uffff"
+                "source": "$XU",
+                "replace": "(^|[^0-9])0([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?",
+                "by": "${1}0\u0004${2}\u0004${3}\u0004${4}\u0004${5}\u0004${6}\u0004${7}\u0004${8}\u0004${9}\u0004${10}\u0004${11}\u0001"
               }
             }
           },

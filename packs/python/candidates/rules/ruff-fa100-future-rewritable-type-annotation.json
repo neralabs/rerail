@@ -215,6 +215,13 @@
          "field": "attribute",
          "regex": "^TYPE_CHECKING$"
         }
+       },
+       {
+        "kind": "parenthesized_expression",
+        "has": {
+         "stopBy": "neighbor",
+         "matches": "type-checking-test"
+        }
        }
       ]
      },
@@ -355,7 +362,7 @@
     "anchor": "capture.NAME",
     "each": "NAME",
     "code": "FA100",
-    "message": "Add `from __future__ import annotations` so `$NAME` can be written as its built-in generic (`list[...]`, `dict[...]`); skip if annotations are read at runtime.",
+    "message": "Add `from __future__ import annotations` so `$NAME` can be written as `list[...]`, `dict[...]` or `collections.deque[...]`; skip if annotations are evaluated at runtime (e.g. by pydantic).",
     "suppress": {
      "noqa": {
       "codes": [
@@ -416,20 +423,6 @@
          ]
         }
        }
-      },
-      "complex-string": {
-       "any": [
-        {
-         "kind": "concatenated_string"
-        },
-        {
-         "kind": "string",
-         "regex": "\\\\",
-         "not": {
-          "regex": "^[a-zA-Z]*[rR]"
-         }
-        }
-       ]
       }
      },
      "rule": {

@@ -1,0 +1,169 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ytt202-six-py3",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use not six.PY2 instead of six.PY3; six.PY3 is false on Python 4 and later.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "six-py3",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "target": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "six.PY3"
+                ]
+              }
+            },
+            "in-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "target",
+                      "capture": "C"
+                    },
+                    {
+                      "matches": "in-string"
+                    }
+                  ]
+                }
+              }
+            },
+            "pattern-target": {
+              "kind": "dotted_name",
+              "inside": {
+                "stopBy": "end",
+                "kind": "case_clause"
+              },
+              "not": {
+                "inside": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "kind": "import_statement"
+                    },
+                    {
+                      "kind": "import_from_statement"
+                    }
+                  ]
+                }
+              },
+              "all": [
+                {
+                  "has": {
+                    "nthChild": {
+                      "position": 1,
+                      "ofRule": {
+                        "kind": "identifier"
+                      }
+                    },
+                    "resolves": {
+                      "import": [
+                        "six"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "nthChild": {
+                      "position": 2,
+                      "ofRule": {
+                        "kind": "identifier"
+                      }
+                    },
+                    "regex": "^PY3$"
+                  }
+                }
+              ]
+            },
+            "splat-target": {
+              "kind": "attribute",
+              "all": [
+                {
+                  "has": {
+                    "field": "object",
+                    "kind": "list_splat",
+                    "has": {
+                      "kind": "identifier",
+                      "resolves": {
+                        "import": [
+                          "six"
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "field": "attribute",
+                    "regex": "^PY3$"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "target",
+                "pattern": "$C"
+              },
+              {
+                "matches": "splat-target",
+                "regex": "^\\*(?:[\\s\\\\]|#[^\\n]*\\n)*(?<C>[\\s\\S]*)$"
+              },
+              {
+                "matches": "pattern-target",
+                "regex": "^(?<C>[^\\s.\\\\#]+(?:[\\s\\\\]|#[^\\n]*\\n)*\\.(?:[\\s\\\\]|#[^\\n]*\\n)*PY3)"
+              },
+              {
+                "matches": "in-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.C",
+        "code": "YTT202",
+        "message": "Replace `$C` with `not six.PY2` (in a `case` pattern, test `not six.PY2` in a guard instead); `six.PY3` is false on Python 4 and later.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "YTT202"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

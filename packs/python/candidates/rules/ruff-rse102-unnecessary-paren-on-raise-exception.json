@@ -23,6 +23,90 @@
             },
             "lowercase-name": {"regex": "^_?\\p{Lowercase}"},
             "win-error": {"resolves": {"import": ["ctypes.WinError"]}},
+            "class-of": {
+              "params": ["E", "K"],
+              "rule": {
+                "pattern": "$E",
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "resolves": {"binding": {"stopAtGlobal": true, "site": {"kind": "class_definition", "pattern": "$K"}}}
+                  },
+                  {
+                    "kind": "parenthesized_expression",
+                    "has": {"stopBy": "neighbor", "pattern": "$I", "matches": {"class-of": {"E": "$I", "K": "$K"}}}
+                  },
+                  {"kind": "attribute", "matches": {"member-class": {"E": "$E", "S": "$K"}}}
+                ]
+              }
+            },
+            "member-class": {
+              "params": ["E", "S"],
+              "rule": {
+                "kind": "attribute",
+                "pattern": "$E",
+                "all": [
+                  {"has": {"field": "object", "pattern": "$O", "matches": {"class-of": {"E": "$O", "K": "$P"}}}},
+                  {"has": {"field": "attribute", "pattern": "$N"}},
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "module",
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "class_definition",
+                        "pattern": "$Q",
+                        "compare": {"left": "Q", "op": "eq", "right": "P", "text": "node"},
+                        "has": {
+                          "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]},
+                          "kind": "class_definition",
+                          "has": {
+                            "field": "name",
+                            "pattern": "$ND",
+                            "compare": {"left": "ND", "op": "eq", "right": "N", "text": "tokens"},
+                            "binds": {"latest": true}
+                          },
+                          "pattern": "$S"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "member-def": {
+              "params": ["E"],
+              "rule": {
+                "kind": "attribute",
+                "pattern": "$E",
+                "all": [
+                  {"has": {"field": "object", "pattern": "$O", "matches": {"class-of": {"E": "$O", "K": "$P"}}}},
+                  {"has": {"field": "attribute", "pattern": "$N"}},
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "module",
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "class_definition",
+                        "pattern": "$Q",
+                        "compare": {"left": "Q", "op": "eq", "right": "P", "text": "node"},
+                        "has": {
+                          "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]},
+                          "kind": "function_definition",
+                          "has": {
+                            "field": "name",
+                            "pattern": "$ND",
+                            "compare": {"left": "ND", "op": "eq", "right": "N", "text": "tokens"},
+                            "binds": {"latest": true}
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
             "callee": {
               "any": [
                 {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "callee"}},
@@ -30,27 +114,34 @@
                   "kind": "identifier",
                   "any": [
                     {"resolves": {"global": true}},
-                    {"resolves": {"binding": {"site": {"kind": "class_definition"}}}},
+                    {
+                      "not": {"matches": "nonlocal-name"},
+                      "resolves": {"binding": {"stopAtGlobal": true, "site": {"kind": "class_definition"}}}
+                    },
                     {
                       "not": {
                         "any": [
-                          {"resolves": {"binding": {"site": {"kind": "function_definition"}}}},
+                          {
+                            "not": {"matches": "nonlocal-name"},
+                            "resolves": {"binding": {"stopAtGlobal": true, "site": {"kind": "function_definition"}}}
+                          },
                           {"matches": "lowercase-name"},
                           {"matches": "win-error"}
                         ]
                       }
                     }
-                  ]
+                  ],
+                  "pattern": "$NM"
                 },
                 {
                   "kind": "attribute",
+                  "pattern": "$CAL",
                   "any": [
-                    {"any": [{"matches": "class-member-class"}, {"matches": "class-member-class-2"}]},
+                    {"matches": {"member-class": {"E": "$CAL", "S": "$MS"}}},
                     {
                       "not": {
                         "any": [
-                          {"matches": "class-member-function"},
-                          {"matches": "class-member-function-2"},
+                          {"matches": {"member-def": {"E": "$CAL"}}},
                           {"has": {"field": "attribute", "matches": "lowercase-name"}},
                           {"matches": "win-error"}
                         ]
@@ -72,134 +163,31 @@
                 }
               ]
             },
-            "class-member-function": {
-              "kind": "attribute",
-              "pattern": "$OBJ.$MEMBER",
-              "has": {
-                "field": "object",
-                "resolves": {
-                  "binding": {
-                    "site": {
-                      "kind": "class_definition",
-                      "has": {
-                        "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]},
+            "nonlocal-name": {
+              "inside": {
+                "stopBy": "end",
+                "kind": "function_definition",
+                "has": {
+                  "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]},
+                  "kind": "nonlocal_statement",
+                  "has": {
+                    "kind": "identifier",
+                    "pattern": "$NL",
+                    "compare": {"left": "NL", "op": "eq", "right": "NM", "text": "tokens"}
+                  }
+                },
+                "pattern": "$F"
+              },
+              "resolves": {
+                "binding": {
+                  "stopAtGlobal": true,
+                  "site": {
+                    "not": {
+                      "inside": {
+                        "stopBy": "end",
                         "kind": "function_definition",
-                        "has": {
-                          "field": "name",
-                          "pattern": "$MEMBERD",
-                          "compare": {"left": "MEMBERD", "op": "eq", "right": "MEMBER", "text": "tokens"},
-                          "binds": {"latest": true}
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            },
-            "class-member-class": {
-              "kind": "attribute",
-              "pattern": "$OBJ.$MEMBER",
-              "has": {
-                "field": "object",
-                "resolves": {
-                  "binding": {
-                    "site": {
-                      "kind": "class_definition",
-                      "has": {
-                        "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]},
-                        "kind": "class_definition",
-                        "has": {
-                          "field": "name",
-                          "pattern": "$MEMBERD",
-                          "compare": {"left": "MEMBERD", "op": "eq", "right": "MEMBER", "text": "tokens"},
-                          "binds": {"latest": true}
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            },
-            "class-member-function-2": {
-              "kind": "attribute",
-              "pattern": "$ROOT.$MID.$MEMBER",
-              "has": {
-                "field": "object",
-                "has": {
-                  "field": "object",
-                  "resolves": {
-                    "binding": {
-                      "site": {
-                        "kind": "class_definition",
-                        "has": {
-                          "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]},
-                          "kind": "class_definition",
-                          "all": [
-                            {
-                              "has": {
-                                "field": "name",
-                                "pattern": "$MIDD",
-                                "compare": {"left": "MIDD", "op": "eq", "right": "MID", "text": "tokens"},
-                                "binds": {"latest": true}
-                              }
-                            },
-                            {
-                              "has": {
-                                "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]},
-                                "kind": "function_definition",
-                                "has": {
-                                  "field": "name",
-                                  "pattern": "$MEMBERD",
-                                  "compare": {"left": "MEMBERD", "op": "eq", "right": "MEMBER", "text": "tokens"},
-                                  "binds": {"latest": true}
-                                }
-                              }
-                            }
-                          ]
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            },
-            "class-member-class-2": {
-              "kind": "attribute",
-              "pattern": "$ROOT.$MID.$MEMBER",
-              "has": {
-                "field": "object",
-                "has": {
-                  "field": "object",
-                  "resolves": {
-                    "binding": {
-                      "site": {
-                        "kind": "class_definition",
-                        "has": {
-                          "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]},
-                          "kind": "class_definition",
-                          "all": [
-                            {
-                              "has": {
-                                "field": "name",
-                                "pattern": "$MIDD",
-                                "compare": {"left": "MIDD", "op": "eq", "right": "MID", "text": "tokens"},
-                                "binds": {"latest": true}
-                              }
-                            },
-                            {
-                              "has": {
-                                "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]},
-                                "kind": "class_definition",
-                                "has": {
-                                  "field": "name",
-                                  "pattern": "$MEMBERD",
-                                  "compare": {"left": "MEMBERD", "op": "eq", "right": "MEMBER", "text": "tokens"},
-                                  "binds": {"latest": true}
-                                }
-                              }
-                            }
-                          ]
-                        }
+                        "pattern": "$G",
+                        "compare": {"left": "G", "op": "eq", "right": "F", "text": "node"}
                       }
                     }
                   }

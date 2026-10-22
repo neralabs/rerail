@@ -131,15 +131,25 @@
               ]
             },
             "negatable-constant": {
-              "kind": "attribute",
-              "resolves": {
-                "import": [
-                  "math.inf",
-                  "math.e",
-                  "math.pi",
-                  "math.tau"
-                ]
-              }
+              "any": [
+                {
+                  "kind": "attribute",
+                  "resolves": {
+                    "import": [
+                      "math.inf",
+                      "math.e",
+                      "math.pi",
+                      "math.tau"
+                    ]
+                  }
+                },
+                {
+                  "matches": "later-math",
+                  "not": {
+                    "regex": "^math\\.nan$"
+                  }
+                }
+              ]
             },
             "peeled-negatable-constant": {
               "any": [
@@ -156,30 +166,40 @@
               ]
             },
             "allowed-constant": {
-              "kind": "attribute",
-              "resolves": {
-                "import": [
-                  "math.inf",
-                  "math.nan",
-                  "math.e",
-                  "math.pi",
-                  "math.tau",
-                  "sys.stdin",
-                  "sys.stdout",
-                  "sys.stderr",
-                  "sys.version",
-                  "sys.version_info",
-                  "sys.platform",
-                  "sys.executable",
-                  "sys.prefix",
-                  "sys.exec_prefix",
-                  "sys.base_prefix",
-                  "sys.byteorder",
-                  "sys.maxsize",
-                  "sys.hexversion",
-                  "sys.winver"
-                ]
-              }
+              "any": [
+                {
+                  "kind": "attribute",
+                  "resolves": {
+                    "import": [
+                      "math.inf",
+                      "math.nan",
+                      "math.e",
+                      "math.pi",
+                      "math.tau",
+                      "sys.stdin",
+                      "sys.stdout",
+                      "sys.stderr",
+                      "sys.version",
+                      "sys.version_info",
+                      "sys.platform",
+                      "sys.executable",
+                      "sys.prefix",
+                      "sys.exec_prefix",
+                      "sys.base_prefix",
+                      "sys.byteorder",
+                      "sys.maxsize",
+                      "sys.hexversion",
+                      "sys.winver"
+                    ]
+                  }
+                },
+                {
+                  "matches": "later-math"
+                },
+                {
+                  "matches": "later-sys"
+                }
+              ]
             },
             "negation": {
               "kind": "unary_operator",
@@ -400,6 +420,105 @@
                   }
                 }
               ]
+            },
+            "unbound-object": {
+              "has": {
+                "stopBy": "neighbor",
+                "field": "object",
+                "kind": "identifier",
+                "resolves": {
+                  "unresolved": true
+                }
+              }
+            },
+            "module-level": {
+              "not": {
+                "inside": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "class_definition"
+                    }
+                  ]
+                }
+              }
+            },
+            "later-math": {
+              "kind": "attribute",
+              "regex": "^math\\.(?:inf|nan|e|pi|tau)$",
+              "matches": "unbound-object",
+              "not": {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "parameters",
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "identifier",
+                    "regex": "^math$",
+                    "not": {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "field": "object",
+                        "kind": "attribute"
+                      }
+                    }
+                  }
+                }
+              },
+              "inside": {
+                "stopBy": "end",
+                "kind": "module",
+                "has": {
+                  "stopBy": "end",
+                  "kind": "import_statement",
+                  "matches": "module-level",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "dotted_name",
+                    "regex": "^math(?:\\.|$)"
+                  }
+                }
+              }
+            },
+            "later-sys": {
+              "kind": "attribute",
+              "regex": "^sys\\.(?:stdin|stdout|stderr|version|version_info|platform|executable|prefix|exec_prefix|base_prefix|byteorder|maxsize|hexversion|winver)$",
+              "matches": "unbound-object",
+              "not": {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "parameters",
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "identifier",
+                    "regex": "^sys$",
+                    "not": {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "field": "object",
+                        "kind": "attribute"
+                      }
+                    }
+                  }
+                }
+              },
+              "inside": {
+                "stopBy": "end",
+                "kind": "module",
+                "has": {
+                  "stopBy": "end",
+                  "kind": "import_statement",
+                  "matches": "module-level",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "dotted_name",
+                    "regex": "^sys(?:\\.|$)"
+                  }
+                }
+              }
             }
           },
           "rule": {

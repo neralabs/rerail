@@ -16,15 +16,6 @@
    "define": {
     "language": "python",
     "utils": {
-     "future-seen": {
-      "inside": {
-       "stopBy": "end",
-       "follows": {
-        "stopBy": "end",
-        "kind": "future_import_statement"
-       }
-      }
-     },
      "annotation-root": {
       "kind": "type",
       "any": [
@@ -271,6 +262,16 @@
          "field": "attribute",
          "regex": "^TYPE_CHECKING$"
         }
+       },
+       {
+        "kind": "parenthesized_expression",
+        "has": {
+         "stopBy": "neighbor",
+         "not": {
+          "kind": "comment"
+         },
+         "matches": "type-checking-test"
+        }
        }
       ]
      },
@@ -294,59 +295,6 @@
        "stopBy": "end",
        "matches": "annotation-root"
       }
-     },
-     "typing-ref": {
-      "any": [
-       {
-        "kind": "identifier"
-       },
-       {
-        "kind": "attribute"
-       }
-      ],
-      "resolves": {
-       "import": [
-        "typing",
-        "typing_extensions",
-        "_typeshed"
-       ],
-       "prefix": true
-      }
-     },
-     "string-site": {
-      "any": [
-       {
-        "matches": "in-annotation"
-       },
-       {
-        "follows": {
-         "stopBy": "neighbor",
-         "regex": "^\\($"
-        },
-        "inside": {
-         "stopBy": "neighbor",
-         "kind": "argument_list",
-         "follows": {
-          "stopBy": "neighbor",
-          "matches": "typing-ref"
-         }
-        }
-       },
-       {
-        "inside": {
-         "stopBy": "neighbor",
-         "field": "right",
-         "kind": "assignment",
-         "has": {
-          "field": "type",
-          "has": {
-           "stopBy": "neighbor",
-           "matches": "typing-ref"
-          }
-         }
-        }
-       }
-      ]
      },
      "in-local-annotation": {
       "inside": {
@@ -454,6 +402,79 @@
         }
        }
       ]
+     },
+     "future-stmt": {
+      "kind": "future_import_statement",
+      "has": {
+       "stopBy": "end",
+       "kind": "identifier",
+       "regex": "^annotations$",
+       "not": {
+        "inside": {
+         "stopBy": "neighbor",
+         "kind": "aliased_import",
+         "field": "alias"
+        }
+       }
+      }
+     },
+     "future-annotations": {
+      "inside": {
+       "stopBy": "end",
+       "follows": {
+        "stopBy": "end",
+        "matches": "future-stmt"
+       }
+      }
+     },
+     "in-type-param": {
+      "inside": {
+       "stopBy": "end",
+       "any": [
+        {
+         "kind": "type_parameter",
+         "inside": {
+          "stopBy": "neighbor",
+          "field": "type_parameters",
+          "any": [
+           {
+            "kind": "function_definition"
+           },
+           {
+            "kind": "class_definition"
+           }
+          ]
+         }
+        },
+        {
+         "kind": "type",
+         "inside": {
+          "stopBy": "neighbor",
+          "kind": "type_alias_statement"
+         }
+        }
+       ]
+      }
+     },
+     "typing-context": {
+      "any": [
+       {
+        "matches": "in-type-checking"
+       },
+       {
+        "matches": "in-local-annotation"
+       },
+       {
+        "matches": "in-type-param"
+       },
+       {
+        "matches": "future-annotations",
+        "inside": {
+         "stopBy": "end",
+         "matches": "annotation-root"
+        }
+       }
+      ]
      }
     }
    }
@@ -485,31 +506,12 @@
           }
          },
          {
-          "any": [
-           {
-            "matches": "in-type-checking"
-           },
-           {
-            "matches": "in-local-annotation"
-           },
-           {
-            "matches": "future-seen",
-            "inside": {
-             "stopBy": "end",
-             "matches": "annotation-root"
-            }
-           }
-          ]
+          "matches": "typing-context"
          }
         ]
        },
        {
-        "matches": "union-in-string",
-        "all": [
-         {
-          "matches": "string-site"
-         }
-        ]
+        "matches": "union-in-string"
        }
       ]
      }
@@ -539,11 +541,6 @@
        "regex": "\\.pyi$"
       }
      },
-     "when": {
-      "pythonVersion": {
-       "min": "3.10"
-      }
-     },
      "rule": {
       "any": [
        {
@@ -556,24 +553,66 @@
           }
          },
          {
-          "any": [
-           {
-            "matches": "in-type-checking"
-           },
-           {
-            "matches": "in-annotation"
-           }
-          ]
+          "matches": "in-type-checking"
+         },
+         {
+          "matches": "in-annotation"
+         },
+         {
+          "matches": "in-type-param"
          }
         ]
        },
        {
-        "matches": "union-in-string",
+        "matches": "union-in-string"
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.NAME",
+    "each": "NAME",
+    "code": "UP007",
+    "message": "Write `Union[X, Y]` as `X | Y`, and drop the `Union` import if nothing else uses it. Leave it where a library reads annotations at runtime on Python below 3.10.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP007"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "union-annotation-future-annotations",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "file": {
+      "path": {
+       "notRegex": "\\.pyi$"
+      }
+     },
+     "when": {
+      "pythonVersion": {
+       "max": "3.9"
+      }
+     },
+     "rule": {
+      "matches": "future-annotations",
+      "any": [
+       {
+        "matches": "union-node",
+        "pattern": "$NAME",
         "all": [
          {
-          "matches": "string-site"
+          "matches": "in-annotation"
          }
         ]
+       },
+       {
+        "matches": "union-in-string"
        }
       ]
      }

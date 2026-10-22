@@ -36,8 +36,7 @@
                 "range",
                 "str",
                 "frozenset",
-                "tuple",
-                "frozendict"
+                "tuple"
               ],
               "import": [
                 "collections.abc.Sized",
@@ -83,8 +82,7 @@
             "resolves": {
               "global": [
                 "frozenset",
-                "tuple",
-                "frozendict"
+                "tuple"
               ],
               "import": [
                 "builtins.frozenset",
@@ -315,69 +313,120 @@
                         }
                       },
                       {
-                        "all": [
+                        "any": [
                           {
-                            "has": {
-                              "stopBy": "neighbor",
-                              "matches": "generic-head",
-                              "all": [
-                                {
-                                  "matches": "ref-typing-union"
-                                }
-                              ]
-                            }
-                          },
-                          {
-                            "any": [
+                            "all": [
                               {
-                                "kind": "subscript",
                                 "has": {
                                   "stopBy": "neighbor",
-                                  "regex": "^,$"
+                                  "matches": "generic-head",
+                                  "all": [
+                                    {
+                                      "matches": "ref-typing-union"
+                                    }
+                                  ]
                                 }
                               },
                               {
-                                "kind": "generic_type",
-                                "has": {
-                                  "stopBy": "neighbor",
-                                  "kind": "type_parameter",
-                                  "has": {
-                                    "stopBy": "neighbor",
-                                    "regex": "^,$"
+                                "any": [
+                                  {
+                                    "kind": "subscript",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "regex": "^,$"
+                                    }
+                                  },
+                                  {
+                                    "kind": "generic_type",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "kind": "type_parameter",
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "regex": "^,$"
+                                      }
+                                    }
                                   }
+                                ]
+                              },
+                              {
+                                "not": {
+                                  "any": [
+                                    {
+                                      "kind": "subscript",
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "matches": "generic-item",
+                                        "not": {
+                                          "matches": "immutable-annotation"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "kind": "generic_type",
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "kind": "type_parameter",
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "matches": "generic-item",
+                                          "not": {
+                                            "matches": "immutable-annotation"
+                                          }
+                                        }
+                                      }
+                                    }
+                                  ]
                                 }
                               }
                             ]
                           },
                           {
-                            "not": {
-                              "any": [
-                                {
-                                  "kind": "subscript",
-                                  "has": {
-                                    "stopBy": "neighbor",
-                                    "matches": "generic-item",
-                                    "not": {
-                                      "matches": "immutable-annotation"
+                            "all": [
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "matches": "generic-head",
+                                  "all": [
+                                    {
+                                      "matches": "ref-typing-union"
                                     }
-                                  }
-                                },
-                                {
-                                  "kind": "generic_type",
+                                  ]
+                                }
+                              },
+                              {
+                                "not": {
                                   "has": {
-                                    "stopBy": "neighbor",
-                                    "kind": "type_parameter",
-                                    "has": {
-                                      "stopBy": "neighbor",
-                                      "matches": "generic-item",
+                                    "stopBy": {
                                       "not": {
-                                        "matches": "immutable-annotation"
+                                        "kind": "type_parameter"
                                       }
-                                    }
+                                    },
+                                    "regex": "^,$"
                                   }
                                 }
-                              ]
-                            }
+                              },
+                              {
+                                "has": {
+                                  "stopBy": {
+                                    "not": {
+                                      "any": [
+                                        {
+                                          "kind": "type_parameter"
+                                        },
+                                        {
+                                          "kind": "type"
+                                        },
+                                        {
+                                          "kind": "parenthesized_expression"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "matches": "tuple-all-immutable"
+                                }
+                              }
+                            ]
                           }
                         ]
                       },
@@ -453,80 +502,131 @@
                         ]
                       },
                       {
-                        "all": [
+                        "any": [
                           {
-                            "has": {
-                              "stopBy": "neighbor",
-                              "matches": "generic-head",
-                              "all": [
-                                {
-                                  "matches": "ref-annotated"
-                                }
-                              ]
-                            }
-                          },
-                          {
-                            "any": [
+                            "all": [
                               {
-                                "kind": "subscript",
                                 "has": {
                                   "stopBy": "neighbor",
-                                  "regex": "^,$"
+                                  "matches": "generic-head",
+                                  "all": [
+                                    {
+                                      "matches": "ref-annotated"
+                                    }
+                                  ]
                                 }
                               },
                               {
-                                "kind": "generic_type",
-                                "has": {
-                                  "stopBy": "neighbor",
-                                  "kind": "type_parameter",
-                                  "has": {
-                                    "stopBy": "neighbor",
-                                    "regex": "^,$"
+                                "any": [
+                                  {
+                                    "kind": "subscript",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "regex": "^,$"
+                                    }
+                                  },
+                                  {
+                                    "kind": "generic_type",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "kind": "type_parameter",
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "regex": "^,$"
+                                      }
+                                    }
                                   }
-                                }
+                                ]
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "kind": "subscript",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "matches": "generic-item",
+                                      "all": [
+                                        {
+                                          "matches": "immutable-annotation"
+                                        }
+                                      ],
+                                      "not": {
+                                        "follows": {
+                                          "stopBy": "end",
+                                          "matches": "generic-item"
+                                        }
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "kind": "generic_type",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "kind": "type_parameter",
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "matches": "generic-item",
+                                        "all": [
+                                          {
+                                            "matches": "immutable-annotation"
+                                          }
+                                        ],
+                                        "not": {
+                                          "follows": {
+                                            "stopBy": "end",
+                                            "matches": "generic-item"
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                ]
                               }
                             ]
                           },
                           {
-                            "any": [
+                            "all": [
                               {
-                                "kind": "subscript",
                                 "has": {
                                   "stopBy": "neighbor",
-                                  "matches": "generic-item",
+                                  "matches": "generic-head",
                                   "all": [
                                     {
-                                      "matches": "immutable-annotation"
+                                      "matches": "ref-annotated"
                                     }
-                                  ],
-                                  "not": {
-                                    "follows": {
-                                      "stopBy": "end",
-                                      "matches": "generic-item"
-                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "not": {
+                                  "has": {
+                                    "stopBy": {
+                                      "not": {
+                                        "kind": "type_parameter"
+                                      }
+                                    },
+                                    "regex": "^,$"
                                   }
                                 }
                               },
                               {
-                                "kind": "generic_type",
                                 "has": {
-                                  "stopBy": "neighbor",
-                                  "kind": "type_parameter",
-                                  "has": {
-                                    "stopBy": "neighbor",
-                                    "matches": "generic-item",
-                                    "all": [
-                                      {
-                                        "matches": "immutable-annotation"
-                                      }
-                                    ],
+                                  "stopBy": {
                                     "not": {
-                                      "follows": {
-                                        "stopBy": "end",
-                                        "matches": "generic-item"
-                                      }
+                                      "any": [
+                                        {
+                                          "kind": "type_parameter"
+                                        },
+                                        {
+                                          "kind": "type"
+                                        },
+                                        {
+                                          "kind": "parenthesized_expression"
+                                        }
+                                      ]
                                     }
-                                  }
+                                  },
+                                  "matches": "tuple-first-immutable"
                                 }
                               }
                             ]
@@ -1018,6 +1118,53 @@
                 }
               }
             ]
+          },
+          "tuple-all-immutable": {
+            "kind": "tuple",
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "not": {
+                  "any": [
+                    {
+                      "any": [
+                        {
+                          "regex": "^[(),]$"
+                        },
+                        {
+                          "kind": "comment"
+                        }
+                      ]
+                    },
+                    {
+                      "matches": "immutable-annotation"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "tuple-first-immutable": {
+            "kind": "tuple",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "immutable-annotation",
+              "not": {
+                "follows": {
+                  "stopBy": "end",
+                  "not": {
+                    "any": [
+                      {
+                        "regex": "^[(),]$"
+                      },
+                      {
+                        "kind": "comment"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -1042,7 +1189,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "RUF008",
-        "message": "Use `field(default_factory=...)` for this mutable default, or annotate it `ClassVar` if one shared object is intended; a plain default is shared by every instance.",
+        "message": "Use `field(default_factory=...)` for this mutable default, or annotate it `ClassVar` if one shared object is intended; a dataclass rejects or shares a plain mutable default.",
         "suppress": {
           "noqa": {
             "codes": [

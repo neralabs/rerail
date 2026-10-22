@@ -75,6 +75,13 @@
                   "stopBy": "neighbor",
                   "matches": "path-ann"
                 }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "path-ann"
+                }
               }
             ]
           },
@@ -124,10 +131,24 @@
                     "only": true,
                     "site": {
                       "kind": "as_pattern",
-                      "has": {
-                        "stopBy": "neighbor",
-                        "matches": "path-init"
-                      }
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "path-init"
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "as_pattern_target",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "identifier"
+                            }
+                          }
+                        }
+                      ]
                     }
                   }
                 }

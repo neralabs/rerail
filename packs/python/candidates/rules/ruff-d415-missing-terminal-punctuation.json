@@ -97,14 +97,14 @@
             "has": {
               "stopBy": "neighbor",
               "kind": "string_content",
-              "regex": "\\A(?:[^\\S\\n]*(?:[-~=#]+[^\\S\\n]*)?\\n)*(?:[^\\S\\n]*(?:[^\\s\\-~=#]|[-~=#]+(?:[^\\S\\n]+\\S|[^\\s\\-~=#]))[^\\n]*\\n)*(?:[^\\n]*[^\\s.!?\\\\\\-~=#]|[^\\n]*[^\\s\\-~=#][^\\n]*[-~=#]|[^\\S\\n]*[-~=#]+(?:[^\\S\\n]+[-~=#]+)+)[^\\S\\n]*(?:\\n[^\\S\\n]*(?:[-~=#]+[^\\S\\n]*)?(?:\\n[\\s\\S]*)?)?\\z",
+              "regex": "\\A(?:[^\\S\\r\\n]*(?:[-~=#]+[^\\S\\r\\n]*)?(?:\\r\\n?|\\n))*(?:[^\\S\\r\\n]*(?:[^\\s\\-~=#]|[-~=#]+(?:[^\\S\\r\\n]+\\S|[^\\s\\-~=#]))[^\\r\\n]*(?:\\r\\n?|\\n))*(?:[^\\r\\n]*[^\\s.!?\\\\\\-~=#]|[^\\r\\n]*[^\\s\\-~=#][^\\r\\n]*[-~=#]|[^\\S\\r\\n]*[-~=#]+(?:[^\\S\\r\\n]+[-~=#]+)+)[^\\S\\r\\n]*(?:(?:\\r\\n?|\\n)[^\\S\\r\\n]*(?:[-~=#]+[^\\S\\r\\n]*)?(?:(?:\\r\\n?|\\n)[\\s\\S]*)?)?\\z",
               "not": {
                 "any": [
                   {
                     "regex": "\\A\\s*:(?:param|type|raises|return|rtype)"
                   },
                   {
-                    "regex": "\\A\\s*:?(?:Arg(?:ument)?s|Attention|Attributes|Caution|Danger|Error|Examples?|Extended Summary|Hint|Important|Keyword Arg(?:ument)?s|Methods|Notes?|Other (?:Arg(?:ument)?s|Param(?:eter)?s)|Parameters|Raises|Receives|References|Returns?|See Also|Short Summary|Tip|Todo|Warnings?|Warns|Yields?)[^\\S\\n]*(?:\\n|\\z)"
+                    "regex": "\\A\\s*:?(?:Arg(?:ument)?s|Attention|Attributes|Caution|Danger|Error|Examples?|Extended Summary|Hint|Important|Keyword Arg(?:ument)?s|Methods|Notes?|Other (?:Arg(?:ument)?s|Param(?:eter)?s)|Parameters|Raises|Receives|References|Returns?|See Also|Short Summary|Tip|Todo|Warnings?|Warns|Yields?)[^\\S\\r\\n]*(?:[\\r\\n]|\\z)"
                   }
                 ]
               }
@@ -115,7 +115,7 @@
       "violation": {
         "code": "D415",
         "anchor": "witness.span",
-        "message": "End the docstring's first paragraph (its summary) with a period, question mark or exclamation point.",
+        "message": "End the docstring's summary (its first paragraph) with a period, question mark or exclamation point; if it ends in a colon, reword it into a complete sentence.",
         "suppress": {
           "noqa": {
             "codes": [

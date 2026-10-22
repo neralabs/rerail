@@ -41,17 +41,68 @@
             "iterable-ref": {
               "any": [
                 {
-                  "kind": "identifier"
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.Iterable",
+                      "collections.abc.Iterable"
+                    ]
+                  }
                 },
                 {
-                  "kind": "attribute"
+                  "matches": "later-import-ref"
                 }
-              ],
+              ]
+            },
+            "later-import-ref": {
+              "kind": "identifier",
+              "pattern": "$LATE",
               "resolves": {
-                "import": [
-                  "typing.Iterable",
-                  "collections.abc.Iterable"
-                ]
+                "unresolved": true
+              },
+              "inside": {
+                "stopBy": "end",
+                "kind": "module",
+                "has": {
+                  "stopBy": "end",
+                  "pattern": "$LATE",
+                  "binds": {
+                    "form": "import",
+                    "scope": "module",
+                    "latest": true
+                  },
+                  "any": [
+                    {
+                      "kind": "dotted_name",
+                      "resolves": {
+                        "imported": [
+                          "typing.Iterable",
+                          "collections.abc.Iterable"
+                        ]
+                      }
+                    },
+                    {
+                      "kind": "identifier",
+                      "follows": {
+                        "stopBy": "end",
+                        "kind": "dotted_name",
+                        "resolves": {
+                          "imported": [
+                            "typing.Iterable",
+                            "collections.abc.Iterable"
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
               }
             },
             "ref-expr": {
@@ -88,6 +139,20 @@
                 }
               ]
             },
+            "subscripted-expr": {
+              "any": [
+                {
+                  "matches": "subscripted-ref"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "subscripted-expr"
+                  }
+                }
+              ]
+            },
             "iterable-annotation": {
               "any": [
                 {
@@ -101,7 +166,7 @@
                   "has": {
                     "stopBy": "neighbor",
                     "field": "value",
-                    "matches": "subscripted-ref"
+                    "matches": "subscripted-expr"
                   }
                 }
               ]
@@ -184,17 +249,68 @@
             "iterable-ref": {
               "any": [
                 {
-                  "kind": "identifier"
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.AsyncIterable",
+                      "collections.abc.AsyncIterable"
+                    ]
+                  }
                 },
                 {
-                  "kind": "attribute"
+                  "matches": "later-import-ref"
                 }
-              ],
+              ]
+            },
+            "later-import-ref": {
+              "kind": "identifier",
+              "pattern": "$LATE",
               "resolves": {
-                "import": [
-                  "typing.AsyncIterable",
-                  "collections.abc.AsyncIterable"
-                ]
+                "unresolved": true
+              },
+              "inside": {
+                "stopBy": "end",
+                "kind": "module",
+                "has": {
+                  "stopBy": "end",
+                  "pattern": "$LATE",
+                  "binds": {
+                    "form": "import",
+                    "scope": "module",
+                    "latest": true
+                  },
+                  "any": [
+                    {
+                      "kind": "dotted_name",
+                      "resolves": {
+                        "imported": [
+                          "typing.AsyncIterable",
+                          "collections.abc.AsyncIterable"
+                        ]
+                      }
+                    },
+                    {
+                      "kind": "identifier",
+                      "follows": {
+                        "stopBy": "end",
+                        "kind": "dotted_name",
+                        "resolves": {
+                          "imported": [
+                            "typing.AsyncIterable",
+                            "collections.abc.AsyncIterable"
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
               }
             },
             "ref-expr": {
@@ -231,6 +347,20 @@
                 }
               ]
             },
+            "subscripted-expr": {
+              "any": [
+                {
+                  "matches": "subscripted-ref"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "subscripted-expr"
+                  }
+                }
+              ]
+            },
             "iterable-annotation": {
               "any": [
                 {
@@ -244,7 +374,7 @@
                   "has": {
                     "stopBy": "neighbor",
                     "field": "value",
-                    "matches": "subscripted-ref"
+                    "matches": "subscripted-expr"
                   }
                 }
               ]

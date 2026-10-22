@@ -3,7 +3,7 @@
   "id": "ruff-up042-replace-str-enum",
   "revision": 1,
   "mode": "steer",
-  "description": "Inherit from enum.StrEnum instead of both str and enum.Enum on Python 3.11 and above; check how members are formatted first.",
+  "description": "Inherit from enum.StrEnum instead of both str and enum.Enum on Python 3.11 and above; it is the standard library base for string-valued enums.",
   "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [
     {
@@ -48,7 +48,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "UP042",
-        "message": "Inherit from `enum.StrEnum` instead of `str` and `enum.Enum`. Its members format as their value; keep the bases if code relies on the `ClassName.MEMBER` format of `f\"{member}\"`.",
+        "message": "Inherit from `enum.StrEnum` instead of `str` and `enum.Enum`, unless code relies on `f\"{member}\"` giving `Cls.MEMBER`, on `auto()` giving `'1'` rather than the lowercase name, or on non-string values.",
         "suppress": { "noqa": { "codes": ["UP042"] } }
       }
     }

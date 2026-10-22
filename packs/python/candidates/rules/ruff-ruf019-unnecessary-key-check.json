@@ -22,10 +22,19 @@
                 {
                   "any": [
                     {
-                      "kind": "string"
+                      "kind": "string",
+                      "not": {
+                        "matches": "tstring"
+                      }
                     },
                     {
-                      "kind": "concatenated_string"
+                      "kind": "concatenated_string",
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "tstring"
+                        }
+                      }
                     },
                     {
                       "kind": "integer"
@@ -85,24 +94,14 @@
                     "all": [
                       {
                         "has": {
-                          "stopBy": "neighbor",
-                          "kind": "identifier",
-                          "resolves": {
-                            "global": [
-                              "list",
-                              "tuple",
-                              "set",
-                              "dict",
-                              "frozenset"
-                            ]
-                          }
+                          "field": "function",
+                          "matches": "iterable-init"
                         }
                       },
                       {
                         "has": {
-                          "stopBy": "neighbor",
-                          "kind": "argument_list",
-                          "regex": "^\\(\\s*\\)$"
+                          "field": "arguments",
+                          "regex": "^\\((?:\\s|#[^\\n]*)*\\)$"
                         }
                       }
                     ]
@@ -224,7 +223,11 @@
                 },
                 {
                   "follows": {
-                    "stopBy": "neighbor",
+                    "stopBy": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    },
                     "regex": "^\\($"
                   },
                   "inside": {
@@ -312,7 +315,7 @@
               "any": [
                 {
                   "kind": "comparison_operator",
-                  "pattern": "($K1,) in $D",
+                  "pattern": "$K in $D",
                   "count": {
                     "has": {
                       "stopBy": "neighbor",
@@ -324,8 +327,15 @@
                   },
                   "has": {
                     "stopBy": "neighbor",
-                    "kind": "tuple",
-                    "pattern": "$K"
+                    "matches": "tuple-1",
+                    "precedes": {
+                      "stopBy": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      },
+                      "regex": "^in$"
+                    }
                   }
                 },
                 {
@@ -344,6 +354,14 @@
                   "pattern": "$E[$L1,]"
                 },
                 {
+                  "kind": "subscript",
+                  "pattern": "$E[$L1]",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "list_splat"
+                  }
+                },
+                {
                   "kind": "parenthesized_expression",
                   "has": {
                     "stopBy": "neighbor",
@@ -356,7 +374,7 @@
               "any": [
                 {
                   "kind": "comparison_operator",
-                  "pattern": "($K1, $K2) in $D",
+                  "pattern": "$K in $D",
                   "count": {
                     "has": {
                       "stopBy": "neighbor",
@@ -368,8 +386,15 @@
                   },
                   "has": {
                     "stopBy": "neighbor",
-                    "kind": "tuple",
-                    "pattern": "$K"
+                    "matches": "tuple-2",
+                    "precedes": {
+                      "stopBy": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      },
+                      "regex": "^in$"
+                    }
                   }
                 },
                 {
@@ -400,7 +425,7 @@
               "any": [
                 {
                   "kind": "comparison_operator",
-                  "pattern": "($K1, $K2, $K3) in $D",
+                  "pattern": "$K in $D",
                   "count": {
                     "has": {
                       "stopBy": "neighbor",
@@ -412,8 +437,15 @@
                   },
                   "has": {
                     "stopBy": "neighbor",
-                    "kind": "tuple",
-                    "pattern": "$K"
+                    "matches": "tuple-3",
+                    "precedes": {
+                      "stopBy": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      },
+                      "regex": "^in$"
+                    }
                   }
                 },
                 {
@@ -444,7 +476,7 @@
               "any": [
                 {
                   "kind": "comparison_operator",
-                  "pattern": "($K1, $K2, $K3, $K4) in $D",
+                  "pattern": "$K in $D",
                   "count": {
                     "has": {
                       "stopBy": "neighbor",
@@ -456,8 +488,15 @@
                   },
                   "has": {
                     "stopBy": "neighbor",
-                    "kind": "tuple",
-                    "pattern": "$K"
+                    "matches": "tuple-4",
+                    "precedes": {
+                      "stopBy": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      },
+                      "regex": "^in$"
+                    }
                   }
                 },
                 {
@@ -748,6 +787,97 @@
                   ]
                 }
               }
+            },
+            "tstring": {
+              "kind": "string",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "string_start",
+                "regex": "^[A-Za-z]*[tT]"
+              }
+            },
+            "iterable-init": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "global": [
+                      "list",
+                      "tuple",
+                      "set",
+                      "dict",
+                      "frozenset"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "iterable-init"
+                  }
+                }
+              ]
+            },
+            "tuple-1": {
+              "any": [
+                {
+                  "kind": "tuple",
+                  "pattern": "($K1,)"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "tuple-1"
+                  }
+                }
+              ]
+            },
+            "tuple-2": {
+              "any": [
+                {
+                  "kind": "tuple",
+                  "pattern": "($K1, $K2)"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "tuple-2"
+                  }
+                }
+              ]
+            },
+            "tuple-3": {
+              "any": [
+                {
+                  "kind": "tuple",
+                  "pattern": "($K1, $K2, $K3)"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "tuple-3"
+                  }
+                }
+              ]
+            },
+            "tuple-4": {
+              "any": [
+                {
+                  "kind": "tuple",
+                  "pattern": "($K1, $K2, $K3, $K4)"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "tuple-4"
+                  }
+                }
+              ]
             }
           },
           "rule": {

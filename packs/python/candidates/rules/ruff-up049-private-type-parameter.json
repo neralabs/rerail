@@ -91,7 +91,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "UP049",
-        "message": "Drop the leading underscore from type parameter `$NAME` in its declaration and every use; if the bare name would clash with another name or is not a valid identifier, pick a different one.",
+        "message": "Remove the leading underscores from type parameter `$NAME` here and in every use; if the bare name would shadow a variable or builtin, or is not a valid identifier, choose another name.",
         "suppress": {
           "noqa": {
             "codes": [

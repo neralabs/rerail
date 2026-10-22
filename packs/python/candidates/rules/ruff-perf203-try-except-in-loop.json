@@ -38,6 +38,7 @@
           },
           "rule": {
             "matches": "handler",
+            "regex": "\\A(?:(?P<H>(?:(?s:.*?)\\n)?[ \\t]*(?:(?:[^\\s\"'#\\\\]|\\\\.|\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*')[ \\t]*)*?(?:[^\\s\"'#\\\\]|\\\\.|\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*'))[ \\t\\r]*(?:#[^\\n]*)?(?:\\n[ \\t\\r]*(?:#[^\\n]*)?)*\\z)?",
             "not": {
               "follows": {
                 "stopBy": "end",
@@ -112,7 +113,7 @@
         }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "capture.H",
         "code": "PERF203",
         "message": "Move the whole loop into one try block, or check the failing condition before the call, so no handler is set up per iteration. Keep it if the loop must carry on after each failure.",
         "suppress": {

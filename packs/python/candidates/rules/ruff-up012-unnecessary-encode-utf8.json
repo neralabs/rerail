@@ -172,29 +172,7 @@
                 "has": {
                   "stopBy": "neighbor",
                   "field": "function",
-                  "kind": "attribute",
-                  "all": [
-                    {
-                      "has": {
-                        "stopBy": "neighbor",
-                        "field": "attribute",
-                        "regex": "^encode$"
-                      }
-                    },
-                    {
-                      "has": {
-                        "stopBy": "neighbor",
-                        "field": "object",
-                        "matches": "plain-text",
-                        "value": {
-                          "regex": "^[\\x00-\\x7F]*$"
-                        },
-                        "not": {
-                          "matches": "string-only-escape"
-                        }
-                      }
-                    }
-                  ]
+                  "matches": "bytes-encode"
                 }
               },
               {
@@ -220,36 +198,7 @@
                 "has": {
                   "stopBy": "neighbor",
                   "field": "function",
-                  "kind": "attribute",
-                  "all": [
-                    {
-                      "has": {
-                        "stopBy": "neighbor",
-                        "field": "attribute",
-                        "regex": "^encode$"
-                      }
-                    },
-                    {
-                      "has": {
-                        "stopBy": "neighbor",
-                        "field": "object",
-                        "any": [
-                          {
-                            "matches": "plain-text",
-                            "value": {
-                              "regex": "[^\\x00-\\x7F]"
-                            },
-                            "not": {
-                              "matches": "string-only-escape"
-                            }
-                          },
-                          {
-                            "matches": "f-text"
-                          }
-                        ]
-                      }
-                    }
-                  ]
+                  "matches": "default-encode"
                 }
               },
               {
@@ -257,6 +206,85 @@
                   "stopBy": "neighbor",
                   "field": "arguments",
                   "matches": "one-encoding-arg"
+                }
+              }
+            ]
+          },
+          "bytes-encode": {
+            "any": [
+              {
+                "kind": "attribute",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "attribute",
+                      "regex": "^encode$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "object",
+                      "matches": "plain-text",
+                      "value": {
+                        "regex": "^[\\x00-\\x7F]*$"
+                      },
+                      "not": {
+                        "matches": "string-only-escape"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "bytes-encode"
+                }
+              }
+            ]
+          },
+          "default-encode": {
+            "any": [
+              {
+                "kind": "attribute",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "attribute",
+                      "regex": "^encode$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "object",
+                      "any": [
+                        {
+                          "matches": "plain-text",
+                          "value": {
+                            "regex": "[^\\x00-\\x7F]"
+                          },
+                          "not": {
+                            "matches": "string-only-escape"
+                          }
+                        },
+                        {
+                          "matches": "f-text"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "default-encode"
                 }
               }
             ]

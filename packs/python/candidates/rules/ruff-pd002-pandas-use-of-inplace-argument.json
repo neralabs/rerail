@@ -4,129 +4,168 @@
   "revision": 1,
   "mode": "steer",
   "description": "Avoid passing True for the inplace argument of pandas methods; assign the returned object instead, which keeps chaining and avoids hidden mutation.",
-  "scope": {
-    "include": [
-      "**/*"
-    ],
-    "exclude": []
-  },
+  "scope": {"include": ["**/*"], "exclude": []},
   "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "true-literal": {
+            "any": [
+              {"kind": "true"},
+              {
+                "kind": "parenthesized_expression",
+                "has": {"stopBy": "neighbor", "matches": "true-literal"}
+              }
+            ]
+          },
+          "inplace-method": {
+            "any": [
+              {
+                "kind": "attribute",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "attribute",
+                  "regex": "^(where|mask|query|clip|eval|backfill|bfill|ffill|fillna|interpolate|dropna|pad|replace|drop|drop_duplicates|rename|rename_axis|reset_index|set_index|sort_values|sort_index|set_names)$"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {"stopBy": "neighbor", "matches": "inplace-method"}
+              }
+            ]
+          },
+          "inplace-keyword": {
+            "kind": "keyword_argument",
+            "all": [
+              {"has": {"stopBy": "neighbor", "field": "name", "regex": "^inplace$"}},
+              {"has": {"stopBy": "neighbor", "field": "value", "matches": "true-literal"}},
+              {
+                "not": {
+                  "precedes": {
+                    "stopBy": "end",
+                    "kind": "keyword_argument",
+                    "has": {"stopBy": "neighbor", "field": "name", "regex": "^inplace$"}
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "call",
+                    "has": {"stopBy": "neighbor", "field": "function", "matches": "inplace-method"}
+                  }
+                }
+              }
+            ]
+          },
+          "pandas-import-file": {
+            "kind": "module",
+            "has": {
+              "stopBy": "end",
+              "any": [
+                {
+                  "kind": "import_statement",
+                  "has": {"stopBy": "end", "kind": "dotted_name", "regex": "^pandas(\\s*\\.|$)"}
+                },
+                {
+                  "kind": "import_from_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "module_name",
+                    "kind": "dotted_name",
+                    "regex": "^pandas(\\s*\\.|$)"
+                  }
+                }
+              ]
+            }
+          },
+          "annotation-type": {
+            "kind": "type",
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {"kind": "typed_parameter"},
+                {"kind": "typed_default_parameter"},
+                {"kind": "function_definition"},
+                {"kind": "assignment"}
+              ]
+            }
+          },
+          "deferred-annotation": {
+            "inside": {"stopBy": "end", "matches": "annotation-type"},
+            "all": [
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "module",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "future_import_statement",
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "dotted_name",
+                      "resolves": {"imported": ["__future__.annotations"]}
+                    }
+                  }
+                }
+              },
+              {"inside": {"stopBy": "end", "matches": "pandas-import-file"}}
+            ]
+          },
+          "pandas-gate": {
+            "any": [
+              {"resolves": {"imported": ["pandas"], "seenBefore": true}},
+              {"matches": "deferred-annotation"}
+            ]
+          },
+          "hit": {"matches": "inplace-keyword", "all": [{"matches": "pandas-gate"}]},
+          "in-string": {
+            "any": [{"kind": "string"}, {"kind": "concatenated_string"}],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [{"matches": "hit", "capture": "KW"}, {"matches": "in-string"}]
+              }
+            }
+          }
+        }
+      }
+    },
     {
       "id": "pandas-use-of-inplace-argument",
       "forbid": {
         "ast": {
           "language": "python",
-          "utils": {
-            "true-literal": {
-              "any": [
-                {
-                  "kind": "true"
-                },
-                {
-                  "kind": "parenthesized_expression",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "matches": "true-literal"
-                  }
-                }
-              ]
-            },
-            "inplace-method": {
-              "any": [
-                {
-                  "kind": "attribute",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "field": "attribute",
-                    "regex": "^(where|mask|query|clip|eval|backfill|bfill|ffill|fillna|interpolate|dropna|pad|replace|drop|drop_duplicates|rename|rename_axis|reset_index|set_index|sort_values|sort_index|set_names)$"
-                  }
-                },
-                {
-                  "kind": "parenthesized_expression",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "matches": "inplace-method"
-                  }
-                }
-              ]
-            },
-            "hit": {
-              "kind": "keyword_argument",
-              "all": [
-                {
-                  "has": {
-                    "stopBy": "neighbor",
-                    "field": "name",
-                    "regex": "^inplace$"
-                  }
-                },
-                {
-                  "has": {
-                    "stopBy": "neighbor",
-                    "field": "value",
-                    "matches": "true-literal"
-                  }
-                },
-                {
-                  "inside": {
-                    "stopBy": "neighbor",
-                    "kind": "argument_list",
-                    "inside": {
-                      "stopBy": "neighbor",
-                      "kind": "call",
-                      "has": {
-                        "stopBy": "neighbor",
-                        "field": "function",
-                        "matches": "inplace-method"
-                      }
-                    }
-                  }
-                },
-                {
-                  "resolves": {
-                    "imported": [
-                      "pandas"
-                    ],
-                    "seenBefore": true
-                  }
-                }
-              ]
-            },
-            "in-string": {
-              "any": [
-                {
-                  "kind": "string"
-                },
-                {
-                  "kind": "concatenated_string"
-                }
-              ],
-              "parse": {
-                "grammar": "annotation",
-                "has": {
-                  "stopBy": "end",
-                  "any": [
-                    {
-                      "matches": "hit",
-                      "capture": "KW"
-                    },
-                    {
-                      "matches": "in-string"
-                    }
-                  ]
-                }
-              }
-            }
-          },
+          "rule": {"any": [{"matches": "hit", "pattern": "$KW"}, {"matches": "in-string"}]}
+        }
+      },
+      "violation": {
+        "anchor": "capture.KW",
+        "code": "PD002",
+        "message": "Remove `inplace=True` and assign the returned object back, e.g. `df = df.sort_values(\"a\")`; leave it if this isn't a pandas object.",
+        "suppress": {"noqa": {"codes": ["PD002"]}},
+        "each": "KW"
+      }
+    },
+    {
+      "id": "stub-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {"path": {"regex": "\\.pyi$"}},
           "rule": {
-            "any": [
-              {
-                "matches": "hit",
-                "pattern": "$KW"
-              },
-              {
-                "matches": "in-string"
-              }
+            "matches": "inplace-keyword",
+            "pattern": "$KW",
+            "all": [
+              {"inside": {"stopBy": "end", "matches": "annotation-type"}},
+              {"inside": {"stopBy": "end", "matches": "pandas-import-file"}},
+              {"not": {"matches": "pandas-gate"}}
             ]
           }
         }
@@ -135,13 +174,7 @@
         "anchor": "capture.KW",
         "code": "PD002",
         "message": "Remove `inplace=True` and assign the returned object back, e.g. `df = df.sort_values(\"a\")`; leave it if this isn't a pandas object.",
-        "suppress": {
-          "noqa": {
-            "codes": [
-              "PD002"
-            ]
-          }
-        },
+        "suppress": {"noqa": {"codes": ["PD002"]}},
         "each": "KW"
       }
     }

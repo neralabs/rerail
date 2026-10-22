@@ -17,6 +17,16 @@
         "ast": {
           "language": "python",
           "utils": {
+            "trivia": {
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                }
+              ]
+            },
             "dict-expr": {
               "any": [
                 {
@@ -36,10 +46,7 @@
                   "kind": "named_expression",
                   "has": {
                     "stopBy": "neighbor",
-                    "follows": {
-                      "stopBy": "neighbor",
-                      "regex": "^:=$"
-                    },
+                    "field": "value",
                     "matches": "dict-expr"
                   }
                 },
@@ -50,7 +57,11 @@
                       "has": {
                         "stopBy": "neighbor",
                         "precedes": {
-                          "stopBy": "neighbor",
+                          "stopBy": {
+                            "not": {
+                              "matches": "trivia"
+                            }
+                          },
                           "regex": "^if$"
                         },
                         "matches": "dict-expr"
@@ -60,7 +71,11 @@
                       "has": {
                         "stopBy": "neighbor",
                         "follows": {
-                          "stopBy": "neighbor",
+                          "stopBy": {
+                            "not": {
+                              "matches": "trivia"
+                            }
+                          },
                           "regex": "^else$"
                         },
                         "matches": "dict-expr"
@@ -129,18 +144,8 @@
                   "kind": "call",
                   "has": {
                     "stopBy": "neighbor",
-                    "matches": "dict-callee",
-                    "precedes": {
-                      "stopBy": "neighbor",
-                      "any": [
-                        {
-                          "kind": "argument_list"
-                        },
-                        {
-                          "kind": "generator_expression"
-                        }
-                      ]
-                    }
+                    "field": "function",
+                    "matches": "dict-callee"
                   }
                 }
               ]
@@ -161,21 +166,7 @@
                       "dict"
                     ],
                     "import": [
-                      "builtins.dict"
-                    ]
-                  }
-                },
-                {
-                  "any": [
-                    {
-                      "kind": "identifier"
-                    },
-                    {
-                      "kind": "attribute"
-                    }
-                  ],
-                  "resolves": {
-                    "import": [
+                      "builtins.dict",
                       "typing.Dict",
                       "_typeshed.Dict",
                       "typing_extensions.Dict"
@@ -282,29 +273,109 @@
                       "site": {
                         "kind": "as_pattern",
                         "inside": {
-                          "stopBy": "neighbor",
-                          "kind": "with_item"
-                        },
-                        "all": [
-                          {
-                            "has": {
-                              "stopBy": "neighbor",
-                              "matches": "dict-init",
-                              "precedes": {
-                                "stopBy": "end",
-                                "regex": "^as$"
-                              }
+                          "stopBy": {
+                            "not": {
+                              "kind": "parenthesized_expression"
                             }
                           },
+                          "kind": "with_item"
+                        },
+                        "any": [
                           {
-                            "has": {
-                              "stopBy": "neighbor",
-                              "kind": "as_pattern_target",
-                              "has": {
-                                "stopBy": "neighbor",
-                                "matches": "plain-target"
+                            "all": [
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "matches": "dict-init",
+                                  "precedes": {
+                                    "stopBy": "end",
+                                    "regex": "^as$"
+                                  }
+                                }
+                              },
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "as_pattern_target",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "matches": "plain-target"
+                                  }
+                                }
                               }
-                            }
+                            ]
+                          },
+                          {
+                            "all": [
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "any": [
+                                    {
+                                      "kind": "tuple"
+                                    },
+                                    {
+                                      "kind": "list"
+                                    },
+                                    {
+                                      "kind": "set"
+                                    }
+                                  ],
+                                  "precedes": {
+                                    "stopBy": {
+                                      "not": {
+                                        "matches": "trivia"
+                                      }
+                                    },
+                                    "regex": "^as$"
+                                  },
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "matches": "dict-init",
+                                    "pattern": "$VE"
+                                  }
+                                }
+                              },
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "as_pattern_target",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "any": [
+                                      {
+                                        "kind": "tuple"
+                                      },
+                                      {
+                                        "kind": "list"
+                                      }
+                                    ],
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "kind": "identifier",
+                                      "pattern": "$TN",
+                                      "all": [
+                                        {
+                                          "compare": {
+                                            "left": "TN",
+                                            "op": "eq",
+                                            "right": "RN"
+                                          }
+                                        },
+                                        {
+                                          "compare": {
+                                            "left": "TN",
+                                            "op": "eq",
+                                            "right": "VE",
+                                            "text": "index"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              }
+                            ]
                           }
                         ]
                       }
@@ -354,7 +425,8 @@
                     }
                   }
                 }
-              ]
+              ],
+              "pattern": "$RN"
             },
             "dict-name": {
               "any": [
@@ -434,14 +506,7 @@
                     "has": {
                       "stopBy": "neighbor",
                       "not": {
-                        "any": [
-                          {
-                            "kind": "comment"
-                          },
-                          {
-                            "kind": "line_continuation"
-                          }
-                        ]
+                        "matches": "trivia"
                       }
                     },
                     "min": 3,
@@ -456,14 +521,7 @@
                         "precedes": {
                           "stopBy": {
                             "not": {
-                              "any": [
-                                {
-                                  "kind": "comment"
-                                },
-                                {
-                                  "kind": "line_continuation"
-                                }
-                              ]
+                              "matches": "trivia"
                             }
                           },
                           "regex": "^in$"
@@ -478,14 +536,7 @@
                         "follows": {
                           "stopBy": {
                             "not": {
-                              "any": [
-                                {
-                                  "kind": "comment"
-                                },
-                                {
-                                  "kind": "line_continuation"
-                                }
-                              ]
+                              "matches": "trivia"
                             }
                           },
                           "regex": "^in$"
@@ -540,10 +591,7 @@
                         "not": {
                           "any": [
                             {
-                              "kind": "comment"
-                            },
-                            {
-                              "kind": "line_continuation"
+                              "matches": "trivia"
                             },
                             {
                               "regex": "^,$"
@@ -599,10 +647,10 @@
                           "not": {
                             "any": [
                               {
-                                "kind": "comment"
+                                "matches": "trivia"
                               },
                               {
-                                "kind": "line_continuation"
+                                "regex": "^;$"
                               }
                             ]
                           }

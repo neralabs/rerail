@@ -148,32 +148,13 @@
                         "stopBy": "neighbor",
                         "field": "name",
                         "kind": "function_definition",
-                        "any": [
-                          {
-                            "inside": {
-                              "stopBy": "neighbor",
-                              "kind": "block",
-                              "inside": {
-                                "stopBy": "neighbor",
-                                "matches": "visitor-class"
-                              }
-                            }
+                        "matches": "direct-method",
+                        "inside": {
+                          "stopBy": {
+                            "kind": "class_definition"
                           },
-                          {
-                            "inside": {
-                              "stopBy": "neighbor",
-                              "kind": "decorated_definition",
-                              "inside": {
-                                "stopBy": "neighbor",
-                                "kind": "block",
-                                "inside": {
-                                  "stopBy": "neighbor",
-                                  "matches": "visitor-class"
-                                }
-                              }
-                            }
-                          }
-                        ]
+                          "matches": "visitor-class"
+                        }
                       }
                     },
                     {
@@ -182,32 +163,13 @@
                         "stopBy": "neighbor",
                         "field": "name",
                         "kind": "function_definition",
-                        "any": [
-                          {
-                            "inside": {
-                              "stopBy": "neighbor",
-                              "kind": "block",
-                              "inside": {
-                                "stopBy": "neighbor",
-                                "matches": "handler-class"
-                              }
-                            }
+                        "matches": "direct-method",
+                        "inside": {
+                          "stopBy": {
+                            "kind": "class_definition"
                           },
-                          {
-                            "inside": {
-                              "stopBy": "neighbor",
-                              "kind": "decorated_definition",
-                              "inside": {
-                                "stopBy": "neighbor",
-                                "kind": "block",
-                                "inside": {
-                                  "stopBy": "neighbor",
-                                  "matches": "handler-class"
-                                }
-                              }
-                            }
-                          }
-                        ]
+                          "matches": "handler-class"
+                        }
                       }
                     }
                   ]
@@ -260,7 +222,18 @@
                   "binding": {
                     "site": {
                       "matches": "visitor-class"
-                    }
+                    },
+                    "scope": [
+                      "module",
+                      "function"
+                    ]
+                  }
+                }
+              },
+              {
+                "matches": {
+                  "visitor-attr": {
+                    "P": "$P"
                   }
                 }
               },
@@ -307,7 +280,18 @@
                   "binding": {
                     "site": {
                       "matches": "handler-class"
-                    }
+                    },
+                    "scope": [
+                      "module",
+                      "function"
+                    ]
+                  }
+                }
+              },
+              {
+                "matches": {
+                  "handler-attr": {
+                    "P": "$P"
                   }
                 }
               },
@@ -327,6 +311,122 @@
                 }
               }
             ]
+          },
+          "visitor-attr": {
+            "params": [
+              "P"
+            ],
+            "rule": {
+              "kind": "attribute",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "attribute",
+                    "pattern": "$A"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "object",
+                    "kind": "identifier",
+                    "resolves": {
+                      "binding": {
+                        "scope": [
+                          "module",
+                          "function"
+                        ],
+                        "site": {
+                          "kind": "class_definition",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "body",
+                            "has": {
+                              "stopBy": {
+                                "any": [
+                                  {
+                                    "kind": "function_definition"
+                                  },
+                                  {
+                                    "kind": "class_definition"
+                                  }
+                                ]
+                              },
+                              "kind": "class_definition",
+                              "matches": "visitor-class",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "name",
+                                "pattern": "$A"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "handler-attr": {
+            "params": [
+              "P"
+            ],
+            "rule": {
+              "kind": "attribute",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "attribute",
+                    "pattern": "$A"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "object",
+                    "kind": "identifier",
+                    "resolves": {
+                      "binding": {
+                        "scope": [
+                          "module",
+                          "function"
+                        ],
+                        "site": {
+                          "kind": "class_definition",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "body",
+                            "has": {
+                              "stopBy": {
+                                "any": [
+                                  {
+                                    "kind": "function_definition"
+                                  },
+                                  {
+                                    "kind": "class_definition"
+                                  }
+                                ]
+                              },
+                              "kind": "class_definition",
+                              "matches": "handler-class",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "name",
+                                "pattern": "$A"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
           }
         }
       }

@@ -81,6 +81,20 @@
                             "regex": "^staticmethod$",
                             "binds": {
                               "scope": "module"
+                            },
+                            "not": {
+                              "any": [
+                                {
+                                  "binds": {
+                                    "form": "annotation"
+                                  }
+                                },
+                                {
+                                  "binds": {
+                                    "form": "except"
+                                  }
+                                }
+                              ]
                             }
                           }
                         }
@@ -338,6 +352,9 @@
                     "stopBy": "neighbor",
                     "matches": "any-ref"
                   }
+                },
+                {
+                  "matches": "late-any-ref"
                 }
               ]
             },
@@ -373,6 +390,9 @@
                     "stopBy": "neighbor",
                     "matches": "optional-ref"
                   }
+                },
+                {
+                  "matches": "late-optional-ref"
                 }
               ]
             },
@@ -408,6 +428,9 @@
                     "stopBy": "neighbor",
                     "matches": "union-ref"
                   }
+                },
+                {
+                  "matches": "late-union-ref"
                 }
               ]
             },
@@ -443,6 +466,9 @@
                     "stopBy": "neighbor",
                     "matches": "annotated-ref"
                   }
+                },
+                {
+                  "matches": "late-annotated-ref"
                 }
               ]
             },
@@ -1241,6 +1267,590 @@
                   }
                 }
               }
+            },
+            "late-any-ref": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$LA",
+                  "resolves": {
+                    "unresolved": true
+                  },
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "module",
+                    "has": {
+                      "stopBy": "end",
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "kind": "dotted_name",
+                              "pattern": "$LA",
+                              "resolves": {
+                                "imported": [
+                                  "typing.Any",
+                                  "typing_extensions.Any",
+                                  "_typeshed.Any"
+                                ]
+                              },
+                              "binds": {
+                                "form": "import",
+                                "scope": "module",
+                                "latest": true
+                              }
+                            },
+                            {
+                              "kind": "aliased_import",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "alias",
+                                "pattern": "$LA",
+                                "binds": {
+                                  "form": "import",
+                                  "scope": "module",
+                                  "latest": true
+                                }
+                              },
+                              "all": [
+                                {
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "field": "name",
+                                    "resolves": {
+                                      "imported": [
+                                        "typing.Any",
+                                        "typing_extensions.Any",
+                                        "_typeshed.Any"
+                                      ]
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "attribute",
+                    "regex": "^Any$"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "object",
+                        "kind": "identifier",
+                        "pattern": "$LA",
+                        "resolves": {
+                          "unresolved": true
+                        },
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "module",
+                          "has": {
+                            "stopBy": "end",
+                            "all": [
+                              {
+                                "any": [
+                                  {
+                                    "kind": "dotted_name",
+                                    "pattern": "$LA",
+                                    "resolves": {
+                                      "imported": [
+                                        "typing",
+                                        "typing_extensions",
+                                        "_typeshed"
+                                      ]
+                                    },
+                                    "binds": {
+                                      "form": "import",
+                                      "scope": "module",
+                                      "latest": true
+                                    }
+                                  },
+                                  {
+                                    "kind": "aliased_import",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "field": "alias",
+                                      "pattern": "$LA",
+                                      "binds": {
+                                        "form": "import",
+                                        "scope": "module",
+                                        "latest": true
+                                      }
+                                    },
+                                    "all": [
+                                      {
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "field": "name",
+                                          "resolves": {
+                                            "imported": [
+                                              "typing",
+                                              "typing_extensions",
+                                              "_typeshed"
+                                            ]
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "late-optional-ref": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$LO",
+                  "resolves": {
+                    "unresolved": true
+                  },
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "module",
+                    "has": {
+                      "stopBy": "end",
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "kind": "dotted_name",
+                              "pattern": "$LO",
+                              "resolves": {
+                                "imported": [
+                                  "typing.Optional",
+                                  "typing_extensions.Optional",
+                                  "_typeshed.Optional"
+                                ]
+                              },
+                              "binds": {
+                                "form": "import",
+                                "scope": "module",
+                                "latest": true
+                              }
+                            },
+                            {
+                              "kind": "aliased_import",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "alias",
+                                "pattern": "$LO",
+                                "binds": {
+                                  "form": "import",
+                                  "scope": "module",
+                                  "latest": true
+                                }
+                              },
+                              "all": [
+                                {
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "field": "name",
+                                    "resolves": {
+                                      "imported": [
+                                        "typing.Optional",
+                                        "typing_extensions.Optional",
+                                        "_typeshed.Optional"
+                                      ]
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "attribute",
+                    "regex": "^Optional$"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "object",
+                        "kind": "identifier",
+                        "pattern": "$LO",
+                        "resolves": {
+                          "unresolved": true
+                        },
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "module",
+                          "has": {
+                            "stopBy": "end",
+                            "all": [
+                              {
+                                "any": [
+                                  {
+                                    "kind": "dotted_name",
+                                    "pattern": "$LO",
+                                    "resolves": {
+                                      "imported": [
+                                        "typing",
+                                        "typing_extensions",
+                                        "_typeshed"
+                                      ]
+                                    },
+                                    "binds": {
+                                      "form": "import",
+                                      "scope": "module",
+                                      "latest": true
+                                    }
+                                  },
+                                  {
+                                    "kind": "aliased_import",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "field": "alias",
+                                      "pattern": "$LO",
+                                      "binds": {
+                                        "form": "import",
+                                        "scope": "module",
+                                        "latest": true
+                                      }
+                                    },
+                                    "all": [
+                                      {
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "field": "name",
+                                          "resolves": {
+                                            "imported": [
+                                              "typing",
+                                              "typing_extensions",
+                                              "_typeshed"
+                                            ]
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "late-union-ref": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$LU",
+                  "resolves": {
+                    "unresolved": true
+                  },
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "module",
+                    "has": {
+                      "stopBy": "end",
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "kind": "dotted_name",
+                              "pattern": "$LU",
+                              "resolves": {
+                                "imported": [
+                                  "typing.Union",
+                                  "typing_extensions.Union",
+                                  "_typeshed.Union"
+                                ]
+                              },
+                              "binds": {
+                                "form": "import",
+                                "scope": "module",
+                                "latest": true
+                              }
+                            },
+                            {
+                              "kind": "aliased_import",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "alias",
+                                "pattern": "$LU",
+                                "binds": {
+                                  "form": "import",
+                                  "scope": "module",
+                                  "latest": true
+                                }
+                              },
+                              "all": [
+                                {
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "field": "name",
+                                    "resolves": {
+                                      "imported": [
+                                        "typing.Union",
+                                        "typing_extensions.Union",
+                                        "_typeshed.Union"
+                                      ]
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "attribute",
+                    "regex": "^Union$"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "object",
+                        "kind": "identifier",
+                        "pattern": "$LU",
+                        "resolves": {
+                          "unresolved": true
+                        },
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "module",
+                          "has": {
+                            "stopBy": "end",
+                            "all": [
+                              {
+                                "any": [
+                                  {
+                                    "kind": "dotted_name",
+                                    "pattern": "$LU",
+                                    "resolves": {
+                                      "imported": [
+                                        "typing",
+                                        "typing_extensions",
+                                        "_typeshed"
+                                      ]
+                                    },
+                                    "binds": {
+                                      "form": "import",
+                                      "scope": "module",
+                                      "latest": true
+                                    }
+                                  },
+                                  {
+                                    "kind": "aliased_import",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "field": "alias",
+                                      "pattern": "$LU",
+                                      "binds": {
+                                        "form": "import",
+                                        "scope": "module",
+                                        "latest": true
+                                      }
+                                    },
+                                    "all": [
+                                      {
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "field": "name",
+                                          "resolves": {
+                                            "imported": [
+                                              "typing",
+                                              "typing_extensions",
+                                              "_typeshed"
+                                            ]
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "late-annotated-ref": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$LT",
+                  "resolves": {
+                    "unresolved": true
+                  },
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "module",
+                    "has": {
+                      "stopBy": "end",
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "kind": "dotted_name",
+                              "pattern": "$LT",
+                              "resolves": {
+                                "imported": [
+                                  "typing.Annotated",
+                                  "typing_extensions.Annotated",
+                                  "_typeshed.Annotated"
+                                ]
+                              },
+                              "binds": {
+                                "form": "import",
+                                "scope": "module",
+                                "latest": true
+                              }
+                            },
+                            {
+                              "kind": "aliased_import",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "alias",
+                                "pattern": "$LT",
+                                "binds": {
+                                  "form": "import",
+                                  "scope": "module",
+                                  "latest": true
+                                }
+                              },
+                              "all": [
+                                {
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "field": "name",
+                                    "resolves": {
+                                      "imported": [
+                                        "typing.Annotated",
+                                        "typing_extensions.Annotated",
+                                        "_typeshed.Annotated"
+                                      ]
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "attribute",
+                    "regex": "^Annotated$"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "object",
+                        "kind": "identifier",
+                        "pattern": "$LT",
+                        "resolves": {
+                          "unresolved": true
+                        },
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "module",
+                          "has": {
+                            "stopBy": "end",
+                            "all": [
+                              {
+                                "any": [
+                                  {
+                                    "kind": "dotted_name",
+                                    "pattern": "$LT",
+                                    "resolves": {
+                                      "imported": [
+                                        "typing",
+                                        "typing_extensions",
+                                        "_typeshed"
+                                      ]
+                                    },
+                                    "binds": {
+                                      "form": "import",
+                                      "scope": "module",
+                                      "latest": true
+                                    }
+                                  },
+                                  {
+                                    "kind": "aliased_import",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "field": "alias",
+                                      "pattern": "$LT",
+                                      "binds": {
+                                        "form": "import",
+                                        "scope": "module",
+                                        "latest": true
+                                      }
+                                    },
+                                    "all": [
+                                      {
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "field": "name",
+                                          "resolves": {
+                                            "imported": [
+                                              "typing",
+                                              "typing_extensions",
+                                              "_typeshed"
+                                            ]
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
             }
           },
           "rule": {
@@ -1307,7 +1917,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "ANN401",
-        "message": "Replace `Any` here with the type the code actually accepts or returns, such as a union, a TypeVar or a Protocol; keep it only where every type is truly allowed.",
+        "message": "This annotation amounts to `Any`; replace it with the type the code actually accepts or returns (a union, a TypeVar or a Protocol), keeping `Any` only where every type is truly allowed.",
         "suppress": {
           "noqa": {
             "codes": [

@@ -12,46 +12,51 @@
   },
   "clauses": [
     {
-      "id": "blanket-noqa",
-      "forbid": {
-        "ast": {
-          "language": "python",
-          "utils": {
-            "missing-colon": {
-              "kind": "comment",
-              "regex": "^[^#]*(?:#\\s*(?i:[^\\s#n][^#]*|n(?:[^#o][^#]*)?|no(?:[^#q][^#]*)?|noq(?:[^#a][^#]*)?)?)*(?<D>#\\s*(?i:noqa)\\s+)[\\s,]*[A-Z]+[0-9]+(?:[\\s,]*[A-Z]+[0-9]+)*(?:$|#|[\\s,]+(?:$|[^\\s,A-Z]|[A-Z]+(?:[^A-Z0-9]|$)))"
-            },
-            "exempt-file": {
-              "kind": "comment",
-              "regex": "#\\s*(?:ruff|flake8)\\s*:\\s*(?i:noqa)\\s*:[\\s,]*(?:[A-Z]+[0-9]+[\\s,]*)*?PGH004(?:[\\s,]*[A-Z]+[0-9]+)*(?:$|#|[\\s,]+(?:$|[^\\s,A-Z]|[A-Z]+(?:[^A-Z0-9]|$)))",
-              "not": {
-                "layout": {
-                  "before": {
-                    "to": "token",
-                    "breaks": {
-                      "eq": 0
-                    }
-                  }
-                }
-              }
-            },
-            "earlier-file-directive": {
-              "kind": "comment",
-              "regex": "#\\s*(?:ruff|flake8)\\s*:\\s*(?i:noqa)(?:[^\\s#]|\\s+:).*#\\s*(?:ruff|flake8)\\s*:\\s*(?i:noqa)(?:$|#|\\s+(?:$|[^\\s:]))"
-            },
-            "enabled": {
-              "inside": {
-                "stopBy": "end",
-                "kind": "module",
-                "not": {
-                  "has": {
-                    "stopBy": "end",
-                    "matches": "exempt-file"
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "own-line": {
+            "not": {
+              "layout": {
+                "before": {
+                  "to": "token",
+                  "breaks": {
+                    "eq": 0
                   }
                 }
               }
             }
           },
+          "missing-colon": {
+            "kind": "comment",
+            "regex": "^[^#]*(?:#\\s*(?i:[^\\s#n][^#]*|n(?:[^#o][^#]*)?|no(?:[^#q][^#]*)?|noq(?:[^#a][^#]*)?)?)*(?<D>#\\s*(?i:noqa)\\s+)[\\s,]*[A-Z]+[0-9]+(?:[\\s,]*[A-Z]+[0-9]+)*(?:$|#|[\\s,]+(?:$|[^\\s,A-Z]|[A-Z]+(?:[^A-Z0-9]|$)))"
+          },
+          "exempt-file": {
+            "kind": "comment",
+            "matches": "own-line",
+            "regex": "^[^#]*(?:#\\s*(?:[^\\s#rf][^#]*|r(?:[^#u][^#]*)?|ru(?:[^#f][^#]*)?|ruf(?:[^#f][^#]*)?|f(?:[^#l][^#]*)?|fl(?:[^#a][^#]*)?|fla(?:[^#k][^#]*)?|flak(?:[^#e][^#]*)?|flake(?:[^#8][^#]*)?|(?:ruff|flake8)\\s*(?:[^\\s#:][^#]*)?|(?:ruff|flake8)\\s*:\\s*(?i:[^\\s#n][^#]*|n(?:[^#o][^#]*)?|no(?:[^#q][^#]*)?|noq(?:[^#a][^#]*)?)?)?)*#\\s*(?:ruff|flake8)\\s*:\\s*(?i:noqa)\\s*:[\\s,]*(?:[A-Z]+[0-9]+[\\s,]*)*?PGH004(?:[\\s,]*[A-Z]+[0-9]+)*(?:$|#|[\\s,]+(?:$|[^\\s,A-Z]|[A-Z]+(?:[^A-Z0-9]|$)))"
+          },
+          "enabled": {
+            "inside": {
+              "stopBy": "end",
+              "kind": "module",
+              "not": {
+                "has": {
+                  "stopBy": "end",
+                  "matches": "exempt-file"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "blanket-noqa",
+      "forbid": {
+        "ast": {
+          "language": "python",
           "rule": {
             "kind": "comment",
             "regex": "^[^#]*(?:#\\s*(?i:[^\\s#n][^#]*|n(?:[^#o][^#]*)?|no(?:[^#q][^#]*)?|noq(?:[^#a][^#]*)?)?)*(?<D>#\\s*(?i:noqa))(?:$|#|\\s+(?:$|[^\\s:]))",
@@ -65,7 +70,7 @@
       "violation": {
         "anchor": "capture.D",
         "code": "PGH004",
-        "message": "List the specific rule codes to suppress, as in `# noqa: F401`, instead of a blanket `noqa`, so other problems on this line still surface."
+        "message": "Replace the blanket `noqa` with the codes it should silence, as in `# noqa: F401`, so other problems on this line still surface; delete it if nothing needs silencing."
       }
     },
     {
@@ -73,42 +78,6 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "utils": {
-            "missing-colon": {
-              "kind": "comment",
-              "regex": "^[^#]*(?:#\\s*(?i:[^\\s#n][^#]*|n(?:[^#o][^#]*)?|no(?:[^#q][^#]*)?|noq(?:[^#a][^#]*)?)?)*(?<D>#\\s*(?i:noqa)\\s+)[\\s,]*[A-Z]+[0-9]+(?:[\\s,]*[A-Z]+[0-9]+)*(?:$|#|[\\s,]+(?:$|[^\\s,A-Z]|[A-Z]+(?:[^A-Z0-9]|$)))"
-            },
-            "exempt-file": {
-              "kind": "comment",
-              "regex": "#\\s*(?:ruff|flake8)\\s*:\\s*(?i:noqa)\\s*:[\\s,]*(?:[A-Z]+[0-9]+[\\s,]*)*?PGH004(?:[\\s,]*[A-Z]+[0-9]+)*(?:$|#|[\\s,]+(?:$|[^\\s,A-Z]|[A-Z]+(?:[^A-Z0-9]|$)))",
-              "not": {
-                "layout": {
-                  "before": {
-                    "to": "token",
-                    "breaks": {
-                      "eq": 0
-                    }
-                  }
-                }
-              }
-            },
-            "earlier-file-directive": {
-              "kind": "comment",
-              "regex": "#\\s*(?:ruff|flake8)\\s*:\\s*(?i:noqa)(?:[^\\s#]|\\s+:).*#\\s*(?:ruff|flake8)\\s*:\\s*(?i:noqa)(?:$|#|\\s+(?:$|[^\\s:]))"
-            },
-            "enabled": {
-              "inside": {
-                "stopBy": "end",
-                "kind": "module",
-                "not": {
-                  "has": {
-                    "stopBy": "end",
-                    "matches": "exempt-file"
-                  }
-                }
-              }
-            }
-          },
           "rule": {
             "all": [
               {
@@ -132,63 +101,15 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "utils": {
-            "missing-colon": {
-              "kind": "comment",
-              "regex": "^[^#]*(?:#\\s*(?i:[^\\s#n][^#]*|n(?:[^#o][^#]*)?|no(?:[^#q][^#]*)?|noq(?:[^#a][^#]*)?)?)*(?<D>#\\s*(?i:noqa)\\s+)[\\s,]*[A-Z]+[0-9]+(?:[\\s,]*[A-Z]+[0-9]+)*(?:$|#|[\\s,]+(?:$|[^\\s,A-Z]|[A-Z]+(?:[^A-Z0-9]|$)))"
-            },
-            "exempt-file": {
-              "kind": "comment",
-              "regex": "#\\s*(?:ruff|flake8)\\s*:\\s*(?i:noqa)\\s*:[\\s,]*(?:[A-Z]+[0-9]+[\\s,]*)*?PGH004(?:[\\s,]*[A-Z]+[0-9]+)*(?:$|#|[\\s,]+(?:$|[^\\s,A-Z]|[A-Z]+(?:[^A-Z0-9]|$)))",
-              "not": {
-                "layout": {
-                  "before": {
-                    "to": "token",
-                    "breaks": {
-                      "eq": 0
-                    }
-                  }
-                }
-              }
-            },
-            "earlier-file-directive": {
-              "kind": "comment",
-              "regex": "#\\s*(?:ruff|flake8)\\s*:\\s*(?i:noqa)(?:[^\\s#]|\\s+:).*#\\s*(?:ruff|flake8)\\s*:\\s*(?i:noqa)(?:$|#|\\s+(?:$|[^\\s:]))"
-            },
-            "enabled": {
-              "inside": {
-                "stopBy": "end",
-                "kind": "module",
-                "not": {
-                  "has": {
-                    "stopBy": "end",
-                    "matches": "exempt-file"
-                  }
-                }
-              }
-            }
-          },
           "rule": {
             "kind": "comment",
-            "regex": "#\\s*(?:ruff|flake8)\\s*:\\s*(?i:noqa)(?:$|#|\\s+(?:$|[^\\s:]))",
-            "not": {
-              "any": [
-                {
-                  "layout": {
-                    "before": {
-                      "to": "token",
-                      "breaks": {
-                        "eq": 0
-                      }
-                    }
-                  }
-                },
-                {
-                  "matches": "earlier-file-directive"
-                }
-              ]
-            },
-            "matches": "enabled"
+            "regex": "^[^#]*(?:#\\s*(?:[^\\s#rf][^#]*|r(?:[^#u][^#]*)?|ru(?:[^#f][^#]*)?|ruf(?:[^#f][^#]*)?|f(?:[^#l][^#]*)?|fl(?:[^#a][^#]*)?|fla(?:[^#k][^#]*)?|flak(?:[^#e][^#]*)?|flake(?:[^#8][^#]*)?|(?:ruff|flake8)\\s*(?:[^\\s#:][^#]*)?|(?:ruff|flake8)\\s*:\\s*(?i:[^\\s#n][^#]*|n(?:[^#o][^#]*)?|no(?:[^#q][^#]*)?|noq(?:[^#a][^#]*)?)?)?)*#\\s*(?:ruff|flake8)\\s*:\\s*(?i:noqa)(?:$|#|\\s+(?:$|[^\\s:]))",
+            "matches": "own-line",
+            "all": [
+              {
+                "matches": "enabled"
+              }
+            ]
           }
         }
       },

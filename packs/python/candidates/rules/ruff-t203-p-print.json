@@ -93,7 +93,7 @@
                 }
               ]
             },
-            "python2-statement": {
+            "python2-syntax": {
               "any": [
                 {
                   "kind": "print_statement",
@@ -106,6 +106,42 @@
                 },
                 {
                   "kind": "exec_statement"
+                },
+                {
+                  "kind": "integer",
+                  "regex": "^(?:0[0-9_]*[1-9][0-9_]*|.*[lL])$"
+                },
+                {
+                  "kind": "string",
+                  "regex": "^(?:`|[uU][rR])"
+                },
+                {
+                  "kind": "comparison_operator",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^<>$"
+                  }
+                },
+                {
+                  "kind": "raise_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "expression_list"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "parameters"
+                    },
+                    {
+                      "kind": "lambda_parameters"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "tuple_pattern"
+                  }
                 }
               ]
             },
@@ -116,7 +152,7 @@
                 "not": {
                   "has": {
                     "stopBy": "end",
-                    "matches": "python2-statement"
+                    "matches": "python2-syntax"
                   }
                 }
               }
@@ -130,6 +166,51 @@
                     "stopBy": "neighbor",
                     "matches": "custom-target-keyword"
                   }
+                }
+              }
+            },
+            "call-in-annotation": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "kind": "call",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "callee"
+                      },
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "argument_list",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "keyword_argument",
+                            "regex": "^stream\\s*=",
+                            "not": {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "matches": "default-target"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "matches": "call-in-annotation"
+                    }
+                  ]
                 }
               }
             }
@@ -197,6 +278,14 @@
                   "matches": "default-output"
                 },
                 "matches": "python3-file"
+              },
+              {
+                "matches": "call-in-annotation",
+                "all": [
+                  {
+                    "matches": "python3-file"
+                  }
+                ]
               }
             ]
           }
@@ -212,7 +301,8 @@
               "T203"
             ]
           }
-        }
+        },
+        "each": "F"
       }
     }
   ]

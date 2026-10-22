@@ -3,7 +3,7 @@
   "id": "ruff-arg002-unused-method-argument",
   "revision": 1,
   "mode": "steer",
-  "description": "Remove method parameters the body never reads, or prefix them with an underscore when the signature is fixed.",
+  "description": "Remove method parameters the body never reads, or prefix them with an underscore when the signature must stay and no caller passes them by keyword.",
   "scope": {
     "include": [
       "**/*"
@@ -329,15 +329,23 @@
                     {
                       "has": {
                         "stopBy": "neighbor",
-                        "kind": "argument_list",
-                        "count": {
-                          "has": {
-                            "stopBy": "neighbor",
-                            "matches": "positional"
+                        "field": "arguments",
+                        "any": [
+                          {
+                            "kind": "argument_list",
+                            "count": {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "matches": "positional"
+                              },
+                              "min": 1,
+                              "max": 1
+                            }
                           },
-                          "min": 1,
-                          "max": 1
-                        }
+                          {
+                            "kind": "generator_expression"
+                          }
+                        ]
                       }
                     }
                   ]
@@ -440,29 +448,37 @@
                           "kind": "call",
                           "has": {
                             "stopBy": "neighbor",
-                            "kind": "argument_list",
-                            "has": {
-                              "stopBy": "neighbor",
-                              "matches": "positional",
-                              "not": {
-                                "any": [
-                                  {
-                                    "kind": "identifier"
-                                  },
-                                  {
-                                    "kind": "parenthesized_expression",
-                                    "has": {
-                                      "stopBy": {
-                                        "not": {
-                                          "kind": "parenthesized_expression"
-                                        }
+                            "field": "arguments",
+                            "any": [
+                              {
+                                "kind": "argument_list",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "matches": "positional",
+                                  "not": {
+                                    "any": [
+                                      {
+                                        "kind": "identifier"
                                       },
-                                      "kind": "identifier"
-                                    }
+                                      {
+                                        "kind": "parenthesized_expression",
+                                        "has": {
+                                          "stopBy": {
+                                            "not": {
+                                              "kind": "parenthesized_expression"
+                                            }
+                                          },
+                                          "kind": "identifier"
+                                        }
+                                      }
+                                    ]
                                   }
-                                ]
+                                }
+                              },
+                              {
+                                "kind": "generator_expression"
                               }
-                            }
+                            ]
                           }
                         }
                       }
@@ -935,7 +951,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "ARG002",
-        "message": "Remove `$N` if no caller passes it, or prefix it with an underscore if the signature must stay, such as to match a base class.",
+        "message": "Remove `$N` if no caller passes it. If the signature must stay, such as to match a base class, prefix it with an underscore, but keep the name when callers pass it by keyword.",
         "suppress": {
           "noqa": {
             "codes": [

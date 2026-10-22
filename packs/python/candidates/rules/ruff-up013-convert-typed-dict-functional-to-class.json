@@ -130,6 +130,7 @@
                 "kind": "attribute"
               }
             ],
+            "pattern": "$BASE",
             "resolves": {
               "import": [
                 "typing.TypedDict",
@@ -287,6 +288,13 @@
               },
               {
                 "matches": "dict-call"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "typed-dict-fields"
+                }
               }
             ]
           },
@@ -364,7 +372,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "UP013",
-        "message": "Define `$NAME` with class syntax: `class $NAME(TypedDict):` with one `field: type` line per field; keywords such as `total=` go in the class bases.",
+        "message": "Define `$NAME` as `class $NAME($BASE):` with one `field: type` line per field; options passed after the fields, such as `total=False`, become class keywords.",
         "suppress": {
           "noqa": {
             "codes": [

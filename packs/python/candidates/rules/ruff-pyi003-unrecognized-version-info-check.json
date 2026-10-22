@@ -187,8 +187,15 @@
           },
           "comparator": {
             "follows": {
-              "stopBy": "neighbor",
+              "stopBy": {
+                "not": {
+                  "kind": "comment"
+                }
+              },
               "regex": "^(==|!=|<|<=|>|>=|<>|in|is|not\\s[\\s\\S]*in|is\\s[\\s\\S]*not)$"
+            },
+            "not": {
+              "kind": "comment"
             }
           },
           "version-ref": {
@@ -235,41 +242,19 @@
             ]
           },
           "zero-literal": {
-            "any": [
-              {
-                "kind": "integer",
-                "value": {
-                  "type": "int",
-                  "eq": 0
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "zero-literal"
-                }
-              }
-            ]
+            "matches": "int-literal",
+            "value": {
+              "type": "int",
+              "eq": 0
+            }
           },
           "small-literal": {
-            "any": [
-              {
-                "kind": "integer",
-                "value": {
-                  "type": "int",
-                  "ge": 1,
-                  "le": 2
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "small-literal"
-                }
-              }
-            ]
+            "matches": "int-literal",
+            "value": {
+              "type": "int",
+              "ge": 1,
+              "le": 2
+            }
           },
           "sole-index": {
             "not": {
@@ -322,10 +307,40 @@
               "all": [
                 {
                   "kind": "slice",
-                  "regex": "^:[^:]*:?\\s*$",
                   "has": {
                     "stopBy": "neighbor",
-                    "matches": "small-literal"
+                    "matches": "small-literal",
+                    "follows": {
+                      "stopBy": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      },
+                      "regex": "^:$",
+                      "not": {
+                        "follows": {
+                          "stopBy": "end",
+                          "not": {
+                            "kind": "comment"
+                          }
+                        }
+                      }
+                    },
+                    "not": {
+                      "precedes": {
+                        "stopBy": "end",
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "comment"
+                            },
+                            {
+                              "regex": "^:$"
+                            }
+                          ]
+                        }
+                      }
+                    }
                   }
                 },
                 {
@@ -420,37 +435,6 @@
                 "has": {
                   "stopBy": "neighbor",
                   "matches": "int-tuple"
-                }
-              }
-            ]
-          },
-          "patch-tuple": {
-            "any": [
-              {
-                "kind": "tuple",
-                "matches": "int-tuple",
-                "count": {
-                  "has": {
-                    "stopBy": "neighbor",
-                    "not": {
-                      "any": [
-                        {
-                          "regex": "^[(),]$"
-                        },
-                        {
-                          "kind": "comment"
-                        }
-                      ]
-                    }
-                  },
-                  "min": 3
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "patch-tuple"
                 }
               }
             ]

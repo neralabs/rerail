@@ -237,7 +237,57 @@
                 "inside": {
                   "stopBy": "neighbor",
                   "kind": "tuple",
-                  "matches": "under-lit0"
+                  "matches": "lone-slice"
+                }
+              }
+            ]
+          },
+          "lone-slice": {
+            "any": [
+              {
+                "follows": {
+                  "stopBy": "end",
+                  "regex": "^\\[$"
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "lit-sub",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "type_parameter",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "lit-gen"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "type"
+                    }
+                  ],
+                  "matches": "lone-slice"
                 }
               }
             ]
@@ -270,7 +320,7 @@
       "violation": {
         "code": "RUF041",
         "anchor": "witness.span",
-        "message": "Flatten this nested `Literal` into one `Literal[...]` listing every value; keep a named alias such as `Mode = Literal[...]` for a group reused elsewhere.",
+        "message": "Flatten this nested `Literal` into one `Literal[...]` listing every value; if an inner group is reused, name it as an alias (`Mode = Literal[...]`) and nest the alias instead.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -324,7 +374,7 @@
       "violation": {
         "code": "RUF041",
         "anchor": "capture.C",
-        "message": "Flatten this nested `Literal` into one `Literal[...]` listing every value; keep a named alias such as `Mode = Literal[...]` for a group reused elsewhere.",
+        "message": "Flatten this nested `Literal` into one `Literal[...]` listing every value; if an inner group is reused, name it as an alias (`Mode = Literal[...]`) and nest the alias instead.",
         "suppress": {
           "noqa": {
             "codes": [

@@ -12,256 +12,255 @@
   },
   "clauses": [
     {
-      "id": "warns-with-multiple-statements",
-      "forbid": {
-        "ast": {
-          "language": "python",
-          "utils": {
-            "warns-ref": {
-              "any": [
-                {
-                  "kind": "identifier"
-                },
-                {
-                  "kind": "attribute"
-                }
-              ],
-              "resolves": {
-                "import": [
-                  "pytest.warns"
-                ]
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "warns-ref": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
               }
-            },
-            "warns-callee": {
-              "any": [
-                {
-                  "matches": "warns-ref"
-                },
-                {
-                  "kind": "parenthesized_expression",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "matches": "warns-callee"
-                  }
-                }
+            ],
+            "resolves": {
+              "import": [
+                "pytest.warns"
               ]
-            },
-            "warns-value": {
+            }
+          },
+          "warns-callee": {
+            "any": [
+              {
+                "matches": "warns-ref"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "warns-callee"
+                }
+              }
+            ]
+          },
+          "warns-value": {
+            "any": [
+              {
+                "kind": "call",
+                "has": {
+                  "field": "function",
+                  "matches": "warns-callee"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "warns-value"
+                }
+              }
+            ]
+          },
+          "warns-item": {
+            "kind": "with_item",
+            "has": {
+              "stopBy": "neighbor",
               "any": [
                 {
-                  "kind": "call",
-                  "has": {
-                    "field": "function",
-                    "matches": "warns-callee"
-                  }
+                  "matches": "item-expr"
                 },
                 {
-                  "kind": "parenthesized_expression",
+                  "kind": "tuple",
+                  "matches": "unparenthesized-clause-tuple",
                   "has": {
                     "stopBy": "neighbor",
                     "matches": "warns-value"
                   }
                 }
               ]
-            },
-            "warns-item": {
-              "kind": "with_item",
+            }
+          },
+          "meaningful": {
+            "not": {
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                },
+                {
+                  "regex": "^;$"
+                }
+              ]
+            }
+          },
+          "compound": {
+            "any": [
+              {
+                "kind": "function_definition"
+              },
+              {
+                "kind": "class_definition"
+              },
+              {
+                "kind": "decorated_definition"
+              },
+              {
+                "kind": "while_statement"
+              },
+              {
+                "kind": "for_statement"
+              },
+              {
+                "kind": "match_statement"
+              },
+              {
+                "kind": "with_statement"
+              },
+              {
+                "kind": "if_statement"
+              },
+              {
+                "kind": "try_statement"
+              }
+            ]
+          },
+          "single-stmt-block": {
+            "kind": "block",
+            "count": {
               "has": {
                 "stopBy": "neighbor",
-                "any": [
-                  {
-                    "matches": "item-expr"
-                  },
-                  {
-                    "kind": "tuple",
-                    "matches": "unparenthesized-clause-tuple",
-                    "has": {
-                      "stopBy": "neighbor",
-                      "matches": "warns-value"
-                    }
-                  }
-                ]
-              }
-            },
-            "meaningful": {
-              "not": {
-                "any": [
-                  {
-                    "kind": "comment"
-                  },
-                  {
-                    "kind": "line_continuation"
-                  },
-                  {
-                    "regex": "^;$"
-                  }
-                ]
-              }
-            },
-            "compound": {
-              "any": [
-                {
-                  "kind": "function_definition"
-                },
-                {
-                  "kind": "class_definition"
-                },
-                {
-                  "kind": "decorated_definition"
-                },
-                {
-                  "kind": "while_statement"
-                },
-                {
-                  "kind": "for_statement"
-                },
-                {
-                  "kind": "match_statement"
-                },
-                {
-                  "kind": "with_statement"
-                },
-                {
-                  "kind": "if_statement"
-                },
-                {
-                  "kind": "try_statement"
-                }
-              ]
-            },
-            "single-stmt-block": {
-              "kind": "block",
-              "count": {
+                "matches": "meaningful"
+              },
+              "min": 1,
+              "max": 1
+            }
+          },
+          "empty-loop-stmt": {
+            "any": [
+              {
+                "kind": "pass_statement"
+              },
+              {
+                "kind": "expression_statement",
                 "has": {
                   "stopBy": "neighbor",
-                  "matches": "meaningful"
-                },
-                "min": 1,
-                "max": 1
+                  "matches": "ellipsis-expr"
+                }
               }
-            },
-            "empty-loop-stmt": {
-              "any": [
-                {
-                  "kind": "pass_statement"
-                },
-                {
-                  "kind": "expression_statement",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "matches": "ellipsis-expr"
-                  }
+            ]
+          },
+          "ellipsis-expr": {
+            "any": [
+              {
+                "kind": "ellipsis"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "ellipsis-expr"
                 }
-              ]
-            },
-            "ellipsis-expr": {
-              "any": [
-                {
-                  "kind": "ellipsis"
-                },
-                {
-                  "kind": "parenthesized_expression",
+              }
+            ]
+          },
+          "allowed-stmt": {
+            "matches": "meaningful",
+            "any": [
+              {
+                "kind": "with_statement",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "body",
+                  "matches": "single-stmt-block",
                   "has": {
                     "stopBy": "neighbor",
-                    "matches": "ellipsis-expr"
-                  }
-                }
-              ]
-            },
-            "allowed-stmt": {
-              "matches": "meaningful",
-              "any": [
-                {
-                  "kind": "with_statement",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "field": "body",
-                    "matches": "single-stmt-block",
-                    "has": {
-                      "stopBy": "neighbor",
-                      "matches": "meaningful",
-                      "not": {
-                        "matches": "compound"
-                      }
+                    "matches": "meaningful",
+                    "not": {
+                      "matches": "compound"
                     }
                   }
-                },
-                {
-                  "any": [
-                    {
-                      "kind": "function_definition"
-                    },
-                    {
-                      "kind": "class_definition"
-                    },
-                    {
-                      "kind": "decorated_definition"
-                    }
-                  ]
-                },
-                {
-                  "kind": "for_statement",
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "kind": "class_definition"
+                  },
+                  {
+                    "kind": "decorated_definition"
+                  }
+                ]
+              },
+              {
+                "kind": "for_statement",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "body",
+                  "matches": "single-stmt-block",
                   "has": {
                     "stopBy": "neighbor",
-                    "field": "body",
-                    "matches": "single-stmt-block",
-                    "has": {
-                      "stopBy": "neighbor",
-                      "matches": "empty-loop-stmt"
-                    }
-                  }
-                },
-                {
-                  "not": {
-                    "matches": "compound"
+                    "matches": "empty-loop-stmt"
                   }
                 }
-              ]
-            },
-            "item-expr": {
-              "any": [
-                {
-                  "matches": "warns-value"
-                },
-                {
-                  "kind": "as_pattern",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "matches": "warns-value",
-                    "precedes": {
-                      "stopBy": "end",
-                      "regex": "^as$"
-                    }
-                  }
-                },
-                {
-                  "kind": "parenthesized_expression",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "matches": "item-expr"
+              },
+              {
+                "not": {
+                  "matches": "compound"
+                }
+              }
+            ]
+          },
+          "item-expr": {
+            "any": [
+              {
+                "matches": "warns-value"
+              },
+              {
+                "kind": "as_pattern",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "warns-value",
+                  "precedes": {
+                    "stopBy": "end",
+                    "regex": "^as$"
                   }
                 }
-              ]
-            },
-            "unparenthesized-clause-tuple": {
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "item-expr"
+                }
+              }
+            ]
+          },
+          "unparenthesized-clause-tuple": {
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "with_item",
               "inside": {
                 "stopBy": "neighbor",
-                "kind": "with_item",
-                "inside": {
-                  "stopBy": "neighbor",
-                  "kind": "with_clause",
-                  "not": {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "regex": "^\\($"
-                    }
+                "kind": "with_clause",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^\\($"
                   }
                 }
               }
             }
           },
-          "rule": {
+          "warns-with": {
             "kind": "with_statement",
+            "regex": "^(?P<S>(?:[^\"'#]|#[^\\n]*|\"\"\"(?:[^\"\\\\]|\\\\[\\s\\S]|\"\"?(?:[^\"\\\\]|\\\\[\\s\\S]))*\"\"\"|'''(?:[^'\\\\]|\\\\[\\s\\S]|''?(?:[^'\\\\]|\\\\[\\s\\S]))*'''|\"(?:[^\\n\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^\\n'\\\\]|\\\\[\\s\\S])*')*?(?:[^\\s\"'#;]|\"\"\"(?:[^\"\\\\]|\\\\[\\s\\S]|\"\"?(?:[^\"\\\\]|\\\\[\\s\\S]))*\"\"\"|'''(?:[^'\\\\]|\\\\[\\s\\S]|''?(?:[^'\\\\]|\\\\[\\s\\S]))*'''|\"(?:[^\\n\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^\\n'\\\\]|\\\\[\\s\\S])*'))(?:\\s|;|#[^\\n]*)*$",
             "all": [
               {
                 "has": {
@@ -272,29 +271,69 @@
                     "matches": "warns-item"
                   }
                 }
-              },
-              {
-                "not": {
-                  "has": {
-                    "stopBy": "neighbor",
-                    "field": "body",
-                    "kind": "block",
-                    "has": {
-                      "stopBy": "neighbor",
-                      "matches": "allowed-stmt"
-                    },
-                    "matches": "single-stmt-block"
-                  }
-                }
               }
             ]
           }
         }
+      }
+    },
+    {
+      "id": "several-statements",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "warns-with",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "body",
+              "kind": "block",
+              "not": {
+                "matches": "single-stmt-block"
+              }
+            }
+          }
+        }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "capture.S",
         "code": "PT031",
-        "message": "Keep only the statement expected to warn inside this `pytest.warns` block and move setup before it, unless the other statements are needed to trigger the warning.",
+        "message": "Keep only the statement expected to warn inside this `pytest.warns` block and move the other statements before or after it, unless they are needed to trigger the warning.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT031"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "compound-statement",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "warns-with",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "body",
+              "kind": "block",
+              "matches": "single-stmt-block",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "allowed-stmt"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.S",
+        "code": "PT031",
+        "message": "Put only the call expected to warn inside `pytest.warns`; move the surrounding `if`, loop, `try`, `match` or nested `with` logic out of the block, unless it is needed to trigger the warning.",
         "suppress": {
           "noqa": {
             "codes": [

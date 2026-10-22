@@ -4,12 +4,7 @@
   "revision": 1,
   "mode": "steer",
   "description": "Name class-level variables in snake_case instead of mixedCase, as PEP 8 recommends for variable names.",
-  "scope": {
-    "include": [
-      "**/*"
-    ],
-    "exclude": []
-  },
+  "scope": {"include": ["**/*"], "exclude": []},
   "clauses": [
     {
       "id": "mixed-case-variable-in-class-scope",
@@ -19,9 +14,7 @@
           "utils": {
             "mixed-case": {
               "all": [
-                {
-                  "regex": "^_?\\p{Lowercase}"
-                },
+                {"regex": "^_?\\p{Lowercase}"},
                 {
                   "not": {
                     "regex": "^_?[\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}]"
@@ -32,25 +25,17 @@
                 },
                 {
                   "not": {
-                    "regex": "^(?:tearDownClass|setUpModule|asyncSetUp|asyncTearDown|setUpTestData|failureException|longMessage|maxDiff)$"
+                    "regex": "^(?:setUp|tearDown|setUpClass|tearDownClass|setUpModule|tearDownModule|asyncSetUp|asyncTearDown|setUpTestData|failureException|longMessage|maxDiff)$"
                   }
                 }
               ]
             },
             "container": {
               "any": [
-                {
-                  "kind": "pattern_list"
-                },
-                {
-                  "kind": "tuple_pattern"
-                },
-                {
-                  "kind": "list_pattern"
-                },
-                {
-                  "kind": "list_splat_pattern"
-                }
+                {"kind": "pattern_list"},
+                {"kind": "tuple_pattern"},
+                {"kind": "list_pattern"},
+                {"kind": "list_splat_pattern"}
               ]
             },
             "store-target": {
@@ -60,15 +45,9 @@
                     "stopBy": "neighbor",
                     "field": "left",
                     "any": [
-                      {
-                        "kind": "assignment"
-                      },
-                      {
-                        "kind": "augmented_assignment"
-                      },
-                      {
-                        "kind": "for_statement"
-                      }
+                      {"kind": "assignment"},
+                      {"kind": "augmented_assignment"},
+                      {"kind": "for_statement"}
                     ]
                   }
                 },
@@ -77,43 +56,25 @@
                     "stopBy": "neighbor",
                     "matches": "container",
                     "inside": {
-                      "stopBy": {
-                        "not": {
-                          "matches": "container"
-                        }
-                      },
+                      "stopBy": {"not": {"matches": "container"}},
                       "any": [
-                        {
-                          "kind": "assignment"
-                        },
-                        {
-                          "kind": "augmented_assignment"
-                        },
-                        {
-                          "kind": "for_statement"
-                        }
+                        {"kind": "assignment"},
+                        {"kind": "augmented_assignment"},
+                        {"kind": "for_statement"}
                       ]
                     }
                   }
                 },
-                {
-                  "inside": {
-                    "stopBy": "neighbor",
-                    "field": "name",
-                    "kind": "named_expression"
-                  }
-                },
+                {"inside": {"stopBy": "neighbor", "field": "name", "kind": "named_expression"}},
                 {
                   "inside": {
                     "stopBy": {
                       "not": {
                         "any": [
-                          {
-                            "kind": "tuple"
-                          },
-                          {
-                            "kind": "list"
-                          }
+                          {"kind": "tuple"},
+                          {"kind": "list"},
+                          {"kind": "parenthesized_expression"},
+                          {"kind": "list_splat"}
                         ]
                       }
                     },
@@ -121,10 +82,7 @@
                     "inside": {
                       "stopBy": "neighbor",
                       "kind": "as_pattern",
-                      "inside": {
-                        "stopBy": "neighbor",
-                        "kind": "with_item"
-                      }
+                      "inside": {"stopBy": "neighbor", "kind": "with_item"}
                     }
                   }
                 },
@@ -132,21 +90,13 @@
                   "inside": {
                     "stopBy": "neighbor",
                     "kind": "dotted_name",
-                    "not": {
-                      "has": {
-                        "stopBy": "neighbor",
-                        "regex": "^\\.$"
-                      }
-                    },
+                    "not": {"has": {"stopBy": "neighbor", "regex": "^\\.$"}},
                     "inside": {
                       "stopBy": "neighbor",
                       "any": [
-                        {
-                          "kind": "case_pattern"
-                        },
-                        {
-                          "kind": "keyword_pattern"
-                        }
+                        {"kind": "case_pattern"},
+                        {"kind": "keyword_pattern"},
+                        {"kind": "union_pattern"}
                       ]
                     }
                   }
@@ -155,21 +105,14 @@
                   "inside": {
                     "stopBy": "neighbor",
                     "kind": "as_pattern",
-                    "inside": {
-                      "stopBy": "neighbor",
-                      "kind": "case_pattern"
-                    }
+                    "inside": {"stopBy": "neighbor", "kind": "case_pattern"}
                   }
                 },
                 {
                   "inside": {
                     "stopBy": "neighbor",
                     "kind": "type",
-                    "inside": {
-                      "stopBy": "neighbor",
-                      "field": "left",
-                      "kind": "type_alias_statement"
-                    }
+                    "inside": {"stopBy": "neighbor", "field": "left", "kind": "type_alias_statement"}
                   }
                 },
                 {
@@ -179,11 +122,7 @@
                     "inside": {
                       "stopBy": "neighbor",
                       "kind": "type",
-                      "inside": {
-                        "stopBy": "neighbor",
-                        "field": "left",
-                        "kind": "type_alias_statement"
-                      }
+                      "inside": {"stopBy": "neighbor", "field": "left", "kind": "type_alias_statement"}
                     }
                   }
                 },
@@ -193,14 +132,7 @@
                     "kind": "splat_pattern",
                     "inside": {
                       "stopBy": "neighbor",
-                      "any": [
-                        {
-                          "kind": "case_pattern"
-                        },
-                        {
-                          "kind": "dict_pattern"
-                        }
-                      ]
+                      "any": [{"kind": "case_pattern"}, {"kind": "dict_pattern"}]
                     }
                   }
                 }
@@ -213,42 +145,34 @@
                   "inside": {
                     "stopBy": "neighbor",
                     "field": "body",
-                    "any": [
-                      {
-                        "kind": "class_definition"
-                      },
-                      {
-                        "kind": "function_definition"
-                      }
-                    ]
+                    "any": [{"kind": "class_definition"}, {"kind": "function_definition"}]
                   }
                 },
-                {
-                  "inside": {
-                    "stopBy": "neighbor",
-                    "field": "body",
-                    "kind": "lambda"
-                  }
-                },
+                {"inside": {"stopBy": "neighbor", "field": "body", "kind": "lambda"}},
                 {
                   "kind": "argument_list",
-                  "inside": {
-                    "stopBy": "neighbor",
-                    "field": "superclasses",
-                    "kind": "class_definition"
-                  }
+                  "inside": {"stopBy": "neighbor", "field": "superclasses", "kind": "class_definition"}
                 },
+                {"inside": {"stopBy": "neighbor", "field": "body", "matches": "comprehension"}},
+                {"kind": "if_clause", "inside": {"stopBy": "neighbor", "matches": "comprehension"}},
+                {"kind": "for_in_clause", "follows": {"stopBy": "end", "kind": "for_in_clause"}},
+                {"inside": {"stopBy": "neighbor", "field": "left", "kind": "for_in_clause"}},
                 {
-                  "kind": "list_comprehension"
-                },
-                {
-                  "kind": "set_comprehension"
-                },
-                {
-                  "kind": "dictionary_comprehension"
-                },
-                {
-                  "kind": "generator_expression"
+                  "kind": "type",
+                  "any": [
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "any": [{"kind": "typed_parameter"}, {"kind": "typed_default_parameter"}]
+                      }
+                    },
+                    {
+                      "inside": {"stopBy": "neighbor", "field": "return_type", "kind": "function_definition"}
+                    },
+                    {
+                      "inside": {"stopBy": "neighbor", "field": "right", "kind": "type_alias_statement"}
+                    }
+                  ]
                 }
               ]
             },
@@ -258,18 +182,12 @@
                 "stopBy": "neighbor",
                 "field": "body",
                 "kind": "class_definition",
-                "not": {
-                  "matches": "typed-dict-class"
-                }
+                "not": {"matches": "typed-dict-class"}
               }
             },
             "class-body": {
               "kind": "block",
-              "inside": {
-                "stopBy": "neighbor",
-                "field": "body",
-                "kind": "class_definition"
-              }
+              "inside": {"stopBy": "neighbor", "field": "body", "kind": "class_definition"}
             },
             "typed-dict-class": {
               "kind": "class_definition",
@@ -277,63 +195,19 @@
                 "stopBy": "neighbor",
                 "field": "superclasses",
                 "kind": "argument_list",
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "typed-dict-base"
-                }
+                "has": {"stopBy": "neighbor", "matches": "typed-dict-base"}
               }
             },
             "typed-dict-base": {
               "any": [
+                {"matches": "typed-dict-name"},
                 {
-                  "any": [
-                    {
-                      "kind": "identifier"
-                    },
-                    {
-                      "kind": "attribute"
-                    }
-                  ],
-                  "resolves": {
-                    "import": [
-                      "typing.TypedDict",
-                      "typing_extensions.TypedDict",
-                      "_typeshed.TypedDict"
-                    ]
-                  }
-                },
-                {
-                  "kind": "identifier",
-                  "resolves": {
-                    "binding": {
-                      "site": {
-                        "matches": "typed-dict-class",
-                        "not": {
-                          "inside": {
-                            "stopBy": {
-                              "matches": "scope-edge"
-                            },
-                            "matches": "class-body"
-                          }
-                        }
-                      }
-                    }
-                  }
+                  "kind": "subscript",
+                  "has": {"stopBy": "neighbor", "field": "value", "matches": "typed-dict-name"}
                 },
                 {
                   "kind": "parenthesized_expression",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "matches": "typed-dict-base"
-                  }
-                },
-                {
-                  "kind": "subscript",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "field": "value",
-                    "matches": "typed-dict-base"
-                  }
+                  "has": {"stopBy": "neighbor", "matches": "typed-dict-base"}
                 }
               ]
             },
@@ -356,10 +230,7 @@
                 },
                 {
                   "kind": "parenthesized_expression",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "matches": "named-tuple-call"
-                  }
+                  "has": {"stopBy": "neighbor", "matches": "named-tuple-call"}
                 }
               ]
             },
@@ -369,52 +240,86 @@
                 "stopBy": "end",
                 "kind": "assignment",
                 "all": [
-                  {
-                    "not": {
-                      "has": {
-                        "stopBy": "neighbor",
-                        "field": "type",
-                        "kind": "type"
-                      }
-                    }
-                  },
-                  {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "field": "right",
-                      "matches": "named-tuple-call"
-                    }
-                  }
+                  {"not": {"has": {"stopBy": "neighbor", "field": "type", "kind": "type"}}},
+                  {"has": {"stopBy": "neighbor", "field": "right", "matches": "named-tuple-call"}}
                 ]
               }
+            },
+            "comprehension": {
+              "any": [
+                {"kind": "list_comprehension"},
+                {"kind": "set_comprehension"},
+                {"kind": "dictionary_comprehension"},
+                {"kind": "generator_expression"}
+              ]
+            },
+            "typed-dict-name": {
+              "any": [
+                {
+                  "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+                  "resolves": {
+                    "import": ["typing.TypedDict", "typing_extensions.TypedDict", "_typeshed.TypedDict"]
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "matches": "typed-dict-class",
+                        "not": {"inside": {"stopBy": {"matches": "scope-edge"}, "matches": "class-body"}}
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "all": [
+                    {"has": {"stopBy": "neighbor", "field": "attribute", "pattern": "$TDATTR"}},
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "object",
+                        "kind": "identifier",
+                        "resolves": {
+                          "binding": {
+                            "site": {
+                              "kind": "class_definition",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": {"any": [{"kind": "class_definition"}, {"kind": "function_definition"}]},
+                                  "kind": "class_definition",
+                                  "has": {"stopBy": "neighbor", "field": "name", "pattern": "$TDATTR"},
+                                  "matches": "typed-dict-class"
+                                }
+                              },
+                              "not": {
+                                "inside": {"stopBy": {"matches": "scope-edge"}, "matches": "class-body"}
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {"stopBy": "neighbor", "matches": "typed-dict-name"}
+                }
+              ]
             }
           },
           "rule": {
             "kind": "identifier",
             "pattern": "$NAME",
             "all": [
-              {
-                "matches": "mixed-case"
-              },
-              {
-                "matches": "store-target"
-              },
-              {
-                "inside": {
-                  "stopBy": {
-                    "matches": "scope-edge"
-                  },
-                  "matches": "plain-class-body"
-                }
-              },
-              {
-                "not": {
-                  "inside": {
-                    "stopBy": "end",
-                    "matches": "named-tuple-statement"
-                  }
-                }
-              }
+              {"matches": "mixed-case"},
+              {"matches": "store-target"},
+              {"inside": {"stopBy": {"matches": "scope-edge"}, "matches": "plain-class-body"}},
+              {"not": {"inside": {"stopBy": "end", "matches": "named-tuple-statement"}}}
             ]
           }
         }
@@ -423,13 +328,7 @@
         "anchor": "witness.span",
         "code": "N815",
         "message": "Rename the class variable `$NAME` to snake_case and update its uses; keep the name if outside code depends on it or it mirrors an external schema.",
-        "suppress": {
-          "noqa": {
-            "codes": [
-              "N815"
-            ]
-          }
-        }
+        "suppress": {"noqa": {"codes": ["N815"]}}
       }
     }
   ]

@@ -29,6 +29,19 @@
               }
             ]
           },
+          "edge": {
+            "any": [
+              {
+                "kind": "comment"
+              },
+              {
+                "kind": "line_continuation"
+              },
+              {
+                "regex": "^[\\[\\]()]$"
+              }
+            ]
+          },
           "union-name": {
             "any": [
               {
@@ -160,6 +173,10 @@
               },
               {
                 "kind": "parenthesized_expression"
+              },
+              {
+                "kind": "tuple",
+                "matches": "union-slice"
               }
             ]
           },
@@ -868,6 +885,400 @@
                     "kind": "keyword_argument"
                   }
                 ]
+              },
+              {
+                "all": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "argument_list",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "call",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "function",
+                          "matches": "cast-head"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "matches": "positional"
+                  },
+                  {
+                    "nthChild": {
+                      "position": 1,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "argument_list",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "call",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "function",
+                          "matches": "cast-head"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "kind": "keyword_argument",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "name",
+                      "regex": "^(typ)$"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "argument_list",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "call",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "function",
+                          "matches": "typeform-head"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "matches": "positional"
+                  },
+                  {
+                    "nthChild": {
+                      "position": 1,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "argument_list",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "call",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "function",
+                          "matches": "aliastype-head"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "matches": "positional"
+                  },
+                  {
+                    "nthChild": {
+                      "position": 2,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "argument_list",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "call",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "function",
+                          "matches": "aliastype-head"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "kind": "keyword_argument",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "name",
+                      "regex": "^(value|type_params)$"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "boundary"
+                  },
+                  "kind": "assignment",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "type",
+                    "kind": "type",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "typealias-head"
+                    }
+                  }
+                }
+              },
+              {
+                "nthChild": {
+                  "position": 2,
+                  "ofRule": {
+                    "not": {
+                      "kind": "comment"
+                    }
+                  }
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "list"
+                    },
+                    {
+                      "kind": "tuple"
+                    }
+                  ],
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "nthChild": {
+                        "position": 3,
+                        "ofRule": {
+                          "not": {
+                            "kind": "comment"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "nt-fields"
+                  }
+                }
+              },
+              {
+                "kind": "keyword_argument",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "call",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "function",
+                      "matches": "namedtuple-head"
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "kind": "pair",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "dictionary",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "dictionary_splat",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "argument_list",
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "call",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "function",
+                            "matches": "namedtuple-head"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "kind": "pair",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "dictionary",
+                    "matches": "later-positional",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "argument_list",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "call",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "function",
+                          "matches": "typeddict-head"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "dictionary_splat",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "call",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "function",
+                      "matches": "typeddict-head"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "keyword_argument",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "call",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "function",
+                      "matches": "typeddict-head"
+                    }
+                  }
+                },
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "name",
+                    "regex": "^total$"
+                  }
+                },
+                "any": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "name",
+                      "regex": "^extra_items$"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "argument_list",
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "later-positional",
+                          "not": {
+                            "kind": "none",
+                            "nthChild": {
+                              "position": 2,
+                              "ofRule": {
+                                "matches": "positional"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "matches": "positional",
+                "nthChild": {
+                  "position": 1,
+                  "ofRule": {
+                    "not": {
+                      "kind": "comment"
+                    }
+                  }
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "call",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "function",
+                      "matches": "mypy-arg-head"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "keyword_argument",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "regex": "^type$"
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "positional"
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "call",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "function",
+                      "matches": "mypy-arg-head"
+                    }
+                  }
+                }
               }
             ]
           },
@@ -1012,40 +1423,96 @@
             ]
           },
           "ann-struct": {
-            "kind": "string",
-            "parse": {
-              "grammar": "annotation",
-              "has": {
-                "stopBy": "end",
-                "any": [
-                  {
-                    "matches": "dup-struct",
-                    "capture": "DUP"
-                  },
-                  {
-                    "matches": "ann-struct"
+            "any": [
+              {
+                "kind": "string",
+                "parse": {
+                  "grammar": "annotation",
+                  "has": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "matches": "dup-struct",
+                        "capture": "DUP"
+                      },
+                      {
+                        "matches": "ann-struct"
+                      }
+                    ]
                   }
-                ]
+                }
+              },
+              {
+                "kind": "concatenated_string",
+                "parse": {
+                  "grammar": "annotation",
+                  "has": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "matches": "dup-struct",
+                        "capture": "DUP"
+                      },
+                      {
+                        "matches": "ann-struct"
+                      }
+                    ]
+                  },
+                  "not": {
+                    "has": {
+                      "stopBy": "end",
+                      "matches": "typing-union-name"
+                    }
+                  }
+                }
               }
-            }
+            ]
           },
           "ann-none": {
-            "kind": "string",
-            "parse": {
-              "grammar": "annotation",
-              "has": {
-                "stopBy": "end",
-                "any": [
-                  {
-                    "matches": "dup-none",
-                    "capture": "DUP"
-                  },
-                  {
-                    "matches": "ann-none"
+            "any": [
+              {
+                "kind": "string",
+                "parse": {
+                  "grammar": "annotation",
+                  "has": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "matches": "dup-none",
+                        "capture": "DUP"
+                      },
+                      {
+                        "matches": "ann-none"
+                      }
+                    ]
                   }
-                ]
+                }
+              },
+              {
+                "kind": "concatenated_string",
+                "parse": {
+                  "grammar": "annotation",
+                  "has": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "matches": "dup-none",
+                        "capture": "DUP"
+                      },
+                      {
+                        "matches": "ann-none"
+                      }
+                    ]
+                  },
+                  "not": {
+                    "has": {
+                      "stopBy": "end",
+                      "matches": "typing-union-name"
+                    }
+                  }
+                }
               }
-            }
+            ]
           },
           "ann-optional": {
             "kind": "string",
@@ -1062,6 +1529,316 @@
                     "matches": "ann-optional"
                   }
                 ]
+              }
+            }
+          },
+          "typing-union-name": {
+            "any": [
+              {
+                "matches": "union-name"
+              },
+              {
+                "matches": "optional-name"
+              }
+            ]
+          },
+          "typealias-head": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "typing.TypeAlias",
+                    "typing_extensions.TypeAlias",
+                    "_typeshed.TypeAlias"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "typealias-head"
+                }
+              }
+            ]
+          },
+          "cast-head": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "typing.cast",
+                    "typing_extensions.cast",
+                    "_typeshed.cast"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "cast-head"
+                }
+              }
+            ]
+          },
+          "typeform-head": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "typing.TypeForm",
+                    "typing_extensions.TypeForm",
+                    "_typeshed.TypeForm"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "typeform-head"
+                }
+              }
+            ]
+          },
+          "aliastype-head": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "typing.TypeAliasType",
+                    "typing_extensions.TypeAliasType",
+                    "_typeshed.TypeAliasType"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "aliastype-head"
+                }
+              }
+            ]
+          },
+          "sole": {
+            "not": {
+              "any": [
+                {
+                  "precedes": {
+                    "stopBy": "end",
+                    "not": {
+                      "matches": "edge"
+                    }
+                  }
+                },
+                {
+                  "follows": {
+                    "stopBy": "end",
+                    "not": {
+                      "any": [
+                        {
+                          "matches": "edge"
+                        },
+                        {
+                          "matches": "union-name"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "union-slice": {
+            "matches": "sole",
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "union-sub"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "type_parameter",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "union-sub"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "type"
+                    }
+                  ],
+                  "matches": "union-slice"
+                }
+              }
+            ]
+          },
+          "namedtuple-head": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "typing.NamedTuple",
+                    "typing_extensions.NamedTuple",
+                    "_typeshed.NamedTuple"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "namedtuple-head"
+                }
+              }
+            ]
+          },
+          "typeddict-head": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "typing.TypedDict",
+                    "typing_extensions.TypedDict",
+                    "_typeshed.TypedDict"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "typeddict-head"
+                }
+              }
+            ]
+          },
+          "mypy-arg-head": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "mypy_extensions.Arg",
+                    "mypy_extensions.DefaultArg",
+                    "mypy_extensions.NamedArg",
+                    "mypy_extensions.DefaultNamedArg",
+                    "mypy_extensions.VarArg",
+                    "mypy_extensions.KwArg"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "mypy-arg-head"
+                }
+              }
+            ]
+          },
+          "later-positional": {
+            "matches": "positional",
+            "not": {
+              "nthChild": {
+                "position": 1,
+                "ofRule": {
+                  "not": {
+                    "kind": "comment"
+                  }
+                }
+              }
+            }
+          },
+          "nt-fields": {
+            "any": [
+              {
+                "kind": "list"
+              },
+              {
+                "kind": "tuple"
+              }
+            ],
+            "matches": "later-positional",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "argument_list",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "namedtuple-head"
+                }
               }
             }
           }

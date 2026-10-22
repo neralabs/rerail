@@ -83,28 +83,42 @@
             "mutable-name": {
               "any": [
                 {
-                  "kind": "identifier"
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "dict",
+                      "list",
+                      "set"
+                    ],
+                    "import": [
+                      "builtins.dict",
+                      "builtins.list",
+                      "builtins.set",
+                      "collections.Counter",
+                      "collections.OrderedDict",
+                      "collections.defaultdict",
+                      "collections.deque"
+                    ]
+                  }
                 },
                 {
-                  "kind": "attribute"
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "kind": "comment"
+                    },
+                    "matches": "mutable-name"
+                  }
                 }
-              ],
-              "resolves": {
-                "global": [
-                  "dict",
-                  "list",
-                  "set"
-                ],
-                "import": [
-                  "builtins.dict",
-                  "builtins.list",
-                  "builtins.set",
-                  "collections.Counter",
-                  "collections.OrderedDict",
-                  "collections.defaultdict",
-                  "collections.deque"
-                ]
-              }
+              ]
             },
             "mutable-callee": {
               "any": [
@@ -115,7 +129,7 @@
                   "kind": "subscript",
                   "has": {
                     "field": "value",
-                    "matches": "mutable-callee"
+                    "matches": "mutable-name"
                   }
                 },
                 {
@@ -239,7 +253,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "RUF024",
-        "message": "Build the dict with a comprehension such as `{key: [] for key in keys}`; `dict.fromkeys` shares one mutable value across every key. Leave it if sharing is intended.",
+        "message": "Build the dict with a comprehension that creates a fresh value per key, e.g. `{key: [] for key in keys}`; `dict.fromkeys` shares one mutable value across all keys. Leave it if sharing is intended.",
         "suppress": {
           "noqa": {
             "codes": [

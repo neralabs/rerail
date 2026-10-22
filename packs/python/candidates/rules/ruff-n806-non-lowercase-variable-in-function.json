@@ -19,8 +19,12 @@
             "type": "array",
             "items": "string",
             "default": [
+              "setUp",
+              "tearDown",
+              "setUpClass",
               "tearDownClass",
               "setUpModule",
+              "tearDownModule",
               "asyncSetUp",
               "asyncTearDown",
               "setUpTestData",
@@ -174,20 +178,7 @@
                     }
                   ]
                 },
-                "any": [
-                  {
-                    "kind": "list_comprehension"
-                  },
-                  {
-                    "kind": "set_comprehension"
-                  },
-                  {
-                    "kind": "dictionary_comprehension"
-                  },
-                  {
-                    "kind": "generator_expression"
-                  }
-                ]
+                "matches": "comprehension-scope-part"
               }
             },
             "global-declared": {
@@ -274,8 +265,24 @@
               ]
             },
             "plain-string": {
-              "kind": "string",
-              "regex": "^[rRuU]{0,2}['\"]"
+              "any": [
+                {
+                  "kind": "string",
+                  "regex": "^[rRuU]{0,2}['\"]"
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "not": {
+                        "regex": "^[rRuU]{0,2}['\"]"
+                      }
+                    }
+                  }
+                }
+              ]
             },
             "positional": {
               "not": {
@@ -291,9 +298,6 @@
                   },
                   {
                     "kind": "dictionary_splat"
-                  },
-                  {
-                    "kind": "list_splat"
                   }
                 ]
               }
@@ -309,99 +313,120 @@
                   }
                 },
                 {
-                  "has": {
-                    "stopBy": "neighbor",
-                    "field": "arguments",
-                    "kind": "argument_list",
-                    "any": [
-                      {
-                        "has": {
-                          "stopBy": "neighbor",
-                          "kind": "keyword_argument",
-                          "all": [
-                            {
-                              "has": {
-                                "stopBy": "neighbor",
-                                "field": "name",
-                                "regex": "^model_name$"
-                              }
-                            },
-                            {
-                              "has": {
-                                "stopBy": "neighbor",
-                                "field": "value",
-                                "all": [
-                                  {
-                                    "pattern": "$MODEL",
-                                    "any": [
-                                      {
-                                        "not": {
-                                          "matches": "plain-string"
-                                        }
-                                      },
-                                      {
-                                        "compare": {
-                                          "left": "MODELTEXT",
-                                          "op": "eq",
-                                          "right": "NAME"
-                                        }
-                                      }
-                                    ]
-                                  }
-                                ]
-                              }
-                            }
-                          ]
-                        }
-                      },
-                      {
-                        "not": {
-                          "has": {
-                            "stopBy": "neighbor",
-                            "kind": "keyword_argument",
+                  "any": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "arguments",
+                        "kind": "argument_list",
+                        "any": [
+                          {
                             "has": {
                               "stopBy": "neighbor",
-                              "field": "name",
-                              "regex": "^model_name$"
-                            }
-                          }
-                        },
-                        "has": {
-                          "stopBy": "neighbor",
-                          "all": [
-                            {
-                              "matches": "positional"
-                            },
-                            {
-                              "not": {
-                                "precedes": {
-                                  "stopBy": "end",
-                                  "matches": "positional"
-                                }
-                              }
-                            },
-                            {
-                              "pattern": "$MODEL",
-                              "any": [
+                              "kind": "keyword_argument",
+                              "all": [
                                 {
-                                  "not": {
-                                    "matches": "plain-string"
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "field": "name",
+                                    "regex": "^model_name$"
                                   }
                                 },
                                 {
-                                  "compare": {
-                                    "left": "MODELTEXT",
-                                    "op": "eq",
-                                    "right": "NAME"
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "field": "value",
+                                    "all": [
+                                      {
+                                        "pattern": "$MODEL",
+                                        "any": [
+                                          {
+                                            "not": {
+                                              "matches": "plain-string"
+                                            }
+                                          },
+                                          {
+                                            "compare": {
+                                              "left": "MODELTEXT",
+                                              "op": "eq",
+                                              "right": "NAME"
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
                                   }
                                 }
                               ]
                             }
-                          ]
-                        }
+                          },
+                          {
+                            "not": {
+                              "any": [
+                                {
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "keyword_argument",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "field": "name",
+                                      "regex": "^model_name$"
+                                    }
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "list_splat"
+                                  }
+                                }
+                              ]
+                            },
+                            "has": {
+                              "stopBy": "neighbor",
+                              "all": [
+                                {
+                                  "matches": "positional"
+                                },
+                                {
+                                  "not": {
+                                    "precedes": {
+                                      "stopBy": "end",
+                                      "matches": "positional"
+                                    }
+                                  }
+                                },
+                                {
+                                  "pattern": "$MODEL",
+                                  "any": [
+                                    {
+                                      "not": {
+                                        "matches": "plain-string"
+                                      }
+                                    },
+                                    {
+                                      "compare": {
+                                        "left": "MODELTEXT",
+                                        "op": "eq",
+                                        "right": "NAME"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        ]
                       }
-                    ]
-                  }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "arguments",
+                        "kind": "generator_expression"
+                      }
+                    }
+                  ]
                 }
               ]
             },
@@ -540,6 +565,102 @@
                   }
                 ]
               }
+            },
+            "comprehension-scope-part": {
+              "any": [
+                {
+                  "not": {
+                    "kind": "for_in_clause"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "list_comprehension"
+                      },
+                      {
+                        "kind": "set_comprehension"
+                      },
+                      {
+                        "kind": "dictionary_comprehension"
+                      },
+                      {
+                        "kind": "generator_expression"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "for_in_clause",
+                  "follows": {
+                    "stopBy": "end",
+                    "kind": "for_in_clause"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "left",
+                    "kind": "for_in_clause"
+                  }
+                }
+              ]
+            },
+            "in-type-scope": {
+              "inside": {
+                "stopBy": {
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "class_definition"
+                    },
+                    {
+                      "kind": "lambda"
+                    }
+                  ]
+                },
+                "any": [
+                  {
+                    "kind": "argument_list",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "field": "superclasses",
+                      "kind": "class_definition"
+                    }
+                  },
+                  {
+                    "kind": "type",
+                    "any": [
+                      {
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "field": "return_type",
+                          "kind": "function_definition"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "typed_parameter"
+                            },
+                            {
+                              "kind": "typed_default_parameter"
+                            }
+                          ],
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "parameters"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
             }
           },
           "rule": {
@@ -578,6 +699,9 @@
                   "matches": "in-comprehension"
                 },
                 {
+                  "matches": "in-type-scope"
+                },
+                {
                   "matches": "global-declared"
                 },
                 {
@@ -604,14 +728,21 @@
             "MODELTEXT": {
               "replace": {
                 "source": "$MODEL",
-                "replace": "^[rRuU]{0,2}(?:\"\"\"|'''|\"|')(.*?)(?:\"\"\"|'''|\"|')$",
-                "by": "${1}"
+                "replace": "(?s)[rRuU]{0,2}(?:\"\"\"((?:[^\\\\]|\\\\.)*?)\"\"\"|'''((?:[^\\\\]|\\\\.)*?)'''|\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^'\\\\]|\\\\.)*)')\\s*",
+                "by": "${1}${2}${3}${4}"
+              }
+            },
+            "PATHTEXT": {
+              "replace": {
+                "source": "$PATH",
+                "replace": "(?s)[rRuU]{0,2}(?:\"\"\"((?:[^\\\\]|\\\\.)*?)\"\"\"|'''((?:[^\\\\]|\\\\.)*?)'''|\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^'\\\\]|\\\\.)*)')\\s*",
+                "by": "${1}${2}${3}${4}"
               }
             },
             "LAST": {
               "replace": {
-                "source": "$PATH",
-                "replace": "^[rRuU]{0,2}['\"][^'\"]*\\.([^'\".]*)['\"]$",
+                "source": "$PATHTEXT",
+                "replace": "(?s)^(?:.*\\.(.*)|.*)$",
                 "by": "${1}"
               }
             }

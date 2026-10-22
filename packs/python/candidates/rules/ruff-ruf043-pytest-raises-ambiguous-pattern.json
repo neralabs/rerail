@@ -3,7 +3,7 @@
   "id": "ruff-ruf043-pytest-raises-ambiguous-pattern",
   "revision": 1,
   "mode": "steer",
-  "description": "Make the match pattern of pytest.raises explicit; use a raw string for a regex or re.escape for literal text, rather than a plain string with unescaped special characters.",
+  "description": "Use a raw string or re.escape for the match pattern of pytest.raises; a plain string with regex special characters hides whether a regex or literal text was meant.",
   "scope": {
     "include": [
       "**/*"
@@ -128,7 +128,7 @@
       "violation": {
         "code": "RUF043",
         "anchor": "witness.span",
-        "message": "This `match=` string holds regex special characters. Use a raw string if it is a regex, or `re.escape(...)` if it is literal text.",
+        "message": "This `match=` string has regex special characters: make it a raw string (writing doubled backslashes once) if it is a regex, or wrap it in `re.escape(...)` if it is literal text.",
         "suppress": {
           "noqa": {
             "codes": [

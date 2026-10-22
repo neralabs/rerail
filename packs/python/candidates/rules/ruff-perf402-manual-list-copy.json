@@ -281,6 +281,40 @@
                       }
                     }
                   }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "only": true,
+                      "site": {
+                        "any": [
+                          {
+                            "kind": "as_pattern",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "precedes": {
+                                "stopBy": "neighbor",
+                                "regex": "^as$"
+                              },
+                              "matches": "list-init"
+                            }
+                          },
+                          {
+                            "kind": "function_definition",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "field": "return_type",
+                              "kind": "type",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "matches": "list-ann"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
                 }
               ]
             },
@@ -387,7 +421,14 @@
                     "follows": {
                       "stopBy": "end",
                       "not": {
-                        "kind": "comment"
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "regex": "^;$"
+                          }
+                        ]
                       }
                     }
                   },
@@ -395,7 +436,14 @@
                     "precedes": {
                       "stopBy": "end",
                       "not": {
-                        "kind": "comment"
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "regex": "^;$"
+                          }
+                        ]
                       }
                     }
                   }
@@ -418,8 +466,7 @@
                   },
                   "has": {
                     "stopBy": "neighbor",
-                    "kind": "identifier",
-                    "pattern": "$T"
+                    "matches": "loop-target"
                   }
                 }
               ]
@@ -485,7 +532,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PERF402",
-        "message": "Copy the iterable in one step: `$L.extend(<iterable>)`, or `$L = list(<iterable>)` when `$L` starts empty and nothing reads it before the loop.",
+        "message": "Copy the iterable in one step: `$L.extend(<iterable>)`, or `$L = list(<iterable>)` if `$L` is a fresh empty list; keep the loop if code after it reads the loop variable.",
         "suppress": {
           "noqa": {
             "codes": [

@@ -191,6 +191,13 @@
                     "stopBy": "end",
                     "kind": "for_in_clause"
                   }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "for_in_clause",
+                    "field": "left"
+                  }
                 }
               ]
             },
@@ -238,27 +245,7 @@
                   "matches": "extend-method"
                 }
               },
-              "all": [
-                {
-                  "count": {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "not": {
-                        "any": [
-                          {
-                            "kind": "comment"
-                          },
-                          {
-                            "regex": "^[(),]$"
-                          }
-                        ]
-                      }
-                    },
-                    "min": 1,
-                    "max": 1
-                  }
-                }
-              ]
+              "matches": "one-arg"
             },
             "sequence": {
               "any": [
@@ -296,41 +283,13 @@
                   "matches": "other-scope"
                 }
               }
-            }
-          },
-          "rule": {
-            "matches": "current",
-            "inside": {
-              "stopBy": "neighbor",
-              "matches": "sequence"
             },
-            "follows": {
-              "stopBy": "end",
-              "any": [
-                {
-                  "any": [
-                    {
-                      "kind": "string"
-                    },
-                    {
-                      "kind": "concatenated_string"
-                    }
-                  ],
-                  "value": {
-                    "type": "str"
-                  },
-                  "not": {
-                    "has": {
-                      "stopBy": "end",
-                      "kind": "string_start",
-                      "regex": "[fFtT]"
-                    }
-                  },
-                  "pattern": "$FIRST"
-                },
-                {
-                  "kind": "parenthesized_expression",
-                  "has": {
+            "dup": {
+              "matches": "current",
+              "follows": {
+                "stopBy": "end",
+                "any": [
+                  {
                     "any": [
                       {
                         "kind": "string"
@@ -349,22 +308,206 @@
                         "regex": "[fFtT]"
                       }
                     },
-                    "stopBy": {
+                    "pattern": "$FIRST"
+                  },
+                  {
+                    "kind": "parenthesized_expression",
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "string"
+                        },
+                        {
+                          "kind": "concatenated_string"
+                        }
+                      ],
+                      "value": {
+                        "type": "str"
+                      },
                       "not": {
-                        "kind": "parenthesized_expression"
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "string_start",
+                          "regex": "[fFtT]"
+                        }
+                      },
+                      "stopBy": {
+                        "not": {
+                          "kind": "parenthesized_expression"
+                        }
+                      },
+                      "pattern": "$FIRST"
+                    }
+                  }
+                ],
+                "compare": {
+                  "left": "FIRST",
+                  "op": "eq",
+                  "right": "DUP",
+                  "text": "value"
+                }
+              }
+            },
+            "ann-extend": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "identifier",
+                        "regex": "^extend$",
+                        "follows": {
+                          "stopBy": "end",
+                          "regex": "^\\.$"
+                        }
                       }
                     },
-                    "pattern": "$FIRST"
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "dunder-all",
+                        "precedes": {
+                          "stopBy": "end",
+                          "regex": "^\\.$"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "ann-extend"
                   }
                 }
+              ]
+            },
+            "ann-sequence": {
+              "any": [
+                {
+                  "kind": "list"
+                },
+                {
+                  "kind": "tuple"
+                }
               ],
-              "compare": {
-                "left": "FIRST",
-                "op": "eq",
-                "right": "DUP",
-                "text": "value"
+              "inside": {
+                "stopBy": {
+                  "not": {
+                    "kind": "parenthesized_expression"
+                  }
+                },
+                "kind": "argument_list",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "ann-extend",
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "kind": "argument_list"
+                    }
+                  }
+                },
+                "matches": "one-arg"
+              },
+              "not": {
+                "inside": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "kind": "lambda"
+                    },
+                    {
+                      "kind": "list_comprehension"
+                    },
+                    {
+                      "kind": "set_comprehension"
+                    },
+                    {
+                      "kind": "dictionary_comprehension"
+                    },
+                    {
+                      "kind": "generator_expression"
+                    }
+                  ]
+                }
+              }
+            },
+            "dup-in-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "dup",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "matches": "ann-sequence"
+                      }
+                    },
+                    {
+                      "matches": "dup-in-string"
+                    }
+                  ]
+                }
+              }
+            },
+            "one-arg": {
+              "count": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "comment"
+                      },
+                      {
+                        "kind": "line_continuation"
+                      },
+                      {
+                        "regex": "^[(),]$"
+                      }
+                    ]
+                  }
+                },
+                "min": 1,
+                "max": 1
               }
             }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "dup",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "sequence"
+                }
+              },
+              {
+                "matches": "dup-in-string",
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "matches": "other-scope"
+                  }
+                }
+              }
+            ]
           }
         }
       },

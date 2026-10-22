@@ -45,19 +45,7 @@
                 "kind": "argument_list",
                 "has": {
                   "stopBy": "neighbor",
-                  "any": [
-                    {
-                      "matches": "enum-ref"
-                    },
-                    {
-                      "kind": "subscript",
-                      "has": {
-                        "stopBy": "neighbor",
-                        "field": "value",
-                        "matches": "enum-ref"
-                      }
-                    }
-                  ]
+                  "matches": "enum-base-expr"
                 }
               }
             },
@@ -246,6 +234,42 @@
                       }
                     },
                     "matches": "none-target"
+                  }
+                }
+              ]
+            },
+            "paren-enum-ref": {
+              "any": [
+                {
+                  "matches": "enum-ref"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "paren-enum-ref"
+                  }
+                }
+              ]
+            },
+            "enum-base-expr": {
+              "any": [
+                {
+                  "matches": "paren-enum-ref"
+                },
+                {
+                  "kind": "subscript",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "paren-enum-ref"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "enum-base-expr"
                   }
                 }
               ]

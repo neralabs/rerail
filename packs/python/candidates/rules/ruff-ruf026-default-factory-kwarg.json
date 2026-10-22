@@ -123,61 +123,93 @@
                   }
                 }
               ]
-            }
-          },
-          "rule": {
-            "kind": "call",
-            "all": [
-              {
-                "has": {
-                  "field": "function",
-                  "matches": "callee"
-                }
-              },
-              {
-                "has": {
-                  "field": "arguments",
-                  "kind": "argument_list",
-                  "all": [
-                    {
-                      "not": {
+            },
+            "bad-call": {
+              "kind": "call",
+              "all": [
+                {
+                  "has": {
+                    "field": "function",
+                    "matches": "callee"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "arguments",
+                    "kind": "argument_list",
+                    "all": [
+                      {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "positional"
+                          }
+                        }
+                      },
+                      {
                         "has": {
                           "stopBy": "neighbor",
-                          "matches": "positional"
-                        }
-                      }
-                    },
-                    {
-                      "has": {
-                        "stopBy": "neighbor",
-                        "kind": "keyword_argument",
-                        "all": [
-                          {
-                            "has": {
-                              "field": "name",
-                              "regex": "^default_factory$"
-                            }
-                          },
-                          {
-                            "has": {
-                              "field": "value",
-                              "not": {
-                                "matches": "non-callable"
+                          "kind": "keyword_argument",
+                          "all": [
+                            {
+                              "has": {
+                                "field": "name",
+                                "regex": "^default_factory$"
+                              }
+                            },
+                            {
+                              "has": {
+                                "field": "value",
+                                "not": {
+                                  "matches": "non-callable"
+                                }
                               }
                             }
-                          }
-                        ]
+                          ]
+                        }
                       }
+                    ]
+                  }
+                }
+              ]
+            },
+            "in-string": {
+              "kind": "string",
+              "not": {
+                "regex": "\\\\"
+              },
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "bad-call",
+                      "capture": "C"
+                    },
+                    {
+                      "matches": "in-string"
                     }
                   ]
                 }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "bad-call",
+                "pattern": "$C"
+              },
+              {
+                "matches": "in-string"
               }
             ]
           }
         }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "capture.C",
         "code": "RUF026",
         "message": "Pass the factory positionally, as in `defaultdict(list)`; `default_factory=` is stored as a dict entry and leaves the dict without a default. Leave it if that entry is intended.",
         "suppress": {

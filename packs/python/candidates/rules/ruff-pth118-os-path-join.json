@@ -3,7 +3,7 @@
  "id": "ruff-pth118-os-path-join",
  "revision": 1,
  "mode": "steer",
- "description": "Use Path objects with the slash operator or joinpath instead of os.path.join; pathlib reads better than string-based os.path functions.",
+ "description": "Use Path objects with the slash operator or joinpath instead of os.path.join or os.sep.join; pathlib reads better than joining path strings.",
  "scope": {
   "include": [
    "**/*"
@@ -340,7 +340,7 @@
    "violation": {
     "anchor": "capture.F",
     "code": "PTH118",
-    "message": "Use `Path(*parts)` instead of `os.sep.join(parts)`; a `Path` is not a `str`, so wrap it in `str()` where a string is needed.",
+    "message": "Use `Path(*parts)` instead of `os.sep.join(parts)`, with `str()` where a string is needed. Leave it if the result is not a filesystem path or a part may be empty or absolute.",
     "each": "F",
     "suppress": {
      "noqa": {

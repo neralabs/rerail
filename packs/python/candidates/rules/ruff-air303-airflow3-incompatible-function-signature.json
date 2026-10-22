@@ -50,6 +50,7 @@
                     }
                   }
                 },
+                { "matches": "assigned-chain" },
                 { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "collector" } }
               ]
             },
@@ -65,6 +66,128 @@
                   ]
                 },
                 { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "collector-method" } }
+              ]
+            },
+            "assigned-hook-callee": {
+              "any": [
+                { "resolves": { "import": ["airflow.lineage.hook"] } },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": { "stopBy": "neighbor", "matches": "assigned-hook-callee" }
+                }
+              ]
+            },
+            "assigned-hook-call": {
+              "any": [
+                {
+                  "kind": "call",
+                  "has": { "stopBy": "neighbor", "field": "function", "matches": "assigned-hook-callee" }
+                },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "assigned-hook-call" } },
+                {
+                  "kind": "assignment",
+                  "has": { "stopBy": "neighbor", "field": "right", "matches": "assigned-hook-call" }
+                }
+              ]
+            },
+            "assigned-lineage-callee": {
+              "any": [
+                { "resolves": { "import": ["airflow.lineage"] } },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": { "stopBy": "neighbor", "matches": "assigned-lineage-callee" }
+                }
+              ]
+            },
+            "assigned-lineage-call": {
+              "any": [
+                {
+                  "kind": "call",
+                  "has": { "stopBy": "neighbor", "field": "function", "matches": "assigned-lineage-callee" }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": { "stopBy": "neighbor", "matches": "assigned-lineage-call" }
+                },
+                {
+                  "kind": "assignment",
+                  "has": { "stopBy": "neighbor", "field": "right", "matches": "assigned-lineage-call" }
+                }
+              ]
+            },
+            "assigned-airflow-callee": {
+              "any": [
+                { "resolves": { "import": ["airflow"] } },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": { "stopBy": "neighbor", "matches": "assigned-airflow-callee" }
+                }
+              ]
+            },
+            "assigned-airflow-call": {
+              "any": [
+                {
+                  "kind": "call",
+                  "has": { "stopBy": "neighbor", "field": "function", "matches": "assigned-airflow-callee" }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": { "stopBy": "neighbor", "matches": "assigned-airflow-call" }
+                },
+                {
+                  "kind": "assignment",
+                  "has": { "stopBy": "neighbor", "field": "right", "matches": "assigned-airflow-call" }
+                }
+              ]
+            },
+            "assigned-chain": {
+              "kind": "attribute",
+              "any": [
+                {
+                  "regex": "^\\w+\\s*\\.\\s*HookLineageCollector$",
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "identifier",
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "assignment",
+                          "has": { "stopBy": "neighbor", "field": "right", "matches": "assigned-hook-call" }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "regex": "^\\w+\\s*\\.\\s*hook\\s*\\.\\s*HookLineageCollector$",
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "identifier",
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "assignment",
+                          "has": { "stopBy": "neighbor", "field": "right", "matches": "assigned-lineage-call" }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "regex": "^\\w+\\s*\\.\\s*lineage\\s*\\.\\s*hook\\s*\\.\\s*HookLineageCollector$",
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "identifier",
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "assignment",
+                          "has": { "stopBy": "neighbor", "field": "right", "matches": "assigned-airflow-call" }
+                        }
+                      }
+                    }
+                  }
+                }
               ]
             }
           },
@@ -385,7 +508,16 @@
                         "binding": {
                           "site": {
                             "kind": "aliased_import",
-                            "has": { "stopBy": "neighbor", "field": "name", "regex": "^BaseOperatorLink$" }
+                            "has": {
+                              "stopBy": "neighbor",
+                              "field": "name",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "identifier",
+                                "regex": "^BaseOperatorLink$",
+                                "not": { "precedes": { "stopBy": "end", "kind": "identifier" } }
+                              }
+                            }
                           }
                         }
                       }
@@ -400,38 +532,8 @@
             },
             "link-base": {
               "any": [
-                {
-                  "all": [
-                    {
-                      "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
-                      "resolves": { "import": ["airflow.models", "airflow.sdk"], "prefix": true }
-                    },
-                    { "matches": "link-name" }
-                  ]
-                },
-                {
-                  "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
-                  "resolves": {
-                    "binding": {
-                      "site": {
-                        "kind": "class_definition",
-                        "not": {
-                          "inside": {
-                            "stopBy": { "any": [{ "kind": "class_definition" }, { "kind": "function_definition" }] },
-                            "kind": "class_definition"
-                          }
-                        },
-                        "has": {
-                          "stopBy": "neighbor",
-                          "field": "superclasses",
-                          "kind": "argument_list",
-                          "has": { "stopBy": "neighbor", "matches": "link-base" }
-                        }
-                      }
-                    }
-                  }
-                },
-                { "kind": "subscript", "has": { "stopBy": "neighbor", "field": "value", "matches": "link-base" } },
+                { "matches": "link-ref" },
+                { "kind": "subscript", "has": { "stopBy": "neighbor", "field": "value", "matches": "link-ref" } },
                 { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "link-base" } }
               ]
             },
@@ -500,6 +602,42 @@
                     "count": { "follows": { "stopBy": "end", "matches": "pos-param" }, "min": 2, "max": 2 }
                   }
                 }
+              ]
+            },
+            "link-ref": {
+              "any": [
+                {
+                  "all": [
+                    {
+                      "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                      "resolves": { "import": ["airflow.models", "airflow.sdk"], "prefix": true }
+                    },
+                    { "matches": "link-name" }
+                  ]
+                },
+                {
+                  "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "class_definition",
+                        "not": {
+                          "inside": {
+                            "stopBy": { "any": [{ "kind": "class_definition" }, { "kind": "function_definition" }] },
+                            "kind": "class_definition"
+                          }
+                        },
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "superclasses",
+                          "kind": "argument_list",
+                          "has": { "stopBy": "neighbor", "matches": "link-base" }
+                        }
+                      }
+                    }
+                  }
+                },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "link-ref" } }
               ]
             }
           },

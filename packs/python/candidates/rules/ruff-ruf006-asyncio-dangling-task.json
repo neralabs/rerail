@@ -3,7 +3,7 @@
   "id": "ruff-ruf006-asyncio-dangling-task",
   "revision": 1,
   "mode": "steer",
-  "description": "Keep a reference to every task created with asyncio, such as in a variable or collection; the event loop holds tasks only weakly, so they can be dropped before they finish.",
+  "description": "Keep a reference to every asyncio task until it finishes, such as in a set or by awaiting it; the event loop holds tasks only weakly, so they can be dropped mid-run.",
   "scope": {
     "include": [
       "**/*"
@@ -316,7 +316,16 @@
                       }
                     ],
                     "has": {
-                      "stopBy": "end",
+                      "stopBy": {
+                        "any": [
+                          {
+                            "kind": "attribute"
+                          },
+                          {
+                            "kind": "subscript"
+                          }
+                        ]
+                      },
                       "kind": "identifier",
                       "pattern": "$N",
                       "matches": {
@@ -344,6 +353,77 @@
           }
         },
         "each": "N"
+      }
+    },
+    {
+      "id": "unused-comprehension-variable",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "matches": "task-call",
+            "inside": {
+              "field": "right",
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              "kind": "assignment",
+              "not": {
+                "inside": {
+                  "field": "right",
+                  "stopBy": "neighbor",
+                  "kind": "assignment"
+                }
+              }
+            },
+            "has": {
+              "stopBy": "end",
+              "kind": "identifier",
+              "pattern": "$C",
+              "inside": {
+                "stopBy": {
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "pattern_list"
+                      },
+                      {
+                        "kind": "tuple_pattern"
+                      },
+                      {
+                        "kind": "list_pattern"
+                      },
+                      {
+                        "kind": "parenthesized_expression"
+                      }
+                    ]
+                  }
+                },
+                "field": "left",
+                "kind": "for_in_clause"
+              },
+              "binds": {
+                "used": false
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RUF006",
+        "message": "Keep a reference to this task until it finishes: await it, or add it to a set and discard it in `add_done_callback`. Leave it if the variable it is assigned to is already awaited.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF006"
+            ]
+          }
+        },
+        "each": "C"
       }
     }
   ]

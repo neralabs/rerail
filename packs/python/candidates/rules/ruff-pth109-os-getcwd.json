@@ -46,14 +46,162 @@
                   }
                 }
               ]
+            },
+            "ann-args": {
+              "any": [
+                {
+                  "kind": "argument_list"
+                },
+                {
+                  "kind": "generator_expression"
+                }
+              ]
+            },
+            "ann-call": {
+              "kind": "call",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "callee",
+                "precedes": {
+                  "stopBy": "neighbor",
+                  "matches": "ann-args"
+                }
+              }
+            },
+            "arg-name": {
+              "kind": "identifier",
+              "not": {
+                "any": [
+                  {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "^\\.$"
+                    }
+                  },
+                  {
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "regex": "^=$"
+                    },
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "keyword_argument"
+                    }
+                  }
+                ]
+              }
+            },
+            "ann-string": {
+              "any": [
+                {
+                  "kind": "string",
+                  "not": {
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "escape_sequence"
+                    }
+                  },
+                  "parse": {
+                    "grammar": "annotation",
+                    "has": {
+                      "stopBy": "end",
+                      "any": [
+                        {
+                          "matches": "ann-call"
+                        },
+                        {
+                          "matches": "ann-string"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "concatenated_string"
+                    },
+                    {
+                      "kind": "string",
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "escape_sequence"
+                      }
+                    }
+                  ],
+                  "parse": {
+                    "grammar": "annotation",
+                    "has": {
+                      "stopBy": "end",
+                      "any": [
+                        {
+                          "matches": "ann-call",
+                          "all": [
+                            {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "matches": "callee",
+                                "any": [
+                                  {
+                                    "kind": "identifier",
+                                    "pattern": "$H"
+                                  },
+                                  {
+                                    "has": {
+                                      "stopBy": "end",
+                                      "kind": "identifier",
+                                      "not": {
+                                        "follows": {
+                                          "stopBy": "neighbor",
+                                          "regex": "^\\.$"
+                                        }
+                                      },
+                                      "pattern": "$H"
+                                    }
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "not": {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "matches": "ann-args",
+                                  "has": {
+                                    "stopBy": "end",
+                                    "matches": "arg-name",
+                                    "not": {
+                                      "pattern": "$H"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "matches": "ann-string"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
             }
           },
           "rule": {
-            "kind": "call",
-            "has": {
-              "field": "function",
-              "matches": "callee"
-            }
+            "any": [
+              {
+                "kind": "call",
+                "has": {
+                  "field": "function",
+                  "matches": "callee"
+                }
+              },
+              {
+                "matches": "ann-string"
+              }
+            ]
           }
         }
       },
@@ -67,7 +215,8 @@
               "PTH109"
             ]
           }
-        }
+        },
+        "each": "F"
       }
     },
     {
@@ -105,14 +254,162 @@
                   }
                 }
               ]
+            },
+            "ann-args": {
+              "any": [
+                {
+                  "kind": "argument_list"
+                },
+                {
+                  "kind": "generator_expression"
+                }
+              ]
+            },
+            "ann-call": {
+              "kind": "call",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "callee",
+                "precedes": {
+                  "stopBy": "neighbor",
+                  "matches": "ann-args"
+                }
+              }
+            },
+            "arg-name": {
+              "kind": "identifier",
+              "not": {
+                "any": [
+                  {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "^\\.$"
+                    }
+                  },
+                  {
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "regex": "^=$"
+                    },
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "keyword_argument"
+                    }
+                  }
+                ]
+              }
+            },
+            "ann-string": {
+              "any": [
+                {
+                  "kind": "string",
+                  "not": {
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "escape_sequence"
+                    }
+                  },
+                  "parse": {
+                    "grammar": "annotation",
+                    "has": {
+                      "stopBy": "end",
+                      "any": [
+                        {
+                          "matches": "ann-call"
+                        },
+                        {
+                          "matches": "ann-string"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "concatenated_string"
+                    },
+                    {
+                      "kind": "string",
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "escape_sequence"
+                      }
+                    }
+                  ],
+                  "parse": {
+                    "grammar": "annotation",
+                    "has": {
+                      "stopBy": "end",
+                      "any": [
+                        {
+                          "matches": "ann-call",
+                          "all": [
+                            {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "matches": "callee",
+                                "any": [
+                                  {
+                                    "kind": "identifier",
+                                    "pattern": "$H"
+                                  },
+                                  {
+                                    "has": {
+                                      "stopBy": "end",
+                                      "kind": "identifier",
+                                      "not": {
+                                        "follows": {
+                                          "stopBy": "neighbor",
+                                          "regex": "^\\.$"
+                                        }
+                                      },
+                                      "pattern": "$H"
+                                    }
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "not": {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "matches": "ann-args",
+                                  "has": {
+                                    "stopBy": "end",
+                                    "matches": "arg-name",
+                                    "not": {
+                                      "pattern": "$H"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "matches": "ann-string"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
             }
           },
           "rule": {
-            "kind": "call",
-            "has": {
-              "field": "function",
-              "matches": "callee"
-            }
+            "any": [
+              {
+                "kind": "call",
+                "has": {
+                  "field": "function",
+                  "matches": "callee"
+                }
+              },
+              {
+                "matches": "ann-string"
+              }
+            ]
           }
         }
       },
@@ -126,7 +423,8 @@
               "PTH109"
             ]
           }
-        }
+        },
+        "each": "F"
       }
     }
   ]

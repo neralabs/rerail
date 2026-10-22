@@ -113,7 +113,7 @@
         "anchor": "capture.A",
         "each": "A",
         "code": "PT017",
-        "message": "Wrap the call in `with pytest.raises(...) as exc_info:` and assert on `exc_info.value`, not on `$N` in an `except`, or the test passes silently when nothing is raised; leave non-test code alone.",
+        "message": "Move this assert out of the `except`: wrap the raising call in `with pytest.raises(...) as exc_info:` and assert on `exc_info.value` instead of `$N`; leave non-test code alone.",
         "suppress": {
           "noqa": {
             "codes": [

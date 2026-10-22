@@ -5,7 +5,9 @@
   "mode": "steer",
   "description": "Pass text instead of universal_newlines to subprocess.run; universal_newlines is the legacy name for the same option.",
   "scope": {
-    "include": ["**/*"],
+    "include": [
+      "**/*"
+    ],
     "exclude": []
   },
   "clauses": [
@@ -17,12 +19,26 @@
           "run-callee": {
             "any": [
               {
-                "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
-                "resolves": { "import": ["subprocess.run"] }
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "subprocess.run"
+                  ]
+                }
               },
               {
                 "kind": "parenthesized_expression",
-                "has": { "stopBy": "neighbor", "matches": "run-callee" }
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "run-callee"
+                }
               }
             ]
           },
@@ -32,7 +48,18 @@
             "inside": {
               "stopBy": "neighbor",
               "kind": "keyword_argument",
-              "field": "name"
+              "field": "name",
+              "not": {
+                "follows": {
+                  "stopBy": "end",
+                  "kind": "keyword_argument",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "name",
+                    "regex": "^universal_newlines$"
+                  }
+                }
+              }
             }
           },
           "run-arguments": {
@@ -40,12 +67,103 @@
             "inside": {
               "stopBy": "neighbor",
               "kind": "call",
-              "has": { "stopBy": "neighbor", "field": "function", "matches": "run-callee" }
+              "has": {
+                "stopBy": "neighbor",
+                "field": "function",
+                "matches": "run-callee"
+              }
             }
           },
           "text-keyword": {
             "kind": "keyword_argument",
-            "has": { "stopBy": "neighbor", "field": "name", "kind": "identifier", "regex": "^text$" }
+            "has": {
+              "stopBy": "neighbor",
+              "field": "name",
+              "kind": "identifier",
+              "regex": "^text$"
+            }
+          },
+          "rename-keyword": {
+            "matches": "legacy-keyword",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "keyword_argument",
+              "inside": {
+                "stopBy": "neighbor",
+                "matches": "run-arguments",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "text-keyword"
+                  }
+                }
+              }
+            }
+          },
+          "drop-keyword": {
+            "matches": "legacy-keyword",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "keyword_argument",
+              "inside": {
+                "stopBy": "neighbor",
+                "matches": "run-arguments",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "text-keyword"
+                }
+              }
+            }
+          },
+          "rename-in-string": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "rename-keyword",
+                    "capture": "K"
+                  },
+                  {
+                    "matches": "rename-in-string"
+                  }
+                ]
+              }
+            }
+          },
+          "drop-in-string": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "drop-keyword",
+                    "capture": "K"
+                  },
+                  {
+                    "matches": "drop-in-string"
+                  }
+                ]
+              }
+            }
           }
         }
       }
@@ -56,24 +174,30 @@
         "ast": {
           "language": "python",
           "rule": {
-            "matches": "legacy-keyword",
-            "inside": {
-              "stopBy": "neighbor",
-              "kind": "keyword_argument",
-              "inside": {
-                "stopBy": "neighbor",
-                "matches": "run-arguments",
-                "not": { "has": { "stopBy": "neighbor", "matches": "text-keyword" } }
+            "any": [
+              {
+                "matches": "rename-keyword",
+                "pattern": "$K"
+              },
+              {
+                "matches": "rename-in-string"
               }
-            }
+            ]
           }
         }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "capture.K",
+        "each": "K",
         "code": "UP021",
         "message": "Rename the `universal_newlines` keyword to `text`; it is the same option under its current name.",
-        "suppress": { "noqa": { "codes": ["UP021"] } }
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP021"
+            ]
+          }
+        }
       }
     },
     {
@@ -82,24 +206,30 @@
         "ast": {
           "language": "python",
           "rule": {
-            "matches": "legacy-keyword",
-            "inside": {
-              "stopBy": "neighbor",
-              "kind": "keyword_argument",
-              "inside": {
-                "stopBy": "neighbor",
-                "matches": "run-arguments",
-                "has": { "stopBy": "neighbor", "matches": "text-keyword" }
+            "any": [
+              {
+                "matches": "drop-keyword",
+                "pattern": "$K"
+              },
+              {
+                "matches": "drop-in-string"
               }
-            }
+            ]
           }
         }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "capture.K",
+        "each": "K",
         "code": "UP021",
-        "message": "Remove the `universal_newlines` keyword; `text` is already passed and means the same thing.",
-        "suppress": { "noqa": { "codes": ["UP021"] } }
+        "message": "Remove the `universal_newlines` keyword; `text` is already passed and sets the same option, so keep the value you meant on `text`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP021"
+            ]
+          }
+        }
       }
     }
   ]

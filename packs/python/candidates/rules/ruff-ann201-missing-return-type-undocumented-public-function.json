@@ -182,9 +182,88 @@
               },
               "matches": "previous-overload"
             },
+            "imports-builtins": {
+              "inside": {
+                "stopBy": "end",
+                "kind": "module",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "kind": "import_statement",
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "dotted_name",
+                        "regex": "^builtins(\\.|$)"
+                      }
+                    },
+                    {
+                      "kind": "import_from_statement",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "module_name",
+                        "kind": "dotted_name",
+                        "regex": "^builtins(\\.|$)"
+                      }
+                    }
+                  ]
+                }
+              }
+            },
             "static-or-class-expr": {
               "any": [
                 {
+                  "kind": "identifier",
+                  "regex": "^staticmethod$",
+                  "not": {
+                    "any": [
+                      {
+                        "matches": "imports-builtins"
+                      },
+                      {
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "module",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "identifier",
+                            "regex": "^staticmethod$",
+                            "binds": {
+                              "scope": "module"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "regex": "^classmethod$",
+                  "not": {
+                    "any": [
+                      {
+                        "matches": "imports-builtins"
+                      },
+                      {
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "module",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "identifier",
+                            "regex": "^classmethod$",
+                            "binds": {
+                              "scope": "module"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "matches": "imports-builtins",
                   "any": [
                     {
                       "kind": "identifier"
@@ -251,6 +330,45 @@
                 "regex": "^_"
               }
             },
+            "all-assignment": {
+              "any": [
+                {
+                  "kind": "assignment",
+                  "not": {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "assignment",
+                      "field": "right"
+                    }
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "left",
+                    "matches": "all-target"
+                  }
+                },
+                {
+                  "kind": "augmented_assignment",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "left",
+                    "matches": "all-target"
+                  }
+                }
+              ]
+            },
+            "all-target": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^__all__$"
+                },
+                {
+                  "kind": "tuple_pattern",
+                  "regex": "^[(\\s]*__all__[\\s)]*$"
+                }
+              ]
+            },
             "declares-all": {
               "has": {
                 "stopBy": {
@@ -263,18 +381,219 @@
                     }
                   ]
                 },
-                "kind": "identifier",
-                "regex": "^__all__$",
-                "binds": {
-                  "scope": "module",
-                  "form": [
-                    "assignment",
-                    "annotated",
-                    "annotation",
-                    "augmented"
-                  ]
+                "matches": "all-assignment"
+              }
+            },
+            "export-string": {
+              "kind": "string",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "string_content",
+                "pattern": "$EXPORT",
+                "compare": {
+                  "left": "EXPORT",
+                  "op": "eq",
+                  "right": "DEFNAME"
+                }
+              },
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "string_start",
+                  "regex": "[fFbBtT]"
                 }
               }
+            },
+            "all-elements": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "list"
+                    },
+                    {
+                      "kind": "tuple"
+                    },
+                    {
+                      "kind": "expression_list"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "export-string"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "all-elements"
+                  }
+                },
+                {
+                  "kind": "named_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "all-elements"
+                  }
+                },
+                {
+                  "kind": "call",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "function",
+                        "any": [
+                          {
+                            "matches": "list-or-tuple"
+                          },
+                          {
+                            "kind": "subscript",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "field": "value",
+                              "matches": "list-or-tuple"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "arguments",
+                        "kind": "argument_list",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "nthChild": 1,
+                          "all": [
+                            {
+                              "nthChild": {
+                                "position": 1,
+                                "reverse": true
+                              }
+                            }
+                          ],
+                          "matches": "all-arg"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "all-arg": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "list"
+                    },
+                    {
+                      "kind": "set"
+                    },
+                    {
+                      "kind": "tuple"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "export-string"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "all-arg"
+                  }
+                }
+              ]
+            },
+            "list-or-tuple": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "global": [
+                  "list",
+                  "tuple"
+                ],
+                "import": [
+                  "builtins.list",
+                  "builtins.tuple"
+                ]
+              }
+            },
+            "all-value": {
+              "any": [
+                {
+                  "matches": "all-elements"
+                },
+                {
+                  "kind": "binary_operator",
+                  "matches": "all-binop"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "all-value"
+                  }
+                },
+                {
+                  "kind": "assignment",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "right",
+                    "matches": "all-value"
+                  }
+                }
+              ]
+            },
+            "all-binop": {
+              "any": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "right",
+                    "matches": "all-elements"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "left",
+                    "matches": "all-left"
+                  }
+                }
+              ]
+            },
+            "all-left": {
+              "any": [
+                {
+                  "matches": "all-elements"
+                },
+                {
+                  "kind": "binary_operator",
+                  "matches": "all-binop"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "binary_operator",
+                    "matches": "all-binop"
+                  }
+                }
+              ]
             },
             "listed": {
               "any": [
@@ -291,9 +610,28 @@
                   "has": {
                     "stopBy": "neighbor",
                     "kind": "identifier",
-                    "binds": {
-                      "form": "definition",
-                      "exported": true
+                    "pattern": "$DEFNAME"
+                  },
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "module",
+                    "has": {
+                      "stopBy": {
+                        "any": [
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "kind": "class_definition"
+                          }
+                        ]
+                      },
+                      "matches": "all-assignment",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "right",
+                        "matches": "all-value"
+                      }
                     }
                   }
                 }

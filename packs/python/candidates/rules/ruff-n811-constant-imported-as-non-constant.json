@@ -107,7 +107,7 @@
                           "kind": "identifier"
                         }
                       },
-                      "regex": "^.$"
+                      "regex": "^[^\\x{132}\\x{13F}\\x{1C4}\\x{1C7}\\x{1CA}\\x{1F1}\\x{2161}-\\x{2163}\\x{2165}-\\x{2168}\\x{216A}\\x{216B}]$"
                     }
                   }
                 },
@@ -119,7 +119,7 @@
                     "not": {
                       "any": [
                         {
-                          "regex": "_"
+                          "regex": "[_\\x{FE33}\\x{FE34}\\x{FE4D}-\\x{FE4F}\\x{FF3F}]"
                         },
                         {
                           "matches": "cased-lower"

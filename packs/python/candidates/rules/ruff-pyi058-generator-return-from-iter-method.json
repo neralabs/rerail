@@ -24,6 +24,28 @@
               }
             ]
           },
+          "generator-tuple": { "any": [ {
+            "kind": "tuple",
+            "count": { "has": { "stopBy": "neighbor", "nthChild": { "position": "n+1", "ofRule": {"not": {"kind": "comment"}} } }, "min": 3, "max": 3 },
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "nthChild": { "position": "n+2", "ofRule": {"not": {"kind": "comment"}} },
+                "not": { "matches": "any-or-none" }
+              }
+            }
+          }, { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "generator-tuple" } } ] },
+          "async-generator-tuple": { "any": [ {
+            "kind": "tuple",
+            "count": { "has": { "stopBy": "neighbor", "nthChild": { "position": "n+1", "ofRule": {"not": {"kind": "comment"}} } }, "min": 2, "max": 2 },
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "nthChild": { "position": "n+2", "ofRule": {"not": {"kind": "comment"}} },
+                "not": { "matches": "any-or-none" }
+              }
+            }
+          }, { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "async-generator-tuple" } } ] },
           "generator-ref": {
             "any": [
               {
@@ -58,6 +80,28 @@
           },
           "generator-return": {
             "any": [
+              {
+                "kind": "subscript",
+                "all": [
+                  { "has": { "stopBy": "neighbor", "field": "value", "matches": "generator-ref" } },
+                  { "has": { "stopBy": "neighbor", "field": "subscript", "matches": "generator-tuple" } },
+                  { "not": { "has": { "stopBy": "neighbor", "regex": "^,$" } } }
+                ]
+              },
+              {
+                "kind": "generic_type",
+                "all": [
+                  { "has": { "stopBy": "neighbor", "kind": "identifier", "matches": "generator-ref" } },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "type_parameter",
+                      "not": { "has": { "stopBy": "neighbor", "regex": "^,$" } },
+                      "has": { "stopBy": "neighbor", "kind": "type", "has": { "stopBy": "neighbor", "matches": "generator-tuple" } }
+                    }
+                  }
+                ]
+              },
               { "matches": "generator-ref" },
               {
                 "any": [{"kind": "parenthesized_expression"}, {"kind": "type"}],
@@ -115,6 +159,28 @@
           },
           "async-generator-return": {
             "any": [
+              {
+                "kind": "subscript",
+                "all": [
+                  { "has": { "stopBy": "neighbor", "field": "value", "matches": "async-generator-ref" } },
+                  { "has": { "stopBy": "neighbor", "field": "subscript", "matches": "async-generator-tuple" } },
+                  { "not": { "has": { "stopBy": "neighbor", "regex": "^,$" } } }
+                ]
+              },
+              {
+                "kind": "generic_type",
+                "all": [
+                  { "has": { "stopBy": "neighbor", "kind": "identifier", "matches": "async-generator-ref" } },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "type_parameter",
+                      "not": { "has": { "stopBy": "neighbor", "regex": "^,$" } },
+                      "has": { "stopBy": "neighbor", "kind": "type", "has": { "stopBy": "neighbor", "matches": "async-generator-tuple" } }
+                    }
+                  }
+                ]
+              },
               { "matches": "async-generator-ref" },
               {
                 "any": [{"kind": "parenthesized_expression"}, {"kind": "type"}],
@@ -290,7 +356,8 @@
               { "regex": "^;$" },
               {
                 "kind": "expression_statement",
-                "has": { "stopBy": "neighbor", "matches": "statement-expr" }
+                "has": { "stopBy": "neighbor", "matches": "statement-expr" },
+                "not": { "has": { "stopBy": "neighbor", "regex": "^,$" } }
               },
               { "kind": "return_statement", "not": {"matches": "late-value-return"} }
             ]

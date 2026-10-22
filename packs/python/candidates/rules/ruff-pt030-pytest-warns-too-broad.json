@@ -287,16 +287,39 @@
                 }
               }
             }
-          }
-        }
-      }
-    },
-    {
-      "id": "warns-too-broad",
-      "forbid": {
-        "ast": {
-          "language": "python",
-          "rule": {
+          },
+          "callable-args": {
+            "kind": "argument_list",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "positional",
+              "follows": {
+                "stopBy": "end",
+                "matches": "positional"
+              }
+            }
+          },
+          "in-callable-form": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "callable-args"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "keyword_argument",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "callable-args"
+                  }
+                }
+              }
+            ]
+          },
+          "flagged-warning": {
             "matches": "broad-warning",
             "any": [
               {
@@ -326,11 +349,55 @@
             ]
           }
         }
+      }
+    },
+    {
+      "id": "context-manager-form",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "flagged-warning",
+            "not": {
+              "matches": "in-callable-form"
+            }
+          }
+        }
       },
       "violation": {
         "anchor": "capture.W",
         "code": "PT030",
         "message": "Give `pytest.warns($W)` a non-empty `match=` regex, or expect a more specific warning, so an unrelated warning cannot satisfy it.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT030"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "callable-form",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "matches": "flagged-warning"
+              },
+              {
+                "matches": "in-callable-form"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.W",
+        "code": "PT030",
+        "message": "`pytest.warns($W, func)` ignores `match=`; call the function inside `with pytest.warns($W, match=...):` instead, or expect a more specific warning class.",
         "suppress": {
           "noqa": {
             "codes": [

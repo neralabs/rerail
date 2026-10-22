@@ -3,7 +3,7 @@
   "id": "ruff-td003-missing-todo-link",
   "revision": 1,
   "mode": "steer",
-  "description": "Link every TODO comment to an issue or ticket, on the same line or on the comment line after it, so the work can be tracked.",
+  "description": "Link every TODO comment to an issue or ticket, on the same line or in the comment lines right after it, so the work can be tracked.",
   "scope": {
     "include": [
       "**/*"

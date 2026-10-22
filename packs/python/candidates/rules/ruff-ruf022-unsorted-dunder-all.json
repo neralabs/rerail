@@ -351,34 +351,76 @@
             }
           },
           "transform": {
-            "YS": {
+            "YD": {
               "replace": {
                 "source": "$Y",
-                "replace": "\\s+",
-                "by": "",
+                "replace": "([0-9])\\s+([0-9])",
+                "by": "${1}\u0001${2}",
                 "value": true
+              }
+            },
+            "YS": {
+              "replace": {
+                "source": "$YD",
+                "replace": "\\s+",
+                "by": ""
+              }
+            },
+            "YA": {
+              "replace": {
+                "source": "$YS",
+                "replace": "([\ue000-\uffff])",
+                "by": "\ud7ff${1}"
+              }
+            },
+            "YU": {
+              "replace": {
+                "source": "$YA",
+                "replace": "_",
+                "by": "Zz\uffff"
               }
             },
             "YT": {
               "replace": {
-                "source": "$YS",
-                "replace": "_",
-                "by": "Zz\uffff"
+                "source": "$YU",
+                "replace": "(^|[^0-9])0([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?",
+                "by": "${1}0\u0004${2}\u0004${3}\u0004${4}\u0004${5}\u0004${6}\u0004${7}\u0004${8}\u0004${9}\u0004${10}\u0004${11}\u0001"
+              }
+            },
+            "XD": {
+              "replace": {
+                "source": "$X",
+                "replace": "([0-9])\\s+([0-9])",
+                "by": "${1}\u0001${2}",
+                "value": true
               }
             },
             "XS": {
               "replace": {
-                "source": "$X",
+                "source": "$XD",
                 "replace": "\\s+",
-                "by": "",
-                "value": true
+                "by": ""
+              }
+            },
+            "XA": {
+              "replace": {
+                "source": "$XS",
+                "replace": "([\ue000-\uffff])",
+                "by": "\ud7ff${1}"
+              }
+            },
+            "XU": {
+              "replace": {
+                "source": "$XA",
+                "replace": "_",
+                "by": "Zz\uffff"
               }
             },
             "XT": {
               "replace": {
-                "source": "$XS",
-                "replace": "_",
-                "by": "Zz\uffff"
+                "source": "$XU",
+                "replace": "(^|[^0-9])0([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?",
+                "by": "${1}0\u0004${2}\u0004${3}\u0004${4}\u0004${5}\u0004${6}\u0004${7}\u0004${8}\u0004${9}\u0004${10}\u0004${11}\u0001"
               }
             }
           },
@@ -391,9 +433,9 @@
                 "matches": "all-slot"
               },
               {
-                "all": [
-                  {
-                    "not": {
+                "not": {
+                  "any": [
+                    {
                       "inside": {
                         "stopBy": "end",
                         "field": "body",
@@ -406,10 +448,8 @@
                           }
                         ]
                       }
-                    }
-                  },
-                  {
-                    "not": {
+                    },
+                    {
                       "inside": {
                         "stopBy": "end",
                         "any": [
@@ -417,22 +457,75 @@
                             "kind": "class_definition"
                           },
                           {
-                            "kind": "list_comprehension"
+                            "kind": "type_alias_statement"
                           },
                           {
-                            "kind": "set_comprehension"
+                            "kind": "typed_parameter"
                           },
                           {
-                            "kind": "dictionary_comprehension"
+                            "kind": "typed_default_parameter"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "end",
+                        "field": "return_type",
+                        "kind": "function_definition"
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "end",
+                        "field": "type_parameters",
+                        "kind": "function_definition"
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "end",
+                        "any": [
+                          {
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "any": [
+                                {
+                                  "kind": "list_comprehension"
+                                },
+                                {
+                                  "kind": "set_comprehension"
+                                },
+                                {
+                                  "kind": "dictionary_comprehension"
+                                },
+                                {
+                                  "kind": "generator_expression"
+                                }
+                              ]
+                            },
+                            "not": {
+                              "kind": "for_in_clause",
+                              "not": {
+                                "follows": {
+                                  "stopBy": "end",
+                                  "kind": "for_in_clause"
+                                }
+                              }
+                            }
                           },
                           {
-                            "kind": "generator_expression"
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "field": "left",
+                              "kind": "for_in_clause"
+                            }
                           }
                         ]
                       }
                     }
-                  }
-                ]
+                  ]
+                }
               },
               {
                 "matches": "all-strings"

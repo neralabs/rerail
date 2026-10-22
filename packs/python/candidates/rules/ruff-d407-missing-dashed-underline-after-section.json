@@ -74,63 +74,147 @@
          ]
         }
        }
+      },
+      "numpy-style": {
+       "kind": "string_content",
+       "any": [
+        {
+         "matches": "params-header"
+        },
+        {
+         "all": [
+          {
+           "not": {
+            "matches": "args-header"
+           }
+          },
+          {
+           "any": [
+            {
+             "any": [
+              {
+               "all": [
+                {
+                 "matches": "numpy-only-header"
+                },
+                {
+                 "not": {
+                  "matches": "google-only-header"
+                 }
+                }
+               ]
+              },
+              {
+               "all": [
+                {
+                 "matches": "numpy-only-headers-2"
+                },
+                {
+                 "not": {
+                  "matches": "google-only-headers-2"
+                 }
+                }
+               ]
+              }
+             ]
+            },
+            {
+             "all": [
+              {
+               "not": {
+                "any": [
+                 {
+                  "all": [
+                   {
+                    "matches": "google-only-header"
+                   },
+                   {
+                    "not": {
+                     "matches": "numpy-only-header"
+                    }
+                   }
+                  ]
+                 },
+                 {
+                  "all": [
+                   {
+                    "matches": "google-only-headers-2"
+                   },
+                   {
+                    "not": {
+                     "matches": "numpy-only-headers-2"
+                    }
+                   }
+                  ]
+                 }
+                ]
+               }
+              },
+              {
+               "matches": "underline-before-colon"
+              }
+             ]
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      "params-header": {
+       "kind": "string_content",
+       "regex": "(?:\\n[^\\S\\n]*(?i:other parameters|other params|parameters):?[^\\S\\n]*(?m:$)\\n[^\\S\\n]*[-=]+[^\\S\\n]*(?m:$)|(?:\\A|\\n)[^\\S\\n]*\\n[^\\S\\n]*(?i:other parameters|other params|parameters):?[^\\S\\n]*(?m:$)|[,;.\\-\\\\/\\]})][^\\S\\n]*\\n[^\\S\\n]*(?:O(?i:ther parameters|ther params)|P(?i:arameters)):?[^\\S\\n]*(?m:$))"
+      },
+      "args-header": {
+       "kind": "string_content",
+       "regex": "(?:\\n[^\\S\\n]*(?i:keyword arguments|other arguments|keyword args|other args|arguments|args):?[^\\S\\n]*(?m:$)\\n[^\\S\\n]*[-=]+[^\\S\\n]*(?m:$)|(?:\\A|\\n)[^\\S\\n]*\\n[^\\S\\n]*(?i:keyword arguments|other arguments|keyword args|other args|arguments|args):?[^\\S\\n]*(?m:$)|[,;.\\-\\\\/\\]})][^\\S\\n]*\\n[^\\S\\n]*(?:A(?i:rguments|rgs)|K(?i:eyword arguments|eyword args)|O(?i:ther arguments|ther args)):?[^\\S\\n]*(?m:$))"
+      },
+      "numpy-only-header": {
+       "kind": "string_content",
+       "regex": "(?:\\n[^\\S\\n]*(?i:extended summary|short summary|receives):?[^\\S\\n]*(?m:$)\\n[^\\S\\n]*[-=]+[^\\S\\n]*(?m:$)|(?:\\A|\\n)[^\\S\\n]*\\n[^\\S\\n]*(?i:extended summary|short summary|receives):?[^\\S\\n]*(?m:$)|[,;.\\-\\\\/\\]})][^\\S\\n]*\\n[^\\S\\n]*(?:E(?i:xtended summary)|R(?i:eceives)|S(?i:hort summary)):?[^\\S\\n]*(?m:$))"
+      },
+      "numpy-only-headers-2": {
+       "kind": "string_content",
+       "regex": "(?:\\n[^\\S\\n]*(?i:extended summary|short summary|receives):?[^\\S\\n]*(?m:$)\\n[^\\S\\n]*[-=]+[^\\S\\n]*(?m:$)|(?:\\A|\\n)[^\\S\\n]*\\n[^\\S\\n]*(?i:extended summary|short summary|receives):?[^\\S\\n]*(?m:$)|[,;.\\-\\\\/\\]})][^\\S\\n]*\\n[^\\S\\n]*(?:E(?i:xtended summary)|R(?i:eceives)|S(?i:hort summary)):?[^\\S\\n]*(?m:$))(?s:.*)\\n[^\\S\\n]*(?i:extended summary|short summary|receives):?[^\\S\\n]*(?m:$)"
+      },
+      "google-only-header": {
+       "kind": "string_content",
+       "regex": "(?:\\n[^\\S\\n]*(?i:attention|important|caution|example|warning|danger|return|error|yield|hint|note|todo|tip):?[^\\S\\n]*(?m:$)\\n[^\\S\\n]*[-=]+[^\\S\\n]*(?m:$)|(?:\\A|\\n)[^\\S\\n]*\\n[^\\S\\n]*(?i:attention|important|caution|example|warning|danger|return|error|yield|hint|note|todo|tip):?[^\\S\\n]*(?m:$)|[,;.\\-\\\\/\\]})][^\\S\\n]*\\n[^\\S\\n]*(?:A(?i:ttention)|C(?i:aution)|D(?i:anger)|E(?i:xample|rror)|H(?i:int)|I(?i:mportant)|N(?i:ote)|R(?i:eturn)|T(?i:odo|ip)|W(?i:arning)|Y(?i:ield)):?[^\\S\\n]*(?m:$))"
+      },
+      "google-only-headers-2": {
+       "kind": "string_content",
+       "regex": "(?:\\n[^\\S\\n]*(?i:attention|important|caution|example|warning|danger|return|error|yield|hint|note|todo|tip):?[^\\S\\n]*(?m:$)\\n[^\\S\\n]*[-=]+[^\\S\\n]*(?m:$)|(?:\\A|\\n)[^\\S\\n]*\\n[^\\S\\n]*(?i:attention|important|caution|example|warning|danger|return|error|yield|hint|note|todo|tip):?[^\\S\\n]*(?m:$)|[,;.\\-\\\\/\\]})][^\\S\\n]*\\n[^\\S\\n]*(?:A(?i:ttention)|C(?i:aution)|D(?i:anger)|E(?i:xample|rror)|H(?i:int)|I(?i:mportant)|N(?i:ote)|R(?i:eturn)|T(?i:odo|ip)|W(?i:arning)|Y(?i:ield)):?[^\\S\\n]*(?m:$))(?s:.*)\\n[^\\S\\n]*(?i:attention|important|caution|example|warning|danger|return|error|yield|hint|note|todo|tip):?[^\\S\\n]*(?m:$)"
+      },
+      "underline-before-colon": {
+       "kind": "string_content",
+       "any": [
+        {
+         "not": {
+          "regex": "(?:(?m:^)[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?i:attributes|references|examples|see also|warnings|methods|returns|raises|yields|notes|warns):[^\\S\\n]*(?m:$)(?:\\z|\\n[^\\S\\n]*(?m:$)|\\n[^\\S\\n]*(?:[^\\s\\-]|-+(?:[^\\S\\n]+\\S|[^\\s\\-])))"
+         }
+        },
+        {
+         "regex": "(?s)\\n[^\\S\\n]*(?i:attributes|references|examples|see also|warnings|methods|returns|raises|yields|notes|warns):?[^\\S\\n]*(?m:$)\\n[^\\S\\n]*-+[^\\S\\n]*(?m:$).*?(?:(?m:^)[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?i:attributes|references|examples|see also|warnings|methods|returns|raises|yields|notes|warns):[^\\S\\n]*(?m:$)(?:\\z|\\n[^\\S\\n]*(?m:$)|\\n[^\\S\\n]*(?:[^\\s\\-]|-+(?:[^\\S\\n]+\\S|[^\\s\\-])))"
+        }
+       ]
       }
      },
      "rule": {
       "kind": "string_content",
-      "inside": {
-       "stopBy": "neighbor",
-       "matches": "docstring",
-       "not": {
-        "value": {
-         "regex": "\\n([ \\t]*)\\.\\. [^\\n]*(?:\\n(?:[ \\t]*\\n)*\\1[ \\t]+[^\\s][^\\n]*)*?\\n(?:[ \\t]*\\n)*\\1[ \\t]+(?i:extended summary|other parameters|short summary|other params|attributes|references|parameters|examples|see also|warnings|receives|methods|returns|raises|yields|notes|warns):?[ \\t]*(?:\\n|\\z)"
-        }
-       }
-      },
       "all": [
        {
-        "any": [
-         {
-          "regex": "(?:\\n[^\\S\\n]*(?i:other parameters|other params|parameters):?[^\\S\\n]*(?m:$)\\n[^\\S\\n]*[-=]+[^\\S\\n]*(?m:$)|(?:\\A|\\n)[^\\S\\n]*\\n[^\\S\\n]*(?i:other parameters|other params|parameters):?[^\\S\\n]*(?m:$)|[,;.\\-\\\\/\\]})][^\\S\\n]*\\n[^\\S\\n]*(?:O(?i:ther parameters|ther params)|P(?i:arameters)):?[^\\S\\n]*(?m:$))"
-         },
-         {
-          "all": [
-           {
-            "not": {
-             "regex": "(?:\\n[^\\S\\n]*(?i:keyword arguments|other arguments|keyword args|other args|arguments|args):?[^\\S\\n]*(?m:$)\\n[^\\S\\n]*[-=]+[^\\S\\n]*(?m:$)|(?:\\A|\\n)[^\\S\\n]*\\n[^\\S\\n]*(?i:keyword arguments|other arguments|keyword args|other args|arguments|args):?[^\\S\\n]*(?m:$)|[,;.\\-\\\\/\\]})][^\\S\\n]*\\n[^\\S\\n]*(?:A(?i:rguments|rgs)|K(?i:eyword arguments|eyword args)|O(?i:ther arguments|ther args)):?[^\\S\\n]*(?m:$))"
-            }
-           },
-           {
-            "any": [
-             {
-              "regex": "(?:\\n[^\\S\\n]*(?i:extended summary|short summary|receives):?[^\\S\\n]*(?m:$)\\n[^\\S\\n]*[-=]+[^\\S\\n]*(?m:$)|(?:\\A|\\n)[^\\S\\n]*\\n[^\\S\\n]*(?i:extended summary|short summary|receives):?[^\\S\\n]*(?m:$)|[,;.\\-\\\\/\\]})][^\\S\\n]*\\n[^\\S\\n]*(?:E(?i:xtended summary)|R(?i:eceives)|S(?i:hort summary)):?[^\\S\\n]*(?m:$))"
-             },
-             {
-              "all": [
-               {
-                "not": {
-                 "regex": "(?:\\n[^\\S\\n]*(?i:attention|important|caution|example|warning|danger|return|error|yield|hint|note|todo|tip):?[^\\S\\n]*(?m:$)\\n[^\\S\\n]*[-=]+[^\\S\\n]*(?m:$)|(?:\\A|\\n)[^\\S\\n]*\\n[^\\S\\n]*(?i:attention|important|caution|example|warning|danger|return|error|yield|hint|note|todo|tip):?[^\\S\\n]*(?m:$)|[,;.\\-\\\\/\\]})][^\\S\\n]*\\n[^\\S\\n]*(?:A(?i:ttention)|C(?i:aution)|D(?i:anger)|E(?i:xample|rror)|H(?i:int)|I(?i:mportant)|N(?i:ote)|R(?i:eturn)|T(?i:odo|ip)|W(?i:arning)|Y(?i:ield)):?[^\\S\\n]*(?m:$))"
-                }
-               },
-               {
-                "any": [
-                 {
-                  "not": {
-                   "regex": "(?:(?m:^)[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?i:attributes|references|examples|see also|warnings|methods|returns|raises|yields|notes|warns):[^\\S\\n]*(?m:$)(?:\\z|\\n[^\\S\\n]*(?m:$)|\\n[^\\S\\n]*(?:[^\\s\\-]|-+(?:[^\\S\\n]+\\S|[^\\s\\-])))"
-                  }
-                 },
-                 {
-                  "regex": "(?s)\\n[^\\S\\n]*(?i:attributes|references|examples|see also|warnings|methods|returns|raises|yields|notes|warns):?[^\\S\\n]*(?m:$)\\n[^\\S\\n]*-+[^\\S\\n]*(?m:$).*?(?:(?m:^)[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?i:attributes|references|examples|see also|warnings|methods|returns|raises|yields|notes|warns):[^\\S\\n]*(?m:$)(?:\\z|\\n[^\\S\\n]*(?m:$)|\\n[^\\S\\n]*(?:[^\\s\\-]|-+(?:[^\\S\\n]+\\S|[^\\s\\-])))"
-                 }
-                ]
-               }
-              ]
-             }
-            ]
-           }
-          ]
+        "matches": "numpy-style"
+       },
+       {
+        "inside": {
+         "stopBy": "neighbor",
+         "matches": "docstring",
+         "not": {
+          "value": {
+           "regex": "\\n([ \\t]*)\\.\\. [^\\n]*(?:\\n(?:[ \\t]*\\n)*\\1[ \\t]+[^\\s][^\\n]*)*?\\n(?:[ \\t]*\\n)*\\1[ \\t]+(?i:extended summary|other parameters|short summary|other params|attributes|references|parameters|examples|see also|warnings|receives|methods|returns|raises|yields|notes|warns):?[ \\t]*(?:\\n|\\z)"
+          }
          }
-        ]
+        }
        },
        {
         "any": [
@@ -144,6 +228,12 @@
           "regex": "[,;.\\-\\\\/\\]})][^\\S\\n]*\\n[^\\S\\n]*(?P<NAME>(?:A(?i:ttributes)|E(?i:xtended summary|xamples)|M(?i:ethods)|N(?i:otes)|O(?i:ther parameters|ther params)|P(?i:arameters)|R(?i:eferences|eceives|eturns|aises)|S(?i:hort summary|ee also)|W(?i:arnings|arns)|Y(?i:ields))):?[^\\S\\n]*(?m:$)(?:\\z|(?:\\n[^\\S\\n]*)*(?:\\z|\\n[^\\S\\n]*(?:\\b|[^\\s\\w\\-=]|-+(?:[^\\S\\n]+\\S|[^\\s\\-])|=+(?:[^\\S\\n]+\\S|[^\\s=]))))"
          },
          {
+          "regex": "(?:[,;.\\-\\\\/\\]})][^\\S\\n]*\\n[^\\S\\n]*(?P<NAME>(?:a(?i:ttributes)|e(?i:xtended summary|xamples)|m(?i:ethods)|n(?i:otes)|o(?i:ther parameters|ther params)|p(?i:arameters)|r(?i:eferences|eceives|eturns|aises)|s(?i:hort summary|ee also)|w(?i:arnings|arns)|y(?i:ields))):?[^\\S\\n]*(?m:$)(?:\\z|(?:\\n[^\\S\\n]*)*(?:\\z|\\n[^\\S\\n]*(?:\\b|[^\\s\\w\\-=]|-+(?:[^\\S\\n]+\\S|[^\\s\\-])|=+(?:[^\\S\\n]+\\S|[^\\s=])))))|\\n[^\\S\\n]*(?i:keyword arguments|extended summary|other parameters|other arguments|short summary|other params|keyword args|attributes|references|parameters|other args|arguments|attention|important|examples|see also|warnings|receives|methods|returns|caution|example|warning|raises|yields|danger|return|notes|warns|error|yield|args|hint|note|todo|tip):?[^\\S\\n]*(?m:$)(?s:.*)"
+         },
+         {
+          "regex": "\\n[^\\S\\n]*(?i:extended summary|other parameters|short summary|other params|attributes|references|parameters|examples|see also|warnings|receives|methods|returns|raises|yields|notes|warns):?[^\\S\\n]*(?m:$)(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?P<NAME>(?i:extended summary|other parameters|short summary|other params|attributes|references|parameters|examples|see also|warnings|receives|methods|returns|raises|yields|notes|warns)):?[^\\S\\n]*(?m:$)(?:\\z|(?:\\n[^\\S\\n]*)*(?:\\z|\\n[^\\S\\n]*(?:\\b|[^\\s\\w\\-=]|-+(?:[^\\S\\n]+\\S|[^\\s\\-])|=+(?:[^\\S\\n]+\\S|[^\\s=]))))"
+         },
+         {
           "regex": "\\n[^\\S\\n]*(?i:extended summary|other parameters|short summary|other params|attributes|references|parameters|examples|see also|warnings|receives|methods|returns|raises|yields|notes|warns):?[^\\S\\n]*(?m:$)\\n[^\\S\\n]*(?P<NAME>=+)[^\\S\\n]*(?m:$)"
          },
          {
@@ -151,6 +241,9 @@
          },
          {
           "regex": "[,;.\\-\\\\/\\]})][^\\S\\n]*\\n[^\\S\\n]*(?:A(?i:ttributes)|E(?i:xtended summary|xamples)|M(?i:ethods)|N(?i:otes)|O(?i:ther parameters|ther params)|P(?i:arameters)|R(?i:eferences|eceives|eturns|aises)|S(?i:hort summary|ee also)|W(?i:arnings|arns)|Y(?i:ields)):?[^\\S\\n]*(?m:$)(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*(?P<NAME>=+)[^\\S\\n]*(?m:$)"
+         },
+         {
+          "regex": "(?:[,;.\\-\\\\/\\]})][^\\S\\n]*\\n[^\\S\\n]*(?:a(?i:ttributes)|e(?i:xtended summary|xamples)|m(?i:ethods)|n(?i:otes)|o(?i:ther parameters|ther params)|p(?i:arameters)|r(?i:eferences|eceives|eturns|aises)|s(?i:hort summary|ee also)|w(?i:arnings|arns)|y(?i:ields)):?[^\\S\\n]*(?m:$)(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*(?P<NAME>=+)[^\\S\\n]*(?m:$))|\\n[^\\S\\n]*(?i:keyword arguments|extended summary|other parameters|other arguments|short summary|other params|keyword args|attributes|references|parameters|other args|arguments|attention|important|examples|see also|warnings|receives|methods|returns|caution|example|warning|raises|yields|danger|return|notes|warns|error|yield|args|hint|note|todo|tip):?[^\\S\\n]*(?m:$)(?s:.*)"
          }
         ]
        }
@@ -162,7 +255,7 @@
     "code": "D407",
     "anchor": "capture.NAME",
     "each": "NAME",
-    "message": "Add a line of dashes as long as the section name directly below it, replacing any equals signs.",
+    "message": "Add a line of dashes as long as the section name directly below it, replacing any equals signs; in a Google-style docstring, end the name with a colon instead.",
     "suppress": {
      "noqa": {
       "codes": [

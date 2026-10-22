@@ -20,13 +20,6 @@
             "shadowed": {
               "any": [
                 {
-                  "binds": {
-                    "redefines": {
-                      "sameScope": true
-                    }
-                  }
-                },
-                {
                   "inside": {
                     "stopBy": {
                       "any": [
@@ -137,12 +130,93 @@
                                   "left": "J",
                                   "op": "eq",
                                   "right": "N"
+                                },
+                                "not": {
+                                  "inside": {
+                                    "stopBy": "neighbor",
+                                    "kind": "assignment",
+                                    "not": {
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "regex": "^=$"
+                                      }
+                                    }
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "identifier",
+                                "pattern": "$J",
+                                "compare": {
+                                  "left": "J",
+                                  "op": "eq",
+                                  "right": "N"
+                                },
+                                "inside": {
+                                  "stopBy": "neighbor",
+                                  "any": [
+                                    {
+                                      "kind": "global_statement"
+                                    },
+                                    {
+                                      "kind": "nonlocal_statement"
+                                    }
+                                  ]
                                 }
                               }
                             ]
+                          },
+                          "not": {
+                            "kind": "type_parameter"
                           }
                         }
                       ]
+                    }
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "precedes": {
+                        "stopBy": "end",
+                        "matches": "alias-binding"
+                      }
+                    },
+                    {
+                      "follows": {
+                        "stopBy": "end",
+                        "matches": "alias-binding"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "alias-binding": {
+              "follows": {
+                "stopBy": "end",
+                "regex": "^import$"
+              },
+              "any": [
+                {
+                  "kind": "dotted_name",
+                  "pattern": "$J",
+                  "compare": {
+                    "left": "J",
+                    "op": "eq",
+                    "right": "N"
+                  }
+                },
+                {
+                  "kind": "aliased_import",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "alias",
+                    "pattern": "$J",
+                    "compare": {
+                      "left": "J",
+                      "op": "eq",
+                      "right": "N"
                     }
                   }
                 }
@@ -277,7 +351,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "UP029",
-        "message": "Remove these names from the import; Python 3 already provides them as builtins. Keep an import only if the code must still run on Python 2.",
+        "message": "Remove the names Python 3 already provides as builtins from this import, and the whole statement if nothing else remains. Keep it only if the code must still run on Python 2.",
         "suppress": {
           "noqa": {
             "codes": [

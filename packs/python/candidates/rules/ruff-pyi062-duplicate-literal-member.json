@@ -237,6 +237,16 @@
               }
             ]
           },
+          "string-duplicate-member": {
+            "any": [{"kind": "string"}, {"kind": "concatenated_string"}],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [{ "matches": "duplicate-member", "capture": "D" }, { "matches": "string-duplicate-member" }]
+              }
+            }
+          },
           "duplicate-member": {
             "matches": "leaf-slot",
             "all": [{"matches": "member-expr"}],
@@ -288,11 +298,7 @@
         "ast": {
           "language": "python",
           "rule": {
-            "any": [{"kind": "string"}, {"kind": "concatenated_string"}],
-            "parse": {
-              "grammar": "annotation",
-              "has": { "stopBy": "end", "matches": "duplicate-member", "capture": "D" }
-            }
+            "matches": "string-duplicate-member"
           }
         }
       },

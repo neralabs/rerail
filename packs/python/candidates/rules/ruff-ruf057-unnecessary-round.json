@@ -3,7 +3,7 @@
   "id": "ruff-ruf057-unnecessary-round",
   "revision": 1,
   "mode": "steer",
-  "description": "Remove round() on a value that is already an integer; the call has no effect.",
+  "description": "Remove the round call on a value that is already an integer; rounding an integer returns it unchanged.",
   "scope": {
     "include": [
       "**/*"
@@ -427,6 +427,12 @@
                       "matches": "int-ann"
                     }
                   }
+                },
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "matches": "int-param"
+                  }
                 }
               },
               {
@@ -505,6 +511,12 @@
                       }
                     }
                   }
+                },
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "matches": "int-param"
+                  }
                 }
               },
               {
@@ -568,7 +580,14 @@
               {
                 "kind": "integer",
                 "not": {
-                  "regex": "[jJ]$"
+                  "any": [
+                    {
+                      "regex": "[jJ]$"
+                    },
+                    {
+                      "regex": "^(?:[1-9](?:_?\\d){19,}|9(?:_?[3-9](?:_?\\d){17}|_?2(?:_?[3-9](?:_?\\d){16}|_?2(?:_?[4-9](?:_?\\d){15}|_?3(?:_?[4-9](?:_?\\d){14}|_?3(?:_?[8-9](?:_?\\d){13}|_?7(?:_?[3-9](?:_?\\d){12}|_?2(?:_?[1-9](?:_?\\d){11}|_?0(?:_?[4-9](?:_?\\d){10}|_?3(?:_?[7-9](?:_?\\d){9}|_?6(?:_?[9](?:_?\\d){8}|_?8(?:_?[6-9](?:_?\\d){7}|_?5(?:_?[5-9](?:_?\\d){6}|_?4(?:_?[8-9](?:_?\\d){5}|_?7(?:_?[8-9](?:_?\\d){4}|_?7(?:_?[6-9](?:_?\\d){3}|_?5(?:_?[9](?:_?\\d){2}|_?8(?:_?[1-9](?:_?\\d){1}|_?0(?:_?[8-9](?:_?\\d){0}))))))))))))))))))|0[xX](?:_?0)*_?(?:[1-9a-fA-F](?:_?[0-9a-fA-F]){16,}|[89a-fA-F](?:_?[0-9a-fA-F]){15})|0[oO](?:_?0)*_?[1-7](?:_?[0-7]){21,}|0[bB](?:_?0)*_?1(?:_?[01]){63,})$"
+                    }
+                  ]
                 }
               },
               {
@@ -632,15 +651,27 @@
               {
                 "any": [
                   {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "matches": "pos0",
-                      "all": [
-                        {
-                          "matches": "int-like"
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "pos0",
+                          "all": [
+                            {
+                              "matches": "int-like"
+                            }
+                          ]
                         }
-                      ]
-                    }
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "kw-number"
+                          }
+                        }
+                      }
+                    ]
                   },
                   {
                     "has": {
@@ -710,6 +741,102 @@
                 ]
               }
             ]
+          },
+          "int-param": {
+            "any": [
+              {
+                "kind": "function_definition",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "parameters",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "identifier",
+                        "regex": "^int$"
+                      },
+                      {
+                        "kind": "typed_parameter",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "identifier",
+                          "regex": "^int$"
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "kind": "default_parameter"
+                          },
+                          {
+                            "kind": "typed_default_parameter"
+                          }
+                        ],
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "name",
+                          "kind": "identifier",
+                          "regex": "^int$"
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "kind": "list_splat_pattern"
+                          },
+                          {
+                            "kind": "dictionary_splat_pattern"
+                          }
+                        ],
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "identifier",
+                          "regex": "^int$"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "list_comprehension"
+                  },
+                  {
+                    "kind": "set_comprehension"
+                  },
+                  {
+                    "kind": "dictionary_comprehension"
+                  },
+                  {
+                    "kind": "generator_expression"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "for_in_clause",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "left",
+                    "any": [
+                      {
+                        "kind": "identifier",
+                        "regex": "^int$"
+                      },
+                      {
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "identifier",
+                          "regex": "^int$"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
           }
         }
       }
@@ -743,7 +870,7 @@
       "violation": {
         "code": "RUF057",
         "anchor": "witness.span",
-        "message": "Use the value directly instead of `round(...)`; it is already an integer. Keep `round` if the value may be an int subclass that overrides `__round__`.",
+        "message": "Use the value directly instead of `round(...)`; it is already an integer. Keep `round` if the value may not truly be an `int`, e.g. a wrong annotation or a subclass overriding `__round__`.",
         "suppress": {
           "noqa": {
             "codes": [

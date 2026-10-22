@@ -94,7 +94,7 @@
       "violation": {
         "anchor": "capture.NAME",
         "code": "NPY001",
-        "message": "Use the builtin `str` instead of `$NAME`; NumPy's `unicode` alias of it was removed.",
+        "message": "Replace `$NAME`, NumPy's removed alias `numpy.unicode`, with the builtin `str` and drop its NumPy import.",
         "each": "NAME",
         "suppress": {
           "noqa": {
@@ -192,7 +192,7 @@
       "violation": {
         "anchor": "capture.NAME",
         "code": "NPY001",
-        "message": "Use the builtin type of the same name (`int`, `float`, `complex`, `object` or `str`) instead of `$NAME`; NumPy removed this alias.",
+        "message": "Replace `$NAME`, a removed NumPy alias of a builtin, with that builtin (`numpy.int` is `int`; likewise `float`, `complex`, `object`, `str`) and drop its NumPy import.",
         "each": "NAME",
         "suppress": {
           "noqa": {

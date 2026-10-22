@@ -238,6 +238,26 @@
             "matches": "leaf-slot",
             "all": [{"matches": "none-expr"}, {"not": {"matches": "has-other"}}]
           },
+          "string-none-only": {
+            "any": [{"kind": "string"}, {"kind": "concatenated_string"}],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [{ "matches": "none-only", "capture": "N" }, { "matches": "string-none-only" }]
+              }
+            }
+          },
+          "string-none-with-other": {
+            "any": [{"kind": "string"}, {"kind": "concatenated_string"}],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [{ "matches": "none-with-other", "capture": "N" }, { "matches": "string-none-with-other" }]
+              }
+            }
+          },
           "none-with-other": { "matches": "leaf-slot", "all": [{"matches": "none-expr"}, {"matches": "has-other"}] }
         }
       }
@@ -304,11 +324,7 @@
         "ast": {
           "language": "python",
           "rule": {
-            "any": [{"kind": "string"}, {"kind": "concatenated_string"}],
-            "parse": {
-              "grammar": "annotation",
-              "has": { "stopBy": "end", "matches": "none-only", "capture": "N" }
-            }
+            "matches": "string-none-only"
           }
         }
       },
@@ -326,11 +342,7 @@
         "ast": {
           "language": "python",
           "rule": {
-            "any": [{"kind": "string"}, {"kind": "concatenated_string"}],
-            "parse": {
-              "grammar": "annotation",
-              "has": { "stopBy": "end", "matches": "none-with-other", "capture": "N" }
-            }
+            "matches": "string-none-with-other"
           }
         }
       },

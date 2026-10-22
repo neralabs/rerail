@@ -396,7 +396,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PYI005",
-        "message": "Compare `sys.version_info[:1]` with a one-element tuple such as `(3,)`, or use `sys.version_info[0] == 3` for the major version.",
+        "message": "Match the slice to the tuple length: use `sys.version_info[:2]` for a tuple such as `(3, 9)`, or a one-element tuple such as `(3,)` with `[:1]`; as written the result ignores the version.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -497,7 +497,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PYI005",
-        "message": "Compare `sys.version_info[:2]` with a two-element tuple such as `(3, 9)`, or use `sys.version_info[0] == 3` for the major version only.",
+        "message": "Match the slice to the tuple length: use `sys.version_info[0] == 3` for the major version only, or a tuple such as `(3, 9)` with `[:2]`; as written the result ignores the version.",
         "suppress": {
           "noqa": {
             "codes": [

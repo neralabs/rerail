@@ -487,11 +487,7 @@
               "has": {
                 "stopBy": "neighbor",
                 "field": "left",
-                "kind": "identifier",
-                "pattern": "$NAME",
-                "not": {
-                  "matches": "special"
-                }
+                "matches": "target-name"
               }
             },
             "value-of": {
@@ -508,6 +504,37 @@
                     "stopBy": "neighbor",
                     "kind": "parenthesized_expression",
                     "matches": "value-of"
+                  }
+                }
+              ]
+            },
+            "target-name": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$NAME",
+                  "not": {
+                    "matches": "special"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "target-name"
+                  }
+                },
+                {
+                  "kind": "tuple_pattern",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "target-name"
                   }
                 }
               ]

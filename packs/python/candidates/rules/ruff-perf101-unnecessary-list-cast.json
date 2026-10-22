@@ -3,7 +3,7 @@
   "id": "ruff-perf101-unnecessary-list-cast",
   "revision": 1,
   "mode": "steer",
-  "description": "Iterate over a list, tuple or set directly in a for loop instead of copying it with list() first, unless the loop changes it; the copy only costs time.",
+  "description": "Iterate over a list, tuple or set directly in a for loop instead of first copying it into a new list, unless the loop changes it; the copy only costs time.",
   "scope": {
     "include": [
       "**/*"
@@ -28,6 +28,9 @@
                 "kind": "set"
               },
               {
+                "kind": "expression_list"
+              },
+              {
                 "kind": "parenthesized_expression",
                 "has": {
                   "stopBy": "neighbor",
@@ -47,21 +50,6 @@
                 "has": {
                   "stopBy": "neighbor",
                   "matches": "name-arg"
-                }
-              }
-            ]
-          },
-          "name-is": {
-            "any": [
-              {
-                "kind": "identifier",
-                "pattern": "$NAME"
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "name-is"
                 }
               }
             ]
@@ -119,7 +107,7 @@
                 "has": {
                   "stopBy": "neighbor",
                   "field": "value",
-                  "matches": "name-is"
+                  "matches": "name-arg"
                 }
               },
               {
@@ -129,9 +117,6 @@
                   },
                   {
                     "kind": "parenthesized_expression"
-                  },
-                  {
-                    "kind": "tuple"
                   }
                 ],
                 "has": {
@@ -144,31 +129,16 @@
           "mutation": {
             "any": [
               {
-                "kind": "call",
-                "inside": {
-                  "stopBy": "neighbor",
-                  "kind": "expression_statement"
+                "kind": "expression_statement",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  }
                 },
                 "has": {
                   "stopBy": "neighbor",
-                  "field": "function",
-                  "kind": "attribute",
-                  "all": [
-                    {
-                      "has": {
-                        "stopBy": "neighbor",
-                        "field": "object",
-                        "matches": "name-is"
-                      }
-                    },
-                    {
-                      "has": {
-                        "stopBy": "neighbor",
-                        "field": "attribute",
-                        "regex": "^(append|insert|extend|remove|pop|clear|reverse|sort)$"
-                      }
-                    }
-                  ]
+                  "matches": "mutating-call"
                 }
               },
               {
@@ -180,7 +150,7 @@
                   "has": {
                     "stopBy": "neighbor",
                     "field": "value",
-                    "matches": "name-is"
+                    "matches": "name-arg"
                   }
                 }
               },
@@ -199,6 +169,165 @@
                   "stopBy": "neighbor",
                   "matches": "del-target"
                 }
+              }
+            ]
+          },
+          "mutating-call": {
+            "any": [
+              {
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "kind": "attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "object",
+                        "matches": "name-arg"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "attribute",
+                        "regex": "^(append|insert|extend|remove|pop|clear|reverse|sort)$"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "mutating-call"
+                }
+              }
+            ]
+          },
+          "rebinding": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "dotted_name"
+                  }
+                ],
+                "pattern": "$NAME",
+                "binds": {
+                  "form": [
+                    "for",
+                    "with",
+                    "import",
+                    "definition",
+                    "deletion",
+                    "match",
+                    "assignment",
+                    "annotated",
+                    "augmented",
+                    "named"
+                  ]
+                },
+                "not": {
+                  "binds": {
+                    "form": [
+                      "assignment",
+                      "annotated",
+                      "named"
+                    ],
+                    "value": {
+                      "matches": "literal"
+                    }
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "kind": "class_definition"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "pattern": "$NAME"
+                }
+              },
+              {
+                "kind": "dotted_name",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "import_statement"
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "nthChild": 1,
+                  "pattern": "$NAME"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": {
+                    "not": {
+                      "matches": "comprehension"
+                    },
+                    "matches": "new-scope"
+                  },
+                  "kind": "named_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "name",
+                    "pattern": "$NAME"
+                  },
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "value",
+                      "matches": "literal"
+                    }
+                  }
+                },
+                "matches": "comprehension"
+              }
+            ]
+          },
+          "comprehension": {
+            "any": [
+              {
+                "kind": "list_comprehension"
+              },
+              {
+                "kind": "set_comprehension"
+              },
+              {
+                "kind": "dictionary_comprehension"
+              },
+              {
+                "kind": "generator_expression"
+              }
+            ]
+          },
+          "new-scope": {
+            "any": [
+              {
+                "kind": "function_definition"
+              },
+              {
+                "kind": "class_definition"
+              },
+              {
+                "kind": "lambda"
+              },
+              {
+                "matches": "comprehension"
               }
             ]
           }
@@ -315,68 +444,52 @@
                   {
                     "has": {
                       "stopBy": {
-                        "any": [
-                          {
-                            "kind": "function_definition"
-                          },
-                          {
-                            "kind": "class_definition"
-                          },
-                          {
-                            "kind": "lambda"
-                          },
-                          {
-                            "kind": "list_comprehension"
-                          },
-                          {
-                            "kind": "set_comprehension"
-                          },
-                          {
-                            "kind": "dictionary_comprehension"
-                          },
-                          {
-                            "kind": "generator_expression"
-                          }
-                        ]
+                        "matches": "new-scope"
                       },
-                      "any": [
-                        {
-                          "kind": "identifier"
-                        },
-                        {
-                          "kind": "dotted_name"
-                        }
-                      ],
-                      "pattern": "$NAME",
-                      "binds": {
-                        "form": [
-                          "for",
-                          "with",
-                          "import",
-                          "definition",
-                          "deletion",
-                          "match",
-                          "assignment",
-                          "annotated",
-                          "augmented",
-                          "named"
-                        ]
-                      },
-                      "not": {
-                        "binds": {
-                          "form": [
-                            "assignment",
-                            "annotated",
-                            "named"
-                          ],
-                          "value": {
-                            "matches": "literal"
-                          }
-                        }
-                      }
+                      "matches": "rebinding"
                     }
                   }
                 ]
+              }
+            },
+            "not": {
+              "inside": {
+                "stopBy": {
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "class_definition"
+                    }
+                  ]
+                },
+                "any": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "kind": "class_definition"
+                  }
+                ],
+                "has": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "class_definition"
+                      }
+                    ]
+                  },
+                  "kind": "nonlocal_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "pattern": "$NAME"
+                  }
+                }
               }
             }
           }

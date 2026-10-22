@@ -314,23 +314,27 @@
             "falsy": {
               "any": [
                 {
-                  "kind": "false"
-                },
-                {
-                  "kind": "none"
-                },
-                {
                   "any": [
                     {
-                      "kind": "integer"
+                      "kind": "false"
                     },
                     {
-                      "kind": "float"
+                      "kind": "none"
+                    },
+                    {
+                      "any": [
+                        {
+                          "kind": "integer"
+                        },
+                        {
+                          "kind": "float"
+                        }
+                      ],
+                      "value": {
+                        "truthy": false
+                      }
                     }
-                  ],
-                  "value": {
-                    "truthy": false
-                  }
+                  ]
                 },
                 {
                   "matches": "falsy-iterable"
@@ -395,34 +399,30 @@
                       "has": {
                         "stopBy": "neighbor",
                         "kind": "argument_list",
-                        "any": [
-                          {
+                        "count": {
+                          "has": {
+                            "stopBy": "neighbor",
                             "not": {
-                              "has": {
-                                "stopBy": "neighbor",
-                                "not": {
-                                  "matches": "filler"
-                                }
-                              }
+                              "matches": "filler"
                             }
                           },
-                          {
-                            "count": {
-                              "has": {
-                                "stopBy": "neighbor",
-                                "not": {
+                          "max": 1
+                        },
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "not": {
+                              "any": [
+                                {
                                   "matches": "filler"
+                                },
+                                {
+                                  "matches": "falsy-iterable"
                                 }
-                              },
-                              "min": 1,
-                              "max": 1
-                            },
-                            "has": {
-                              "stopBy": "neighbor",
-                              "matches": "falsy-iterable"
+                              ]
                             }
                           }
-                        ]
+                        }
                       }
                     }
                   ]
@@ -455,35 +455,7 @@
                   "stopBy": "end",
                   "any": [
                     {
-                      "kind": "call",
-                      "all": [
-                        {
-                          "has": {
-                            "stopBy": "neighbor",
-                            "matches": "exception-callee"
-                          }
-                        },
-                        {
-                          "has": {
-                            "stopBy": "neighbor",
-                            "kind": "argument_list",
-                            "has": {
-                              "stopBy": "neighbor",
-                              "matches": "exc-info-kw",
-                              "has": {
-                                "stopBy": "neighbor",
-                                "matches": "falsy"
-                              },
-                              "not": {
-                                "follows": {
-                                  "stopBy": "end",
-                                  "matches": "exc-info-kw"
-                                }
-                              }
-                            }
-                          }
-                        }
-                      ],
+                      "matches": "bad-call",
                       "capture": "C"
                     },
                     {
@@ -492,40 +464,43 @@
                   ]
                 }
               }
+            },
+            "bad-call": {
+              "kind": "call",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "exception-callee"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "argument_list",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "exc-info-kw",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "falsy"
+                      },
+                      "not": {
+                        "follows": {
+                          "stopBy": "end",
+                          "matches": "exc-info-kw"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
             }
           },
           "rule": {
             "any": [
               {
-                "kind": "call",
-                "all": [
-                  {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "matches": "exception-callee"
-                    }
-                  },
-                  {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "kind": "argument_list",
-                      "has": {
-                        "stopBy": "neighbor",
-                        "matches": "exc-info-kw",
-                        "has": {
-                          "stopBy": "neighbor",
-                          "matches": "falsy"
-                        },
-                        "not": {
-                          "follows": {
-                            "stopBy": "end",
-                            "matches": "exc-info-kw"
-                          }
-                        }
-                      }
-                    }
-                  }
-                ],
+                "matches": "bad-call",
                 "pattern": "$C"
               },
               {

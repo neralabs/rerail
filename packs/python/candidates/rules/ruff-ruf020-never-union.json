@@ -61,11 +61,22 @@
                   "kind": "parenthesized_expression"
                 }
               },
-              "kind": "binary_operator",
-              "has": {
-                "stopBy": "neighbor",
-                "regex": "^\\|$"
-              }
+              "any": [
+                {
+                  "kind": "binary_operator",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^\\|$"
+                  }
+                },
+                {
+                  "kind": "type",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "union_type"
+                  }
+                }
+              ]
             }
           },
           "union-subscript": {
@@ -167,21 +178,11 @@
                       }
                     },
                     "matches": "union-subscript",
-                    "count": {
+                    "not": {
                       "has": {
                         "stopBy": "neighbor",
-                        "not": {
-                          "any": [
-                            {
-                              "kind": "comment"
-                            },
-                            {
-                              "regex": "^[\\[\\],]$"
-                            }
-                          ]
-                        }
-                      },
-                      "max": 2
+                        "regex": "^,$"
+                      }
                     }
                   }
                 }
@@ -220,16 +221,15 @@
                     "inside": {
                       "stopBy": "neighbor",
                       "kind": "type_parameter",
-                      "count": {
-                        "has": {
-                          "stopBy": "neighbor",
-                          "kind": "type"
-                        },
-                        "max": 1
-                      },
                       "inside": {
                         "stopBy": "neighbor",
                         "matches": "union-generic"
+                      },
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "regex": "^,$"
+                        }
                       }
                     }
                   }

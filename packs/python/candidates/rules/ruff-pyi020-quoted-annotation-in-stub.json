@@ -4,12 +4,7 @@
   "revision": 1,
   "mode": "steer",
   "description": "Write type annotations in stub files without quotes; stubs resolve forward references natively, so quotes are never needed.",
-  "scope": {
-    "include": [
-      "**/*"
-    ],
-    "exclude": []
-  },
+  "scope": {"include": ["**/*"], "exclude": []},
   "clauses": [
     {
       "id": "quoted-annotation-in-stub",
@@ -17,43 +12,16 @@
         "ast": {
           "language": "python",
           "rule": {
-            "all": [
-              {
-                "any": [
-                  {
-                    "kind": "string"
-                  },
-                  {
-                    "kind": "concatenated_string"
-                  }
-                ]
-              },
-              {
-                "parse": {
-                  "grammar": "annotation",
-                  "kind": "expression_statement"
-                }
-              }
-            ]
+            "all": [{"any": [{"kind": "string"}, {"kind": "concatenated_string"}]}, {"parse": {"grammar": "annotation", "kind": "expression_statement"}}]
           },
-          "file": {
-            "path": {
-              "regex": "\\.pyi$"
-            }
-          }
+          "file": {"path": {"regex": "\\.pyi$"}}
         }
       },
       "violation": {
         "anchor": "witness.span",
         "code": "PYI020",
         "message": "Remove the quotes from this annotation and write the type directly; a stub resolves forward references, so quoting adds nothing.",
-        "suppress": {
-          "noqa": {
-            "codes": [
-              "PYI020"
-            ]
-          }
-        }
+        "suppress": {"noqa": {"codes": ["PYI020"]}}
       }
     },
     {
@@ -70,22 +38,8 @@
                     "has": {
                       "stopBy": "end",
                       "all": [
-                        {
-                          "any": [
-                            {
-                              "kind": "string"
-                            },
-                            {
-                              "kind": "concatenated_string"
-                            }
-                          ]
-                        },
-                        {
-                          "parse": {
-                            "grammar": "annotation",
-                            "kind": "expression_statement"
-                          }
-                        }
+                        {"any": [{"kind": "string"}, {"kind": "concatenated_string"}]},
+                        {"parse": {"grammar": "annotation", "kind": "expression_statement"}}
                       ],
                       "capture": "Q"
                     }
@@ -94,64 +48,21 @@
                 {
                   "parse": {
                     "grammar": "annotation",
-                    "has": {
-                      "stopBy": "end",
-                      "all": [
-                        {
-                          "any": [
-                            {
-                              "kind": "string"
-                            },
-                            {
-                              "kind": "concatenated_string"
-                            }
-                          ]
-                        },
-                        {
-                          "matches": "quoted-within"
-                        }
-                      ]
-                    }
+                    "has": {"stopBy": "end", "all": [{"any": [{"kind": "string"}, {"kind": "concatenated_string"}]}, {"matches": "quoted-within"}]}
                   }
                 }
               ]
             }
           },
-          "rule": {
-            "all": [
-              {
-                "any": [
-                  {
-                    "kind": "string"
-                  },
-                  {
-                    "kind": "concatenated_string"
-                  }
-                ]
-              },
-              {
-                "matches": "quoted-within"
-              }
-            ]
-          },
-          "file": {
-            "path": {
-              "regex": "\\.pyi$"
-            }
-          }
+          "rule": {"all": [{"any": [{"kind": "string"}, {"kind": "concatenated_string"}]}, {"matches": "quoted-within"}]},
+          "file": {"path": {"regex": "\\.pyi$"}}
         }
       },
       "violation": {
         "anchor": "capture.Q",
         "code": "PYI020",
         "message": "Remove the quotes from this annotation and write the type directly; a stub resolves forward references, so quoting adds nothing.",
-        "suppress": {
-          "noqa": {
-            "codes": [
-              "PYI020"
-            ]
-          }
-        },
+        "suppress": {"noqa": {"codes": ["PYI020"]}},
         "each": "Q"
       }
     }

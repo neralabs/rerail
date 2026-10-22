@@ -53,6 +53,10 @@
                   "has": {
                     "stopBy": "neighbor",
                     "matches": "abc-set"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "import_from_statement"
                   }
                 }
               }

@@ -60,7 +60,7 @@
    "violation": {
     "anchor": "capture.F",
     "code": "PTH103",
-    "message": "Use `Path(name).mkdir(parents=True)` instead of `os.makedirs(name)`, passing `mode` and `exist_ok` on to `mkdir`; leave it where the path is bytes.",
+    "message": "Use `Path(name).mkdir(parents=True)` instead of `os.makedirs(name)`, passing `mode`, `exist_ok` and any `parent_mode` on to `mkdir`; leave it where the path is bytes.",
     "suppress": {
      "noqa": {
       "codes": [

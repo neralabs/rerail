@@ -41,7 +41,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "D301",
-        "message": "Add an `r` prefix so this docstring's backslashes stay literal; leave it if an escape like `\\t` must take effect, and for a `u` prefix drop the `u` first.",
+        "message": "Add an `r` prefix (replacing any `u`) so backslashes stay literal, writing each `\\\\` as one `\\`; keep the plain string if an escape like `\\t` or `\\x41` must take effect.",
         "suppress": { "noqa": { "codes": ["D301"] } }
       }
     }

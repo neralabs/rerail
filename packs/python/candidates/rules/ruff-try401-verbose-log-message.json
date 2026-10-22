@@ -164,6 +164,19 @@
                 "stopBy": "neighbor",
                 "field": "function",
                 "matches": "level-callee"
+              },
+              "not": {
+                "any": [
+                  {
+                    "matches": "handler-type"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "matches": "handler-type"
+                    }
+                  }
+                ]
               }
             },
             "walked": {
@@ -190,6 +203,15 @@
                   }
                 },
                 {
+                  "kind": "generator_expression",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "arguments",
+                    "kind": "call",
+                    "matches": "exception-call"
+                  }
+                },
+                {
                   "inside": {
                     "stopBy": "neighbor",
                     "matches": "walked-parent"
@@ -201,6 +223,15 @@
               "matches": "walked",
               "not": {
                 "kind": "attribute"
+              }
+            },
+            "handler-type": {
+              "not": {
+                "kind": "block"
+              },
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "except_clause"
               }
             }
           },

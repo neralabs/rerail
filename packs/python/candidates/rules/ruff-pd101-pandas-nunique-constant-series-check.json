@@ -4,12 +4,7 @@
   "revision": 1,
   "mode": "steer",
   "description": "Avoid comparing nunique() with 1 to check whether a pandas Series is constant; compare its values with the first one instead, which stops at the first difference.",
-  "scope": {
-    "include": [
-      "**/*"
-    ],
-    "exclude": []
-  },
+  "scope": {"include": ["**/*"], "exclude": []},
   "clauses": [
     {
       "id": "shared",
@@ -18,61 +13,28 @@
         "utils": {
           "literal-receiver": {
             "any": [
-              {
-                "kind": "integer"
-              },
-              {
-                "kind": "float"
-              },
-              {
-                "kind": "true"
-              },
-              {
-                "kind": "false"
-              },
-              {
-                "kind": "none"
-              },
-              {
-                "kind": "ellipsis"
-              },
-              {
-                "kind": "tuple"
-              },
-              {
-                "kind": "list"
-              },
-              {
-                "kind": "set"
-              },
-              {
-                "kind": "dictionary"
-              },
-              {
-                "kind": "list_comprehension"
-              },
-              {
-                "kind": "set_comprehension"
-              },
-              {
-                "kind": "dictionary_comprehension"
-              },
-              {
-                "kind": "generator_expression"
-              },
-              {
-                "kind": "string",
-                "regex": "^[uUbBrR]{0,2}['\"]"
-              },
+              {"kind": "integer"},
+              {"kind": "float"},
+              {"kind": "true"},
+              {"kind": "false"},
+              {"kind": "none"},
+              {"kind": "ellipsis"},
+              {"kind": "tuple"},
+              {"kind": "list"},
+              {"kind": "set"},
+              {"kind": "dictionary"},
+              {"kind": "list_comprehension"},
+              {"kind": "set_comprehension"},
+              {"kind": "dictionary_comprehension"},
+              {"kind": "generator_expression"},
+              {"kind": "string", "regex": "^[uUbBrR]{0,2}['\"]"},
               {
                 "kind": "concatenated_string",
                 "not": {
                   "has": {
                     "stopBy": "neighbor",
                     "kind": "string",
-                    "not": {
-                      "regex": "^[uUbBrR]{0,2}['\"]"
-                    }
+                    "not": {"regex": "^[uUbBrR]{0,2}['\"]"}
                   }
                 }
               }
@@ -80,66 +42,66 @@
           },
           "relevant-name": {
             "kind": "identifier",
-            "any": [
+            "all": [
               {
-                "resolves": {
-                  "binding": {
-                    "form": [
-                      "assignment",
-                      "annotated",
-                      "annotation",
-                      "augmented",
-                      "named",
-                      "for",
-                      "global",
-                      "match",
-                      "typeAlias"
-                    ]
+                "any": [
+                  {
+                    "resolves": {
+                      "binding": {
+                        "form": [
+                          "assignment",
+                          "annotated",
+                          "annotation",
+                          "augmented",
+                          "named",
+                          "for",
+                          "global",
+                          "match",
+                          "typeAlias"
+                        ]
+                      }
+                    }
+                  },
+                  {"resolves": {"binding": {"form": "parameter"}}, "not": {"regex": "^(self|cls)$"}}
+                ]
+              },
+              {
+                "not": {
+                  "resolves": {
+                    "binding": {
+                      "scope": "module",
+                      "site": {"inside": {"stopBy": "end", "matches": "dunder-all-statement"}}
+                    }
                   }
                 }
               },
               {
-                "resolves": {
-                  "binding": {
-                    "form": "parameter"
-                  }
-                },
                 "not": {
-                  "regex": "^(self|cls)$"
+                  "resolves": {
+                    "binding": {
+                      "scope": "comprehension",
+                      "site": {"inside": {"stopBy": "end", "kind": "with_clause"}}
+                    }
+                  }
                 }
               }
             ]
           },
           "series-receiver": {
             "any": [
-              {
-                "matches": "relevant-name"
-              },
+              {"matches": "relevant-name"},
               {
                 "kind": "parenthesized_expression",
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "series-receiver"
-                }
+                "has": {"stopBy": "neighbor", "matches": "series-receiver"}
               },
               {
                 "not": {
                   "any": [
-                    {
-                      "kind": "identifier"
-                    },
-                    {
-                      "kind": "parenthesized_expression"
-                    },
-                    {
-                      "matches": "literal-receiver"
-                    },
-                    {
-                      "kind": "comment"
-                    },
-                    {
-                      "regex": "^[()]$"
-                    }
+                    {"kind": "identifier"},
+                    {"kind": "parenthesized_expression"},
+                    {"matches": "literal-receiver"},
+                    {"kind": "comment"},
+                    {"regex": "^[()]$"}
                   ]
                 }
               }
@@ -150,28 +112,13 @@
               {
                 "kind": "attribute",
                 "all": [
-                  {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "field": "attribute",
-                      "regex": "^nunique$"
-                    }
-                  },
-                  {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "field": "object",
-                      "matches": "series-receiver"
-                    }
-                  }
+                  {"has": {"stopBy": "neighbor", "field": "attribute", "regex": "^nunique$"}},
+                  {"has": {"stopBy": "neighbor", "field": "object", "matches": "series-receiver"}}
                 ]
               },
               {
                 "kind": "parenthesized_expression",
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "nunique-func"
-                }
+                "has": {"stopBy": "neighbor", "matches": "nunique-func"}
               }
             ]
           },
@@ -179,39 +126,86 @@
             "any": [
               {
                 "kind": "call",
-                "has": {
-                  "stopBy": "neighbor",
-                  "field": "function",
-                  "matches": "nunique-func"
-                }
+                "has": {"stopBy": "neighbor", "field": "function", "matches": "nunique-func"}
               },
               {
                 "kind": "parenthesized_expression",
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "nunique-call"
-                }
+                "has": {"stopBy": "neighbor", "matches": "nunique-call"}
               }
             ]
           },
           "int-one": {
             "any": [
-              {
-                "kind": "integer",
-                "value": {
-                  "eq": 1
-                }
-              },
+              {"kind": "integer", "value": {"eq": 1}},
               {
                 "kind": "parenthesized_expression",
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "int-one"
-                }
+                "has": {"stopBy": "neighbor", "matches": "int-one"}
               }
             ]
           },
-          "hit-core": {
+          "dunder-all-statement": {
+            "kind": "expression_statement",
+            "has": {
+              "stopBy": "neighbor",
+              "any": [{"kind": "assignment"}, {"kind": "augmented_assignment"}],
+              "has": {"stopBy": "neighbor", "field": "left", "regex": "^__all__$"}
+            }
+          },
+          "pandas-import-file": {
+            "kind": "module",
+            "has": {
+              "stopBy": "end",
+              "any": [
+                {
+                  "kind": "import_statement",
+                  "has": {"stopBy": "end", "kind": "dotted_name", "regex": "^pandas(\\s*\\.|$)"}
+                },
+                {
+                  "kind": "import_from_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "module_name",
+                    "kind": "dotted_name",
+                    "regex": "^pandas(\\s*\\.|$)"
+                  }
+                }
+              ]
+            }
+          },
+          "annotation-type": {
+            "kind": "type",
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {"kind": "typed_parameter"},
+                {"kind": "typed_default_parameter"},
+                {"kind": "function_definition"},
+                {"kind": "assignment"}
+              ]
+            }
+          },
+          "deferred-annotation": {
+            "inside": {"stopBy": "end", "matches": "annotation-type"},
+            "all": [
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "module",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "future_import_statement",
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "dotted_name",
+                      "resolves": {"imported": ["__future__.annotations"]}
+                    }
+                  }
+                }
+              },
+              {"inside": {"stopBy": "end", "matches": "pandas-import-file"}}
+            ]
+          },
+          "comparison": {
             "kind": "comparison_operator",
             "all": [
               {
@@ -228,30 +222,25 @@
                 "has": {
                   "stopBy": "neighbor",
                   "matches": "nunique-call",
-                  "precedes": {
-                    "stopBy": "end",
-                    "regex": "^(<=|==|!=|>)$"
-                  }
+                  "precedes": {"stopBy": "end", "regex": "^(<=|==|!=|>)$"}
                 }
               },
               {
                 "has": {
                   "stopBy": "neighbor",
                   "matches": "int-one",
-                  "follows": {
-                    "stopBy": "end",
-                    "regex": "^(<=|==|!=|>)$"
-                  }
+                  "follows": {"stopBy": "end", "regex": "^(<=|==|!=|>)$"}
                 }
               }
-            ],
-            "resolves": {
-              "imported": [
-                "pandas"
-              ],
-              "seenBefore": true
-            }
-          }
+            ]
+          },
+          "pandas-gate": {
+            "any": [
+              {"resolves": {"imported": ["pandas"], "seenBefore": true}},
+              {"matches": "deferred-annotation"}
+            ]
+          },
+          "hit-core": {"matches": "comparison", "all": [{"matches": "pandas-gate"}]}
         }
       }
     },
@@ -261,50 +250,19 @@
         "ast": {
           "language": "python",
           "utils": {
-            "hit": {
-              "matches": "hit-core",
-              "has": {
-                "stopBy": "neighbor",
-                "regex": "^<=$"
-              }
-            },
+            "hit": {"matches": "hit-core", "has": {"stopBy": "neighbor", "regex": "^<=$"}},
             "in-string": {
-              "any": [
-                {
-                  "kind": "string"
-                },
-                {
-                  "kind": "concatenated_string"
-                }
-              ],
+              "any": [{"kind": "string"}, {"kind": "concatenated_string"}],
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
-                  "any": [
-                    {
-                      "matches": "hit",
-                      "capture": "CMP"
-                    },
-                    {
-                      "matches": "in-string"
-                    }
-                  ]
+                  "any": [{"matches": "hit", "capture": "CMP"}, {"matches": "in-string"}]
                 }
               }
             }
           },
-          "rule": {
-            "any": [
-              {
-                "matches": "hit",
-                "pattern": "$CMP"
-              },
-              {
-                "matches": "in-string"
-              }
-            ]
-          }
+          "rule": {"any": [{"matches": "hit", "pattern": "$CMP"}, {"matches": "in-string"}]}
         }
       },
       "violation": {
@@ -312,13 +270,7 @@
         "code": "PD101",
         "each": "CMP",
         "message": "Check a NumPy array, not `nunique()`, which scans every value: `a = s.to_numpy()`, then `a.shape[0] == 0 or (a[0] == a).all()`. Keep nunique if NaN handling matters or `s` isn't a pandas Series.",
-        "suppress": {
-          "noqa": {
-            "codes": [
-              "PD101"
-            ]
-          }
-        }
+        "suppress": {"noqa": {"codes": ["PD101"]}}
       }
     },
     {
@@ -327,50 +279,19 @@
         "ast": {
           "language": "python",
           "utils": {
-            "hit": {
-              "matches": "hit-core",
-              "has": {
-                "stopBy": "neighbor",
-                "regex": "^==$"
-              }
-            },
+            "hit": {"matches": "hit-core", "has": {"stopBy": "neighbor", "regex": "^==$"}},
             "in-string": {
-              "any": [
-                {
-                  "kind": "string"
-                },
-                {
-                  "kind": "concatenated_string"
-                }
-              ],
+              "any": [{"kind": "string"}, {"kind": "concatenated_string"}],
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
-                  "any": [
-                    {
-                      "matches": "hit",
-                      "capture": "CMP"
-                    },
-                    {
-                      "matches": "in-string"
-                    }
-                  ]
+                  "any": [{"matches": "hit", "capture": "CMP"}, {"matches": "in-string"}]
                 }
               }
             }
           },
-          "rule": {
-            "any": [
-              {
-                "matches": "hit",
-                "pattern": "$CMP"
-              },
-              {
-                "matches": "in-string"
-              }
-            ]
-          }
+          "rule": {"any": [{"matches": "hit", "pattern": "$CMP"}, {"matches": "in-string"}]}
         }
       },
       "violation": {
@@ -378,13 +299,7 @@
         "code": "PD101",
         "each": "CMP",
         "message": "Check a NumPy array, not `nunique()`, which scans every value: `a = s.to_numpy()`, then `a.shape[0] > 0 and (a[0] == a).all()`. Keep nunique if NaN handling matters or `s` isn't a pandas Series.",
-        "suppress": {
-          "noqa": {
-            "codes": [
-              "PD101"
-            ]
-          }
-        }
+        "suppress": {"noqa": {"codes": ["PD101"]}}
       }
     },
     {
@@ -393,50 +308,19 @@
         "ast": {
           "language": "python",
           "utils": {
-            "hit": {
-              "matches": "hit-core",
-              "has": {
-                "stopBy": "neighbor",
-                "regex": "^!=$"
-              }
-            },
+            "hit": {"matches": "hit-core", "has": {"stopBy": "neighbor", "regex": "^!=$"}},
             "in-string": {
-              "any": [
-                {
-                  "kind": "string"
-                },
-                {
-                  "kind": "concatenated_string"
-                }
-              ],
+              "any": [{"kind": "string"}, {"kind": "concatenated_string"}],
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
-                  "any": [
-                    {
-                      "matches": "hit",
-                      "capture": "CMP"
-                    },
-                    {
-                      "matches": "in-string"
-                    }
-                  ]
+                  "any": [{"matches": "hit", "capture": "CMP"}, {"matches": "in-string"}]
                 }
               }
             }
           },
-          "rule": {
-            "any": [
-              {
-                "matches": "hit",
-                "pattern": "$CMP"
-              },
-              {
-                "matches": "in-string"
-              }
-            ]
-          }
+          "rule": {"any": [{"matches": "hit", "pattern": "$CMP"}, {"matches": "in-string"}]}
         }
       },
       "violation": {
@@ -444,13 +328,7 @@
         "code": "PD101",
         "each": "CMP",
         "message": "Check a NumPy array, not `nunique()`, which scans every value: `a = s.to_numpy()`, then `a.shape[0] == 0 or not (a[0] == a).all()`. Keep nunique if NaN handling matters or `s` isn't a pandas Series.",
-        "suppress": {
-          "noqa": {
-            "codes": [
-              "PD101"
-            ]
-          }
-        }
+        "suppress": {"noqa": {"codes": ["PD101"]}}
       }
     },
     {
@@ -459,48 +337,42 @@
         "ast": {
           "language": "python",
           "utils": {
-            "hit": {
-              "matches": "hit-core",
-              "has": {
-                "stopBy": "neighbor",
-                "regex": "^>$"
-              }
-            },
+            "hit": {"matches": "hit-core", "has": {"stopBy": "neighbor", "regex": "^>$"}},
             "in-string": {
-              "any": [
-                {
-                  "kind": "string"
-                },
-                {
-                  "kind": "concatenated_string"
-                }
-              ],
+              "any": [{"kind": "string"}, {"kind": "concatenated_string"}],
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
-                  "any": [
-                    {
-                      "matches": "hit",
-                      "capture": "CMP"
-                    },
-                    {
-                      "matches": "in-string"
-                    }
-                  ]
+                  "any": [{"matches": "hit", "capture": "CMP"}, {"matches": "in-string"}]
                 }
               }
             }
           },
+          "rule": {"any": [{"matches": "hit", "pattern": "$CMP"}, {"matches": "in-string"}]}
+        }
+      },
+      "violation": {
+        "anchor": "capture.CMP",
+        "code": "PD101",
+        "each": "CMP",
+        "message": "Check a NumPy array, not `nunique()`, which scans every value: `a = s.to_numpy()`, then `a.shape[0] > 0 and not (a[0] == a).all()`. Keep nunique if NaN handling matters or `s` isn't a pandas Series.",
+        "suppress": {"noqa": {"codes": ["PD101"]}}
+      }
+    },
+    {
+      "id": "stub-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {"path": {"regex": "\\.pyi$"}},
           "rule": {
-            "any": [
-              {
-                "matches": "hit",
-                "pattern": "$CMP"
-              },
-              {
-                "matches": "in-string"
-              }
+            "matches": "comparison",
+            "pattern": "$CMP",
+            "all": [
+              {"inside": {"stopBy": "end", "matches": "annotation-type"}},
+              {"inside": {"stopBy": "end", "matches": "pandas-import-file"}},
+              {"not": {"matches": "pandas-gate"}}
             ]
           }
         }
@@ -509,14 +381,8 @@
         "anchor": "capture.CMP",
         "code": "PD101",
         "each": "CMP",
-        "message": "Check a NumPy array, not `nunique()`, which scans every value: `a = s.to_numpy()`, then `a.shape[0] > 0 and not (a[0] == a).all()`. Keep nunique if NaN handling matters or `s` isn't a pandas Series.",
-        "suppress": {
-          "noqa": {
-            "codes": [
-              "PD101"
-            ]
-          }
-        }
+        "message": "Check a NumPy array, not `nunique()`, which scans every value: with `a = s.to_numpy()`, `a.shape[0] == 0` tests empty and `(a[0] == a).all()` tests constant. Keep nunique if NaN handling matters.",
+        "suppress": {"noqa": {"codes": ["PD101"]}}
       }
     }
   ]

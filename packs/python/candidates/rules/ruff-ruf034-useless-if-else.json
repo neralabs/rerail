@@ -46,30 +46,42 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": {
-            "any": [
-              {
-                "kind": "string"
-              },
-              {
-                "kind": "concatenated_string"
-              }
-            ],
-            "parse": {
-              "grammar": "annotation",
-              "has": {
-                "stopBy": "end",
-                "kind": "conditional_expression",
-                "capture": "COND",
-                "pattern": "$A if $C else $B",
-                "compare": {
-                  "left": "A",
-                  "op": "eq",
-                  "right": "B",
-                  "text": "structure"
+          "utils": {
+            "in-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "kind": "conditional_expression",
+                      "capture": "COND",
+                      "pattern": "$A if $C else $B",
+                      "compare": {
+                        "left": "A",
+                        "op": "eq",
+                        "right": "B",
+                        "text": "structure"
+                      }
+                    },
+                    {
+                      "matches": "in-string"
+                    }
+                  ]
                 }
               }
             }
+          },
+          "rule": {
+            "matches": "in-string"
           }
         }
       },

@@ -438,7 +438,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PT007",
-        "message": "Write each row of parametrize values as a tuple, `(a, b)`, instead of a list.",
+        "message": "Write each row of parametrize values as a tuple, `(a, b)`, instead of a list; leave it if the names are one parameter and the list is that parameter's value.",
         "suppress": {
           "noqa": {
             "codes": [

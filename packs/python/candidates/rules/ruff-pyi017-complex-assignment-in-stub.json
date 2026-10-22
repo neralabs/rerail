@@ -3,99 +3,49 @@
   "id": "ruff-pyi017-complex-assignment-in-stub",
   "revision": 1,
   "mode": "steer",
-  "description": "Assign to a single plain name in stub files; stubs are data for type checkers, so multiple or attribute targets are ambiguous.",
-  "scope": {
-    "include": [
-      "**/*"
-    ],
-    "exclude": []
-  },
+  "description": "Declare each name in a stub file with its own simple assignment instead of chained, unpacking, attribute or item assignments; a stub only declares names.",
+  "scope": {"include": ["**/*"], "exclude": []},
   "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "simple-target": {
+            "any": [
+              {"kind": "identifier"},
+              {
+                "kind": "tuple_pattern",
+                "not": {"has": {"stopBy": "neighbor", "regex": "^,$"}},
+                "has": {"stopBy": "neighbor", "matches": "simple-target"}
+              }
+            ]
+          },
+          "module-or-class-assignment": {
+            "kind": "assignment",
+            "not": {"any": [{"has": {"stopBy": "neighbor", "field": "type", "kind": "type"}}, {"inside": {"stopBy": "end", "kind": "function_definition"}}]},
+            "inside": {"stopBy": "neighbor", "kind": "expression_statement"}
+          }
+        }
+      }
+    },
     {
       "id": "attribute-target",
       "forbid": {
         "ast": {
           "language": "python",
-          "utils": {
-            "simple-target": {
-              "any": [
-                {
-                  "kind": "identifier"
-                },
-                {
-                  "kind": "tuple_pattern",
-                  "not": {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "regex": "^,$"
-                    }
-                  },
-                  "has": {
-                    "stopBy": "neighbor",
-                    "matches": "simple-target"
-                  }
-                }
-              ]
-            }
-          },
           "rule": {
-            "all": [
-              {
-                "kind": "assignment",
-                "not": {
-                  "has": {
-                    "stopBy": "neighbor",
-                    "field": "type",
-                    "kind": "type"
-                  }
-                },
-                "inside": {
-                  "stopBy": "neighbor",
-                  "kind": "expression_statement"
-                }
-              },
-              {
-                "not": {
-                  "inside": {
-                    "stopBy": "end",
-                    "kind": "function_definition"
-                  }
-                }
-              },
-              {
-                "has": {
-                  "stopBy": "neighbor",
-                  "field": "left",
-                  "any": [
-                    {
-                      "kind": "attribute"
-                    },
-                    {
-                      "kind": "subscript"
-                    }
-                  ]
-                }
-              }
-            ]
+            "matches": "module-or-class-assignment",
+            "has": {"stopBy": "neighbor", "field": "left", "any": [{"kind": "attribute"}, {"kind": "subscript"}]}
           },
-          "file": {
-            "path": {
-              "regex": "\\.pyi$"
-            }
-          }
+          "file": {"path": {"regex": "\\.pyi$"}}
         }
       },
       "violation": {
         "anchor": "witness.span",
         "code": "PYI017",
-        "message": "Declare this attribute inside its class body, for example `x: TypeAlias = int` in class `A`, instead of assigning to `A.x` from outside the class.",
-        "suppress": {
-          "noqa": {
-            "codes": [
-              "PYI017"
-            ]
-          }
-        }
+        "message": "Remove this attribute or item assignment from the stub; declare the name where it lives instead, for example `x: int` in the class body or module that defines `x`.",
+        "suppress": {"noqa": {"codes": ["PYI017"]}}
       }
     },
     {
@@ -103,112 +53,22 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "utils": {
-            "simple-target": {
-              "any": [
-                {
-                  "kind": "identifier"
-                },
-                {
-                  "kind": "tuple_pattern",
-                  "not": {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "regex": "^,$"
-                    }
-                  },
-                  "has": {
-                    "stopBy": "neighbor",
-                    "matches": "simple-target"
-                  }
-                }
-              ]
-            }
-          },
           "rule": {
-            "all": [
-              {
-                "kind": "assignment",
-                "not": {
-                  "has": {
-                    "stopBy": "neighbor",
-                    "field": "type",
-                    "kind": "type"
-                  }
-                },
-                "inside": {
-                  "stopBy": "neighbor",
-                  "kind": "expression_statement"
-                }
-              },
-              {
-                "not": {
-                  "inside": {
-                    "stopBy": "end",
-                    "kind": "function_definition"
-                  }
-                }
-              },
-              {
-                "all": [
-                  {
-                    "not": {
-                      "has": {
-                        "stopBy": "neighbor",
-                        "field": "left",
-                        "any": [
-                          {
-                            "kind": "attribute"
-                          },
-                          {
-                            "kind": "subscript"
-                          }
-                        ]
-                      }
-                    }
-                  },
-                  {
-                    "any": [
-                      {
-                        "has": {
-                          "stopBy": "neighbor",
-                          "field": "left",
-                          "not": {
-                            "matches": "simple-target"
-                          }
-                        }
-                      },
-                      {
-                        "has": {
-                          "stopBy": "neighbor",
-                          "field": "right",
-                          "kind": "assignment"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              }
+            "matches": "module-or-class-assignment",
+            "not": {"has": {"stopBy": "neighbor", "field": "left", "any": [{"kind": "attribute"}, {"kind": "subscript"}]}},
+            "any": [
+              {"has": {"stopBy": "neighbor", "field": "left", "not": {"matches": "simple-target"}}},
+              {"has": {"stopBy": "neighbor", "field": "right", "kind": "assignment"}}
             ]
           },
-          "file": {
-            "path": {
-              "regex": "\\.pyi$"
-            }
-          }
+          "file": {"path": {"regex": "\\.pyi$"}}
         }
       },
       "violation": {
         "anchor": "witness.span",
         "code": "PYI017",
-        "message": "Give each name its own annotated assignment, for example `a: TypeAlias = int` and `b: TypeAlias = int`, instead of chaining or unpacking targets.",
-        "suppress": {
-          "noqa": {
-            "codes": [
-              "PYI017"
-            ]
-          }
-        }
+        "message": "Split this into one declaration per name, for example `a: int` and `b: int` on separate lines, instead of chaining or unpacking assignment targets.",
+        "suppress": {"noqa": {"codes": ["PYI017"]}}
       }
     }
   ]

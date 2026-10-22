@@ -17,14 +17,19 @@
         "language": "python",
         "utils": {
           "future-seen": {
-            "resolves": {
-              "imported": [
-                "__future__"
-              ],
-              "seenBefore": true
+            "inside": {
+              "stopBy": "end",
+              "follows": {
+                "stopBy": "end",
+                "kind": "future_import_statement",
+                "has": {
+                  "stopBy": "end",
+                  "regex": "^annotations$"
+                }
+              }
             }
           },
-          "type-checking-test": {
+          "type-checking-name": {
             "any": [
               {
                 "kind": "identifier",
@@ -45,6 +50,24 @@
                 "has": {
                   "field": "attribute",
                   "regex": "^TYPE_CHECKING$"
+                }
+              }
+            ]
+          },
+          "type-checking-test": {
+            "any": [
+              {
+                "matches": "type-checking-name"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "matches": "type-checking-name"
                 }
               }
             ]
@@ -136,30 +159,153 @@
               }
             }
           },
-          "union-member": {
-            "matches": "plain-string",
-            "parse": {
-              "grammar": "annotation",
-              "any": [
-                {
-                  "kind": "expression_statement"
-                },
-                {
-                  "kind": "ERROR"
+          "union-owner": {
+            "any": [
+              {
+                "kind": "subscript",
+                "has": {
+                  "field": "value",
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.Union",
+                      "typing_extensions.Union",
+                      "_typeshed.Union"
+                    ]
+                  }
                 }
-              ]
-            },
+              },
+              {
+                "kind": "type_parameter",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "generic_type",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "identifier"
+                      },
+                      {
+                        "kind": "attribute"
+                      }
+                    ],
+                    "resolves": {
+                      "import": [
+                        "typing.Union",
+                        "typing_extensions.Union",
+                        "_typeshed.Union"
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "literal-owner": {
+            "any": [
+              {
+                "kind": "subscript",
+                "has": {
+                  "field": "value",
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.Literal",
+                      "typing_extensions.Literal"
+                    ]
+                  }
+                }
+              },
+              {
+                "kind": "type_parameter",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "generic_type",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "identifier"
+                      },
+                      {
+                        "kind": "attribute"
+                      }
+                    ],
+                    "resolves": {
+                      "import": [
+                        "typing.Literal",
+                        "typing_extensions.Literal"
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "union-member": {
+            "all": [
+              {
+                "matches": "plain-string"
+              },
+              {
+                "parse": {
+                  "grammar": "annotation",
+                  "any": [
+                    {
+                      "kind": "expression_statement"
+                    },
+                    {
+                      "kind": "ERROR"
+                    }
+                  ]
+                }
+              },
+              {
+                "matches": "union-position"
+              }
+            ]
+          },
+          "union-position": {
             "inside": {
               "stopBy": {
                 "not": {
-                  "kind": "parenthesized_expression"
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "type"
+                    }
+                  ]
                 }
               },
-              "kind": "binary_operator",
-              "has": {
-                "field": "operator",
-                "regex": "^\\|$"
-              }
+              "any": [
+                {
+                  "kind": "union_type"
+                },
+                {
+                  "kind": "binary_operator",
+                  "has": {
+                    "field": "operator",
+                    "regex": "^\\|$"
+                  }
+                }
+              ]
             },
             "not": {
               "any": [
@@ -175,18 +321,249 @@
                             "kind": "parenthesized_expression"
                           },
                           {
+                            "kind": "type"
+                          },
+                          {
                             "kind": "binary_operator",
                             "has": {
                               "field": "operator",
                               "regex": "^\\|$"
                             }
+                          },
+                          {
+                            "kind": "union_type"
                           }
                         ]
                       }
                     },
-                    "kind": "subscript",
+                    "any": [
+                      {
+                        "matches": "union-owner"
+                      },
+                      {
+                        "kind": "tuple",
+                        "inside": {
+                          "stopBy": {
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "parenthesized_expression"
+                                },
+                                {
+                                  "kind": "type"
+                                }
+                              ]
+                            }
+                          },
+                          "matches": "union-owner"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          "unparsed-member": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "string",
+                    "regex": "^[a-zA-Z]*[bB]"
+                  },
+                  {
+                    "kind": "concatenated_string",
                     "has": {
-                      "field": "value",
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "regex": "^[a-zA-Z]*[bB]"
+                    }
+                  },
+                  {
+                    "matches": "plain-string",
+                    "inside": {
+                      "stopBy": {
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "parenthesized_expression"
+                            },
+                            {
+                              "kind": "type"
+                            },
+                            {
+                              "kind": "binary_operator",
+                              "has": {
+                                "field": "operator",
+                                "regex": "^\\|$"
+                              }
+                            },
+                            {
+                              "kind": "union_type"
+                            }
+                          ]
+                        }
+                      },
+                      "any": [
+                        {
+                          "matches": "literal-owner"
+                        },
+                        {
+                          "kind": "tuple",
+                          "inside": {
+                            "stopBy": {
+                              "not": {
+                                "any": [
+                                  {
+                                    "kind": "parenthesized_expression"
+                                  },
+                                  {
+                                    "kind": "type"
+                                  }
+                                ]
+                              }
+                            },
+                            "matches": "literal-owner"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "matches": "union-position"
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": {
+                      "matches": "annotation-root"
+                    },
+                    "any": [
+                      {
+                        "kind": "argument_list"
+                      },
+                      {
+                        "matches": "annotated-metadata"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "annotated-metadata": {
+            "any": [
+              {
+                "not": {
+                  "any": [
+                    {
+                      "nthChild": 1
+                    },
+                    {
+                      "nthChild": 2
+                    }
+                  ]
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "subscript",
+                  "has": {
+                    "field": "value",
+                    "any": [
+                      {
+                        "kind": "identifier"
+                      },
+                      {
+                        "kind": "attribute"
+                      }
+                    ],
+                    "resolves": {
+                      "import": [
+                        "typing.Annotated",
+                        "typing_extensions.Annotated"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "nthChild": 1
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "tuple",
+                  "inside": {
+                    "stopBy": {
+                      "not": {
+                        "kind": "type"
+                      }
+                    },
+                    "any": [
+                      {
+                        "kind": "subscript",
+                        "has": {
+                          "field": "value",
+                          "any": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "kind": "attribute"
+                            }
+                          ],
+                          "resolves": {
+                            "import": [
+                              "typing.Annotated",
+                              "typing_extensions.Annotated"
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "kind": "type_parameter",
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "generic_type",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "attribute"
+                              }
+                            ],
+                            "resolves": {
+                              "import": [
+                                "typing.Annotated",
+                                "typing_extensions.Annotated"
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "kind": "type",
+                "not": {
+                  "nthChild": 1
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "type_parameter",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "generic_type",
+                    "has": {
+                      "stopBy": "neighbor",
                       "any": [
                         {
                           "kind": "identifier"
@@ -197,15 +574,35 @@
                       ],
                       "resolves": {
                         "import": [
-                          "typing.Union",
-                          "typing_extensions.Union",
-                          "_typeshed.Union"
+                          "typing.Annotated",
+                          "typing_extensions.Annotated"
                         ]
                       }
                     }
                   }
                 }
-              ]
+              }
+            ]
+          },
+          "typed-dict-call": {
+            "kind": "call",
+            "has": {
+              "field": "function",
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "typing.TypedDict",
+                  "typing_extensions.TypedDict",
+                  "_typeshed.TypedDict"
+                ]
+              }
             }
           }
         }
@@ -227,7 +624,6 @@
             }
           },
           "rule": {
-            "matches": "union-member",
             "inside": {
               "stopBy": "end",
               "matches": "annotation-root"
@@ -241,14 +637,22 @@
                   "matches": "local-annotation"
                 }
               ]
-            }
+            },
+            "any": [
+              {
+                "matches": "union-member"
+              },
+              {
+                "matches": "unparsed-member"
+              }
+            ]
           }
         }
       },
       "violation": {
         "anchor": "witness.span",
         "code": "TC010",
-        "message": "Remove the quotes from this union member or quote the whole union; a string cannot be an operand of `|` at runtime.",
+        "message": "Quote the whole union instead of this member (`\"A | None\"`), or drop the quotes if the name already exists at runtime; a string cannot be an operand of `|`.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -277,7 +681,144 @@
       "violation": {
         "anchor": "witness.span",
         "code": "TC010",
-        "message": "Remove the quotes from this union member or quote the whole union; a string cannot be an operand of `|` at runtime.",
+        "message": "Quote the whole union instead of this member (`\"A | None\"`), or drop the quotes if the name already exists at runtime; a string cannot be an operand of `|`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "TC010"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "runtime-string-union-in-legacy-typed-dict-field",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "max": "3.12"
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "matches": "plain-string"
+              },
+              {
+                "matches": "union-position"
+              },
+              {
+                "not": {
+                  "matches": "union-member"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "kind": "argument_list"
+                  },
+                  "kind": "keyword_argument",
+                  "not": {
+                    "has": {
+                      "field": "name",
+                      "regex": "^(total|extra_items)$"
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "kind": "argument_list"
+                  },
+                  "kind": "argument_list",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "typed-dict-call"
+                  },
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "keyword_argument"
+                          },
+                          {
+                            "kind": "dictionary_splat"
+                          },
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "regex": "^[(),]$"
+                          }
+                        ]
+                      },
+                      "any": [
+                        {
+                          "not": {
+                            "any": [
+                              {
+                                "nthChild": 1
+                              },
+                              {
+                                "nthChild": 2
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "nthChild": 2,
+                          "not": {
+                            "kind": "none"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "nthChild": 1,
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "keyword_argument"
+                        },
+                        {
+                          "kind": "dictionary_splat"
+                        },
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "regex": "^[(),]$"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": {
+                      "kind": "argument_list"
+                    },
+                    "matches": "annotated-metadata"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "TC010",
+        "message": "Quote the whole union instead of this member (`\"A | None\"`), or drop the quotes if the name already exists at runtime; a string cannot be an operand of `|`.",
         "suppress": {
           "noqa": {
             "codes": [

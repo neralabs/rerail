@@ -20,58 +20,49 @@
             "nt-ref": {
               "any": [
                 {
-                  "any": [
-                    {
-                      "kind": "identifier"
-                    },
-                    {
-                      "kind": "attribute"
-                    }
-                  ],
+                  "kind": "identifier",
                   "resolves": {
                     "import": [
                       "collections.namedtuple"
                     ]
                   },
                   "not": {
-                    "inside": {
-                      "stopBy": {
-                        "not": {
-                          "any": [
-                            {
-                              "kind": "expression_list"
-                            },
-                            {
-                              "kind": "tuple"
-                            },
-                            {
-                              "kind": "list"
-                            },
-                            {
-                              "kind": "parenthesized_expression"
+                    "any": [
+                      {
+                        "inside": {
+                          "stopBy": {
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "expression_list"
+                                },
+                                {
+                                  "kind": "tuple"
+                                },
+                                {
+                                  "kind": "list"
+                                },
+                                {
+                                  "kind": "parenthesized_expression"
+                                }
+                              ]
                             }
-                          ]
+                          },
+                          "kind": "delete_statement"
                         }
                       },
-                      "kind": "delete_statement"
-                    }
+                      {
+                        "matches": "aug-target"
+                      }
+                    ]
                   }
                 },
                 {
-                  "kind": "dotted_name",
-                  "regex": "^\\w+\\s*\\.\\s*namedtuple$",
-                  "inside": {
-                    "stopBy": "end",
-                    "kind": "case_pattern"
-                  },
-                  "has": {
-                    "kind": "identifier",
-                    "nthChild": 1,
-                    "resolves": {
-                      "import": [
-                        "collections"
-                      ]
-                    }
+                  "kind": "attribute",
+                  "resolves": {
+                    "import": [
+                      "collections.namedtuple"
+                    ]
                   }
                 }
               ]
@@ -100,6 +91,31 @@
                   ]
                 }
               }
+            },
+            "aug-target": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "augmented_assignment",
+                    "field": "left"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "parenthesized_expression"
+                      },
+                      {
+                        "kind": "tuple_pattern"
+                      }
+                    ],
+                    "matches": "aug-target"
+                  }
+                }
+              ]
             }
           },
           "rule": {
@@ -107,6 +123,41 @@
               {
                 "matches": "nt-ref",
                 "pattern": "$NT"
+              },
+              {
+                "kind": "dotted_name",
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "case_pattern"
+                },
+                "regex": "^(?P<NT>\\w+\\s*\\.\\s*namedtuple)(?:\\s*\\.|$)",
+                "has": {
+                  "kind": "identifier",
+                  "nthChild": 1,
+                  "resolves": {
+                    "import": [
+                      "collections"
+                    ]
+                  }
+                }
+              },
+              {
+                "kind": "attribute",
+                "regex": "^\\*\\s*(?P<NT>\\w+\\s*\\.\\s*namedtuple)$",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "object",
+                  "kind": "list_splat",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "resolves": {
+                      "import": [
+                        "collections"
+                      ]
+                    }
+                  }
+                }
               },
               {
                 "matches": "in-string"
@@ -118,7 +169,7 @@
       "violation": {
         "anchor": "capture.NT",
         "code": "PYI024",
-        "message": "Use `typing.NamedTuple` instead of `collections.namedtuple`: define a class inheriting `typing.NamedTuple` with an annotated field per attribute, or annotate with that class.",
+        "message": "Replace `collections.namedtuple` with a class inheriting `typing.NamedTuple` that annotates each field; keep it where field names are built at runtime or `rename=True` is needed.",
         "each": "NT",
         "suppress": {
           "noqa": {

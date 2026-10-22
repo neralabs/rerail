@@ -116,12 +116,7 @@
             "union-expr": {
               "any": [
                 {
-                  "kind": "binary_operator",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "field": "operator",
-                    "regex": "^\\|$"
-                  }
+                  "matches": "bar"
                 },
                 {
                   "kind": "union_type"
@@ -214,6 +209,16 @@
               }
             },
             "string-union": {
+              "any": [
+                {
+                  "matches": "simple-string"
+                },
+                {
+                  "matches": "complex-string"
+                }
+              ]
+            },
+            "simple-string": {
               "kind": "string",
               "not": {
                 "has": {
@@ -236,255 +241,239 @@
                   ]
                 }
               }
+            },
+            "complex-string": {
+              "any": [
+                {
+                  "kind": "concatenated_string"
+                },
+                {
+                  "kind": "string",
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "escape_sequence"
+                  }
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "any": [
+                  {
+                    "has": {
+                      "stopBy": "end",
+                      "matches": "string-union"
+                    }
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "end",
+                          "matches": "last-name",
+                          "all": [
+                            {
+                              "matches": "literal-name"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "end",
+                          "matches": "bar",
+                          "not": {
+                            "inside": {
+                              "stopBy": {
+                                "not": {
+                                  "kind": "parenthesized_expression"
+                                }
+                              },
+                              "matches": "bar"
+                            }
+                          },
+                          "count": {
+                            "has": {
+                              "stopBy": {
+                                "not": {
+                                  "any": [
+                                    {
+                                      "matches": "bar"
+                                    },
+                                    {
+                                      "kind": "parenthesized_expression"
+                                    }
+                                  ]
+                                }
+                              },
+                              "matches": "name-subscript"
+                            },
+                            "min": 2
+                          },
+                          "capture": "U"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "end",
+                          "matches": "last-name",
+                          "resolves": {
+                            "import": [
+                              "typing",
+                              "typing_extensions",
+                              "_typeshed"
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "end",
+                          "matches": "bar",
+                          "not": {
+                            "inside": {
+                              "stopBy": {
+                                "not": {
+                                  "kind": "parenthesized_expression"
+                                }
+                              },
+                              "matches": "bar"
+                            }
+                          },
+                          "count": {
+                            "has": {
+                              "stopBy": {
+                                "not": {
+                                  "any": [
+                                    {
+                                      "matches": "bar"
+                                    },
+                                    {
+                                      "kind": "parenthesized_expression"
+                                    }
+                                  ]
+                                }
+                              },
+                              "matches": "attr-subscript"
+                            },
+                            "min": 2
+                          },
+                          "capture": "U"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            "bar": {
+              "kind": "binary_operator",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "operator",
+                "regex": "^\\|$"
+              }
+            },
+            "name-subscript": {
+              "kind": "subscript",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "value",
+                "kind": "identifier"
+              }
+            },
+            "name-ref": {
+              "kind": "identifier",
+              "not": {
+                "any": [
+                  {
+                    "resolves": {
+                      "unresolved": true
+                    }
+                  },
+                  {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "^\\.$"
+                    }
+                  },
+                  {
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "regex": "^=$"
+                    }
+                  }
+                ]
+              }
+            },
+            "last-name": {
+              "matches": "name-ref",
+              "not": {
+                "any": [
+                  {
+                    "precedes": {
+                      "stopBy": "end",
+                      "any": [
+                        {
+                          "matches": "name-ref"
+                        },
+                        {
+                          "has": {
+                            "stopBy": "end",
+                            "matches": "name-ref"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "precedes": {
+                        "stopBy": "end",
+                        "any": [
+                          {
+                            "matches": "name-ref"
+                          },
+                          {
+                            "has": {
+                              "stopBy": "end",
+                              "matches": "name-ref"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "attr-subscript": {
+              "kind": "subscript",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "attribute",
+                "regex": "^[^.\\s]+\\s*\\.\\s*Literal$",
+                "precedes": {
+                  "stopBy": "neighbor",
+                  "regex": "^\\[$"
+                }
+              }
             }
           },
           "rule": {
-            "matches": "top-literal-union"
-          }
-        }
-      },
-      "violation": {
-        "anchor": "witness.span",
-        "code": "PYI030",
-        "message": "Merge the `Literal[...]` members of this union into one `Literal[...]` holding all their values, keeping the other members, e.g. `Literal[1, 2] | str`; the meaning is identical.",
-        "suppress": {
-          "noqa": {
-            "codes": [
-              "PYI030"
+            "any": [
+              {
+                "matches": "top-literal-union",
+                "pattern": "$U"
+              },
+              {
+                "matches": "string-union"
+              }
             ]
-          }
-        }
-      }
-    },
-    {
-      "id": "unnecessary-literal-union-in-string",
-      "forbid": {
-        "ast": {
-          "language": "python",
-          "utils": {
-            "literal-name": {
-              "any": [
-                {
-                  "any": [
-                    {
-                      "kind": "identifier"
-                    },
-                    {
-                      "kind": "attribute"
-                    }
-                  ],
-                  "resolves": {
-                    "import": [
-                      "typing.Literal",
-                      "typing_extensions.Literal",
-                      "_typeshed.Literal"
-                    ]
-                  }
-                },
-                {
-                  "kind": "parenthesized_expression",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "matches": "literal-name"
-                  }
-                }
-              ]
-            },
-            "union-name": {
-              "any": [
-                {
-                  "any": [
-                    {
-                      "kind": "identifier"
-                    },
-                    {
-                      "kind": "attribute"
-                    }
-                  ],
-                  "resolves": {
-                    "import": [
-                      "typing.Union",
-                      "typing_extensions.Union",
-                      "_typeshed.Union"
-                    ]
-                  }
-                },
-                {
-                  "kind": "parenthesized_expression",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "matches": "union-name"
-                  }
-                }
-              ]
-            },
-            "literal": {
-              "any": [
-                {
-                  "kind": "subscript",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "field": "value",
-                    "matches": "literal-name"
-                  }
-                },
-                {
-                  "kind": "generic_type",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "kind": "identifier",
-                    "matches": "literal-name"
-                  }
-                }
-              ]
-            },
-            "union-subscript": {
-              "any": [
-                {
-                  "kind": "subscript",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "field": "value",
-                    "matches": "union-name"
-                  }
-                },
-                {
-                  "kind": "generic_type",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "kind": "identifier",
-                    "matches": "union-name"
-                  }
-                }
-              ]
-            },
-            "union-expr": {
-              "any": [
-                {
-                  "kind": "binary_operator",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "field": "operator",
-                    "regex": "^\\|$"
-                  }
-                },
-                {
-                  "kind": "union_type"
-                },
-                {
-                  "matches": "union-subscript"
-                }
-              ]
-            },
-            "sole-slot": {
-              "any": [
-                {
-                  "follows": {
-                    "stopBy": "neighbor",
-                    "regex": "^\\[$"
-                  },
-                  "precedes": {
-                    "stopBy": "neighbor",
-                    "regex": "^\\]$"
-                  }
-                },
-                {
-                  "inside": {
-                    "stopBy": "neighbor",
-                    "any": [
-                      {
-                        "kind": "type"
-                      },
-                      {
-                        "kind": "parenthesized_expression"
-                      }
-                    ],
-                    "matches": "sole-slot"
-                  }
-                }
-              ]
-            },
-            "sole-tuple": {
-              "kind": "tuple",
-              "matches": "sole-slot"
-            },
-            "wrapper": {
-              "any": [
-                {
-                  "kind": "type"
-                },
-                {
-                  "kind": "type_parameter"
-                },
-                {
-                  "kind": "parenthesized_expression"
-                },
-                {
-                  "matches": "sole-tuple"
-                }
-              ]
-            },
-            "container": {
-              "any": [
-                {
-                  "matches": "union-expr"
-                },
-                {
-                  "matches": "wrapper"
-                }
-              ]
-            },
-            "top-literal-union": {
-              "matches": "union-expr",
-              "not": {
-                "inside": {
-                  "stopBy": {
-                    "not": {
-                      "matches": "wrapper"
-                    }
-                  },
-                  "matches": "union-expr"
-                }
-              },
-              "count": {
-                "has": {
-                  "stopBy": {
-                    "not": {
-                      "matches": "container"
-                    }
-                  },
-                  "matches": "literal"
-                },
-                "min": 2
-              }
-            },
-            "string-union": {
-              "kind": "string",
-              "not": {
-                "has": {
-                  "stopBy": "end",
-                  "kind": "escape_sequence"
-                }
-              },
-              "parse": {
-                "grammar": "annotation",
-                "has": {
-                  "stopBy": "end",
-                  "any": [
-                    {
-                      "matches": "top-literal-union",
-                      "capture": "U"
-                    },
-                    {
-                      "matches": "string-union"
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          "rule": {
-            "matches": "string-union"
           }
         }
       },
@@ -492,7 +481,7 @@
         "anchor": "capture.U",
         "each": "U",
         "code": "PYI030",
-        "message": "Merge the `Literal[...]` members of this union into one `Literal[...]` holding all their values, keeping the other members, e.g. `Literal[1, 2] | str`; the meaning is identical.",
+        "message": "Merge the `Literal[...]` members of this union into one `Literal[...]`, keeping the other members, e.g. `Literal[1, 2] | str`; leave it alone if fewer than two members are `Literal[...]`.",
         "suppress": {
           "noqa": {
             "codes": [

@@ -105,16 +105,7 @@
             "lower-node": {
               "all": [
                 {
-                  "not": {
-                    "any": [
-                      {
-                        "kind": "comment"
-                      },
-                      {
-                        "kind": "line_continuation"
-                      }
-                    ]
-                  }
+                  "matches": "code"
                 },
                 {
                   "not": {
@@ -134,16 +125,7 @@
             "step-node": {
               "all": [
                 {
-                  "not": {
-                    "any": [
-                      {
-                        "kind": "comment"
-                      },
-                      {
-                        "kind": "line_continuation"
-                      }
-                    ]
-                  }
+                  "matches": "code"
                 },
                 {
                   "not": {
@@ -276,6 +258,18 @@
                   }
                 }
               ]
+            },
+            "code": {
+              "not": {
+                "any": [
+                  {
+                    "kind": "comment"
+                  },
+                  {
+                    "kind": "line_continuation"
+                  }
+                ]
+              }
             }
           },
           "rule": {
@@ -321,16 +315,7 @@
                       "nthChild": {
                         "position": 1,
                         "ofRule": {
-                          "not": {
-                            "any": [
-                              {
-                                "kind": "comment"
-                              },
-                              {
-                                "kind": "line_continuation"
-                              }
-                            ]
-                          }
+                          "matches": "code"
                         }
                       },
                       "matches": "first-arg"
@@ -342,16 +327,7 @@
                       "nthChild": {
                         "position": 2,
                         "ofRule": {
-                          "not": {
-                            "any": [
-                              {
-                                "kind": "comment"
-                              },
-                              {
-                                "kind": "line_continuation"
-                              }
-                            ]
-                          }
+                          "matches": "code"
                         }
                       },
                       "matches": "second-arg"
@@ -364,16 +340,7 @@
                         "nthChild": {
                           "position": 3,
                           "ofRule": {
-                            "not": {
-                              "any": [
-                                {
-                                  "kind": "comment"
-                                },
-                                {
-                                  "kind": "line_continuation"
-                                }
-                              ]
-                            }
+                            "matches": "code"
                           }
                         },
                         "not": {
@@ -401,16 +368,16 @@
                 },
                 {
                   "compare": {
-                    "left": "V1",
-                    "op": "ne",
-                    "right": "V2"
+                    "left": "A2",
+                    "op": "eq",
+                    "right": "B2"
                   }
                 },
                 {
                   "compare": {
-                    "left": "S9",
+                    "left": "D1",
                     "op": "eq",
-                    "right": "V2"
+                    "right": "C2"
                   }
                 }
               ]
@@ -434,9 +401,16 @@
                 "value": true
               }
             },
-            "S1": {
+            "A1": {
               "replace": {
                 "source": "$V1",
+                "replace": "^(.*?)9*$",
+                "by": "0$1"
+              }
+            },
+            "S1": {
+              "replace": {
+                "source": "$A1",
                 "replace": "^([0-9]*)8$",
                 "by": "${1}9"
               }
@@ -496,6 +470,41 @@
                 "replace": "^([0-9]*)0$",
                 "by": "${1}1"
               }
+            },
+            "A2": {
+              "replace": {
+                "source": "$S9",
+                "replace": "^0(.)",
+                "by": "$1"
+              }
+            },
+            "B2": {
+              "replace": {
+                "source": "$V2",
+                "replace": "^(.*?)0*$",
+                "by": "$1"
+              }
+            },
+            "C1": {
+              "replace": {
+                "source": "$V1",
+                "replace": "^.*?(9*)$",
+                "by": "$1"
+              }
+            },
+            "D1": {
+              "replace": {
+                "source": "$C1",
+                "replace": "9",
+                "by": "0"
+              }
+            },
+            "C2": {
+              "replace": {
+                "source": "$V2",
+                "replace": "^.*?(0*)$",
+                "by": "$1"
+              }
             }
           }
         }
@@ -503,7 +512,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "RUF007",
-        "message": "Use `itertools.pairwise` over the range both slices cover (`pairwise($ID1)` for plain `$ID1`) instead of zipping it with a copy shifted by one; keep `zip` for custom types or differing bounds.",
+        "message": "Replace this `zip` with `itertools.pairwise($ID1)`, or pairwise over the common slice when both arguments are slices; keep `zip` if the upper bounds differ or `$ID1` is not a plain sequence.",
         "suppress": {
           "noqa": {
             "codes": [

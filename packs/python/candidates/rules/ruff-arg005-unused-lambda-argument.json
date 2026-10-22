@@ -160,15 +160,27 @@
               "latest": true,
               "used": false
             },
-            "inside": {
-              "stopBy": "end",
-              "kind": "lambda_parameters",
-              "inside": {
-                "stopBy": "neighbor",
-                "kind": "lambda",
-                "matches": "lambda"
+            "all": [
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "lambda_parameters",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "lambda"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "kind": "lambda"
+                  },
+                  "kind": "lambda",
+                  "matches": "lambda"
+                }
               }
-            },
+            ],
             "not": {
               "any": [
                 {
@@ -206,7 +218,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "ARG005",
-        "message": "Remove `$N` if no caller passes it, or prefix it with an underscore if the lambda must accept it.",
+        "message": "Remove `$N` if no caller passes it, or prefix it with an underscore if the lambda must accept it; keep the name when callers pass it by keyword.",
         "suppress": {
           "noqa": {
             "codes": [

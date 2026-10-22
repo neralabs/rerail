@@ -989,7 +989,7 @@
       "violation": {
         "code": "RUF046",
         "anchor": "witness.span",
-        "message": "Drop the `int(...)` wrapper; `round`, `math.ceil`, `math.floor` and `math.trunc` already return an int. Keep it if the operand's class overrides the matching dunder.",
+        "message": "Drop the `int(...)` wrapper; this call already returns an int. Keep it if the operand's type overrides `__round__`, `__ceil__`, `__floor__` or `__trunc__` to return a non-int.",
         "suppress": {
           "noqa": {
             "codes": [

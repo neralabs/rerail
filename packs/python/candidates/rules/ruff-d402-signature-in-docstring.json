@@ -163,119 +163,317 @@
                   "right": "NAME",
                   "text": "source"
                 }
+              },
+              {
+                "compare": {
+                  "left": "C9",
+                  "op": "eq",
+                  "right": "NAME",
+                  "text": "source"
+                }
+              },
+              {
+                "compare": {
+                  "left": "C10",
+                  "op": "eq",
+                  "right": "NAME",
+                  "text": "source"
+                }
+              },
+              {
+                "compare": {
+                  "left": "C11",
+                  "op": "eq",
+                  "right": "NAME",
+                  "text": "source"
+                }
+              },
+              {
+                "compare": {
+                  "left": "C12",
+                  "op": "eq",
+                  "right": "NAME",
+                  "text": "source"
+                }
+              },
+              {
+                "compare": {
+                  "left": "C13",
+                  "op": "eq",
+                  "right": "NAME",
+                  "text": "source"
+                }
+              },
+              {
+                "compare": {
+                  "left": "C14",
+                  "op": "eq",
+                  "right": "NAME",
+                  "text": "source"
+                }
+              },
+              {
+                "compare": {
+                  "left": "C15",
+                  "op": "eq",
+                  "right": "NAME",
+                  "text": "source"
+                }
+              },
+              {
+                "compare": {
+                  "left": "C16",
+                  "op": "eq",
+                  "right": "NAME",
+                  "text": "source"
+                }
+              },
+              {
+                "compare": {
+                  "left": "C17",
+                  "op": "eq",
+                  "right": "NAME",
+                  "text": "source"
+                }
+              },
+              {
+                "compare": {
+                  "left": "C18",
+                  "op": "eq",
+                  "right": "NAME",
+                  "text": "source"
+                }
+              },
+              {
+                "compare": {
+                  "left": "C19",
+                  "op": "eq",
+                  "right": "NAME",
+                  "text": "source"
+                }
+              },
+              {
+                "compare": {
+                  "left": "C20",
+                  "op": "eq",
+                  "right": "NAME",
+                  "text": "source"
+                }
+              },
+              {
+                "compare": {
+                  "left": "C21",
+                  "op": "eq",
+                  "right": "NAME",
+                  "text": "source"
+                }
+              },
+              {
+                "compare": {
+                  "left": "C22",
+                  "op": "eq",
+                  "right": "NAME",
+                  "text": "source"
+                }
+              },
+              {
+                "compare": {
+                  "left": "C23",
+                  "op": "eq",
+                  "right": "NAME",
+                  "text": "source"
+                }
+              },
+              {
+                "compare": {
+                  "left": "C24",
+                  "op": "eq",
+                  "right": "NAME",
+                  "text": "source"
+                }
               }
             ]
           },
           "transform": {
-            "R0": {
+            "LINE": {
               "replace": {
                 "source": "$DOC",
                 "replace": "^\\s*([^\\n\\r]*)[\\s\\S]*$",
                 "by": "$1"
               }
             },
-            "C1": {
+            "CALLS": {
               "replace": {
-                "source": "$R0",
-                "replace": "^(?:.*?(?:^|[ \\t;,])(\\w+)\\(.*|.*)$",
-                "by": "$1"
+                "source": "$LINE",
+                "replace": "(?:^|[ \\t;,])(\\w+)\\(|[\\s\\S]",
+                "by": " $1"
               }
             },
-            "R1": {
+            "C1": {
               "replace": {
-                "source": "$R0",
-                "replace": "^(?:.*?(?:^|[ \\t;,])\\w+\\((.*)|.*)$",
-                "by": "($1)"
+                "source": "$CALLS",
+                "replace": "^\\s*(\\S+)[\\s\\S]*$|^[\\s\\S]*$",
+                "by": "$1"
               }
             },
             "C2": {
               "replace": {
-                "source": "$R1",
-                "replace": "^(?:.*?(?:^|[ \\t;,])(\\w+)\\(.*|.*)$",
+                "source": "$CALLS",
+                "replace": "^\\s*(?:\\S+\\s+){1}(\\S+)[\\s\\S]*$|^[\\s\\S]*$",
                 "by": "$1"
-              }
-            },
-            "R2": {
-              "replace": {
-                "source": "$R1",
-                "replace": "^(?:.*?(?:^|[ \\t;,])\\w+\\((.*)|.*)$",
-                "by": "($1)"
               }
             },
             "C3": {
               "replace": {
-                "source": "$R2",
-                "replace": "^(?:.*?(?:^|[ \\t;,])(\\w+)\\(.*|.*)$",
+                "source": "$CALLS",
+                "replace": "^\\s*(?:\\S+\\s+){2}(\\S+)[\\s\\S]*$|^[\\s\\S]*$",
                 "by": "$1"
-              }
-            },
-            "R3": {
-              "replace": {
-                "source": "$R2",
-                "replace": "^(?:.*?(?:^|[ \\t;,])\\w+\\((.*)|.*)$",
-                "by": "($1)"
               }
             },
             "C4": {
               "replace": {
-                "source": "$R3",
-                "replace": "^(?:.*?(?:^|[ \\t;,])(\\w+)\\(.*|.*)$",
+                "source": "$CALLS",
+                "replace": "^\\s*(?:\\S+\\s+){3}(\\S+)[\\s\\S]*$|^[\\s\\S]*$",
                 "by": "$1"
-              }
-            },
-            "R4": {
-              "replace": {
-                "source": "$R3",
-                "replace": "^(?:.*?(?:^|[ \\t;,])\\w+\\((.*)|.*)$",
-                "by": "($1)"
               }
             },
             "C5": {
               "replace": {
-                "source": "$R4",
-                "replace": "^(?:.*?(?:^|[ \\t;,])(\\w+)\\(.*|.*)$",
+                "source": "$CALLS",
+                "replace": "^\\s*(?:\\S+\\s+){4}(\\S+)[\\s\\S]*$|^[\\s\\S]*$",
                 "by": "$1"
-              }
-            },
-            "R5": {
-              "replace": {
-                "source": "$R4",
-                "replace": "^(?:.*?(?:^|[ \\t;,])\\w+\\((.*)|.*)$",
-                "by": "($1)"
               }
             },
             "C6": {
               "replace": {
-                "source": "$R5",
-                "replace": "^(?:.*?(?:^|[ \\t;,])(\\w+)\\(.*|.*)$",
+                "source": "$CALLS",
+                "replace": "^\\s*(?:\\S+\\s+){5}(\\S+)[\\s\\S]*$|^[\\s\\S]*$",
                 "by": "$1"
-              }
-            },
-            "R6": {
-              "replace": {
-                "source": "$R5",
-                "replace": "^(?:.*?(?:^|[ \\t;,])\\w+\\((.*)|.*)$",
-                "by": "($1)"
               }
             },
             "C7": {
               "replace": {
-                "source": "$R6",
-                "replace": "^(?:.*?(?:^|[ \\t;,])(\\w+)\\(.*|.*)$",
+                "source": "$CALLS",
+                "replace": "^\\s*(?:\\S+\\s+){6}(\\S+)[\\s\\S]*$|^[\\s\\S]*$",
                 "by": "$1"
-              }
-            },
-            "R7": {
-              "replace": {
-                "source": "$R6",
-                "replace": "^(?:.*?(?:^|[ \\t;,])\\w+\\((.*)|.*)$",
-                "by": "($1)"
               }
             },
             "C8": {
               "replace": {
-                "source": "$R7",
-                "replace": "^(?:.*?(?:^|[ \\t;,])(\\w+)\\(.*|.*)$",
+                "source": "$CALLS",
+                "replace": "^\\s*(?:\\S+\\s+){7}(\\S+)[\\s\\S]*$|^[\\s\\S]*$",
+                "by": "$1"
+              }
+            },
+            "C9": {
+              "replace": {
+                "source": "$CALLS",
+                "replace": "^\\s*(?:\\S+\\s+){8}(\\S+)[\\s\\S]*$|^[\\s\\S]*$",
+                "by": "$1"
+              }
+            },
+            "C10": {
+              "replace": {
+                "source": "$CALLS",
+                "replace": "^\\s*(?:\\S+\\s+){9}(\\S+)[\\s\\S]*$|^[\\s\\S]*$",
+                "by": "$1"
+              }
+            },
+            "C11": {
+              "replace": {
+                "source": "$CALLS",
+                "replace": "^\\s*(?:\\S+\\s+){10}(\\S+)[\\s\\S]*$|^[\\s\\S]*$",
+                "by": "$1"
+              }
+            },
+            "C12": {
+              "replace": {
+                "source": "$CALLS",
+                "replace": "^\\s*(?:\\S+\\s+){11}(\\S+)[\\s\\S]*$|^[\\s\\S]*$",
+                "by": "$1"
+              }
+            },
+            "C13": {
+              "replace": {
+                "source": "$CALLS",
+                "replace": "^\\s*(?:\\S+\\s+){12}(\\S+)[\\s\\S]*$|^[\\s\\S]*$",
+                "by": "$1"
+              }
+            },
+            "C14": {
+              "replace": {
+                "source": "$CALLS",
+                "replace": "^\\s*(?:\\S+\\s+){13}(\\S+)[\\s\\S]*$|^[\\s\\S]*$",
+                "by": "$1"
+              }
+            },
+            "C15": {
+              "replace": {
+                "source": "$CALLS",
+                "replace": "^\\s*(?:\\S+\\s+){14}(\\S+)[\\s\\S]*$|^[\\s\\S]*$",
+                "by": "$1"
+              }
+            },
+            "C16": {
+              "replace": {
+                "source": "$CALLS",
+                "replace": "^\\s*(?:\\S+\\s+){15}(\\S+)[\\s\\S]*$|^[\\s\\S]*$",
+                "by": "$1"
+              }
+            },
+            "C17": {
+              "replace": {
+                "source": "$CALLS",
+                "replace": "^\\s*(?:\\S+\\s+){16}(\\S+)[\\s\\S]*$|^[\\s\\S]*$",
+                "by": "$1"
+              }
+            },
+            "C18": {
+              "replace": {
+                "source": "$CALLS",
+                "replace": "^\\s*(?:\\S+\\s+){17}(\\S+)[\\s\\S]*$|^[\\s\\S]*$",
+                "by": "$1"
+              }
+            },
+            "C19": {
+              "replace": {
+                "source": "$CALLS",
+                "replace": "^\\s*(?:\\S+\\s+){18}(\\S+)[\\s\\S]*$|^[\\s\\S]*$",
+                "by": "$1"
+              }
+            },
+            "C20": {
+              "replace": {
+                "source": "$CALLS",
+                "replace": "^\\s*(?:\\S+\\s+){19}(\\S+)[\\s\\S]*$|^[\\s\\S]*$",
+                "by": "$1"
+              }
+            },
+            "C21": {
+              "replace": {
+                "source": "$CALLS",
+                "replace": "^\\s*(?:\\S+\\s+){20}(\\S+)[\\s\\S]*$|^[\\s\\S]*$",
+                "by": "$1"
+              }
+            },
+            "C22": {
+              "replace": {
+                "source": "$CALLS",
+                "replace": "^\\s*(?:\\S+\\s+){21}(\\S+)[\\s\\S]*$|^[\\s\\S]*$",
+                "by": "$1"
+              }
+            },
+            "C23": {
+              "replace": {
+                "source": "$CALLS",
+                "replace": "^\\s*(?:\\S+\\s+){22}(\\S+)[\\s\\S]*$|^[\\s\\S]*$",
+                "by": "$1"
+              }
+            },
+            "C24": {
+              "replace": {
+                "source": "$CALLS",
+                "replace": "^\\s*(?:\\S+\\s+){23}(\\S+)[\\s\\S]*$|^[\\s\\S]*$",
                 "by": "$1"
               }
             }
@@ -285,7 +483,7 @@
       "violation": {
         "code": "D402",
         "anchor": "witness.span",
-        "message": "Replace this docstring's first line, which restates `$NAME(...)`, with a sentence on what the function does; the signature and annotations already show its parameters.",
+        "message": "Reword this docstring's first line so it no longer spells `$NAME(...)`; say what the function does, since the signature already shows its parameters.",
         "suppress": {
           "noqa": {
             "codes": [

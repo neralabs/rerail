@@ -281,6 +281,40 @@
                       }
                     }
                   }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "only": true,
+                      "site": {
+                        "any": [
+                          {
+                            "kind": "as_pattern",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "precedes": {
+                                "stopBy": "neighbor",
+                                "regex": "^as$"
+                              },
+                              "matches": "list-init"
+                            }
+                          },
+                          {
+                            "kind": "function_definition",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "field": "return_type",
+                              "kind": "type",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "matches": "list-ann"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
                 }
               ]
             },
@@ -387,7 +421,14 @@
                     "follows": {
                       "stopBy": "end",
                       "not": {
-                        "kind": "comment"
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "regex": "^;$"
+                          }
+                        ]
                       }
                     }
                   },
@@ -395,7 +436,14 @@
                     "precedes": {
                       "stopBy": "end",
                       "not": {
-                        "kind": "comment"
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "regex": "^;$"
+                          }
+                        ]
                       }
                     }
                   }
@@ -421,11 +469,7 @@
                   },
                   "has": {
                     "stopBy": "neighbor",
-                    "kind": "identifier",
-                    "pattern": "$T",
-                    "binds": {
-                      "outer": false
-                    }
+                    "matches": "loop-target"
                   }
                 }
               ]
@@ -549,6 +593,37 @@
                       }
                     ]
                   }
+                },
+                {
+                  "not": {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "function_definition"
+                    },
+                    "any": [
+                      {
+                        "precedes": {
+                          "stopBy": "end",
+                          "matches": "has-nonlocal"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "stopBy": {
+                            "kind": "block",
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "kind": "function_definition"
+                            }
+                          },
+                          "precedes": {
+                            "stopBy": "end",
+                            "matches": "has-nonlocal"
+                          }
+                        }
+                      }
+                    ]
+                  }
                 }
               ]
             },
@@ -568,6 +643,29 @@
                       "right": "T",
                       "op": "eq",
                       "text": "structure"
+                    }
+                  }
+                }
+              ]
+            },
+            "has-nonlocal": {
+              "any": [
+                {
+                  "kind": "nonlocal_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "pattern": "$T"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "nonlocal_statement",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "pattern": "$T"
                     }
                   }
                 }
@@ -659,7 +757,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PERF401",
-        "message": "Replace this loop with a list comprehension, or with `$L.extend(...)` of a generator when `$L` already holds items or is used before the loop.",
+        "message": "Replace this loop with a list comprehension; if `$L` is not a fresh empty list assigned just before the loop, use `$L.extend(...)` of a generator (of a list comprehension under `async for`).",
         "suppress": {
           "noqa": {
             "codes": [

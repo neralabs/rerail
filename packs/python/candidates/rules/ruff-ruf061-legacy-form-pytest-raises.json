@@ -127,15 +127,12 @@
           },
           "func-keyword": {
             "has": {
-              "field": "arguments",
+              "stopBy": "neighbor",
               "kind": "argument_list",
               "has": {
                 "stopBy": "neighbor",
                 "kind": "keyword_argument",
-                "has": {
-                  "field": "name",
-                  "regex": "^func$"
-                }
+                "regex": "^func[\\s=#\\\\]"
               }
             }
           },
@@ -171,7 +168,7 @@
           },
           "func-second": {
             "has": {
-              "field": "arguments",
+              "stopBy": "neighbor",
               "kind": "argument_list",
               "has": {
                 "stopBy": "neighbor",
@@ -180,24 +177,141 @@
             }
           },
           "func-first": {
-            "any": [
-              {
-                "has": {
-                  "field": "arguments",
+            "has": {
+              "stopBy": "neighbor",
+              "any": [
+                {
                   "kind": "argument_list",
                   "has": {
                     "stopBy": "neighbor",
                     "matches": "first-arg"
                   }
-                }
-              },
-              {
-                "has": {
-                  "field": "arguments",
+                },
+                {
                   "kind": "generator_expression"
                 }
+              ]
+            }
+          },
+          "raises-call": {
+            "kind": "call",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "callee-raises"
+            },
+            "any": [
+              {
+                "matches": "func-keyword"
+              },
+              {
+                "matches": "func-second"
               }
             ]
+          },
+          "raises-in-string": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "raises-call",
+                    "capture": "C"
+                  },
+                  {
+                    "matches": "raises-in-string"
+                  }
+                ]
+              }
+            }
+          },
+          "warns-call": {
+            "kind": "call",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "callee-warns"
+            },
+            "any": [
+              {
+                "matches": "func-keyword"
+              },
+              {
+                "matches": "func-second"
+              }
+            ]
+          },
+          "warns-in-string": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "warns-call",
+                    "capture": "C"
+                  },
+                  {
+                    "matches": "warns-in-string"
+                  }
+                ]
+              }
+            }
+          },
+          "deprecated-call-call": {
+            "kind": "call",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "callee-deprecated-call"
+            },
+            "any": [
+              {
+                "matches": "func-keyword"
+              },
+              {
+                "matches": "func-first"
+              }
+            ]
+          },
+          "deprecated-call-in-string": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "deprecated-call-call",
+                    "capture": "C"
+                  },
+                  {
+                    "matches": "deprecated-call-in-string"
+                  }
+                ]
+              }
+            }
           }
         }
       }
@@ -208,32 +322,22 @@
         "ast": {
           "language": "python",
           "rule": {
-            "kind": "call",
-            "all": [
+            "any": [
               {
-                "has": {
-                  "field": "function",
-                  "matches": "callee-raises"
-                }
+                "matches": "raises-call",
+                "pattern": "$C"
               },
               {
-                "any": [
-                  {
-                    "matches": "func-keyword"
-                  },
-                  {
-                    "matches": "func-second"
-                  }
-                ]
+                "matches": "raises-in-string"
               }
             ]
           }
         }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "capture.C",
         "code": "RUF061",
-        "message": "Use `with pytest.raises(Exc) as excinfo:` and call the code under test inside the block, instead of passing the callable to `pytest.raises`.",
+        "message": "Use `with pytest.raises(Exc) as excinfo:` and call the function with its remaining arguments inside the block, instead of passing the callable to `pytest.raises`.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -249,32 +353,22 @@
         "ast": {
           "language": "python",
           "rule": {
-            "kind": "call",
-            "all": [
+            "any": [
               {
-                "has": {
-                  "field": "function",
-                  "matches": "callee-warns"
-                }
+                "matches": "warns-call",
+                "pattern": "$C"
               },
               {
-                "any": [
-                  {
-                    "matches": "func-keyword"
-                  },
-                  {
-                    "matches": "func-second"
-                  }
-                ]
+                "matches": "warns-in-string"
               }
             ]
           }
         }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "capture.C",
         "code": "RUF061",
-        "message": "Use `with pytest.warns(Warn):` and call the code under test inside the block, instead of passing the callable to `pytest.warns`.",
+        "message": "Use `with pytest.warns(Warn):` and call the function with its remaining arguments inside the block, instead of passing the callable to `pytest.warns`.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -290,32 +384,22 @@
         "ast": {
           "language": "python",
           "rule": {
-            "kind": "call",
-            "all": [
+            "any": [
               {
-                "has": {
-                  "field": "function",
-                  "matches": "callee-deprecated-call"
-                }
+                "matches": "deprecated-call-call",
+                "pattern": "$C"
               },
               {
-                "any": [
-                  {
-                    "matches": "func-keyword"
-                  },
-                  {
-                    "matches": "func-first"
-                  }
-                ]
+                "matches": "deprecated-call-in-string"
               }
             ]
           }
         }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "capture.C",
         "code": "RUF061",
-        "message": "Use `with pytest.deprecated_call():` and call the code under test inside the block, instead of passing the callable to `pytest.deprecated_call`.",
+        "message": "Use `with pytest.deprecated_call():` and call the function with its remaining arguments inside the block, instead of passing the callable to `pytest.deprecated_call`.",
         "suppress": {
           "noqa": {
             "codes": [

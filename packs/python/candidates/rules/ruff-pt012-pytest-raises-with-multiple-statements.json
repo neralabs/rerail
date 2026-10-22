@@ -89,7 +89,8 @@
                   ]
                 }
               }
-            }
+            },
+            "regex": "^(?P<S>(?:[^\"'#]|#[^\\n]*|\"\"\"(?:[^\"\\\\]|\\\\[\\s\\S]|\"\"?(?:[^\"\\\\]|\\\\[\\s\\S]))*\"\"\"|'''(?:[^'\\\\]|\\\\[\\s\\S]|''?(?:[^'\\\\]|\\\\[\\s\\S]))*'''|\"(?:[^\\n\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^\\n'\\\\]|\\\\[\\s\\S])*')*?(?:[^\\s\"'#]|\"\"\"(?:[^\"\\\\]|\\\\[\\s\\S]|\"\"?(?:[^\"\\\\]|\\\\[\\s\\S]))*\"\"\"|'''(?:[^'\\\\]|\\\\[\\s\\S]|''?(?:[^'\\\\]|\\\\[\\s\\S]))*'''|\"(?:[^\\n\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^\\n'\\\\]|\\\\[\\s\\S])*'))(?:\\s|#[^\\n]*)*$"
           },
           "stmt": {
             "not": {
@@ -99,6 +100,9 @@
                 },
                 {
                   "kind": "line_continuation"
+                },
+                {
+                  "regex": "^;$"
                 }
               ]
             }
@@ -178,11 +182,7 @@
                           "kind": "pass_statement"
                         },
                         {
-                          "kind": "expression_statement",
-                          "has": {
-                            "stopBy": "neighbor",
-                            "matches": "ellipsis-expr"
-                          }
+                          "matches": "ellipsis-stmt"
                         }
                       ]
                     }
@@ -230,6 +230,19 @@
                 "matches": "nontrivial-for"
               }
             ]
+          },
+          "ellipsis-stmt": {
+            "kind": "expression_statement",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "ellipsis-expr"
+            },
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "regex": "^,$"
+              }
+            }
           }
         }
       }
@@ -254,7 +267,7 @@
         }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "capture.S",
         "code": "PT012",
         "message": "Keep only the statement that should raise inside `pytest.raises`; move setup and follow-up statements before or after the `with` block, unless each one is needed to trigger the error.",
         "suppress": {
@@ -292,7 +305,7 @@
         }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "capture.S",
         "code": "PT012",
         "message": "Put only the call that should raise inside `pytest.raises`; move the surrounding `if`, loop, `try` or nested `with` logic out of the block, unless it is needed to trigger the error.",
         "suppress": {

@@ -148,6 +148,171 @@
           }
         }
       }
+    },
+    {
+      "id": "decimal-from-float-literal-in-string-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "decimal.Decimal"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            },
+            "float-operand": {
+              "any": [
+                {
+                  "matches": "float-expr"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "float-operand"
+                  }
+                }
+              ]
+            },
+            "float-expr": {
+              "any": [
+                {
+                  "kind": "float",
+                  "regex": "^[^jJ]*$"
+                },
+                {
+                  "kind": "unary_operator",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "regex": "^[+-]$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "float-operand"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "first-arg": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "argument_list",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "call",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "callee"
+                      }
+                    }
+                  },
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "line_continuation"
+                          },
+                          {
+                            "regex": "^\\($"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "first-arg"
+                  }
+                }
+              ]
+            },
+            "in-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "all": [
+                        {
+                          "matches": "float-expr"
+                        },
+                        {
+                          "matches": "first-arg"
+                        }
+                      ],
+                      "capture": "ARG"
+                    },
+                    {
+                      "matches": "in-string"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "matches": "in-string"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.ARG",
+        "code": "RUF032",
+        "message": "Pass the number as a string, such as `Decimal(\"1.2345\")`, so it keeps the exact decimal value; keep the float only if its exact binary value is intended.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF032"
+            ]
+          }
+        }
+      }
     }
   ]
 }

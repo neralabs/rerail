@@ -250,7 +250,14 @@
                     "position": 11,
                     "ofRule": {
                       "not": {
-                        "kind": "comment"
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "line_continuation"
+                          }
+                        ]
                       }
                     }
                   }
@@ -504,8 +511,7 @@
                   "has": {
                     "stopBy": "neighbor",
                     "field": "left",
-                    "kind": "identifier",
-                    "regex": "^__all__$"
+                    "matches": "all-name"
                   },
                   "not": {
                     "inside": {
@@ -518,8 +524,7 @@
                   "has": {
                     "stopBy": "neighbor",
                     "field": "left",
-                    "kind": "identifier",
-                    "regex": "^(?:__match_args__|__slots__)$"
+                    "matches": "class-dunder-name"
                   },
                   "inside": {
                     "stopBy": {
@@ -533,6 +538,62 @@
                       ]
                     },
                     "kind": "class_definition"
+                  }
+                }
+              ]
+            },
+            "all-name": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^__all__$"
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "tuple_pattern",
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "regex": "^,$"
+                        }
+                      }
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "all-name"
+                  }
+                }
+              ]
+            },
+            "class-dunder-name": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^(?:__match_args__|__slots__)$"
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "tuple_pattern",
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "regex": "^,$"
+                        }
+                      }
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "class-dunder-name"
                   }
                 }
               ]
@@ -606,6 +667,9 @@
                               },
                               {
                                 "kind": "attribute"
+                              },
+                              {
+                                "kind": "parenthesized_expression"
                               }
                             ],
                             "resolves": {
@@ -719,6 +783,9 @@
                                   },
                                   {
                                     "kind": "attribute"
+                                  },
+                                  {
+                                    "kind": "parenthesized_expression"
                                   }
                                 ],
                                 "resolves": {

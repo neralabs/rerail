@@ -69,7 +69,8 @@
                 "kind": "unary_operator",
                 "has": { "stopBy": "neighbor", "field": "operator", "regex": "^[+-]$" },
                 "all": [{ "has": { "stopBy": "neighbor", "field": "argument", "matches": "literal-int" } }]
-              }
+              },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "signed-int" } }
             ]
           },
           "callee-float": {
@@ -91,7 +92,8 @@
                 "kind": "unary_operator",
                 "has": { "stopBy": "neighbor", "field": "operator", "regex": "^[+-]$" },
                 "all": [{ "has": { "stopBy": "neighbor", "field": "argument", "matches": "literal-float" } }]
-              }
+              },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "signed-float" } }
             ]
           },
           "callee-bool": {
@@ -126,126 +128,113 @@
                 "kind": "unary_operator",
                 "has": { "stopBy": "neighbor", "field": "operator", "regex": "^[+-]$" },
                 "all": [{ "has": { "stopBy": "neighbor", "field": "argument", "matches": "literal-complex" } }]
-              }
+              },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "signed-complex" } }
             ]
           },
           "unnested-call": { "kind": "call", "not": { "matches": "nested-fstring" } },
           "empty-arguments": { "kind": "argument_list", "not": { "has": { "stopBy": "neighbor", "not": { "matches": "not-argument" } } } },
-          "single-argument": { "kind": "argument_list", "count": { "has": { "stopBy": "neighbor", "not": { "matches": "not-argument" } }, "min": 1, "max": 1 } }
+          "single-argument": { "kind": "argument_list", "count": { "has": { "stopBy": "neighbor", "not": { "matches": "not-argument" } }, "min": 1, "max": 1 } },
+          "callee-builtin": {
+            "any": [
+              { "matches": "callee-str" },
+              { "matches": "callee-bytes" },
+              { "matches": "callee-int" },
+              { "matches": "callee-float" },
+              { "matches": "callee-bool" },
+              { "matches": "callee-complex" }
+            ]
+          },
+          "kw-object-str": {
+            "kind": "keyword_argument",
+            "all": [
+              { "has": { "stopBy": "neighbor", "field": "name", "regex": "^object$" } },
+              { "has": { "stopBy": "neighbor", "field": "value", "matches": "literal-str" } }
+            ]
+          },
+          "kw-real-complex": {
+            "kind": "keyword_argument",
+            "all": [
+              { "has": { "stopBy": "neighbor", "field": "name", "regex": "^real$" } },
+              { "has": { "stopBy": "neighbor", "field": "value", "matches": "signed-complex" } }
+            ]
+          },
+          "empty-call": {
+            "matches": "unnested-call",
+            "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-builtin" },
+            "all": [{ "has": { "stopBy": "neighbor", "field": "arguments", "matches": "empty-arguments" } }]
+          },
+          "literal-call": {
+            "matches": "unnested-call",
+            "has": { "stopBy": "neighbor", "field": "arguments", "matches": "single-argument" },
+            "any": [
+              {
+                "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-str" },
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "arguments",
+                      "has": { "stopBy": "neighbor", "any": [{ "matches": "literal-str" }, { "matches": "kw-object-str" }] }
+                    }
+                  }
+                ]
+              },
+              {
+                "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-bytes" },
+                "all": [{ "has": { "stopBy": "neighbor", "field": "arguments", "has": { "stopBy": "neighbor", "matches": "literal-bytes" } } }]
+              },
+              {
+                "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-int" },
+                "all": [{ "has": { "stopBy": "neighbor", "field": "arguments", "has": { "stopBy": "neighbor", "matches": "signed-int" } } }]
+              },
+              {
+                "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-float" },
+                "all": [{ "has": { "stopBy": "neighbor", "field": "arguments", "has": { "stopBy": "neighbor", "matches": "signed-float" } } }]
+              },
+              {
+                "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-bool" },
+                "all": [{ "has": { "stopBy": "neighbor", "field": "arguments", "has": { "stopBy": "neighbor", "matches": "literal-bool" } } }]
+              },
+              {
+                "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-complex" },
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "arguments",
+                      "has": { "stopBy": "neighbor", "any": [{ "matches": "signed-complex" }, { "matches": "kw-real-complex" }] }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
         }
       }
     },
     {
-      "id": "str-without-argument",
+      "id": "call-without-argument",
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": {
-            "matches": "unnested-call",
-            "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-str" },
-            "all": [{ "has": { "stopBy": "neighbor", "field": "arguments", "matches": "empty-arguments" } }]
-          }
+          "utils": {
+            "empty-call-in-string": {
+              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "parse": {
+                "grammar": "annotation",
+                "has": { "stopBy": "end", "any": [{ "matches": "empty-call", "capture": "C" }, { "matches": "empty-call-in-string" }] }
+              }
+            }
+          },
+          "rule": { "any": [{ "matches": "empty-call", "pattern": "$C" }, { "matches": "empty-call-in-string" }] }
         }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "capture.C",
         "code": "UP018",
-        "message": "Replace this `str()` call with the literal `\"\"`.",
-        "suppress": { "noqa": { "codes": ["UP018"] } }
-      }
-    },
-    {
-      "id": "bytes-without-argument",
-      "forbid": {
-        "ast": {
-          "language": "python",
-          "rule": {
-            "matches": "unnested-call",
-            "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-bytes" },
-            "all": [{ "has": { "stopBy": "neighbor", "field": "arguments", "matches": "empty-arguments" } }]
-          }
-        }
-      },
-      "violation": {
-        "anchor": "witness.span",
-        "code": "UP018",
-        "message": "Replace this `bytes()` call with the literal `b\"\"`.",
-        "suppress": { "noqa": { "codes": ["UP018"] } }
-      }
-    },
-    {
-      "id": "int-without-argument",
-      "forbid": {
-        "ast": {
-          "language": "python",
-          "rule": {
-            "matches": "unnested-call",
-            "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-int" },
-            "all": [{ "has": { "stopBy": "neighbor", "field": "arguments", "matches": "empty-arguments" } }]
-          }
-        }
-      },
-      "violation": {
-        "anchor": "witness.span",
-        "code": "UP018",
-        "message": "Replace this `int()` call with the literal `0`.",
-        "suppress": { "noqa": { "codes": ["UP018"] } }
-      }
-    },
-    {
-      "id": "float-without-argument",
-      "forbid": {
-        "ast": {
-          "language": "python",
-          "rule": {
-            "matches": "unnested-call",
-            "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-float" },
-            "all": [{ "has": { "stopBy": "neighbor", "field": "arguments", "matches": "empty-arguments" } }]
-          }
-        }
-      },
-      "violation": {
-        "anchor": "witness.span",
-        "code": "UP018",
-        "message": "Replace this `float()` call with the literal `0.0`.",
-        "suppress": { "noqa": { "codes": ["UP018"] } }
-      }
-    },
-    {
-      "id": "bool-without-argument",
-      "forbid": {
-        "ast": {
-          "language": "python",
-          "rule": {
-            "matches": "unnested-call",
-            "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-bool" },
-            "all": [{ "has": { "stopBy": "neighbor", "field": "arguments", "matches": "empty-arguments" } }]
-          }
-        }
-      },
-      "violation": {
-        "anchor": "witness.span",
-        "code": "UP018",
-        "message": "Replace this `bool()` call with the literal `False`.",
-        "suppress": { "noqa": { "codes": ["UP018"] } }
-      }
-    },
-    {
-      "id": "complex-without-argument",
-      "forbid": {
-        "ast": {
-          "language": "python",
-          "rule": {
-            "matches": "unnested-call",
-            "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-complex" },
-            "all": [{ "has": { "stopBy": "neighbor", "field": "arguments", "matches": "empty-arguments" } }]
-          }
-        }
-      },
-      "violation": {
-        "anchor": "witness.span",
-        "code": "UP018",
-        "message": "Replace this `complex()` call with the literal `0j`.",
+        "message": "Replace this call with the empty literal of its type: `\"\"` for str, `b\"\"` for bytes, `0` for int, `0.0` for float, `False` for bool, `0j` for complex.",
+        "each": "C",
         "suppress": { "noqa": { "codes": ["UP018"] } }
       }
     },
@@ -254,142 +243,23 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": {
-            "any": [
-              {
-                "matches": "unnested-call",
-                "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-str" },
-                "all": [
-                  {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "field": "arguments",
-                      "matches": "single-argument",
-                      "has": { "stopBy": "neighbor", "matches": "literal-str" }
-                    }
-                  }
-                ]
-              },
-              {
-                "matches": "unnested-call",
-                "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-str" },
-                "all": [
-                  {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "field": "arguments",
-                      "matches": "single-argument",
-                      "has": {
-                        "stopBy": "neighbor",
-                        "kind": "keyword_argument",
-                        "all": [
-                          { "has": { "stopBy": "neighbor", "field": "name", "regex": "^object$" } },
-                          { "has": { "stopBy": "neighbor", "field": "value", "matches": "literal-str" } }
-                        ]
-                      }
-                    }
-                  }
-                ]
-              },
-              {
-                "matches": "unnested-call",
-                "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-bytes" },
-                "all": [
-                  {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "field": "arguments",
-                      "matches": "single-argument",
-                      "has": { "stopBy": "neighbor", "matches": "literal-bytes" }
-                    }
-                  }
-                ]
-              },
-              {
-                "matches": "unnested-call",
-                "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-int" },
-                "all": [
-                  {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "field": "arguments",
-                      "matches": "single-argument",
-                      "has": { "stopBy": "neighbor", "matches": "signed-int" }
-                    }
-                  }
-                ]
-              },
-              {
-                "matches": "unnested-call",
-                "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-float" },
-                "all": [
-                  {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "field": "arguments",
-                      "matches": "single-argument",
-                      "has": { "stopBy": "neighbor", "matches": "signed-float" }
-                    }
-                  }
-                ]
-              },
-              {
-                "matches": "unnested-call",
-                "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-bool" },
-                "all": [
-                  {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "field": "arguments",
-                      "matches": "single-argument",
-                      "has": { "stopBy": "neighbor", "matches": "literal-bool" }
-                    }
-                  }
-                ]
-              },
-              {
-                "matches": "unnested-call",
-                "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-complex" },
-                "all": [
-                  {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "field": "arguments",
-                      "matches": "single-argument",
-                      "has": { "stopBy": "neighbor", "matches": "signed-complex" }
-                    }
-                  }
-                ]
-              },
-              {
-                "matches": "unnested-call",
-                "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-complex" },
-                "all": [
-                  {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "field": "arguments",
-                      "matches": "single-argument",
-                      "has": {
-                        "stopBy": "neighbor",
-                        "kind": "keyword_argument",
-                        "all": [
-                          { "has": { "stopBy": "neighbor", "field": "name", "regex": "^real$" } },
-                          { "has": { "stopBy": "neighbor", "field": "value", "matches": "signed-complex" } }
-                        ]
-                      }
-                    }
-                  }
-                ]
+          "utils": {
+            "literal-call-in-string": {
+              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "parse": {
+                "grammar": "annotation",
+                "has": { "stopBy": "end", "any": [{ "matches": "literal-call", "capture": "C" }, { "matches": "literal-call-in-string" }] }
               }
-            ]
-          }
+            }
+          },
+          "rule": { "any": [{ "matches": "literal-call", "pattern": "$C" }, { "matches": "literal-call-in-string" }] }
         }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "capture.C",
         "code": "UP018",
-        "message": "Replace this call with the literal inside it; wrapping a literal of the same type in its own type changes nothing.",
+        "message": "Replace this call with the literal it wraps, keeping parentheses where needed, as in `(1).real`; converting a literal to its own type changes nothing.",
+        "each": "C",
         "suppress": { "noqa": { "codes": ["UP018"] } }
       }
     }

@@ -86,11 +86,8 @@
                   "kind": "call",
                   "has": {
                     "stopBy": "neighbor",
-                    "matches": "dataclass-ref",
-                    "precedes": {
-                      "stopBy": "neighbor",
-                      "kind": "argument_list"
-                    }
+                    "field": "function",
+                    "matches": "dataclass-ref"
                   }
                 },
                 {
@@ -111,11 +108,8 @@
                   "kind": "call",
                   "has": {
                     "stopBy": "neighbor",
-                    "matches": "attrs-ref",
-                    "precedes": {
-                      "stopBy": "neighbor",
-                      "kind": "argument_list"
-                    }
+                    "field": "function",
+                    "matches": "attrs-ref"
                   }
                 },
                 {
@@ -127,38 +121,139 @@
                 }
               ]
             },
+            "enum-ref-q": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "enum.Enum",
+                  "enum.Flag",
+                  "enum.IntEnum",
+                  "enum.IntFlag",
+                  "enum.StrEnum",
+                  "enum.ReprEnum",
+                  "enum.CheckEnum"
+                ]
+              }
+            },
+            "enum-base-q": {
+              "any": [
+                {
+                  "matches": "enum-ref-q"
+                },
+                {
+                  "kind": "subscript",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "enum-ref-q"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "enum-base-q"
+                  }
+                }
+              ]
+            },
             "enum-ref": {
               "any": [
                 {
-                  "any": [
-                    {
-                      "kind": "identifier"
-                    },
-                    {
-                      "kind": "attribute"
-                    }
-                  ],
-                  "resolves": {
-                    "import": [
-                      "enum.Enum",
-                      "enum.Flag",
-                      "enum.IntEnum",
-                      "enum.IntFlag",
-                      "enum.StrEnum",
-                      "enum.ReprEnum",
-                      "enum.CheckEnum"
-                    ]
-                  }
+                  "matches": "enum-ref-q"
                 },
                 {
                   "kind": "identifier",
                   "resolves": {
                     "binding": {
+                      "stopAtGlobal": true,
                       "site": {
                         "matches": "enum-class"
                       }
                     }
                   }
+                },
+                {
+                  "kind": "attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "attribute",
+                        "pattern": "$AN"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "object",
+                        "kind": "identifier",
+                        "resolves": {
+                          "binding": {
+                            "stopAtGlobal": true,
+                            "site": {
+                              "kind": "class_definition",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "any": [
+                                    {
+                                      "kind": "class_definition",
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "field": "name",
+                                        "pattern": "$MN",
+                                        "compare": {
+                                          "left": "MN",
+                                          "op": "eq",
+                                          "right": "AN"
+                                        },
+                                        "binds": {
+                                          "latest": true
+                                        }
+                                      },
+                                      "matches": "enum-class"
+                                    },
+                                    {
+                                      "kind": "decorated_definition",
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "field": "definition",
+                                        "kind": "class_definition",
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "field": "name",
+                                          "pattern": "$MN",
+                                          "compare": {
+                                            "left": "MN",
+                                            "op": "eq",
+                                            "right": "AN"
+                                          },
+                                          "binds": {
+                                            "latest": true
+                                          }
+                                        },
+                                        "matches": "enum-class"
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
                 }
               ]
             },
@@ -171,11 +266,8 @@
                   "kind": "subscript",
                   "has": {
                     "stopBy": "neighbor",
-                    "matches": "enum-ref",
-                    "precedes": {
-                      "stopBy": "neighbor",
-                      "regex": "^\\[$"
-                    }
+                    "field": "value",
+                    "matches": "enum-ref"
                   }
                 },
                 {
@@ -201,7 +293,7 @@
           },
           "rule": {
             "kind": "decorator",
-            "regex": "(?s)^(?P<DECO>@.*?[\\w)])[ \\t]*(?:#[^\\n]*)?$",
+            "regex": "(?s)^(?P<DECO>@(?:\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*'|#[^\\n]*|[^#'\"])*?[\\w)])[ \\t]*(?:#[^\\n]*)?$",
             "has": {
               "stopBy": "neighbor",
               "matches": "dataclass-decorator"
@@ -228,7 +320,99 @@
               "kind": "decorated_definition",
               "has": {
                 "stopBy": "neighbor",
-                "matches": "enum-class"
+                "kind": "class_definition",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "name",
+                      "pattern": "$CN"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "superclasses",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "matches": "enum-base",
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "identifier",
+                                  "pattern": "$BN",
+                                  "compare": {
+                                    "left": "BN",
+                                    "op": "eq",
+                                    "right": "CN"
+                                  }
+                                },
+                                {
+                                  "kind": "subscript",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "field": "value",
+                                    "all": [
+                                      {
+                                        "kind": "identifier",
+                                        "pattern": "$BN",
+                                        "compare": {
+                                          "left": "BN",
+                                          "op": "eq",
+                                          "right": "CN"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                },
+                                {
+                                  "kind": "parenthesized_expression",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "any": [
+                                      {
+                                        "kind": "identifier",
+                                        "pattern": "$BN",
+                                        "compare": {
+                                          "left": "BN",
+                                          "op": "eq",
+                                          "right": "CN"
+                                        }
+                                      },
+                                      {
+                                        "kind": "subscript",
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "field": "value",
+                                          "all": [
+                                            {
+                                              "kind": "identifier",
+                                              "pattern": "$BN",
+                                              "compare": {
+                                                "left": "BN",
+                                                "op": "eq",
+                                                "right": "CN"
+                                              }
+                                            }
+                                          ]
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "matches": "enum-base-q"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
               }
             }
           }

@@ -41,10 +41,20 @@
             "literalish": {
               "any": [
                 {
-                  "kind": "string"
+                  "kind": "string",
+                  "not": {
+                    "regex": "^[rR]?[tT]"
+                  }
                 },
                 {
-                  "kind": "concatenated_string"
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "regex": "^[rR]?[tT]"
+                    }
+                  }
                 },
                 {
                   "kind": "integer"

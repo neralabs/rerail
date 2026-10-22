@@ -3,7 +3,7 @@
   "id": "ruff-ruf060-in-empty-collection",
   "revision": 1,
   "mode": "steer",
-  "description": "Avoid membership tests against an empty list, tuple, set, dict, string or bytes; the outcome is fixed, so the test and the branch it controls are dead code.",
+  "description": "Avoid membership tests against an empty list, tuple, set, dict, string or bytes; the result is almost always fixed, so the test hides a mistake or dead code.",
   "scope": {
     "include": [
       "**/*"
@@ -48,14 +48,6 @@
           "callee-collection": {
             "any": [
               {
-                "any": [
-                  {
-                    "kind": "identifier"
-                  },
-                  {
-                    "kind": "attribute"
-                  }
-                ],
                 "resolves": {
                   "global": [
                     "list",
@@ -95,14 +87,6 @@
           "callee-set": {
             "any": [
               {
-                "any": [
-                  {
-                    "kind": "identifier"
-                  },
-                  {
-                    "kind": "attribute"
-                  }
-                ],
                 "resolves": {
                   "global": [
                     "set",
@@ -141,10 +125,7 @@
             "not": {
               "any": [
                 {
-                  "kind": "comment"
-                },
-                {
-                  "kind": "line_continuation"
+                  "matches": "trivia"
                 },
                 {
                   "regex": "^[\\[\\](){},]$"
@@ -153,8 +134,10 @@
             }
           },
           "str-plain-empty": {
-            "kind": "string",
-            "regex": "^(?i:(?:[uf]?(?:'(?:\\\\\\r?\\n)*'|\"(?:\\\\\\r?\\n)*\"|'''(?:\\\\\\r?\\n)*'''|\"\"\"(?:\\\\\\r?\\n)*\"\"\")|[rfu]{1,2}(?:''|\"\"|''''''|\"\"\"\"\"\")))$"
+            "matches": "str-any-empty",
+            "not": {
+              "regex": "^[A-Za-z]*[bB]"
+            }
           },
           "str-any-empty": {
             "kind": "string",
@@ -162,11 +145,6 @@
           },
           "fstr-empty": {
             "kind": "string",
-            "has": {
-              "stopBy": "neighbor",
-              "kind": "string_start",
-              "regex": "^[A-Za-z]*[fF]"
-            },
             "not": {
               "has": {
                 "stopBy": "neighbor",
@@ -176,16 +154,29 @@
                       "kind": "string_start"
                     },
                     {
-                      "kind": "string_end"
+                      "kind": "string_end",
+                      "regex": "^(?:'|\"|'''|\"\"\")$"
                     },
                     {
                       "kind": "interpolation",
                       "matches": "interp-empty"
+                    },
+                    {
+                      "kind": "string_content",
+                      "regex": "^(?:\\\\\\r?\\n)+$",
+                      "not": {
+                        "follows": {
+                          "stopBy": "end",
+                          "kind": "string_start",
+                          "regex": "^[A-Za-z]*[rR]"
+                        }
+                      }
                     }
                   ]
                 }
               }
-            }
+            },
+            "matches": "fstr-part"
           },
           "interp-empty": {
             "kind": "interpolation",
@@ -239,6 +230,22 @@
                           "matches": "trivia"
                         }
                       ]
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "concatenated_string",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "fstr-part"
+                },
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "fstr-part",
+                    "not": {
+                      "matches": "fstr-empty"
                     }
                   }
                 }
@@ -373,6 +380,106 @@
                 ]
               }
             ]
+          },
+          "fstr-part": {
+            "kind": "string",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "string_start",
+              "regex": "^[A-Za-z]*[fF]"
+            }
+          },
+          "in-compare": {
+            "matches": "single-compare",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "empty",
+              "follows": {
+                "stopBy": {
+                  "not": {
+                    "matches": "trivia"
+                  }
+                },
+                "regex": "^in$"
+              }
+            }
+          },
+          "in-in-string": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "in-compare",
+                    "capture": "C"
+                  },
+                  {
+                    "matches": "in-in-string"
+                  }
+                ]
+              }
+            }
+          },
+          "not-in-compare": {
+            "matches": "single-compare",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "empty",
+              "follows": {
+                "stopBy": {
+                  "not": {
+                    "matches": "trivia"
+                  }
+                },
+                "regex": "^not(?:\\s|\\\\)+in$"
+              }
+            }
+          },
+          "not-in-in-string": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "not-in-compare",
+                    "capture": "C"
+                  },
+                  {
+                    "matches": "not-in-in-string"
+                  }
+                ]
+              }
+            }
+          },
+          "single-compare": {
+            "kind": "comparison_operator",
+            "count": {
+              "has": {
+                "stopBy": "neighbor",
+                "not": {
+                  "matches": "trivia"
+                }
+              },
+              "max": 3
+            }
           }
         }
       }
@@ -383,47 +490,22 @@
         "ast": {
           "language": "python",
           "rule": {
-            "kind": "comparison_operator",
-            "all": [
+            "any": [
               {
-                "has": {
-                  "stopBy": "neighbor",
-                  "regex": "^in$"
-                }
+                "matches": "in-compare",
+                "pattern": "$C"
               },
               {
-                "count": {
-                  "has": {
-                    "stopBy": "neighbor",
-                    "not": {
-                      "matches": "trivia"
-                    }
-                  },
-                  "max": 3
-                }
-              },
-              {
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "empty",
-                  "follows": {
-                    "stopBy": {
-                      "not": {
-                        "matches": "trivia"
-                      }
-                    },
-                    "regex": "^in$"
-                  }
-                }
+                "matches": "in-in-string"
               }
             ]
           }
         }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "capture.C",
         "code": "RUF060",
-        "message": "Replace this `in` test on an empty collection with `False` and simplify the code around it, or fill the collection if items were meant.",
+        "message": "`in` on an empty collection is always False, except an empty string in an empty str or bytes; replace it with `False` and simplify, or fill the collection if items were meant.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -439,47 +521,22 @@
         "ast": {
           "language": "python",
           "rule": {
-            "kind": "comparison_operator",
-            "all": [
+            "any": [
               {
-                "has": {
-                  "stopBy": "neighbor",
-                  "regex": "^not(?:\\s|\\\\)+in$"
-                }
+                "matches": "not-in-compare",
+                "pattern": "$C"
               },
               {
-                "count": {
-                  "has": {
-                    "stopBy": "neighbor",
-                    "not": {
-                      "matches": "trivia"
-                    }
-                  },
-                  "max": 3
-                }
-              },
-              {
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "empty",
-                  "follows": {
-                    "stopBy": {
-                      "not": {
-                        "matches": "trivia"
-                      }
-                    },
-                    "regex": "^not(?:\\s|\\\\)+in$"
-                  }
-                }
+                "matches": "not-in-in-string"
               }
             ]
           }
         }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "capture.C",
         "code": "RUF060",
-        "message": "Replace this `not in` test on an empty collection with `True` and simplify the code around it, or fill the collection if items were meant.",
+        "message": "`not in` on an empty collection is always True, except an empty string against an empty str or bytes; replace it with `True` and simplify, or fill the collection if items were meant.",
         "suppress": {
           "noqa": {
             "codes": [

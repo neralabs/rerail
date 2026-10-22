@@ -193,6 +193,15 @@
                   }
                 }
               ]
+            },
+            "handler-type": {
+              "not": {
+                "kind": "block"
+              },
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "except_clause"
+              }
             }
           },
           "rule": {
@@ -210,16 +219,35 @@
               "field": "function",
               "matches": "level-callee"
             },
-            "not": {
-              "has": {
-                "stopBy": "neighbor",
-                "field": "arguments",
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "exc-info-kwarg"
+            "all": [
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "arguments",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "exc-info-kwarg"
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "matches": "handler-type"
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "end",
+                        "matches": "handler-type"
+                      }
+                    }
+                  ]
                 }
               }
-            }
+            ]
           }
         }
       },

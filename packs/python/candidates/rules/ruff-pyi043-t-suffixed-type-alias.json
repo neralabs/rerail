@@ -145,7 +145,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PYI043",
-        "message": "Remove the trailing `T` from private type alias `$NAME` and update its references; the `T` suffix is conventionally reserved for type variables.",
+        "message": "Rename private type alias `$NAME` so it no longer ends in `T` (or `T` plus a digit), e.g. by dropping the `T`, and update its references; that suffix conventionally marks a type variable.",
         "suppress": {
           "noqa": {
             "codes": [

@@ -3,7 +3,7 @@
   "id": "ruff-ruf058-starmap-zip",
   "revision": 1,
   "mode": "steer",
-  "description": "Use map instead of itertools.starmap over zip; zipping only to unpack the tuples again is unnecessary.",
+  "description": "Pass the iterables straight to map instead of calling starmap on zip; zipping only to unpack each tuple again is unnecessary.",
   "scope": {
     "include": [
       "**/*"
@@ -310,7 +310,7 @@
       "violation": {
         "code": "RUF058",
         "anchor": "witness.span",
-        "message": "Replace `starmap(f, zip(a, b))` with `map(f, a, b)`, passing the zipped iterables straight to `map`. Keep it if `map` is shadowed in this scope.",
+        "message": "Replace `starmap(f, zip(a, b))` with `map(f, a, b)` (`map(f, [])` for an empty `zip()`). Keep it if `map` is shadowed in this scope.",
         "suppress": {
           "noqa": {
             "codes": [

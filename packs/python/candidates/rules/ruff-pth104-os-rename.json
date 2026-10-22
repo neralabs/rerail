@@ -132,7 +132,7 @@
    "violation": {
     "anchor": "capture.F",
     "code": "PTH104",
-    "message": "Use `Path(src).rename(dst)` instead of `os.rename(src, dst)`; it returns a `Path`, so leave it where the paths are bytes or `src_dir_fd`/`dst_dir_fd` come through `**kwargs`.",
+    "message": "Use `Path(src).rename(dst)` instead of `os.rename(src, dst)`; leave it where the paths are bytes or `src_dir_fd`/`dst_dir_fd` come through `**kwargs`.",
     "suppress": {
      "noqa": {
       "codes": [

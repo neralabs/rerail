@@ -355,7 +355,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PYI064",
-        "message": "The value is not the literal `$LIT`: if it should be, assign `$LIT` and annotate with a bare `Final`; otherwise fix the `Literal[...]` type to match the value.",
+        "message": "The value differs from the literal `$LIT`: if it should be `$LIT` (or is a stub's `...` placeholder), assign `$LIT` and annotate with a bare `Final`; otherwise correct the `Literal[...]` type.",
         "suppress": {
           "noqa": {
             "codes": [

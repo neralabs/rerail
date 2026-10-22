@@ -69,6 +69,17 @@
                       "stopBy": "neighbor",
                       "regex": "^,$"
                     }
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "tuple_pattern"
+                      },
+                      {
+                        "kind": "tuple"
+                      }
+                    ],
+                    "regex": "^\\(\\s*\\)$"
                   }
                 ]
               },
@@ -188,7 +199,10 @@
                 },
                 {
                   "binds": {
-                    "form": "with"
+                    "form": [
+                      "with",
+                      "named"
+                    ]
                   },
                   "inside": {
                     "stopBy": "end",

@@ -61,11 +61,25 @@
                     "prefix": true
                   },
                   "not": {
-                    "resolves": {
-                      "import": [
-                        "pytest.mark"
-                      ]
-                    }
+                    "any": [
+                      {
+                        "resolves": {
+                          "import": [
+                            "pytest.mark"
+                          ]
+                        }
+                      },
+                      {
+                        "resolves": {
+                          "binding": {
+                            "form": "import",
+                            "site": {
+                              "matches": "deeper-import-site"
+                            }
+                          }
+                        }
+                      }
+                    ]
                   }
                 },
                 {
@@ -120,6 +134,33 @@
                   }
                 }
               ]
+            },
+            "deeper-import-site": {
+              "any": [
+                {
+                  "kind": "aliased_import",
+                  "not": {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "import_from_statement"
+                    }
+                  },
+                  "has": {
+                    "field": "name",
+                    "regex": "^(?:[^.]*\\.){3}"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "import_from_statement",
+                    "has": {
+                      "field": "module_name",
+                      "regex": "^(?:[^.]*\\.){2}"
+                    }
+                  }
+                }
+              ]
             }
           },
           "rule": {
@@ -135,7 +176,7 @@
       "violation": {
         "anchor": "capture.span",
         "code": "PT023",
-        "message": "Remove the empty parentheses after this `pytest.mark` decorator; a marker that takes no arguments is written without them.",
+        "message": "Remove the empty `()` after this `pytest.mark` decorator; a marker without arguments is written bare. Keep any comments that sat inside the parentheses.",
         "suppress": {
           "noqa": {
             "codes": [

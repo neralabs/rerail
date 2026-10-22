@@ -93,6 +93,40 @@
                   }
                 },
                 {
+                  "kind": "identifier",
+                  "regex": "^tuple$",
+                  "resolves": {
+                    "binding": {
+                      "form": "typeParameter"
+                    }
+                  },
+                  "not": {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "module",
+                      "has": {
+                        "stopBy": "end",
+                        "any": [
+                          {
+                            "kind": "dotted_name",
+                            "regex": "^builtins$"
+                          },
+                          {
+                            "kind": "identifier",
+                            "regex": "^tuple$",
+                            "binds": {},
+                            "not": {
+                              "binds": {
+                                "form": "typeParameter"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
                   "kind": "parenthesized_expression",
                   "has": {
                     "stopBy": "neighbor",

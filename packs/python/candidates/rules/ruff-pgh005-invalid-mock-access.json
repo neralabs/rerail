@@ -3,7 +3,7 @@
   "id": "ruff-pgh005-invalid-mock-access",
   "revision": 1,
   "mode": "steer",
-  "description": "Call mock assertion methods instead of merely reading them, and use the real assert_ names; a bare attribute or a made-up method name verifies nothing.",
+  "description": "Call mock assertion methods instead of only referencing them, and use their real assert-prefixed names; a bare attribute or an invented method name verifies nothing.",
   "scope": {
     "include": [
       "**/*"
@@ -53,7 +53,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PGH005",
-        "message": "Call `$METHOD(...)`; written as a bare attribute it only reads the method and asserts nothing.",
+        "message": "Call `$METHOD(...)` with the expected arguments; written as a bare attribute it only reads the method and asserts nothing.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -136,7 +136,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PGH005",
-        "message": "`$METHOD` is not part of the mock API, so this assert can pass without checking anything; call `assert_$METHOD(...)` on the mock as a plain statement.",
+        "message": "`$METHOD` is not a mock method, so on a mock this assert always passes; call `assert_$METHOD(...)` as a plain statement. Leave it if the object is not a mock and defines `$METHOD`.",
         "suppress": {
           "noqa": {
             "codes": [

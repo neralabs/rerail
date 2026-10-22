@@ -214,7 +214,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "TRY301",
-        "message": "Move this `raise` into a helper function, or handle the condition directly, so the same `try` does not raise and catch it. Leave it if the handler is meant to catch this exception.",
+        "message": "Move this `raise` out of the `try` body into a helper function, or handle the condition without raising, so this `try` does not catch its own exception. Leave it if it is in a nested function.",
         "suppress": {
           "noqa": {
             "codes": [

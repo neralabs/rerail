@@ -3,7 +3,7 @@
   "id": "ruff-pyi007-unrecognized-platform-check",
   "revision": 1,
   "mode": "steer",
-  "description": "Compare sys.platform in stub files only with equality or inequality against a string literal; type checkers cannot evaluate other checks.",
+  "description": "Compare sys.platform only by equality or inequality with a plain string literal in stub files; type checkers cannot evaluate other checks.",
   "scope": {
     "include": [
       "**/*"

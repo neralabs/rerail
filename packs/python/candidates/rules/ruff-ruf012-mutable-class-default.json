@@ -532,6 +532,106 @@
                             ]
                           }
                         ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "generic-head",
+                              "all": [
+                                {
+                                  "matches": "ref-typing-union"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "any": [
+                              {
+                                "kind": "subscript",
+                                "not": {
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^,$"
+                                  }
+                                },
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "field": "subscript",
+                                  "matches": "tuple-all-immutable"
+                                }
+                              },
+                              {
+                                "kind": "generic_type",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "type_parameter",
+                                  "not": {
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "regex": "^,$"
+                                    }
+                                  },
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "matches": "tuple-all-immutable"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "generic-head",
+                              "all": [
+                                {
+                                  "matches": "ref-annotated"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "any": [
+                              {
+                                "kind": "subscript",
+                                "not": {
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^,$"
+                                  }
+                                },
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "field": "subscript",
+                                  "matches": "tuple-first-immutable"
+                                }
+                              },
+                              {
+                                "kind": "generic_type",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "type_parameter",
+                                  "not": {
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "regex": "^,$"
+                                    }
+                                  },
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "matches": "tuple-first-immutable"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        ]
                       }
                     ]
                   }
@@ -567,8 +667,7 @@
                     "has": {
                       "stopBy": "neighbor",
                       "kind": "dotted_name",
-                      "regex": "^ClassVar$",
-                      "field": "name"
+                      "regex": "^ClassVar$"
                     }
                   }
                 ]
@@ -878,8 +977,7 @@
                     "has": {
                       "stopBy": "neighbor",
                       "kind": "dotted_name",
-                      "regex": "^Final$",
-                      "field": "name"
+                      "regex": "^Final$"
                     }
                   }
                 ]
@@ -1495,6 +1593,127 @@
                   "stopBy": "neighbor",
                   "kind": "parenthesized_expression",
                   "matches": "plain-default"
+                }
+              }
+            ]
+          },
+          "tuple-all-immutable": {
+            "any": [
+              {
+                "kind": "tuple",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "any": [
+                            {
+                              "regex": "^[\\[\\](),|]$"
+                            },
+                            {
+                              "kind": "comment"
+                            }
+                          ]
+                        },
+                        {
+                          "matches": "immutable-annotation"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "type"
+                  },
+                  {
+                    "kind": "parenthesized_expression"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "regex": "^[\\[\\](),|]$"
+                      },
+                      {
+                        "kind": "comment"
+                      }
+                    ]
+                  },
+                  "matches": "tuple-all-immutable"
+                }
+              }
+            ]
+          },
+          "tuple-first-immutable": {
+            "any": [
+              {
+                "kind": "tuple",
+                "has": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "not": {
+                        "any": [
+                          {
+                            "regex": "^[\\[\\](),|]$"
+                          },
+                          {
+                            "kind": "comment"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "matches": "immutable-annotation"
+                    },
+                    {
+                      "not": {
+                        "follows": {
+                          "stopBy": "end",
+                          "not": {
+                            "any": [
+                              {
+                                "regex": "^[\\[\\](),|]$"
+                              },
+                              {
+                                "kind": "comment"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "type"
+                  },
+                  {
+                    "kind": "parenthesized_expression"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "regex": "^[\\[\\](),|]$"
+                      },
+                      {
+                        "kind": "comment"
+                      }
+                    ]
+                  },
+                  "matches": "tuple-first-immutable"
                 }
               }
             ]

@@ -3,7 +3,7 @@
   "id": "ruff-d418-overload-with-docstring",
   "revision": 1,
   "mode": "steer",
-  "description": "Document an overloaded Python function on its implementation, not on its overload signatures; type checkers and help() ignore those docstrings.",
+  "description": "Document an overloaded Python function on its implementation instead of its overload signatures, which the implementation replaces at runtime.",
   "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [
     {

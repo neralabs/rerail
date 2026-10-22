@@ -42,7 +42,23 @@
             ]
           },
           "empty-mode": { "all": [{ "matches": "redundant-mode" }, { "value": { "regex": "^[rtU]+$" } }] },
-          "flags-mode": { "all": [{ "matches": "redundant-mode" }, { "value": { "regex": "[bwax+]" } }] }
+          "flags-mode": { "all": [{ "matches": "redundant-mode" }, { "value": { "regex": "[bwax+]" } }] },
+          "not-argument": { "any": [{ "regex": "^[(),]$" }, { "kind": "comment" }, { "kind": "line_continuation" }] },
+          "mode-after-continued-comma": {
+            "nthChild": { "position": 2, "ofRule": { "not": { "matches": "not-argument" } } },
+            "not": { "follows": { "stopBy": "end", "kind": "list_splat" } },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "argument_list",
+              "not": { "has": { "stopBy": "neighbor", "kind": "keyword_argument", "has": { "stopBy": "neighbor", "field": "name", "regex": "^mode$" } } },
+              "inside": { "stopBy": "neighbor", "kind": "call", "has": { "stopBy": "neighbor", "field": "function", "matches": "callee" } }
+            },
+            "follows": {
+              "stopBy": { "not": { "kind": "comment" } },
+              "regex": "^,$",
+              "follows": { "stopBy": { "not": { "kind": "comment" } }, "kind": "line_continuation" }
+            }
+          }
         }
       }
     },
@@ -91,6 +107,7 @@
                 "has": { "stopBy": "neighbor", "field": "function", "matches": "callee" },
                 "arguments": { "signature": ["file", "mode"], "bind": { "M": "mode" }, "mode": "syntactic" }
               },
+              { "matches": "mode-only-redundant-site", "all": [{ "matches": "mode-after-continued-comma" }] },
               { "matches": "mode-only-redundant-in-string" }
             ]
           },
@@ -150,6 +167,7 @@
                 "has": { "stopBy": "neighbor", "field": "function", "matches": "callee" },
                 "arguments": { "signature": ["file", "mode"], "bind": { "M": "mode" }, "mode": "syntactic" }
               },
+              { "matches": "mode-has-redundant-flags-site", "all": [{ "matches": "mode-after-continued-comma" }] },
               { "matches": "mode-has-redundant-flags-in-string" }
             ]
           },

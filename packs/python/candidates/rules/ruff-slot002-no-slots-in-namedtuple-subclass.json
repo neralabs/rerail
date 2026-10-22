@@ -135,6 +135,40 @@
                   }
                 },
                 {
+                  "kind": "identifier",
+                  "regex": "^object$",
+                  "resolves": {
+                    "binding": {
+                      "form": "typeParameter"
+                    }
+                  },
+                  "not": {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "module",
+                      "has": {
+                        "stopBy": "end",
+                        "any": [
+                          {
+                            "kind": "dotted_name",
+                            "regex": "^builtins$"
+                          },
+                          {
+                            "kind": "identifier",
+                            "regex": "^object$",
+                            "binds": {},
+                            "not": {
+                              "binds": {
+                                "form": "typeParameter"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
                   "kind": "parenthesized_expression",
                   "has": {
                     "stopBy": "neighbor",
@@ -181,6 +215,9 @@
                             },
                             {
                               "kind": "dictionary_splat"
+                            },
+                            {
+                              "kind": "line_continuation"
                             },
                             {
                               "kind": "comment"

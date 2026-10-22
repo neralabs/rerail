@@ -150,7 +150,7 @@
       "violation": {
         "anchor": "capture.C",
         "code": "YTT301",
-        "message": "Use `sys.version_info.major` instead of `sys.version[0]`; the first character is only the first digit of the major version once it has two digits.",
+        "message": "Use `sys.version_info.major` (an int, so compare it to ints, not strings) instead of `sys.version[0]`, which is only the first digit of a two-digit major version.",
         "suppress": {
           "noqa": {
             "codes": [

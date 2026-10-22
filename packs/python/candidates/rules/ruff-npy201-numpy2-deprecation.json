@@ -36,6 +36,7 @@
             }
           },
           "attribute-error": {
+            "matches": "handled-type",
             "any": [
               {
                 "kind": "identifier",
@@ -56,6 +57,7 @@
             ]
           },
           "import-error": {
+            "matches": "handled-type",
             "any": [
               {
                 "kind": "identifier",
@@ -216,7 +218,8 @@
                                   "numpy.str_",
                                   "numpy.trapezoid",
                                   "numpy.vstack"
-                                ]
+                                ],
+                                "relative": "text"
                               },
                               "pattern": "$IID",
                               "compare": {
@@ -246,6 +249,55 @@
                 "matches": "import-error"
               }
             }
+          },
+          "handled-root": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "except_clause",
+                  "field": "value"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "as_pattern",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "except_clause"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "handled-root"
+                }
+              }
+            ]
+          },
+          "handled-type": {
+            "any": [
+              {
+                "matches": "handled-root"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "tuple",
+                  "matches": "handled-root"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "handled-type"
+                }
+              }
+            ]
           }
         }
       }
@@ -2913,7 +2965,7 @@
       "violation": {
         "anchor": "capture.NAME",
         "code": "NPY201",
-        "message": "NumPy 2.0 removes `$NAME`; use its replacement from the 2.0 migration guide (for example `np.float64` for `float_`, `np.inf` for `Inf`, `np.exceptions.X` for exceptions).",
+        "message": "NumPy 2.0 removes `$NAME`; switch to the replacement NumPy's 2.0 migration guide gives for it (e.g. `np.float64` for `float_`, `np.inf` for `Inf`), or drop it if there is none.",
         "each": "NAME",
         "suppress": {
           "noqa": {

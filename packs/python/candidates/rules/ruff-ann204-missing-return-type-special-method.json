@@ -81,6 +81,20 @@
                             "regex": "^staticmethod$",
                             "binds": {
                               "scope": "module"
+                            },
+                            "not": {
+                              "any": [
+                                {
+                                  "binds": {
+                                    "form": "annotation"
+                                  }
+                                },
+                                {
+                                  "binds": {
+                                    "form": "except"
+                                  }
+                                }
+                              ]
                             }
                           }
                         }
@@ -143,6 +157,20 @@
                             "regex": "^classmethod$",
                             "binds": {
                               "scope": "module"
+                            },
+                            "not": {
+                              "any": [
+                                {
+                                  "binds": {
+                                    "form": "annotation"
+                                  }
+                                },
+                                {
+                                  "binds": {
+                                    "form": "except"
+                                  }
+                                }
+                              ]
                             }
                           }
                         }

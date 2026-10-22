@@ -3,7 +3,7 @@
   "id": "ruff-ruf028-invalid-formatter-suppression-comment",
   "revision": 1,
   "mode": "steer",
-  "description": "Place formatter off, on and skip comments where the formatter honours them: not inside an expression or after a decorator, skip at the end of a line, off and on on their own line.",
+  "description": "Place formatter suppression comments between statements, not inside expressions or after decorators, keeping skip comments at a line's end and on comments on their own line.",
   "scope": {
     "include": [
       "**/*"
@@ -12,134 +12,224 @@
   },
   "clauses": [
     {
-      "id": "in-non-statement",
-      "forbid": {
-        "ast": {
-          "language": "python",
-          "utils": {
-            "off": {
-              "kind": "comment",
-              "regex": "^#\\s*(?:fmt:\\s*off|yapf:\\s*disable)\\s*$"
-            },
-            "on": {
-              "kind": "comment",
-              "regex": "^#\\s*(?:fmt:\\s*on|yapf:\\s*enable)\\s*$"
-            },
-            "skip": {
-              "kind": "comment",
-              "regex": "#\\s*fmt:\\s*skip\\s*(?:#|$)"
-            },
-            "statement-level": {
-              "any": [
-                {
-                  "kind": "module"
-                },
-                {
-                  "kind": "block"
-                },
-                {
-                  "kind": "decorated_definition"
-                },
-                {
-                  "kind": "decorator"
-                },
-                {
-                  "kind": "function_definition"
-                },
-                {
-                  "kind": "class_definition"
-                },
-                {
-                  "kind": "if_statement"
-                },
-                {
-                  "kind": "elif_clause"
-                },
-                {
-                  "kind": "else_clause"
-                },
-                {
-                  "kind": "for_statement"
-                },
-                {
-                  "kind": "while_statement"
-                },
-                {
-                  "kind": "try_statement"
-                },
-                {
-                  "kind": "except_clause"
-                },
-                {
-                  "kind": "finally_clause"
-                },
-                {
-                  "kind": "with_statement"
-                },
-                {
-                  "kind": "with_clause"
-                },
-                {
-                  "kind": "match_statement"
-                },
-                {
-                  "kind": "case_clause"
-                },
-                {
-                  "kind": "import_from_statement"
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "off": {
+            "kind": "comment",
+            "regex": "^#[ \\t\\f]*(?:fmt:[ \\t\\f]*off|yapf:[ \\t\\f]*disable)[ \\t\\f]*\\r?$"
+          },
+          "on": {
+            "kind": "comment",
+            "regex": "^#[ \\t\\f]*(?:fmt:[ \\t\\f]*on|yapf:[ \\t\\f]*enable)[ \\t\\f]*\\r?$"
+          },
+          "skip": {
+            "kind": "comment",
+            "regex": "#[ \\t\\f]*fmt:[ \\t\\f]*skip[ \\t\\f]*(?:#|\\r?$)"
+          },
+          "suppression": {
+            "any": [
+              {
+                "matches": "off"
+              },
+              {
+                "matches": "on"
+              },
+              {
+                "matches": "skip"
+              }
+            ]
+          },
+          "end-of-line": {
+            "layout": {
+              "before": {
+                "to": "token",
+                "breaks": {
+                  "eq": 0
                 }
-              ]
-            },
-            "paren-parent": {
-              "any": [
-                {
-                  "kind": "assignment"
-                },
-                {
-                  "kind": "augmented_assignment"
-                },
-                {
-                  "kind": "return_statement"
-                },
-                {
-                  "kind": "assert_statement"
-                },
-                {
-                  "kind": "raise_statement"
-                },
-                {
-                  "kind": "expression_statement"
-                },
-                {
-                  "kind": "if_statement"
-                },
-                {
-                  "kind": "elif_clause"
-                },
-                {
-                  "kind": "while_statement"
-                },
-                {
-                  "kind": "for_statement"
-                }
-              ]
-            },
-            "trailing-in-paren": {
-              "follows": {
-                "stopBy": "end",
+              }
+            }
+          },
+          "statement-level": {
+            "any": [
+              {
+                "kind": "module"
+              },
+              {
+                "kind": "block"
+              },
+              {
+                "kind": "decorated_definition"
+              },
+              {
+                "kind": "decorator"
+              },
+              {
+                "kind": "function_definition"
+              },
+              {
+                "kind": "class_definition"
+              },
+              {
+                "kind": "if_statement"
+              },
+              {
+                "kind": "elif_clause"
+              },
+              {
+                "kind": "else_clause"
+              },
+              {
+                "kind": "for_statement"
+              },
+              {
+                "kind": "while_statement"
+              },
+              {
+                "kind": "try_statement"
+              },
+              {
+                "kind": "except_clause"
+              },
+              {
+                "kind": "finally_clause"
+              },
+              {
+                "kind": "with_statement"
+              },
+              {
+                "kind": "with_clause"
+              },
+              {
+                "kind": "match_statement"
+              },
+              {
+                "kind": "case_clause"
+              },
+              {
+                "kind": "import_from_statement"
+              }
+            ]
+          },
+          "paren-parent": {
+            "any": [
+              {
+                "kind": "assignment"
+              },
+              {
+                "kind": "augmented_assignment"
+              },
+              {
+                "kind": "return_statement"
+              },
+              {
+                "kind": "assert_statement"
+              },
+              {
+                "kind": "raise_statement"
+              },
+              {
+                "kind": "expression_statement"
+              },
+              {
+                "kind": "if_statement"
+              },
+              {
+                "kind": "elif_clause"
+              },
+              {
+                "kind": "while_statement"
+              },
+              {
+                "kind": "for_statement"
+              },
+              {
+                "kind": "delete_statement"
+              },
+              {
+                "kind": "match_statement",
                 "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  }
+                }
+              },
+              {
+                "kind": "except_clause"
+              },
+              {
+                "kind": "decorator"
+              },
+              {
+                "kind": "with_item"
+              },
+              {
+                "kind": "if_clause",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "case_clause"
+                }
+              },
+              {
+                "kind": "type",
+                "inside": {
+                  "stopBy": "neighbor",
                   "any": [
                     {
-                      "kind": "comment"
+                      "kind": "type_alias_statement"
                     },
                     {
-                      "regex": "^\\($"
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "assignment"
                     }
                   ]
                 }
+              },
+              {
+                "kind": "case_pattern",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "case_clause"
+                }
+              },
+              {
+                "kind": "as_pattern",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "except_clause"
+                }
               }
-            },
-            "end-of-line": {
+            ]
+          },
+          "trailing-in-paren": {
+            "follows": {
+              "stopBy": "end",
+              "not": {
+                "any": [
+                  {
+                    "kind": "comment"
+                  },
+                  {
+                    "regex": "^\\($"
+                  },
+                  {
+                    "kind": "parenthesized_expression"
+                  }
+                ]
+              }
+            }
+          },
+          "prev-inline": {
+            "follows": {
+              "stopBy": {
+                "not": {
+                  "kind": "comment"
+                }
+              },
               "layout": {
                 "before": {
                   "to": "token",
@@ -148,85 +238,453 @@
                   }
                 }
               }
-            },
-            "non-statement": {
-              "kind": "comment",
+            }
+          },
+          "grabbed": {
+            "any": [
+              {
+                "matches": "end-of-line"
+              },
+              {
+                "matches": "prev-inline"
+              }
+            ]
+          },
+          "after-name": {
+            "follows": {
+              "stopBy": {
+                "not": {
+                  "kind": "comment"
+                }
+              },
               "any": [
                 {
-                  "not": {
-                    "inside": {
-                      "stopBy": "neighbor",
-                      "any": [
-                        {
-                          "matches": "statement-level"
-                        },
-                        {
-                          "kind": "parenthesized_expression"
-                        }
-                      ]
-                    }
-                  }
+                  "kind": "dotted_name"
                 },
                 {
-                  "inside": {
-                    "stopBy": "neighbor",
-                    "kind": "parenthesized_expression"
-                  },
-                  "any": [
-                    {
-                      "all": [
-                        {
-                          "matches": "trailing-in-paren"
-                        },
-                        {
-                          "matches": "end-of-line"
-                        }
-                      ]
-                    },
-                    {
-                      "all": [
-                        {
-                          "not": {
-                            "matches": "trailing-in-paren"
-                          }
-                        },
-                        {
-                          "not": {
-                            "inside": {
-                              "stopBy": "neighbor",
-                              "kind": "parenthesized_expression",
-                              "inside": {
-                                "stopBy": "neighbor",
-                                "matches": "paren-parent"
-                              }
-                            }
-                          }
-                        }
-                      ]
-                    }
-                  ]
+                  "kind": "aliased_import"
+                },
+                {
+                  "kind": "with_item"
                 }
               ]
             }
           },
-          "rule": {
+          "non-statement": {
             "kind": "comment",
-            "all": [
+            "any": [
               {
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "matches": "statement-level"
+                      },
+                      {
+                        "matches": "paren"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "paren"
+                },
                 "any": [
                   {
-                    "matches": "off"
+                    "all": [
+                      {
+                        "matches": "trailing-in-paren"
+                      },
+                      {
+                        "matches": "grabbed"
+                      }
+                    ]
                   },
                   {
-                    "matches": "on"
-                  },
-                  {
-                    "matches": "skip"
+                    "not": {
+                      "inside": {
+                        "stopBy": {
+                          "not": {
+                            "any": [
+                              {
+                                "matches": "paren"
+                              },
+                              {
+                                "kind": "case_pattern",
+                                "inside": {
+                                  "stopBy": "neighbor",
+                                  "matches": "paren"
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        "matches": "paren-parent"
+                      }
+                    }
                   }
                 ]
               },
               {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "import_from_statement"
+                    },
+                    {
+                      "kind": "with_clause"
+                    }
+                  ]
+                },
+                "all": [
+                  {
+                    "matches": "after-name"
+                  },
+                  {
+                    "matches": "grabbed"
+                  }
+                ]
+              },
+              {
+                "matches": "captured-after-statement"
+              }
+            ]
+          },
+          "last-child": {
+            "not": {
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "precedes": {
+                    "stopBy": "end",
+                    "not": {
+                      "kind": "comment"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "tail-open": {
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "last-child",
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "assignment"
+                    },
+                    {
+                      "kind": "augmented_assignment"
+                    },
+                    {
+                      "kind": "type"
+                    }
+                  ],
+                  "matches": "tail-open"
+                },
+                {
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "assignment"
+                      },
+                      {
+                        "kind": "augmented_assignment"
+                      },
+                      {
+                        "kind": "type"
+                      },
+                      {
+                        "kind": "parenthesized_expression"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          "open-stmt": {
+            "any": [
+              {
+                "kind": "expression_statement"
+              },
+              {
+                "kind": "return_statement"
+              },
+              {
+                "kind": "delete_statement"
+              },
+              {
+                "kind": "raise_statement"
+              },
+              {
+                "kind": "assert_statement"
+              },
+              {
+                "kind": "type_alias_statement"
+              }
+            ],
+            "all": [
+              {
+                "has": {
+                  "stopBy": "end",
+                  "matches": "suppression"
+                }
+              },
+              {
+                "matches": "tail-open"
+              }
+            ]
+          },
+          "mid-line-tail": {
+            "matches": "open-stmt",
+            "any": [
+              {
+                "not": {
+                  "kind": "expression_statement"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "assignment"
+                    },
+                    {
+                      "kind": "augmented_assignment"
+                    }
+                  ]
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "last-child",
+                  "any": [
+                    {
+                      "kind": "call"
+                    },
+                    {
+                      "kind": "binary_operator"
+                    },
+                    {
+                      "kind": "boolean_operator"
+                    },
+                    {
+                      "kind": "comparison_operator"
+                    },
+                    {
+                      "kind": "not_operator"
+                    },
+                    {
+                      "kind": "unary_operator"
+                    },
+                    {
+                      "kind": "conditional_expression"
+                    },
+                    {
+                      "kind": "lambda"
+                    },
+                    {
+                      "kind": "await"
+                    },
+                    {
+                      "kind": "yield"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "last-child",
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^,$"
+                },
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "last-child",
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "parenthesized_expression"
+                          },
+                          {
+                            "regex": "^,$"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "ends-mid-line": {
+            "any": [
+              {
+                "matches": "mid-line-tail"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "block"
+                  },
+                  {
+                    "kind": "if_statement"
+                  },
+                  {
+                    "kind": "elif_clause"
+                  },
+                  {
+                    "kind": "else_clause"
+                  },
+                  {
+                    "kind": "for_statement"
+                  },
+                  {
+                    "kind": "while_statement"
+                  },
+                  {
+                    "kind": "try_statement"
+                  },
+                  {
+                    "kind": "except_clause"
+                  },
+                  {
+                    "kind": "finally_clause"
+                  },
+                  {
+                    "kind": "with_statement"
+                  },
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "kind": "class_definition"
+                  },
+                  {
+                    "kind": "decorated_definition"
+                  },
+                  {
+                    "kind": "match_statement"
+                  },
+                  {
+                    "kind": "case_clause"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "last-child",
+                  "all": [
+                    {
+                      "matches": "ends-mid-line"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "paren": {
+            "any": [
+              {
+                "kind": "parenthesized_expression"
+              },
+              {
+                "kind": "tuple_pattern",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  }
+                }
+              }
+            ]
+          },
+          "captured-after-statement": {
+            "kind": "comment",
+            "any": [
+              {
+                "matches": "end-of-line",
+                "follows": {
+                  "stopBy": "neighbor",
+                  "matches": "open-stmt"
+                }
+              },
+              {
+                "not": {
+                  "matches": "end-of-line"
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "block"
+                },
+                "follows": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "comment"
+                    }
+                  },
+                  "matches": "ends-mid-line"
+                }
+              },
+              {
+                "matches": "end-of-line",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "decorator"
+                },
+                "follows": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "matches": "paren"
+                  },
+                  "has": {
+                    "stopBy": "end",
+                    "matches": "suppression"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "in-non-statement",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "comment",
+            "all": [
+              {
+                "matches": "suppression"
+              },
+              {
                 "matches": "non-statement"
+              },
+              {
+                "not": {
+                  "matches": "captured-after-statement"
+                }
               }
             ]
           }
@@ -235,14 +693,45 @@
       "violation": {
         "anchor": "witness.span",
         "code": "RUF028",
-        "message": "Move this formatter comment out of the brackets or expression to a line between statements; the formatter ignores it where it stands.",
         "suppress": {
           "noqa": {
             "codes": [
               "RUF028"
             ]
           }
+        },
+        "message": "Move this formatter comment out of the brackets or expression to a line between statements; the formatter ignores it where it stands."
+      }
+    },
+    {
+      "id": "attached-to-statement-above",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "comment",
+            "all": [
+              {
+                "matches": "suppression"
+              },
+              {
+                "matches": "captured-after-statement"
+              }
+            ]
+          }
         }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RUF028",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF028"
+            ]
+          }
+        },
+        "message": "The statement above holds another formatter comment inside its brackets, so this one attaches to its last expression and is ignored; move that inner comment out of the statement."
       }
     },
     {
@@ -250,195 +739,6 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "utils": {
-            "on": {
-              "kind": "comment",
-              "regex": "^#\\s*(?:fmt:\\s*on|yapf:\\s*enable)\\s*$"
-            },
-            "skip": {
-              "kind": "comment",
-              "regex": "#\\s*fmt:\\s*skip\\s*(?:#|$)"
-            },
-            "statement-level": {
-              "any": [
-                {
-                  "kind": "module"
-                },
-                {
-                  "kind": "block"
-                },
-                {
-                  "kind": "decorated_definition"
-                },
-                {
-                  "kind": "decorator"
-                },
-                {
-                  "kind": "function_definition"
-                },
-                {
-                  "kind": "class_definition"
-                },
-                {
-                  "kind": "if_statement"
-                },
-                {
-                  "kind": "elif_clause"
-                },
-                {
-                  "kind": "else_clause"
-                },
-                {
-                  "kind": "for_statement"
-                },
-                {
-                  "kind": "while_statement"
-                },
-                {
-                  "kind": "try_statement"
-                },
-                {
-                  "kind": "except_clause"
-                },
-                {
-                  "kind": "finally_clause"
-                },
-                {
-                  "kind": "with_statement"
-                },
-                {
-                  "kind": "with_clause"
-                },
-                {
-                  "kind": "match_statement"
-                },
-                {
-                  "kind": "case_clause"
-                },
-                {
-                  "kind": "import_from_statement"
-                }
-              ]
-            },
-            "paren-parent": {
-              "any": [
-                {
-                  "kind": "assignment"
-                },
-                {
-                  "kind": "augmented_assignment"
-                },
-                {
-                  "kind": "return_statement"
-                },
-                {
-                  "kind": "assert_statement"
-                },
-                {
-                  "kind": "raise_statement"
-                },
-                {
-                  "kind": "expression_statement"
-                },
-                {
-                  "kind": "if_statement"
-                },
-                {
-                  "kind": "elif_clause"
-                },
-                {
-                  "kind": "while_statement"
-                },
-                {
-                  "kind": "for_statement"
-                }
-              ]
-            },
-            "trailing-in-paren": {
-              "follows": {
-                "stopBy": "end",
-                "not": {
-                  "any": [
-                    {
-                      "kind": "comment"
-                    },
-                    {
-                      "regex": "^\\($"
-                    }
-                  ]
-                }
-              }
-            },
-            "end-of-line": {
-              "layout": {
-                "before": {
-                  "to": "token",
-                  "breaks": {
-                    "eq": 0
-                  }
-                }
-              }
-            },
-            "non-statement": {
-              "kind": "comment",
-              "any": [
-                {
-                  "not": {
-                    "inside": {
-                      "stopBy": "neighbor",
-                      "any": [
-                        {
-                          "matches": "statement-level"
-                        },
-                        {
-                          "kind": "parenthesized_expression"
-                        }
-                      ]
-                    }
-                  }
-                },
-                {
-                  "inside": {
-                    "stopBy": "neighbor",
-                    "kind": "parenthesized_expression"
-                  },
-                  "any": [
-                    {
-                      "all": [
-                        {
-                          "matches": "trailing-in-paren"
-                        },
-                        {
-                          "matches": "end-of-line"
-                        }
-                      ]
-                    },
-                    {
-                      "all": [
-                        {
-                          "not": {
-                            "matches": "trailing-in-paren"
-                          }
-                        },
-                        {
-                          "not": {
-                            "inside": {
-                              "stopBy": "neighbor",
-                              "kind": "parenthesized_expression",
-                              "inside": {
-                                "stopBy": "neighbor",
-                                "matches": "paren-parent"
-                              }
-                            }
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                }
-              ]
-            }
-          },
           "rule": {
             "kind": "comment",
             "all": [
@@ -472,14 +772,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "RUF028",
-        "message": "Put a skip comment at the end of the line it applies to and an on comment on a line of its own; the other way round the formatter ignores them.",
         "suppress": {
           "noqa": {
             "codes": [
               "RUF028"
             ]
           }
-        }
+        },
+        "message": "Put a skip comment at the end of the line it applies to and an on comment on a line of its own; the other way round the formatter ignores them."
       }
     },
     {
@@ -487,26 +787,6 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "utils": {
-            "off": {
-              "kind": "comment",
-              "regex": "^#\\s*(?:fmt:\\s*off|yapf:\\s*disable)\\s*$"
-            },
-            "on": {
-              "kind": "comment",
-              "regex": "^#\\s*(?:fmt:\\s*on|yapf:\\s*enable)\\s*$"
-            },
-            "end-of-line": {
-              "layout": {
-                "before": {
-                  "to": "token",
-                  "breaks": {
-                    "eq": 0
-                  }
-                }
-              }
-            }
-          },
           "rule": {
             "any": [
               {
@@ -541,14 +821,14 @@
       "violation": {
         "anchor": "witness.span",
         "code": "RUF028",
-        "message": "Move this comment above the first decorator; after a decorator the formatter ignores it.",
         "suppress": {
           "noqa": {
             "codes": [
               "RUF028"
             ]
           }
-        }
+        },
+        "message": "Move this comment above the first decorator; after a decorator the formatter ignores it."
       }
     },
     {
@@ -556,56 +836,6 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "utils": {
-            "off": {
-              "kind": "comment",
-              "regex": "^#\\s*(?:fmt:\\s*off|yapf:\\s*disable)\\s*$"
-            },
-            "end-of-line": {
-              "layout": {
-                "before": {
-                  "to": "token",
-                  "breaks": {
-                    "eq": 0
-                  }
-                }
-              }
-            },
-            "next-clause": {
-              "any": [
-                {
-                  "kind": "else_clause",
-                  "not": {
-                    "follows": {
-                      "stopBy": "end",
-                      "kind": "elif_clause"
-                    }
-                  }
-                },
-                {
-                  "kind": "finally_clause"
-                },
-                {
-                  "kind": "elif_clause",
-                  "not": {
-                    "follows": {
-                      "stopBy": "end",
-                      "kind": "elif_clause"
-                    }
-                  }
-                },
-                {
-                  "kind": "except_clause",
-                  "not": {
-                    "follows": {
-                      "stopBy": "end",
-                      "kind": "except_clause"
-                    }
-                  }
-                }
-              ]
-            }
-          },
           "rule": {
             "matches": "off",
             "all": [
@@ -640,7 +870,58 @@
                       "kind": "comment"
                     }
                   },
-                  "matches": "next-clause"
+                  "any": [
+                    {
+                      "kind": "else_clause",
+                      "not": {
+                        "any": [
+                          {
+                            "follows": {
+                              "stopBy": "end",
+                              "kind": "elif_clause"
+                            }
+                          },
+                          {
+                            "follows": {
+                              "stopBy": "end",
+                              "kind": "except_clause"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "kind": "finally_clause",
+                      "not": {
+                        "follows": {
+                          "stopBy": {
+                            "not": {
+                              "kind": "comment"
+                            }
+                          },
+                          "kind": "except_clause"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "elif_clause",
+                      "not": {
+                        "follows": {
+                          "stopBy": "end",
+                          "kind": "elif_clause"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "except_clause",
+                      "not": {
+                        "follows": {
+                          "stopBy": "end",
+                          "kind": "except_clause"
+                        }
+                      }
+                    }
+                  ]
                 }
               }
             ]
@@ -650,14 +931,65 @@
       "violation": {
         "anchor": "witness.span",
         "code": "RUF028",
-        "message": "Indent this off comment to match the block above, or move it before the whole statement; directly above else, elif, except or finally the formatter ignores it.",
         "suppress": {
           "noqa": {
             "codes": [
               "RUF028"
             ]
           }
+        },
+        "message": "Indent this off comment to match the block above, or move it before the whole statement; directly above else, elif, except or finally the formatter ignores it."
+      }
+    },
+    {
+      "id": "off-at-start-of-handler-follower",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "off",
+            "all": [
+              {
+                "not": {
+                  "matches": "end-of-line"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "else_clause"
+                    },
+                    {
+                      "kind": "finally_clause"
+                    }
+                  ],
+                  "follows": {
+                    "stopBy": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    },
+                    "kind": "except_clause"
+                  }
+                }
+              }
+            ]
+          }
         }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RUF028",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF028"
+            ]
+          }
+        },
+        "message": "Move this off comment below the first statement of the else or finally block, or above the try statement; at the start of a block after except the formatter ignores it."
       }
     }
   ]

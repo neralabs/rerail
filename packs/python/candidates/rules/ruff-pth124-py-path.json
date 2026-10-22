@@ -68,7 +68,7 @@
       "violation": {
         "anchor": "capture.F",
         "code": "PTH124",
-        "message": "Use `pathlib.Path(...)` instead of `py.path.local(...)`; py.path is in maintenance mode. Keep `py.path.local` only where the code calls its py-only methods, such as `sysfind` or `visit`.",
+        "message": "Use `pathlib.Path(...)` instead of `py.path.local(...)` and port the py.path methods called on it (`join`, `ensure`, `check`, `read`); keep it where an API still requires a `py.path.local`.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -96,12 +96,136 @@
               "grammar": "annotation",
               "has": {
                 "stopBy": "end",
-                "kind": "call",
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "ref",
-                  "capture": "F"
-                }
+                "any": [
+                  {
+                    "kind": "call",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "matches": "ref",
+                          "capture": "F"
+                        },
+                        {
+                          "kind": "parenthesized_expression",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "ref",
+                            "capture": "F"
+                          }
+                        },
+                        {
+                          "kind": "parenthesized_expression",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "parenthesized_expression",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "ref",
+                              "capture": "F"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "string"
+                      },
+                      {
+                        "kind": "concatenated_string"
+                      }
+                    ],
+                    "parse": {
+                      "grammar": "annotation",
+                      "has": {
+                        "stopBy": "end",
+                        "any": [
+                          {
+                            "kind": "call",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "any": [
+                                {
+                                  "matches": "ref",
+                                  "capture": "F"
+                                },
+                                {
+                                  "kind": "parenthesized_expression",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "matches": "ref",
+                                    "capture": "F"
+                                  }
+                                },
+                                {
+                                  "kind": "parenthesized_expression",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "parenthesized_expression",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "matches": "ref",
+                                      "capture": "F"
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "any": [
+                              {
+                                "kind": "string"
+                              },
+                              {
+                                "kind": "concatenated_string"
+                              }
+                            ],
+                            "parse": {
+                              "grammar": "annotation",
+                              "has": {
+                                "stopBy": "end",
+                                "kind": "call",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "any": [
+                                    {
+                                      "matches": "ref",
+                                      "capture": "F"
+                                    },
+                                    {
+                                      "kind": "parenthesized_expression",
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "matches": "ref",
+                                        "capture": "F"
+                                      }
+                                    },
+                                    {
+                                      "kind": "parenthesized_expression",
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "kind": "parenthesized_expression",
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "matches": "ref",
+                                          "capture": "F"
+                                        }
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
               }
             }
           }
@@ -111,7 +235,7 @@
         "anchor": "capture.F",
         "each": "F",
         "code": "PTH124",
-        "message": "Use `pathlib.Path(...)` instead of `py.path.local(...)`; py.path is in maintenance mode. Keep `py.path.local` only where the code calls its py-only methods, such as `sysfind` or `visit`.",
+        "message": "Use `pathlib.Path(...)` instead of `py.path.local(...)` and port the py.path methods called on it (`join`, `ensure`, `check`, `read`); keep it where an API still requires a `py.path.local`.",
         "suppress": {
           "noqa": {
             "codes": [

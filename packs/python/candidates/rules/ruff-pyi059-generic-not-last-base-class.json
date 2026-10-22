@@ -66,7 +66,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PYI059",
-        "message": "Move `Generic[...]` to the end of the base class list so the class gets the right method resolution order; check that reordering the other bases keeps the intended method lookup.",
+        "message": "Move `Generic[...]` after the other positional base classes, keeping keyword arguments last; this changes the method resolution order, so check nothing relied on the old one.",
         "suppress": { "noqa": { "codes": ["PYI059"] } }
       }
     }

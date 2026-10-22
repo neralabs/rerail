@@ -289,6 +289,33 @@
                       "kind": "function_definition"
                     }
                   }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "generic_type"
+                    },
+                    {
+                      "kind": "union_type"
+                    },
+                    {
+                      "kind": "member_type"
+                    },
+                    {
+                      "kind": "splat_type"
+                    }
+                  ],
+                  "not": {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "type",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "field": "left",
+                        "kind": "type_alias_statement"
+                      }
+                    }
+                  }
                 }
               ]
             },
@@ -346,6 +373,25 @@
                 "kind": "function_definition"
               }
             },
+            "late-annotation": {
+              "kind": "type",
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "type",
+                    "kind": "assignment"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "left",
+                    "kind": "type_alias_statement"
+                  }
+                }
+              ]
+            },
             "not-last": {
               "any": [
                 {
@@ -366,11 +412,43 @@
                       "kind": "function_definition"
                     },
                     "not": {
-                      "kind": "function_definition"
+                      "any": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "matches": "late-annotation"
+                        }
+                      ]
                     },
                     "precedes": {
                       "stopBy": "end",
                       "matches": "later-call"
+                    }
+                  }
+                },
+                {
+                  "follows": {
+                    "stopBy": "end",
+                    "matches": "late-annotation",
+                    "has": {
+                      "stopBy": "end",
+                      "matches": "walked-call"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": {
+                      "kind": "function_definition"
+                    },
+                    "follows": {
+                      "stopBy": "end",
+                      "matches": "late-annotation",
+                      "has": {
+                        "stopBy": "end",
+                        "matches": "walked-call"
+                      }
                     }
                   }
                 }
@@ -394,7 +472,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PT021",
-        "message": "Replace this finalizer registration with a `yield` of the fixture value and run the cleanup after it. Keep it only if cleanup must still run when later setup code raises.",
+        "message": "Return the fixture value with `yield` and move this cleanup, and any other registered finalizer, after it. Keep the callback if cleanup must run even when later setup code raises.",
         "suppress": {
           "noqa": {
             "codes": [

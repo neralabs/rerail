@@ -54,6 +54,29 @@
             "value": {
               "regex": "^\\.?$"
             }
+          },
+          "single-arg-list": {
+            "kind": "argument_list",
+            "count": {
+              "has": {
+                "stopBy": "neighbor",
+                "not": {
+                  "any": [
+                    {
+                      "regex": "^[(),]$"
+                    },
+                    {
+                      "kind": "comment"
+                    },
+                    {
+                      "kind": "line_continuation"
+                    }
+                  ]
+                }
+              },
+              "min": 1,
+              "max": 1
+            }
           }
         }
       }
@@ -168,50 +191,204 @@
               "grammar": "annotation",
               "has": {
                 "stopBy": "end",
-                "kind": "call",
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "ref",
-                  "capture": "F"
-                },
-                "all": [
+                "any": [
                   {
+                    "kind": "call",
                     "has": {
                       "stopBy": "neighbor",
-                      "kind": "argument_list",
-                      "count": {
-                        "has": {
-                          "stopBy": "neighbor",
-                          "not": {
-                            "any": [
-                              {
-                                "regex": "^[(),]$"
-                              },
-                              {
-                                "kind": "comment"
-                              },
-                              {
-                                "kind": "line_continuation"
-                              }
-                            ]
+                      "any": [
+                        {
+                          "matches": "ref",
+                          "capture": "F"
+                        },
+                        {
+                          "kind": "parenthesized_expression",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "ref",
+                            "capture": "F"
                           }
                         },
-                        "min": 1,
-                        "max": 1
-                      },
-                      "has": {
-                        "stopBy": "neighbor",
-                        "any": [
-                          {
-                            "matches": "dot-str",
-                            "capture": "ARG"
-                          },
-                          {
+                        {
+                          "kind": "parenthesized_expression",
+                          "has": {
+                            "stopBy": "neighbor",
                             "kind": "parenthesized_expression",
                             "has": {
                               "stopBy": "neighbor",
-                              "matches": "dot-str",
-                              "capture": "ARG"
+                              "matches": "ref",
+                              "capture": "F"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "single-arg-list",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "any": [
+                              {
+                                "matches": "dot-str",
+                                "capture": "ARG"
+                              },
+                              {
+                                "kind": "parenthesized_expression",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "matches": "dot-str",
+                                  "capture": "ARG"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "string"
+                      },
+                      {
+                        "kind": "concatenated_string"
+                      }
+                    ],
+                    "parse": {
+                      "grammar": "annotation",
+                      "has": {
+                        "stopBy": "end",
+                        "any": [
+                          {
+                            "kind": "call",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "any": [
+                                {
+                                  "matches": "ref",
+                                  "capture": "F"
+                                },
+                                {
+                                  "kind": "parenthesized_expression",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "matches": "ref",
+                                    "capture": "F"
+                                  }
+                                },
+                                {
+                                  "kind": "parenthesized_expression",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "parenthesized_expression",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "matches": "ref",
+                                      "capture": "F"
+                                    }
+                                  }
+                                }
+                              ]
+                            },
+                            "all": [
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "matches": "single-arg-list",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "any": [
+                                      {
+                                        "matches": "dot-str",
+                                        "capture": "ARG"
+                                      },
+                                      {
+                                        "kind": "parenthesized_expression",
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "matches": "dot-str",
+                                          "capture": "ARG"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "kind": "string"
+                              },
+                              {
+                                "kind": "concatenated_string"
+                              }
+                            ],
+                            "parse": {
+                              "grammar": "annotation",
+                              "has": {
+                                "stopBy": "end",
+                                "kind": "call",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "any": [
+                                    {
+                                      "matches": "ref",
+                                      "capture": "F"
+                                    },
+                                    {
+                                      "kind": "parenthesized_expression",
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "matches": "ref",
+                                        "capture": "F"
+                                      }
+                                    },
+                                    {
+                                      "kind": "parenthesized_expression",
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "kind": "parenthesized_expression",
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "matches": "ref",
+                                          "capture": "F"
+                                        }
+                                      }
+                                    }
+                                  ]
+                                },
+                                "all": [
+                                  {
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "matches": "single-arg-list",
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "any": [
+                                          {
+                                            "matches": "dot-str",
+                                            "capture": "ARG"
+                                          },
+                                          {
+                                            "kind": "parenthesized_expression",
+                                            "has": {
+                                              "stopBy": "neighbor",
+                                              "matches": "dot-str",
+                                              "capture": "ARG"
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  }
+                                ]
+                              }
                             }
                           }
                         ]

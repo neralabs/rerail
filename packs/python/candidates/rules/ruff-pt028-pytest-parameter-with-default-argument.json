@@ -140,7 +140,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PT028",
-        "message": "Remove this default: pytest never injects a fixture for a parameter that has one, so the test always gets it. Set fixed values in the body, or leave it if pytest does not collect this function.",
+        "message": "Remove this default: pytest never fills a parameter that has a default from a fixture or parametrize. Set fixed values in the test body, or keep it if pytest does not collect this function.",
         "suppress": {
           "noqa": {
             "codes": [

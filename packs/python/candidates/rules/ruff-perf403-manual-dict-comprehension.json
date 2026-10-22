@@ -285,6 +285,40 @@
                       }
                     }
                   }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "only": true,
+                      "site": {
+                        "any": [
+                          {
+                            "kind": "as_pattern",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "precedes": {
+                                "stopBy": "neighbor",
+                                "regex": "^as$"
+                              },
+                              "matches": "dict-init"
+                            }
+                          },
+                          {
+                            "kind": "function_definition",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "field": "return_type",
+                              "kind": "type",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "matches": "dict-ann"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
                 }
               ]
             },
@@ -310,7 +344,14 @@
                     "follows": {
                       "stopBy": "end",
                       "not": {
-                        "kind": "comment"
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "regex": "^;$"
+                          }
+                        ]
                       }
                     }
                   },
@@ -318,7 +359,14 @@
                     "precedes": {
                       "stopBy": "end",
                       "not": {
-                        "kind": "comment"
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "regex": "^;$"
+                          }
+                        ]
                       }
                     }
                   }
@@ -496,11 +544,37 @@
                       }
                     }
                   ]
+                },
+                {
+                  "kind": "tuple_pattern",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "key-element"
+                  }
                 }
               ]
             },
             "target": {
               "any": [
+                {
+                  "kind": "tuple_pattern",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "target"
+                  }
+                },
                 {
                   "kind": "identifier",
                   "pattern": "$E",
@@ -565,13 +639,7 @@
                     {
                       "has": {
                         "stopBy": "neighbor",
-                        "pattern": "$E2",
-                        "compare": {
-                          "left": "E2",
-                          "right": "V",
-                          "op": "eq",
-                          "text": "structure"
-                        }
+                        "matches": "value-element"
                       }
                     }
                   ]
@@ -611,6 +679,109 @@
                         }
                       }
                     ]
+                  }
+                },
+                {
+                  "not": {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "function_definition"
+                    },
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "left",
+                      "any": [
+                        {
+                          "matches": "nonlocal-target"
+                        },
+                        {
+                          "has": {
+                            "stopBy": "end",
+                            "matches": "nonlocal-target"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "has-nonlocal": {
+              "any": [
+                {
+                  "kind": "nonlocal_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "pattern": "$TN"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "nonlocal_statement",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "pattern": "$TN"
+                    }
+                  }
+                }
+              ]
+            },
+            "nonlocal-target": {
+              "kind": "identifier",
+              "pattern": "$TN",
+              "inside": {
+                "stopBy": "end",
+                "kind": "for_statement",
+                "any": [
+                  {
+                    "precedes": {
+                      "stopBy": "end",
+                      "matches": "has-nonlocal"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": {
+                        "kind": "block",
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "function_definition"
+                        }
+                      },
+                      "precedes": {
+                        "stopBy": "end",
+                        "matches": "has-nonlocal"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "value-element": {
+              "any": [
+                {
+                  "pattern": "$E2",
+                  "compare": {
+                    "left": "E2",
+                    "right": "V",
+                    "op": "eq",
+                    "text": "structure"
+                  }
+                },
+                {
+                  "kind": "tuple_pattern",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "value-element"
                   }
                 }
               ]
@@ -730,7 +901,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PERF403",
-        "message": "Build the dict with a comprehension (`{k: v for ...}`), or `$L.update(...)` of one when `$L` already has entries or is used before the loop.",
+        "message": "Build the dict with a comprehension (`{k: v for ...}`); if `$L` is not a fresh empty dict assigned just before the loop, pass that comprehension to `$L.update(...)` instead.",
         "suppress": {
           "noqa": {
             "codes": [

@@ -3,7 +3,7 @@
   "id": "ruff-perf102-incorrect-dict-iterator",
   "revision": 1,
   "mode": "steer",
-  "description": "Iterate over keys() or values() instead of items() when a for loop uses only the key or only the value of each pair.",
+  "description": "Iterate over a dict's keys or values instead of its items when a for loop uses only the key or only the value of each pair.",
   "scope": {
     "include": [
       "**/*"
@@ -335,7 +335,11 @@
               "regex": "^items$"
             },
             "inside": {
-              "stopBy": "neighbor",
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
               "field": "function",
               "kind": "call",
               "has": {
@@ -393,7 +397,11 @@
               "regex": "^items$"
             },
             "inside": {
-              "stopBy": "neighbor",
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
               "field": "function",
               "kind": "call",
               "has": {

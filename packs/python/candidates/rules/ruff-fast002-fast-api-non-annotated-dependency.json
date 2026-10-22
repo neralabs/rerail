@@ -3,7 +3,7 @@
   "id": "ruff-fast002-fast-api-non-annotated-dependency",
   "revision": 1,
   "mode": "steer",
-  "description": "Declare FastAPI route dependencies and parameter markers inside Annotated type hints instead of as default values, so the signature stays a valid plain function signature.",
+  "description": "Declare FastAPI route dependencies and parameter markers inside Annotated type hints instead of as default values, so the function keeps ordinary defaults when called directly.",
   "scope": {
     "include": [
       "**/*"
@@ -422,7 +422,7 @@
       "violation": {
         "code": "FAST002",
         "anchor": "witness.span",
-        "message": "Declare `$NAME: Annotated[$TYPE, <marker>]` using `$DEFAULT` without its default argument, which becomes the parameter's plain `= value` (none when it is `...`).",
+        "message": "Move `$DEFAULT` into `$NAME: Annotated[$TYPE, ...]`; if the call has a default argument, take it out of the call and keep it as the plain `= default`, dropping it when it is `...`.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -451,7 +451,7 @@
       "violation": {
         "code": "FAST002",
         "anchor": "witness.span",
-        "message": "Declare `$NAME: Annotated[$TYPE, $DEFAULT]` instead of passing the dependency as the parameter's default.",
+        "message": "Declare `$NAME: Annotated[$TYPE, $DEFAULT]` instead of passing the dependency as the default; move the parameter before any with defaults, or make it keyword-only, if needed.",
         "suppress": {
           "noqa": {
             "codes": [

@@ -27,93 +27,36 @@
             ]
           },
           "class-ref": {
-            "any": [
-              {
-                "any": [
-                  {
-                    "kind": "identifier"
-                  },
-                  {
-                    "kind": "attribute"
-                  }
-                ],
-                "resolves": {
-                  "global": [
-                    "classmethod"
-                  ],
-                  "import": [
-                    "builtins.classmethod",
-                    "abc.abstractclassmethod"
-                  ]
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "class-ref"
-                }
-              }
-            ]
+            "resolves": {
+              "global": [
+                "classmethod"
+              ],
+              "import": [
+                "builtins.classmethod",
+                "abc.abstractclassmethod"
+              ]
+            }
           },
           "static-ref": {
-            "any": [
-              {
-                "any": [
-                  {
-                    "kind": "identifier"
-                  },
-                  {
-                    "kind": "attribute"
-                  }
-                ],
-                "resolves": {
-                  "global": [
-                    "staticmethod"
-                  ],
-                  "import": [
-                    "builtins.staticmethod",
-                    "abc.abstractstaticmethod"
-                  ]
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "static-ref"
-                }
-              }
-            ]
+            "resolves": {
+              "global": [
+                "staticmethod"
+              ],
+              "import": [
+                "builtins.staticmethod",
+                "abc.abstractstaticmethod"
+              ]
+            }
           },
           "type-ref": {
-            "any": [
-              {
-                "any": [
-                  {
-                    "kind": "identifier"
-                  },
-                  {
-                    "kind": "attribute"
-                  }
-                ],
-                "resolves": {
-                  "global": [
-                    "type"
-                  ],
-                  "import": [
-                    "builtins.type"
-                  ]
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "type-ref"
-                }
-              }
-            ]
+            "resolves": {
+              "global": [
+                "type"
+              ],
+              "import": [
+                "builtins.type"
+              ]
+            }
           },
           "meta-base": {
             "any": [
@@ -121,14 +64,6 @@
                 "matches": "type-ref"
               },
               {
-                "any": [
-                  {
-                    "kind": "identifier"
-                  },
-                  {
-                    "kind": "attribute"
-                  }
-                ],
                 "resolves": {
                   "import": [
                     "abc.ABCMeta",
@@ -200,6 +135,13 @@
                 }
               },
               {
+                "matches": {
+                  "meta-attr": {
+                    "P": "$P"
+                  }
+                }
+              },
+              {
                 "kind": "subscript",
                 "has": {
                   "stopBy": "neighbor",
@@ -249,6 +191,13 @@
                 }
               },
               {
+                "matches": {
+                  "tainted-attr": {
+                    "P": "$P"
+                  }
+                }
+              },
+              {
                 "kind": "subscript",
                 "has": {
                   "stopBy": "neighbor",
@@ -269,14 +218,7 @@
             "kind": "function_definition",
             "inside": {
               "stopBy": {
-                "any": [
-                  {
-                    "kind": "function_definition"
-                  },
-                  {
-                    "kind": "class_definition"
-                  }
-                ]
+                "matches": "scope-node"
               },
               "kind": "class_definition"
             },
@@ -304,14 +246,7 @@
                 },
                 "inside": {
                   "stopBy": {
-                    "any": [
-                      {
-                        "kind": "function_definition"
-                      },
-                      {
-                        "kind": "class_definition"
-                      }
-                    ]
+                    "matches": "scope-node"
                   },
                   "kind": "class_definition",
                   "matches": "meta-class"
@@ -409,6 +344,114 @@
                 "matches": "class-method"
               }
             }
+          },
+          "meta-attr": {
+            "params": [
+              "P"
+            ],
+            "rule": {
+              "kind": "attribute",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "attribute",
+                    "pattern": "$A"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "object",
+                    "kind": "identifier",
+                    "resolves": {
+                      "binding": {
+                        "scope": "module",
+                        "latest": true,
+                        "site": {
+                          "kind": "class_definition",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "body",
+                            "has": {
+                              "stopBy": {
+                                "matches": "scope-node"
+                              },
+                              "kind": "class_definition",
+                              "matches": "meta-class",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "name",
+                                "pattern": "$A"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "tainted-attr": {
+            "params": [
+              "P"
+            ],
+            "rule": {
+              "kind": "attribute",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "attribute",
+                    "pattern": "$A"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "object",
+                    "kind": "identifier",
+                    "resolves": {
+                      "binding": {
+                        "scope": "module",
+                        "latest": true,
+                        "site": {
+                          "kind": "class_definition",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "body",
+                            "has": {
+                              "stopBy": {
+                                "matches": "scope-node"
+                              },
+                              "kind": "class_definition",
+                              "matches": "call-tainted-class",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "name",
+                                "pattern": "$A"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "scope-node": {
+            "any": [
+              {
+                "kind": "function_definition"
+              },
+              {
+                "kind": "class_definition"
+              }
+            ]
           }
         }
       }
@@ -457,7 +500,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "N804",
-        "message": "Name the first parameter of this class method `cls` and update its uses in the body; keep the current name only if the project follows another convention.",
+        "message": "Rename this class method's first parameter to `cls` and update its uses in the body, unless another parameter already has that name; keep it if the project follows another convention.",
         "suppress": {
           "noqa": {
             "codes": [
@@ -475,7 +518,7 @@
           "rule": {
             "kind": "typed_default_parameter",
             "matches": "first-slot",
-            "regex": "^(?P<PARAM>(?:[^=\\[\\]()\"']|\"[^\"]*\"|'[^']*'|\\[(?:[^\\[\\]]|\\[[^\\[\\]]*\\])*\\]|\\((?:[^()]|\\([^()]*\\))*\\))+?)\\s*=",
+            "regex": "^(?P<PARAM>(?:[^=\\[\\]()\"']|\"[^\"]*\"|'[^']*'|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[[^\\[\\]]*\\])*\\])*\\])*\\]|\\((?:[^()]|\\((?:[^()]|\\([^()]*\\))*\\))*\\))+?)\\s*=",
             "has": {
               "stopBy": "neighbor",
               "field": "name",
@@ -489,7 +532,7 @@
       "violation": {
         "anchor": "capture.PARAM",
         "code": "N804",
-        "message": "Name the first parameter of this class method `cls` and update its uses in the body; keep the current name only if the project follows another convention.",
+        "message": "Rename this class method's first parameter to `cls` and update its uses in the body, unless another parameter already has that name; keep it if the project follows another convention.",
         "suppress": {
           "noqa": {
             "codes": [

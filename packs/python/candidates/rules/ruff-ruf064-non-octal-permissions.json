@@ -38,45 +38,44 @@
           "path-class": {
             "any": [
               {
-                "any": [
-                  {
-                    "kind": "identifier"
-                  },
-                  {
-                    "kind": "attribute"
-                  }
-                ],
-                "resolves": {
-                  "import": [
-                    "pathlib.Path",
-                    "pathlib.PosixPath",
-                    "pathlib.WindowsPath"
-                  ]
-                }
+                "kind": "identifier"
               },
               {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "path-class"
-                }
+                "kind": "attribute"
               }
-            ]
+            ],
+            "resolves": {
+              "import": [
+                "pathlib.Path",
+                "pathlib.PosixPath",
+                "pathlib.WindowsPath"
+              ]
+            }
           },
           "path-call": {
+            "kind": "call",
+            "has": {
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              "matches": "path-class"
+            }
+          },
+          "path-value": {
             "any": [
               {
-                "kind": "call",
-                "has": {
-                  "stopBy": "neighbor",
-                  "field": "function",
-                  "matches": "path-class"
-                }
+                "matches": "path-call"
               },
               {
                 "kind": "parenthesized_expression",
                 "has": {
-                  "stopBy": "neighbor",
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
                   "matches": "path-call"
                 }
               }
@@ -106,7 +105,7 @@
                 "resolves": {
                   "binding": {
                     "value": {
-                      "matches": "path-call"
+                      "matches": "path-value"
                     }
                   }
                 }
@@ -125,7 +124,7 @@
                         {
                           "has": {
                             "stopBy": "neighbor",
-                            "matches": "path-call",
+                            "matches": "path-value",
                             "precedes": {
                               "stopBy": "end",
                               "regex": "^as$"
@@ -156,175 +155,220 @@
               }
             ]
           },
-          "path-mode-method": {
-            "any": [
-              {
-                "kind": "attribute",
-                "all": [
-                  {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "field": "attribute",
-                      "regex": "^(?:chmod|lchmod|mkdir|touch)$"
-                    }
-                  },
-                  {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "field": "object",
-                      "matches": "path-object"
-                    }
-                  }
-                ]
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "path-mode-method"
-                }
-              }
-            ]
-          },
-          "path-mkdir": {
-            "any": [
-              {
-                "kind": "attribute",
-                "all": [
-                  {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "field": "attribute",
-                      "regex": "^mkdir$"
-                    }
-                  },
-                  {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "field": "object",
-                      "matches": "path-object"
-                    }
-                  }
-                ]
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "path-mkdir"
-                }
-              }
-            ]
+          "path-method": {
+            "kind": "attribute",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "object",
+              "matches": "path-object"
+            }
           },
           "umask-fn": {
             "any": [
               {
-                "any": [
-                  {
-                    "kind": "identifier"
-                  },
-                  {
-                    "kind": "attribute"
-                  }
-                ],
-                "resolves": {
-                  "import": [
-                    "os.umask"
-                  ]
-                }
+                "kind": "identifier"
               },
               {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "umask-fn"
-                }
+                "kind": "attribute"
               }
-            ]
+            ],
+            "resolves": {
+              "import": [
+                "os.umask"
+              ]
+            }
           },
           "second-slot-fn": {
             "any": [
               {
-                "any": [
-                  {
-                    "kind": "identifier"
-                  },
-                  {
-                    "kind": "attribute"
-                  }
-                ],
-                "resolves": {
-                  "import": [
-                    "os.chmod",
-                    "os.fchmod",
-                    "os.lchmod",
-                    "os.mkdir",
-                    "os.makedirs",
-                    "os.mkfifo",
-                    "os.mknod"
-                  ]
-                }
+                "kind": "identifier"
               },
               {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "second-slot-fn"
-                }
+                "kind": "attribute"
               }
-            ]
+            ],
+            "resolves": {
+              "import": [
+                "os.chmod",
+                "os.fchmod",
+                "os.lchmod",
+                "os.mkdir",
+                "os.makedirs",
+                "os.mkfifo",
+                "os.mknod"
+              ]
+            }
           },
           "third-slot-fn": {
             "any": [
               {
-                "any": [
-                  {
-                    "kind": "identifier"
-                  },
-                  {
-                    "kind": "attribute"
-                  }
-                ],
-                "resolves": {
-                  "import": [
-                    "os.open",
-                    "dbm.open",
-                    "dbm.gnu.open",
-                    "dbm.ndbm.open"
-                  ]
-                }
+                "kind": "identifier"
               },
               {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "third-slot-fn"
-                }
+                "kind": "attribute"
               }
-            ]
+            ],
+            "resolves": {
+              "import": [
+                "os.open",
+                "dbm.open",
+                "dbm.gnu.open",
+                "dbm.ndbm.open"
+              ]
+            }
           },
           "makedirs-fn": {
             "any": [
               {
-                "any": [
-                  {
-                    "kind": "identifier"
-                  },
-                  {
-                    "kind": "attribute"
-                  }
-                ],
-                "resolves": {
-                  "import": [
-                    "os.makedirs"
-                  ]
-                }
+                "kind": "identifier"
               },
               {
-                "kind": "parenthesized_expression",
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "os.makedirs"
+              ]
+            }
+          },
+          "kw-mode": {
+            "kind": "keyword_argument",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "name",
+              "regex": "^mode$"
+            }
+          },
+          "kw-parent-mode": {
+            "kind": "argument_list",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "keyword_argument",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "name",
+                "regex": "^parent_mode$"
+              },
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "bad-mode"
+                  }
+                }
+              ]
+            }
+          },
+          "arg": {
+            "not": {
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                }
+              ]
+            }
+          },
+          "kw-bad": {
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "kw-mode",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "value",
+                "matches": "bad-mode"
+              }
+            }
+          },
+          "no-kw": {
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "kw-mode"
+              }
+            }
+          },
+          "mode-at-0": {
+            "kind": "argument_list",
+            "any": [
+              {
+                "matches": "kw-bad"
+              },
+              {
+                "matches": "no-kw",
                 "has": {
                   "stopBy": "neighbor",
-                  "matches": "makedirs-fn"
+                  "matches": "bad-mode",
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "matches": "arg"
+                    }
+                  },
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "kind": "list_splat"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "mode-at-1": {
+            "kind": "argument_list",
+            "any": [
+              {
+                "matches": "kw-bad"
+              },
+              {
+                "matches": "no-kw",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "bad-mode",
+                  "nthChild": {
+                    "position": 2,
+                    "ofRule": {
+                      "matches": "arg"
+                    }
+                  },
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "kind": "list_splat"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "mode-at-2": {
+            "kind": "argument_list",
+            "any": [
+              {
+                "matches": "kw-bad"
+              },
+              {
+                "matches": "no-kw",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "bad-mode",
+                  "nthChild": {
+                    "position": 3,
+                    "ofRule": {
+                      "matches": "arg"
+                    }
+                  },
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "kind": "list_splat"
+                    }
+                  }
                 }
               }
             ]
@@ -338,91 +382,93 @@
         "ast": {
           "language": "python",
           "rule": {
+            "kind": "call",
             "any": [
               {
-                "kind": "call",
                 "has": {
-                  "stopBy": "neighbor",
-                  "field": "function",
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
                   "matches": "umask-fn"
                 },
-                "arguments": {
-                  "signature": [
-                    "mode"
-                  ],
-                  "bind": {
-                    "MODE": "mode"
-                  },
-                  "mode": "syntactic"
-                }
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "mode-at-0"
+                    }
+                  }
+                ]
               },
               {
-                "kind": "call",
                 "has": {
-                  "stopBy": "neighbor",
-                  "field": "function",
-                  "matches": "path-mode-method"
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "matches": "path-method",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "attribute",
+                    "regex": "^(?:chmod|lchmod|mkdir|touch)$"
+                  }
                 },
-                "arguments": {
-                  "signature": [
-                    "mode"
-                  ],
-                  "bind": {
-                    "MODE": "mode"
-                  },
-                  "mode": "syntactic"
-                }
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "mode-at-0"
+                    }
+                  }
+                ]
               },
               {
-                "kind": "call",
                 "has": {
-                  "stopBy": "neighbor",
-                  "field": "function",
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
                   "matches": "second-slot-fn"
                 },
-                "arguments": {
-                  "signature": [
-                    "a",
-                    "mode"
-                  ],
-                  "bind": {
-                    "MODE": "mode"
-                  },
-                  "mode": "syntactic"
-                }
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "mode-at-1"
+                    }
+                  }
+                ]
               },
               {
-                "kind": "call",
                 "has": {
-                  "stopBy": "neighbor",
-                  "field": "function",
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
                   "matches": "third-slot-fn"
                 },
-                "arguments": {
-                  "signature": [
-                    "a",
-                    "b",
-                    "mode"
-                  ],
-                  "bind": {
-                    "MODE": "mode"
-                  },
-                  "mode": "syntactic"
-                }
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "mode-at-2"
+                    }
+                  }
+                ]
               }
             ]
-          },
-          "constraints": {
-            "MODE": {
-              "matches": "bad-mode"
-            }
           }
         }
       },
       "violation": {
         "anchor": "capture.LIT",
         "code": "RUF064",
-        "message": "Write this mode as an octal literal such as `0o644`. A bare number is read as decimal, hex or binary and sets different bits than its digits suggest; use the octal form of the intended permissions.",
+        "message": "Write `$LIT` as an octal literal: if its digits read as a mode (644, 755), add the `0o` prefix; otherwise write the same value in octal (decimal 420 is `0o644`, `0x1ff` is `0o777`).",
         "suppress": {
           "noqa": {
             "codes": [
@@ -438,56 +484,49 @@
         "ast": {
           "language": "python",
           "rule": {
+            "kind": "call",
             "any": [
               {
-                "kind": "call",
                 "has": {
-                  "stopBy": "neighbor",
-                  "field": "function",
-                  "matches": "makedirs-fn"
-                },
-                "arguments": {
-                  "signature": [
-                    "*",
-                    "parent_mode"
-                  ],
-                  "bind": {
-                    "MODE": "parent_mode"
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
                   },
-                  "mode": "syntactic"
+                  "matches": "makedirs-fn"
                 }
               },
               {
-                "kind": "call",
+                "has": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "matches": "path-method",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "attribute",
+                    "regex": "^mkdir$"
+                  }
+                }
+              }
+            ],
+            "all": [
+              {
                 "has": {
                   "stopBy": "neighbor",
-                  "field": "function",
-                  "matches": "path-mkdir"
-                },
-                "arguments": {
-                  "signature": [
-                    "*",
-                    "parent_mode"
-                  ],
-                  "bind": {
-                    "MODE": "parent_mode"
-                  },
-                  "mode": "syntactic"
+                  "matches": "kw-parent-mode"
                 }
               }
             ]
-          },
-          "constraints": {
-            "MODE": {
-              "matches": "bad-mode"
-            }
           }
         }
       },
       "violation": {
         "anchor": "capture.LIT",
         "code": "RUF064",
-        "message": "Write this mode as an octal literal such as `0o644`. A bare number is read as decimal, hex or binary and sets different bits than its digits suggest; use the octal form of the intended permissions.",
+        "message": "Write `$LIT` as an octal literal: if its digits read as a mode (644, 755), add the `0o` prefix; otherwise write the same value in octal (decimal 420 is `0o644`, `0x1ff` is `0o777`).",
         "suppress": {
           "noqa": {
             "codes": [

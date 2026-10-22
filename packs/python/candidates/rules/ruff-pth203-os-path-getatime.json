@@ -30,6 +30,73 @@
                 "os.path.getatime"
               ]
             }
+          },
+          "single-filename-arg": {
+            "any": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "generator_expression"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "regex": "^[(),\\[\\]{}]$"
+                          },
+                          {
+                            "kind": "comment"
+                          }
+                        ]
+                      }
+                    },
+                    "min": 1,
+                    "max": 1
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "keyword_argument",
+                        "regex": "^filename\\s*="
+                      },
+                      {
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "keyword_argument"
+                            },
+                            {
+                              "kind": "list_splat"
+                            },
+                            {
+                              "kind": "dictionary_splat"
+                            },
+                            {
+                              "any": [
+                                {
+                                  "regex": "^[(),\\[\\]{}]$"
+                                },
+                                {
+                                  "kind": "comment"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
           }
         }
       }
@@ -136,70 +203,132 @@
               "grammar": "annotation",
               "has": {
                 "stopBy": "end",
-                "kind": "call",
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "ref",
-                  "capture": "F"
-                },
                 "any": [
                   {
+                    "kind": "call",
                     "has": {
                       "stopBy": "neighbor",
-                      "kind": "generator_expression"
-                    }
-                  },
-                  {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "kind": "argument_list",
-                      "count": {
-                        "has": {
-                          "stopBy": "neighbor",
-                          "not": {
-                            "any": [
-                              {
-                                "regex": "^[(),\\[\\]{}]$"
-                              },
-                              {
-                                "kind": "comment"
-                              }
-                            ]
+                      "any": [
+                        {
+                          "matches": "ref",
+                          "capture": "F"
+                        },
+                        {
+                          "kind": "parenthesized_expression",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "ref",
+                            "capture": "F"
                           }
                         },
-                        "min": 1,
-                        "max": 1
+                        {
+                          "kind": "parenthesized_expression",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "parenthesized_expression",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "ref",
+                              "capture": "F"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "matches": "single-filename-arg"
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "string"
                       },
+                      {
+                        "kind": "concatenated_string"
+                      }
+                    ],
+                    "parse": {
+                      "grammar": "annotation",
                       "has": {
-                        "stopBy": "neighbor",
+                        "stopBy": "end",
                         "any": [
                           {
-                            "kind": "keyword_argument",
-                            "regex": "^filename\\s*="
-                          },
-                          {
-                            "not": {
+                            "kind": "call",
+                            "has": {
+                              "stopBy": "neighbor",
                               "any": [
                                 {
-                                  "kind": "keyword_argument"
+                                  "matches": "ref",
+                                  "capture": "F"
                                 },
                                 {
-                                  "kind": "list_splat"
+                                  "kind": "parenthesized_expression",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "matches": "ref",
+                                    "capture": "F"
+                                  }
                                 },
                                 {
-                                  "kind": "dictionary_splat"
-                                },
-                                {
-                                  "any": [
-                                    {
-                                      "regex": "^[(),\\[\\]{}]$"
-                                    },
-                                    {
-                                      "kind": "comment"
+                                  "kind": "parenthesized_expression",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "parenthesized_expression",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "matches": "ref",
+                                      "capture": "F"
                                     }
-                                  ]
+                                  }
                                 }
                               ]
+                            },
+                            "matches": "single-filename-arg"
+                          },
+                          {
+                            "any": [
+                              {
+                                "kind": "string"
+                              },
+                              {
+                                "kind": "concatenated_string"
+                              }
+                            ],
+                            "parse": {
+                              "grammar": "annotation",
+                              "has": {
+                                "stopBy": "end",
+                                "kind": "call",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "any": [
+                                    {
+                                      "matches": "ref",
+                                      "capture": "F"
+                                    },
+                                    {
+                                      "kind": "parenthesized_expression",
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "matches": "ref",
+                                        "capture": "F"
+                                      }
+                                    },
+                                    {
+                                      "kind": "parenthesized_expression",
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "kind": "parenthesized_expression",
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "matches": "ref",
+                                          "capture": "F"
+                                        }
+                                      }
+                                    }
+                                  ]
+                                },
+                                "matches": "single-filename-arg"
+                              }
                             }
                           }
                         ]

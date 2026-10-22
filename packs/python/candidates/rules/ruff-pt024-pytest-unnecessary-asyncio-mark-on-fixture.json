@@ -146,14 +146,14 @@
                 }
               ]
             },
-            "regex": "^(?P<span>(?:\"(?:[^\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^'\\\\]|\\\\[\\s\\S])*'|#[^\\n]*\\n|[^#'\"])*?)(?:[ \\t]*#[^\\n]*)?$"
+            "regex": "^(?P<span>(?:\"\"\"(?:(?:[^\"\\\\]|\\\\[\\s\\S])|\"(?:[^\"\\\\]|\\\\[\\s\\S])|\"\"(?:[^\"\\\\]|\\\\[\\s\\S]))*\"\"\"|'''(?:(?:[^'\\\\]|\\\\[\\s\\S])|'(?:[^'\\\\]|\\\\[\\s\\S])|''(?:[^'\\\\]|\\\\[\\s\\S]))*'''|\"(?:[^\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^'\\\\]|\\\\[\\s\\S])*'|#[^\\n]*\\n|[^#'\"])*?)(?:[ \\t]*#[^\\n]*)?$"
           }
         }
       },
       "violation": {
         "anchor": "capture.span",
         "code": "PT024",
-        "message": "Remove this `pytest.mark.asyncio` decorator; marks have no effect on a fixture, so it behaves the same without it.",
+        "message": "Remove this `pytest.mark.asyncio` decorator; marks have no effect on fixtures. If an async fixture needs pytest-asyncio strict mode, use `@pytest_asyncio.fixture` instead.",
         "suppress": {
           "noqa": {
             "codes": [

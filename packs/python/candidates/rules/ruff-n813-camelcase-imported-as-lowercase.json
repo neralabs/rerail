@@ -111,7 +111,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "N813",
-        "message": "Import `$NAME` without `as $ASNAME`, or use a CamelCase alias, and update its uses; keep the alias if `$NAME` is really a function or variable.",
+        "message": "Use a CamelCase alias instead of `$ASNAME` for `$NAME` and update its uses; leave it if `$NAME` is really a function or variable despite its CamelCase name.",
         "suppress": {
           "noqa": {
             "codes": [

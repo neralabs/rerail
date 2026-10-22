@@ -185,12 +185,6 @@
               "max": 1
             }
           },
-          "comparator": {
-            "follows": {
-              "stopBy": "neighbor",
-              "regex": "^(==|!=|<|<=|>|>=|<>|in|is|not\\s[\\s\\S]*in|is\\s[\\s\\S]*not)$"
-            }
-          },
           "version-ref": {
             "any": [
               {
@@ -234,42 +228,13 @@
               }
             ]
           },
-          "zero-literal": {
-            "any": [
-              {
-                "kind": "integer",
-                "value": {
-                  "type": "int",
-                  "eq": 0
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "zero-literal"
-                }
-              }
-            ]
-          },
           "small-literal": {
-            "any": [
-              {
-                "kind": "integer",
-                "value": {
-                  "type": "int",
-                  "ge": 1,
-                  "le": 2
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "small-literal"
-                }
-              }
-            ]
+            "matches": "int-literal",
+            "value": {
+              "type": "int",
+              "ge": 1,
+              "le": 2
+            }
           },
           "sole-index": {
             "not": {
@@ -297,22 +262,6 @@
               "matches": "version-ref"
             }
           },
-          "major-subscript": {
-            "kind": "subscript",
-            "matches": "version-subscript",
-            "has": {
-              "stopBy": "neighbor",
-              "field": "subscript",
-              "all": [
-                {
-                  "matches": "zero-literal"
-                },
-                {
-                  "matches": "sole-index"
-                }
-              ]
-            }
-          },
           "prefix-subscript": {
             "kind": "subscript",
             "matches": "version-subscript",
@@ -322,10 +271,40 @@
               "all": [
                 {
                   "kind": "slice",
-                  "regex": "^:[^:]*:?\\s*$",
                   "has": {
                     "stopBy": "neighbor",
-                    "matches": "small-literal"
+                    "matches": "small-literal",
+                    "follows": {
+                      "stopBy": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      },
+                      "regex": "^:$",
+                      "not": {
+                        "follows": {
+                          "stopBy": "end",
+                          "not": {
+                            "kind": "comment"
+                          }
+                        }
+                      }
+                    },
+                    "not": {
+                      "precedes": {
+                        "stopBy": "end",
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "comment"
+                            },
+                            {
+                              "regex": "^:$"
+                            }
+                          ]
+                        }
+                      }
+                    }
                   }
                 },
                 {
@@ -333,47 +312,6 @@
                 }
               ]
             }
-          },
-          "bad-subscript": {
-            "matches": "version-subscript",
-            "not": {
-              "any": [
-                {
-                  "matches": "major-subscript"
-                },
-                {
-                  "matches": "prefix-subscript"
-                }
-              ]
-            }
-          },
-          "left-bad": {
-            "any": [
-              {
-                "matches": "bad-subscript"
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "left-bad"
-                }
-              }
-            ]
-          },
-          "left-major": {
-            "any": [
-              {
-                "matches": "major-subscript"
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "stopBy": "neighbor",
-                  "matches": "left-major"
-                }
-              }
-            ]
           },
           "left-tuple": {
             "any": [
@@ -489,7 +427,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PYI004",
-        "message": "Compare `sys.version_info` against a major and minor tuple such as `(3, 10)`, not a patch version; type checkers only understand those.",
+        "message": "Compare against the major and minor version only, such as `(3, 8)` instead of `(3, 8, 1)`, picking the minor version this branch should cover; type checkers ignore patch versions.",
         "suppress": {
           "noqa": {
             "codes": [

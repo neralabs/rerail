@@ -32,6 +32,17 @@
                     "kind": "parenthesized_expression",
                     "matches": "callee"
                   }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "list_splat",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "call",
+                      "field": "function"
+                    }
+                  }
                 }
               ]
             },
@@ -43,6 +54,13 @@
                 },
                 {
                   "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "all-ref"
+                  }
+                },
+                {
+                  "kind": "list_splat",
                   "has": {
                     "stopBy": "neighbor",
                     "matches": "all-ref"
@@ -69,12 +87,13 @@
                   "regex": "^(append|extend)$"
                 }
               }
-            ]
+            ],
+            "regex": "^(?:\\*(?:\\s|#[^\\n]*)*)?(?P<ATTR>[^*][\\s\\S]*)$"
           }
         }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "capture.ATTR",
         "code": "PYI056",
         "message": "Add names with `__all__ += [...]` instead of calling `.append()` or `.extend()` on `__all__`; type checkers support `+=` reliably but not every method call.",
         "suppress": {
@@ -107,6 +126,17 @@
                     "kind": "parenthesized_expression",
                     "matches": "callee"
                   }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "list_splat",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "call",
+                      "field": "function"
+                    }
+                  }
                 }
               ]
             },
@@ -118,6 +148,13 @@
                 },
                 {
                   "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "all-ref"
+                  }
+                },
+                {
+                  "kind": "list_splat",
                   "has": {
                     "stopBy": "neighbor",
                     "matches": "all-ref"
@@ -144,12 +181,13 @@
                   "regex": "^(remove)$"
                 }
               }
-            ]
+            ],
+            "regex": "^(?:\\*(?:\\s|#[^\\n]*)*)?(?P<ATTR>[^*][\\s\\S]*)$"
           }
         }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "capture.ATTR",
         "code": "PYI056",
         "message": "Build `__all__` without that name instead of calling `.remove()`; if it depends on a condition, add the name back with `__all__ += [...]` under the opposite condition.",
         "suppress": {
@@ -159,6 +197,76 @@
             ]
           }
         }
+      }
+    },
+    {
+      "id": "method-call-on-all-in-string-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "callee": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "call"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            },
+            "in-annotation": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "kind": "attribute",
+                      "matches": "callee",
+                      "regex": "^[(\\s]*__all__[)\\s]*\\.\\s*(append|extend|remove)$",
+                      "capture": "ATTR"
+                    },
+                    {
+                      "matches": "in-annotation"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "matches": "in-annotation"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.ATTR",
+        "code": "PYI056",
+        "message": "Change `__all__` with `+=` (or build it without the name) instead of calling `.append()`, `.extend()` or `.remove()` on it; type checkers do not all support those calls.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI056"
+            ]
+          }
+        },
+        "each": "ATTR"
       }
     }
   ]

@@ -123,14 +123,16 @@
                 },
                 {
                   "kind": "call",
-                  "has": {
-                    "field": "function",
-                    "matches": "callee-list"
-                  },
                   "all": [
                     {
                       "has": {
-                        "field": "arguments",
+                        "stopBy": "neighbor",
+                        "matches": "callee-list"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
                         "kind": "argument_list",
                         "not": {
                           "has": {
@@ -159,72 +161,68 @@
                   }
                 }
               ]
-            }
-          },
-          "rule": {
-            "kind": "call",
-            "all": [
-              {
-                "has": {
-                  "field": "function",
-                  "matches": "callee-sum"
-                }
-              },
-              {
-                "has": {
-                  "field": "arguments",
-                  "kind": "argument_list",
-                  "any": [
+            },
+            "list-start": {
+              "kind": "argument_list",
+              "any": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "keyword_argument",
+                    "regex": "^start\\b",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "empty-list"
+                    }
+                  },
+                  "all": [
                     {
                       "has": {
                         "stopBy": "neighbor",
-                        "kind": "keyword_argument",
-                        "has": {
-                          "field": "name",
-                          "regex": "^start$"
-                        },
-                        "all": [
-                          {
-                            "has": {
-                              "field": "value",
-                              "matches": "empty-list"
-                            }
+                        "not": {
+                          "matches": "not-positional"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "keyword_argument",
+                      "regex": "^start\\b"
+                    }
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "empty-list",
+                    "all": [
+                      {
+                        "follows": {
+                          "stopBy": "end",
+                          "not": {
+                            "matches": "not-positional"
                           }
-                        ]
+                        }
                       },
-                      "all": [
-                        {
-                          "has": {
-                            "stopBy": "neighbor",
+                      {
+                        "not": {
+                          "follows": {
+                            "stopBy": "end",
+                            "follows": {
+                              "stopBy": "end",
+                              "not": {
+                                "matches": "not-positional"
+                              }
+                            },
                             "not": {
                               "matches": "not-positional"
                             }
                           }
                         }
-                      ]
-                    },
-                    {
-                      "not": {
-                        "has": {
-                          "stopBy": "neighbor",
-                          "kind": "keyword_argument",
-                          "has": {
-                            "field": "name",
-                            "regex": "^start$"
-                          }
-                        }
                       },
-                      "has": {
-                        "stopBy": "neighbor",
-                        "matches": "empty-list",
-                        "nthChild": {
-                          "position": 2,
-                          "ofRule": {
-                            "not": {
-                              "matches": "not-positional"
-                            }
-                          }
-                        },
+                      {
                         "not": {
                           "follows": {
                             "stopBy": "end",
@@ -232,18 +230,72 @@
                           }
                         }
                       }
+                    ]
+                  }
+                }
+              ]
+            },
+            "summation": {
+              "kind": "call",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee-sum"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "list-start"
+                  }
+                }
+              ]
+            },
+            "in-annotation": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "summation",
+                      "capture": "C"
+                    },
+                    {
+                      "matches": "in-annotation"
                     }
                   ]
                 }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "summation",
+                "pattern": "$C"
+              },
+              {
+                "matches": "in-annotation"
               }
             ]
           }
         }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "capture.C",
         "code": "RUF017",
         "message": "Replace `sum(lists, [])` with `list(itertools.chain.from_iterable(lists))`; summing onto a list copies it at every step (quadratic). Leave it when the input is only a few short lists.",
+        "each": "C",
         "suppress": {
           "noqa": {
             "codes": [

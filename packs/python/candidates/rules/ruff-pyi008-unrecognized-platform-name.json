@@ -3,7 +3,7 @@
   "id": "ruff-pyi008-unrecognized-platform-name",
   "revision": 1,
   "mode": "steer",
-  "description": "Compare sys.platform in stub files only against linux, win32, cygwin or darwin; any other name is probably a typo that type checkers don't recognize.",
+  "description": "Compare sys.platform only against linux, win32, cygwin or darwin in stub files; other names are likely typos that type checkers don't recognize.",
   "scope": {
     "include": [
       "**/*"

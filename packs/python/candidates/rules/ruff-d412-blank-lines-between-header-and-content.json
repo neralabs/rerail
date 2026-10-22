@@ -111,29 +111,17 @@
           },
           "directive-hides-header": {
             "regex": "(?m)(?:^[ ]{0}\\.\\.[ ][^\\n]*(?:\\n(?:[^\\S\\n]*|[ ]{1}[^\\n]*))*\\n[ ]{1}[^\\S\\n]*(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|x(?:amples?|tended summary))|hint|important|keyword arg(?:s|uments)|methods|notes?|other (?:arg(?:s|uments)|param(?:eters|s))|parameters|r(?:aises|e(?:ceives|ferences|turns?))|s(?:ee also|hort summary)|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*$|^[ ]{4}\\.\\.[ ][^\\n]*(?:\\n(?:[^\\S\\n]*|[ ]{5}[^\\n]*))*\\n[ ]{5}[^\\S\\n]*(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|x(?:amples?|tended summary))|hint|important|keyword arg(?:s|uments)|methods|notes?|other (?:arg(?:s|uments)|param(?:eters|s))|parameters|r(?:aises|e(?:ceives|ferences|turns?))|s(?:ee also|hort summary)|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*$|^[ ]{8}\\.\\.[ ][^\\n]*(?:\\n(?:[^\\S\\n]*|[ ]{9}[^\\n]*))*\\n[ ]{9}[^\\S\\n]*(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|x(?:amples?|tended summary))|hint|important|keyword arg(?:s|uments)|methods|notes?|other (?:arg(?:s|uments)|param(?:eters|s))|parameters|r(?:aises|e(?:ceives|ferences|turns?))|s(?:ee also|hort summary)|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*$)"
-          }
-        }
-      }
-    },
-    {
-      "id": "blank-lines-between-header-and-content-numpy",
-      "forbid": {
-        "ast": {
-          "language": "python",
-          "rule": {
+          },
+          "spaced-header-numpy": {
+            "regex": "(?m)(?:(?:(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?:A(?i:ttributes)|E(?i:x(?:amples|tended summary))|M(?i:ethods)|N(?i:otes)|O(?i:ther param(?:eters|s))|P(?i:arameters)|R(?i:(?:aises|e(?:ceives|ferences|turns)))|S(?i:(?:ee also|hort summary))|W(?i:arn(?:ings|s))|Y(?i:ields)):?[^\\S\\n]*$|^[^\\S\\n]*\\n[ ]{0,4}(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields)):?[^\\S\\n]*$)(?:(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$)?(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields)):?[^\\S\\n]*$|(?:^[^\\S\\n]*\\n[ ]{0,4}(?P<L>(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields))):?[^\\S\\n]*$|(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?P<N>(?:A(?i:ttributes)|E(?i:x(?:amples|tended summary))|M(?i:ethods)|N(?i:otes)|O(?i:ther param(?:eters|s))|P(?i:arameters)|R(?i:(?:aises|e(?:ceives|ferences|turns)))|S(?i:(?:ee also|hort summary))|W(?i:arn(?:ings|s))|Y(?i:ields))):?[^\\S\\n]*$)(?:(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?:[^\\s\\-.]|-+[^\\S\\n]*[^\\s\\-]|\\.(?:[^.\\n]|$)|\\.\\.(?:[^ \\n]|$))|(?:\\n[^\\S\\n]*){2,}\\n[^\\S\\n]*\\.\\.[ ]|(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?:[^\\s.]|\\.(?:[^.\\n]|$)|\\.\\.(?:[^ \\n]|$))|(?:\\n[^\\S\\n]*){2,}\\n[^\\S\\n]*\\.\\.[ ]))|\\n[^\\S\\n]*(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields)):?[^\\S\\n]*$\\n[^\\S\\n]*-+[^\\S\\n]*$(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields)):?[^\\S\\n]*$|\\n[^\\S\\n]*(?P<K>(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields))):?[^\\S\\n]*$\\n[^\\S\\n]*-+[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?:[^\\s.]|\\.(?:[^.\\n]|$)|\\.\\.(?:[^ \\n]|$))|(?:\\n[^\\S\\n]*){2,}\\n[^\\S\\n]*\\.\\.[ ]))"
+          },
+          "spaced-header-numpy-all": {
             "kind": "string_content",
             "inside": {
               "stopBy": "neighbor",
               "matches": "docstring"
             },
-            "any": [
-              {
-                "regex": "(?m)(?:(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?:A(?i:ttributes)|E(?i:x(?:amples|tended summary))|M(?i:ethods)|N(?i:otes)|O(?i:ther param(?:eters|s))|P(?i:arameters)|R(?i:(?:aises|e(?:ceives|ferences|turns)))|S(?i:(?:ee also|hort summary))|W(?i:arn(?:ings|s))|Y(?i:ields)):?[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$)?(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields)):?[^\\S\\n]*$|(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?P<N>(?:A(?i:ttributes)|E(?i:x(?:amples|tended summary))|M(?i:ethods)|N(?i:otes)|O(?i:ther param(?:eters|s))|P(?i:arameters)|R(?i:(?:aises|e(?:ceives|ferences|turns)))|S(?i:(?:ee also|hort summary))|W(?i:arn(?:ings|s))|Y(?i:ields))):?[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?:[^\\s\\-.]|-+[^\\S\\n]*[^\\s\\-]|\\.(?:[^.\\n]|$)|\\.\\.(?:[^ \\n]|$))|(?:\\n[^\\S\\n]*){2,}\\n[^\\S\\n]*\\.\\.[ ]|(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?:[^\\s.]|\\.(?:[^.\\n]|$)|\\.\\.(?:[^ \\n]|$))|(?:\\n[^\\S\\n]*){2,}\\n[^\\S\\n]*\\.\\.[ ])))"
-              },
-              {
-                "regex": "(?m)(?:\\n[^\\S\\n]*(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields)):?[^\\S\\n]*$\\n[^\\S\\n]*-+[^\\S\\n]*$(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields)):?[^\\S\\n]*$|\\n[^\\S\\n]*(?P<N>(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields))):?[^\\S\\n]*$\\n[^\\S\\n]*-+[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?:[^\\s.]|\\.(?:[^.\\n]|$)|\\.\\.(?:[^ \\n]|$))|(?:\\n[^\\S\\n]*){2,}\\n[^\\S\\n]*\\.\\.[ ]))"
-              }
-            ],
+            "matches": "spaced-header-numpy",
             "all": [
               {
                 "matches": "numpy-mode"
@@ -144,6 +132,64 @@
                 }
               }
             ]
+          },
+          "spaced-header-google": {
+            "regex": "(?m)(?:(?:(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?:A(?i:(?:rg(?:s|uments)|tt(?:ention|ributes)))|C(?i:aution)|D(?i:anger)|E(?i:(?:rror|xamples?))|H(?i:int)|I(?i:mportant)|K(?i:eyword arg(?:s|uments))|M(?i:ethods)|N(?i:otes?)|O(?i:ther arg(?:s|uments))|R(?i:(?:aises|e(?:ferences|turns?)))|S(?i:ee also)|T(?i:(?:ip|odo))|W(?i:arn(?:ings?|s))|Y(?i:ields?)):?[^\\S\\n]*$|^[^\\S\\n]*\\n[ ]{0,4}(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*$)(?:(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$)?(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*$|(?:^[^\\S\\n]*\\n[ ]{0,4}(?P<L>(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?))):?[^\\S\\n]*$|(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?P<N>(?:A(?i:(?:rg(?:s|uments)|tt(?:ention|ributes)))|C(?i:aution)|D(?i:anger)|E(?i:(?:rror|xamples?))|H(?i:int)|I(?i:mportant)|K(?i:eyword arg(?:s|uments))|M(?i:ethods)|N(?i:otes?)|O(?i:ther arg(?:s|uments))|R(?i:(?:aises|e(?:ferences|turns?)))|S(?i:ee also)|T(?i:(?:ip|odo))|W(?i:arn(?:ings?|s))|Y(?i:ields?))):?[^\\S\\n]*$)(?:(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?:[^\\s\\-.]|-+[^\\S\\n]*[^\\s\\-]|\\.(?:[^.\\n]|$)|\\.\\.(?:[^ \\n]|$))|(?:\\n[^\\S\\n]*){2,}\\n[^\\S\\n]*\\.\\.[ ]|(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?:[^\\s.]|\\.(?:[^.\\n]|$)|\\.\\.(?:[^ \\n]|$))|(?:\\n[^\\S\\n]*){2,}\\n[^\\S\\n]*\\.\\.[ ]))|\\n[^\\S\\n]*(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*$\\n[^\\S\\n]*-+[^\\S\\n]*$(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*$|\\n[^\\S\\n]*(?P<K>(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?))):?[^\\S\\n]*$\\n[^\\S\\n]*-+[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?:[^\\s.]|\\.(?:[^.\\n]|$)|\\.\\.(?:[^ \\n]|$))|(?:\\n[^\\S\\n]*){2,}\\n[^\\S\\n]*\\.\\.[ ]))"
+          },
+          "spaced-header-google-all": {
+            "kind": "string_content",
+            "inside": {
+              "stopBy": "neighbor",
+              "matches": "docstring"
+            },
+            "matches": "spaced-header-google",
+            "all": [
+              {
+                "not": {
+                  "matches": "numpy-mode"
+                }
+              },
+              {
+                "not": {
+                  "matches": "directive-hides-header"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "blank-lines-between-header-and-content-numpy-lowercase-after-blank",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "spaced-header-numpy-all"
+          }
+        }
+      },
+      "violation": {
+        "code": "D412",
+        "anchor": "capture.L",
+        "each": "L",
+        "message": "Remove the blank lines between the `$L` header and its content.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "D412"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "blank-lines-between-header-and-content-numpy-capitalized",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "spaced-header-numpy-all"
           }
         }
       },
@@ -162,36 +208,60 @@
       }
     },
     {
-      "id": "blank-lines-between-header-and-content-google",
+      "id": "blank-lines-between-header-and-content-numpy-underlined",
       "forbid": {
         "ast": {
           "language": "python",
           "rule": {
-            "kind": "string_content",
-            "inside": {
-              "stopBy": "neighbor",
-              "matches": "docstring"
-            },
-            "any": [
-              {
-                "regex": "(?m)(?:(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?:A(?i:(?:rg(?:s|uments)|tt(?:ention|ributes)))|C(?i:aution)|D(?i:anger)|E(?i:(?:rror|xamples?))|H(?i:int)|I(?i:mportant)|K(?i:eyword arg(?:s|uments))|M(?i:ethods)|N(?i:otes?)|O(?i:ther arg(?:s|uments))|R(?i:(?:aises|e(?:ferences|turns?)))|S(?i:ee also)|T(?i:(?:ip|odo))|W(?i:arn(?:ings?|s))|Y(?i:ields?)):?[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$)?(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*$|(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?P<N>(?:A(?i:(?:rg(?:s|uments)|tt(?:ention|ributes)))|C(?i:aution)|D(?i:anger)|E(?i:(?:rror|xamples?))|H(?i:int)|I(?i:mportant)|K(?i:eyword arg(?:s|uments))|M(?i:ethods)|N(?i:otes?)|O(?i:ther arg(?:s|uments))|R(?i:(?:aises|e(?:ferences|turns?)))|S(?i:ee also)|T(?i:(?:ip|odo))|W(?i:arn(?:ings?|s))|Y(?i:ields?))):?[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?:[^\\s\\-.]|-+[^\\S\\n]*[^\\s\\-]|\\.(?:[^.\\n]|$)|\\.\\.(?:[^ \\n]|$))|(?:\\n[^\\S\\n]*){2,}\\n[^\\S\\n]*\\.\\.[ ]|(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?:[^\\s.]|\\.(?:[^.\\n]|$)|\\.\\.(?:[^ \\n]|$))|(?:\\n[^\\S\\n]*){2,}\\n[^\\S\\n]*\\.\\.[ ])))"
-              },
-              {
-                "regex": "(?m)(?:\\n[^\\S\\n]*(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*$\\n[^\\S\\n]*-+[^\\S\\n]*$(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*$|\\n[^\\S\\n]*(?P<N>(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?))):?[^\\S\\n]*$\\n[^\\S\\n]*-+[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?:[^\\s.]|\\.(?:[^.\\n]|$)|\\.\\.(?:[^ \\n]|$))|(?:\\n[^\\S\\n]*){2,}\\n[^\\S\\n]*\\.\\.[ ]))"
-              }
-            ],
-            "all": [
-              {
-                "not": {
-                  "matches": "numpy-mode"
-                }
-              },
-              {
-                "not": {
-                  "matches": "directive-hides-header"
-                }
-              }
+            "matches": "spaced-header-numpy-all"
+          }
+        }
+      },
+      "violation": {
+        "code": "D412",
+        "anchor": "capture.K",
+        "each": "K",
+        "message": "Remove the blank lines between the `$K` header and its content.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "D412"
             ]
+          }
+        }
+      }
+    },
+    {
+      "id": "blank-lines-between-header-and-content-google-lowercase-after-blank",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "spaced-header-google-all"
+          }
+        }
+      },
+      "violation": {
+        "code": "D412",
+        "anchor": "capture.L",
+        "each": "L",
+        "message": "Remove the blank lines between the `$L` header and its content.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "D412"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "blank-lines-between-header-and-content-google-capitalized",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "spaced-header-google-all"
           }
         }
       },
@@ -200,6 +270,30 @@
         "anchor": "capture.N",
         "each": "N",
         "message": "Remove the blank lines between the `$N` header and its content.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "D412"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "blank-lines-between-header-and-content-google-underlined",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "spaced-header-google-all"
+          }
+        }
+      },
+      "violation": {
+        "code": "D412",
+        "anchor": "capture.K",
+        "each": "K",
+        "message": "Remove the blank lines between the `$K` header and its content.",
         "suppress": {
           "noqa": {
             "codes": [

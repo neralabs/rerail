@@ -19,8 +19,12 @@
             "type": "array",
             "items": "string",
             "default": [
+              "setUp",
+              "tearDown",
+              "setUpClass",
               "tearDownClass",
               "setUpModule",
+              "tearDownModule",
               "asyncSetUp",
               "asyncTearDown",
               "setUpTestData",
@@ -145,28 +149,39 @@
                     }
                   },
                   {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "field": "arguments",
-                      "kind": "argument_list",
-                      "count": {
+                    "any": [
+                      {
                         "has": {
                           "stopBy": "neighbor",
-                          "not": {
-                            "any": [
-                              {
-                                "regex": "^[(),]$"
-                              },
-                              {
-                                "kind": "comment"
+                          "field": "arguments",
+                          "kind": "argument_list",
+                          "count": {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "not": {
+                                "any": [
+                                  {
+                                    "regex": "^[(),]$"
+                                  },
+                                  {
+                                    "kind": "comment"
+                                  }
+                                ]
                               }
-                            ]
+                            },
+                            "min": 1,
+                            "max": 1
                           }
-                        },
-                        "min": 1,
-                        "max": 1
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "arguments",
+                          "kind": "generator_expression"
+                        }
                       }
-                    }
+                    ]
                   }
                 ]
               },
@@ -190,20 +205,31 @@
           "builtin-type": {
             "any": [
               {
-                "kind": "identifier"
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "type"
+                  ],
+                  "import": [
+                    "builtins.type"
+                  ]
+                }
               },
               {
-                "kind": "attribute"
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "builtin-type"
+                }
               }
-            ],
-            "resolves": {
-              "global": [
-                "type"
-              ],
-              "import": [
-                "builtins.type"
-              ]
-            }
+            ]
           },
           "local-meta": {
             "any": [
@@ -229,6 +255,68 @@
                     }
                   }
                 }
+              },
+              {
+                "kind": "attribute",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "attribute",
+                      "pattern": "$MATTR"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "object",
+                      "kind": "identifier",
+                      "resolves": {
+                        "binding": {
+                          "site": {
+                            "kind": "class_definition",
+                            "not": {
+                              "inside": {
+                                "stopBy": "end",
+                                "any": [
+                                  {
+                                    "kind": "function_definition"
+                                  },
+                                  {
+                                    "kind": "class_definition"
+                                  }
+                                ]
+                              }
+                            },
+                            "has": {
+                              "stopBy": "neighbor",
+                              "field": "body",
+                              "has": {
+                                "stopBy": {
+                                  "any": [
+                                    {
+                                      "kind": "function_definition"
+                                    },
+                                    {
+                                      "kind": "class_definition"
+                                    }
+                                  ]
+                                },
+                                "kind": "class_definition",
+                                "matches": "meta-class",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "field": "name",
+                                  "pattern": "$MATTR"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
               },
               {
                 "kind": "subscript",
@@ -302,41 +390,7 @@
               "kind": "type",
               "has": {
                 "stopBy": "neighbor",
-                "any": [
-                  {
-                    "kind": "identifier",
-                    "resolves": {
-                      "global": [
-                        "str"
-                      ]
-                    }
-                  },
-                  {
-                    "kind": "generic_type",
-                    "has": {
-                      "stopBy": "neighbor",
-                      "kind": "identifier",
-                      "resolves": {
-                        "global": [
-                          "str"
-                        ]
-                      }
-                    }
-                  },
-                  {
-                    "kind": "subscript",
-                    "has": {
-                      "stopBy": "neighbor",
-                      "field": "value",
-                      "kind": "identifier",
-                      "resolves": {
-                        "global": [
-                          "str"
-                        ]
-                      }
-                    }
-                  }
-                ]
+                "matches": "str-ann"
               }
             }
           },
@@ -355,41 +409,7 @@
               "kind": "type",
               "has": {
                 "stopBy": "neighbor",
-                "any": [
-                  {
-                    "kind": "identifier",
-                    "resolves": {
-                      "global": [
-                        "tuple"
-                      ]
-                    }
-                  },
-                  {
-                    "kind": "generic_type",
-                    "has": {
-                      "stopBy": "neighbor",
-                      "kind": "identifier",
-                      "resolves": {
-                        "global": [
-                          "tuple"
-                        ]
-                      }
-                    }
-                  },
-                  {
-                    "kind": "subscript",
-                    "has": {
-                      "stopBy": "neighbor",
-                      "field": "value",
-                      "kind": "identifier",
-                      "resolves": {
-                        "global": [
-                          "tuple"
-                        ]
-                      }
-                    }
-                  }
-                ]
+                "matches": "tuple-ann"
               }
             }
           },
@@ -408,41 +428,7 @@
               "kind": "type",
               "has": {
                 "stopBy": "neighbor",
-                "any": [
-                  {
-                    "kind": "identifier",
-                    "resolves": {
-                      "global": [
-                        "dict"
-                      ]
-                    }
-                  },
-                  {
-                    "kind": "generic_type",
-                    "has": {
-                      "stopBy": "neighbor",
-                      "kind": "identifier",
-                      "resolves": {
-                        "global": [
-                          "dict"
-                        ]
-                      }
-                    }
-                  },
-                  {
-                    "kind": "subscript",
-                    "has": {
-                      "stopBy": "neighbor",
-                      "field": "value",
-                      "kind": "identifier",
-                      "resolves": {
-                        "global": [
-                          "dict"
-                        ]
-                      }
-                    }
-                  }
-                ]
+                "matches": "dict-ann"
               }
             }
           },
@@ -641,7 +627,7 @@
           "named-ok": {
             "any": [
               {
-                "regex": "^self$"
+                "regex": "^[s\\x{17F}\\x{2E2}\\x{209B}\\x{FF53}\\x{1D42C}\\x{1D460}\\x{1D494}\\x{1D4C8}\\x{1D4FC}\\x{1D530}\\x{1D564}\\x{1D598}\\x{1D5CC}\\x{1D600}\\x{1D634}\\x{1D668}\\x{1D69C}][e\\x{1D49}\\x{2091}\\x{212F}\\x{2147}\\x{FF45}\\x{1D41E}\\x{1D452}\\x{1D486}\\x{1D4EE}\\x{1D522}\\x{1D556}\\x{1D58A}\\x{1D5BE}\\x{1D5F2}\\x{1D626}\\x{1D65A}\\x{1D68E}][l\\x{2E1}\\x{2097}\\x{2113}\\x{217C}\\x{FF4C}\\x{1D425}\\x{1D459}\\x{1D48D}\\x{1D4C1}\\x{1D4F5}\\x{1D529}\\x{1D55D}\\x{1D591}\\x{1D5C5}\\x{1D5F9}\\x{1D62D}\\x{1D661}\\x{1D695}][f\\x{1DA0}\\x{FF46}\\x{1D41F}\\x{1D453}\\x{1D487}\\x{1D4BB}\\x{1D4EF}\\x{1D523}\\x{1D557}\\x{1D58B}\\x{1D5BF}\\x{1D5F3}\\x{1D627}\\x{1D65B}\\x{1D68F}]$"
               },
               {
                 "regex": {
@@ -664,6 +650,180 @@
             "not": {
               "matches": "named-ok"
             }
+          },
+          "str-ref": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "str"
+                  ],
+                  "import": [
+                    "builtins.str"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "str-ref"
+                }
+              }
+            ]
+          },
+          "str-ann": {
+            "any": [
+              {
+                "matches": "str-ref"
+              },
+              {
+                "kind": "generic_type",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "str-ref"
+                }
+              },
+              {
+                "kind": "subscript",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "matches": "str-ref"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "str-ann"
+                }
+              }
+            ]
+          },
+          "tuple-ref": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "tuple"
+                  ],
+                  "import": [
+                    "builtins.tuple"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "tuple-ref"
+                }
+              }
+            ]
+          },
+          "tuple-ann": {
+            "any": [
+              {
+                "matches": "tuple-ref"
+              },
+              {
+                "kind": "generic_type",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "tuple-ref"
+                }
+              },
+              {
+                "kind": "subscript",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "matches": "tuple-ref"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "tuple-ann"
+                }
+              }
+            ]
+          },
+          "dict-ref": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "dict"
+                  ],
+                  "import": [
+                    "builtins.dict"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "dict-ref"
+                }
+              }
+            ]
+          },
+          "dict-ann": {
+            "any": [
+              {
+                "matches": "dict-ref"
+              },
+              {
+                "kind": "generic_type",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "dict-ref"
+                }
+              },
+              {
+                "kind": "subscript",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "matches": "dict-ref"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "dict-ann"
+                }
+              }
+            ]
           }
         }
       }
@@ -816,7 +976,7 @@
               "stopBy": "neighbor",
               "matches": "method-parameters"
             },
-            "regex": "(?s)^(?P<PARAM>(?:==|!=|<=|>=|:=|[^=])*?)\\s*=",
+            "regex": "(?s)^(?P<PARAM>(?:==|[<>!:]=?|[^=<>!:\\[\\]()\"']|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*'|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[[^\\[\\]]*\\])*\\])*\\])*\\]|\\((?:[^()]|\\((?:[^()]|\\([^()]*\\))*\\))*\\))+?)\\s*=(?:[^=]|\\z)",
             "has": {
               "stopBy": "neighbor",
               "field": "name",

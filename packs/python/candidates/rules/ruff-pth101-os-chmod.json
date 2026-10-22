@@ -41,7 +41,6 @@
         {
          "kind": "parenthesized_expression",
          "has": {
-          "stopBy": "neighbor",
           "matches": "callee"
          }
         }
@@ -55,7 +54,6 @@
         {
          "kind": "parenthesized_expression",
          "has": {
-          "stopBy": "neighbor",
           "matches": "none-literal"
          }
         }
@@ -64,22 +62,248 @@
       "int-ref": {
        "any": [
         {
-         "kind": "identifier"
+         "any": [
+          {
+           "kind": "identifier"
+          },
+          {
+           "kind": "attribute"
+          }
+         ],
+         "resolves": {
+          "global": [
+           "int"
+          ],
+          "import": [
+           "builtins.int"
+          ]
+         }
         },
         {
-         "kind": "attribute"
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "int-ref"
+         }
         }
-       ],
-       "resolves": {
-        "global": [
-         "int"
-        ],
-        "import": [
-         "builtins.int"
-        ]
+       ]
+      },
+      "arm-if": {
+       "precedes": {
+        "regex": "^if$"
        }
       },
-      "int-initializer": {
+      "arm-else": {
+       "follows": {
+        "regex": "^else$"
+       }
+      },
+      "int-t": {
+       "any": [
+        {
+         "kind": "integer",
+         "not": {
+          "regex": "[jJ]$"
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "int-t"
+         }
+        },
+        {
+         "kind": "named_expression",
+         "has": {
+          "field": "value",
+          "matches": "int-t"
+         }
+        },
+        {
+         "kind": "unary_operator",
+         "has": {
+          "field": "argument",
+          "matches": "intlike"
+         }
+        },
+        {
+         "kind": "binary_operator",
+         "not": {
+          "has": {
+           "field": "operator",
+           "regex": "^[/@]$"
+          }
+         },
+         "all": [
+          {
+           "has": {
+            "field": "left",
+            "matches": "intlike"
+           }
+          },
+          {
+           "has": {
+            "field": "right",
+            "matches": "intlike"
+           }
+          }
+         ]
+        },
+        {
+         "kind": "boolean_operator",
+         "all": [
+          {
+           "has": {
+            "field": "left",
+            "matches": "intlike"
+           }
+          },
+          {
+           "has": {
+            "field": "right",
+            "matches": "intlike"
+           }
+          },
+          {
+           "any": [
+            {
+             "has": {
+              "field": "left",
+              "matches": "int-t"
+             }
+            },
+            {
+             "has": {
+              "field": "right",
+              "matches": "int-t"
+             }
+            }
+           ]
+          }
+         ]
+        },
+        {
+         "kind": "conditional_expression",
+         "all": [
+          {
+           "has": {
+            "matches": "arm-if",
+            "all": [
+             {
+              "matches": "intlike"
+             }
+            ]
+           }
+          },
+          {
+           "has": {
+            "matches": "arm-else",
+            "all": [
+             {
+              "matches": "intlike"
+             }
+            ]
+           }
+          },
+          {
+           "has": {
+            "any": [
+             {
+              "matches": "arm-if"
+             },
+             {
+              "matches": "arm-else"
+             }
+            ],
+            "all": [
+             {
+              "matches": "int-t"
+             }
+            ]
+           }
+          }
+         ]
+        }
+       ]
+      },
+      "bool-t": {
+       "any": [
+        {
+         "kind": "true"
+        },
+        {
+         "kind": "false"
+        },
+        {
+         "kind": "not_operator"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "bool-t"
+         }
+        },
+        {
+         "kind": "named_expression",
+         "has": {
+          "field": "value",
+          "matches": "bool-t"
+         }
+        },
+        {
+         "kind": "boolean_operator",
+         "all": [
+          {
+           "has": {
+            "field": "left",
+            "matches": "bool-t"
+           }
+          },
+          {
+           "has": {
+            "field": "right",
+            "matches": "bool-t"
+           }
+          }
+         ]
+        },
+        {
+         "kind": "conditional_expression",
+         "all": [
+          {
+           "has": {
+            "matches": "arm-if",
+            "all": [
+             {
+              "matches": "bool-t"
+             }
+            ]
+           }
+          },
+          {
+           "has": {
+            "matches": "arm-else",
+            "all": [
+             {
+              "matches": "bool-t"
+             }
+            ]
+           }
+          }
+         ]
+        }
+       ]
+      },
+      "intlike": {
+       "any": [
+        {
+         "matches": "int-t"
+        },
+        {
+         "matches": "bool-t"
+        }
+       ]
+      },
+      "int-ctor": {
        "any": [
         {
          "kind": "call",
@@ -89,25 +313,20 @@
          }
         },
         {
-         "not": {
-          "any": [
-           {
-            "kind": "call"
-           },
-           {
-            "kind": "identifier"
-           },
-           {
-            "kind": "attribute"
-           },
-           {
-            "kind": "subscript"
-           }
-          ]
-         },
-         "value": {
-          "type": "int"
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "int-ctor"
          }
+        }
+       ]
+      },
+      "int-initializer": {
+       "any": [
+        {
+         "matches": "int-t"
+        },
+        {
+         "matches": "int-ctor"
         }
        ]
       },
@@ -117,10 +336,66 @@
          "matches": "int-ref"
         },
         {
+         "kind": "subscript",
+         "has": {
+          "field": "value",
+          "matches": "int-ref"
+         }
+        },
+        {
          "kind": "type",
          "has": {
-          "stopBy": "neighbor",
           "matches": "int-annotation"
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "int-annotation"
+         }
+        }
+       ]
+      },
+      "int-def": {
+       "any": [
+        {
+         "kind": "function_definition",
+         "has": {
+          "field": "return_type",
+          "matches": "int-annotation"
+         }
+        },
+        {
+         "kind": "decorated_definition",
+         "has": {
+          "field": "definition",
+          "matches": "int-def"
+         }
+        }
+       ]
+      },
+      "int-with": {
+       "kind": "as_pattern",
+       "all": [
+        {
+         "has": {
+          "nthChild": 1,
+          "matches": "int-initializer"
+         }
+        },
+        {
+         "has": {
+          "field": "alias",
+          "any": [
+           {
+            "pattern": "$WN"
+           },
+           {
+            "has": {
+             "pattern": "$WN"
+            }
+           }
+          ]
          }
         }
        ]
@@ -154,7 +429,6 @@
            "site": {
             "not": {
              "has": {
-              "stopBy": "neighbor",
               "any": [
                {
                 "kind": "list_splat_pattern"
@@ -177,11 +451,29 @@
           "binding": {
            "only": true,
            "site": {
-            "kind": "function_definition",
-            "has": {
-             "field": "return_type",
-             "matches": "int-annotation"
-            }
+            "matches": "int-def"
+           }
+          }
+         }
+        },
+        {
+         "pattern": "$WN",
+         "resolves": {
+          "binding": {
+           "only": true,
+           "form": "with",
+           "site": {
+            "any": [
+             {
+              "matches": "int-with"
+             },
+             {
+              "has": {
+               "stopBy": "end",
+               "matches": "int-with"
+              }
+             }
+            ]
            }
           }
          }
@@ -196,7 +488,6 @@
         {
          "kind": "parenthesized_expression",
          "has": {
-          "stopBy": "neighbor",
           "matches": "name-root"
          }
         },
@@ -223,12 +514,180 @@
         {
          "kind": "parenthesized_expression",
          "has": {
-          "stopBy": "neighbor",
           "matches": "file-descriptor"
          }
         },
         {
          "matches": "name-root"
+        }
+       ]
+      },
+      "nested-class-body": {
+       "kind": "block",
+       "inside": {
+        "kind": "class_definition"
+       }
+      },
+      "int-member": {
+       "kind": "identifier",
+       "pattern": "$ATTR",
+       "any": [
+        {
+         "binds": {
+          "latest": true,
+          "scope": "class",
+          "form": [
+           "assignment",
+           "named"
+          ],
+          "value": {
+           "matches": "int-initializer"
+          }
+         }
+        },
+        {
+         "binds": {
+          "latest": true,
+          "scope": "class",
+          "form": [
+           "annotated",
+           "annotation"
+          ],
+          "annotation": {
+           "matches": "int-annotation"
+          }
+         }
+        },
+        {
+         "binds": {
+          "latest": true,
+          "scope": "class",
+          "form": "definition",
+          "site": {
+           "matches": "int-def"
+          }
+         }
+        }
+       ]
+      },
+      "class-int-member": {
+       "kind": "class_definition",
+       "has": {
+        "field": "body",
+        "has": {
+         "stopBy": {
+          "matches": "nested-class-body"
+         },
+         "matches": "int-member"
+        }
+       }
+      },
+      "class-ref": {
+       "any": [
+        {
+         "kind": "identifier",
+         "resolves": {
+          "binding": {
+           "site": {
+            "any": [
+             {
+              "matches": "class-int-member"
+             },
+             {
+              "has": {
+               "field": "definition",
+               "matches": "class-int-member"
+              }
+             }
+            ]
+           }
+          }
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "class-ref"
+         }
+        }
+       ]
+      },
+      "inner-class-name": {
+       "kind": "identifier",
+       "pattern": "$MID",
+       "binds": {
+        "latest": true,
+        "scope": "class",
+        "form": "definition",
+        "site": {
+         "any": [
+          {
+           "matches": "class-int-member"
+          },
+          {
+           "has": {
+            "field": "definition",
+            "matches": "class-int-member"
+           }
+          }
+         ]
+        }
+       }
+      },
+      "outer-ref": {
+       "any": [
+        {
+         "kind": "identifier",
+         "resolves": {
+          "binding": {
+           "site": {
+            "any": [
+             {
+              "matches": "outer-class"
+             },
+             {
+              "has": {
+               "field": "definition",
+               "matches": "outer-class"
+              }
+             }
+            ]
+           }
+          }
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "outer-ref"
+         }
+        }
+       ]
+      },
+      "mid-ref": {
+       "any": [
+        {
+         "kind": "attribute",
+         "all": [
+          {
+           "has": {
+            "field": "attribute",
+            "pattern": "$MID"
+           }
+          },
+          {
+           "has": {
+            "field": "object",
+            "matches": "outer-ref"
+           }
+          }
+         ]
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "matches": "mid-ref"
+         }
         }
        ]
       },
@@ -249,198 +708,24 @@
             "matches": "class-ref"
            },
            {
-            "kind": "attribute",
-            "all": [
-             {
-              "has": {
-               "field": "attribute",
-               "pattern": "$MID"
-              }
-             },
-             {
-              "has": {
-               "field": "object",
-               "kind": "identifier",
-               "resolves": {
-                "binding": {
-                 "site": {
-                  "kind": "class_definition",
-                  "has": {
-                   "field": "body",
-                   "has": {
-                    "stopBy": "neighbor",
-                    "kind": "class_definition",
-                    "all": [
-                     {
-                      "has": {
-                       "field": "name",
-                       "pattern": "$MID"
-                      }
-                     },
-                     {
-                      "matches": "class-int-member"
-                     }
-                    ]
-                   }
-                  }
-                 }
-                }
-               }
-              }
-             }
-            ]
+            "matches": "mid-ref"
            }
           ]
          }
         }
        ]
       },
-      "class-int-member": {
+      "outer-class": {
        "kind": "class_definition",
        "has": {
         "field": "body",
         "has": {
-         "stopBy": "neighbor",
-         "all": [
-          {
-           "any": [
-            {
-             "kind": "expression_statement",
-             "has": {
-              "stopBy": "neighbor",
-              "kind": "assignment",
-              "all": [
-               {
-                "has": {
-                 "field": "left",
-                 "pattern": "$ATTR"
-                }
-               },
-               {
-                "any": [
-                 {
-                  "has": {
-                   "field": "type",
-                   "matches": "int-annotation"
-                  }
-                 },
-                 {
-                  "not": {
-                   "has": {
-                    "field": "type",
-                    "kind": "type"
-                   }
-                  },
-                  "has": {
-                   "field": "right",
-                   "matches": "int-initializer"
-                  }
-                 }
-                ]
-               }
-              ]
-             }
-            },
-            {
-             "matches": "int-def"
-            },
-            {
-             "kind": "decorated_definition",
-             "has": {
-              "field": "definition",
-              "matches": "int-def"
-             }
-            }
-           ]
-          },
-          {
-           "not": {
-            "precedes": {
-             "stopBy": "end",
-             "matches": "rebinds-attr"
-            }
-           }
-          }
-         ]
+         "stopBy": {
+          "matches": "nested-class-body"
+         },
+         "matches": "inner-class-name"
         }
        }
-      },
-      "class-ref": {
-       "any": [
-        {
-         "kind": "identifier",
-         "resolves": {
-          "binding": {
-           "site": {
-            "matches": "class-int-member"
-           }
-          }
-         }
-        },
-        {
-         "kind": "parenthesized_expression",
-         "has": {
-          "stopBy": "neighbor",
-          "matches": "class-ref"
-         }
-        }
-       ]
-      },
-      "rebinds-attr": {
-       "any": [
-        {
-         "kind": "expression_statement",
-         "has": {
-          "stopBy": "neighbor",
-          "kind": "assignment",
-          "has": {
-           "field": "left",
-           "pattern": "$ATTR"
-          }
-         }
-        },
-        {
-         "kind": "function_definition",
-         "has": {
-          "field": "name",
-          "pattern": "$ATTR"
-         }
-        },
-        {
-         "kind": "class_definition",
-         "has": {
-          "field": "name",
-          "pattern": "$ATTR"
-         }
-        },
-        {
-         "kind": "decorated_definition",
-         "has": {
-          "field": "definition",
-          "has": {
-           "field": "name",
-           "pattern": "$ATTR"
-          }
-         }
-        }
-       ]
-      },
-      "int-def": {
-       "kind": "function_definition",
-       "all": [
-        {
-         "has": {
-          "field": "name",
-          "pattern": "$ATTR"
-         }
-        },
-        {
-         "has": {
-          "field": "return_type",
-          "matches": "int-annotation"
-         }
-        }
-       ]
       }
      },
      "rule": {
@@ -482,7 +767,6 @@
           "field": "arguments",
           "kind": "argument_list",
           "has": {
-           "stopBy": "neighbor",
            "kind": "keyword_argument",
            "all": [
             {

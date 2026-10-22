@@ -140,7 +140,7 @@
       "violation": {
         "code": "D404",
         "anchor": "witness.span",
-        "message": "Rephrase this docstring's summary to open with an imperative verb instead of \"This\", for example `Return the total.`",
+        "message": "Reword this docstring's summary so it does not open with \"This\": start a function's with an imperative verb (`Return the total.`), a class's or module's with what it is.",
         "suppress": {
           "noqa": {
             "codes": [

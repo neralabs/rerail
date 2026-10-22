@@ -250,7 +250,14 @@
                     "position": 11,
                     "ofRule": {
                       "not": {
-                        "kind": "comment"
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "line_continuation"
+                          }
+                        ]
                       }
                     }
                   }

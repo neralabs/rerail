@@ -150,34 +150,18 @@
               ]
             },
             "annotation-string": {
+              "kind": "string",
               "any": [
                 {
-                  "kind": "string",
-                  "regex": "^[rRuU]{0,2}['\\\"]",
-                  "not": {
-                    "has": {
-                      "stopBy": "end",
-                      "kind": "interpolation"
-                    }
-                  }
+                  "regex": "^[rR]['\"]"
                 },
                 {
-                  "kind": "concatenated_string",
+                  "regex": "^[uU]?['\"]",
                   "not": {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "kind": "string",
-                      "not": {
-                        "regex": "^[rRuU]{0,2}['\\\"]"
-                      }
-                    }
+                    "regex": "\\\\"
                   }
                 }
-              ],
-              "inside": {
-                "stopBy": "end",
-                "kind": "type"
-              }
+              ]
             },
             "top-union": {
               "matches": "union",
@@ -482,212 +466,264 @@
               ]
             },
             "redundant": {
-              "any": [
+              "all": [
                 {
-                  "matches": "elem-str",
-                  "pattern": "$E",
-                  "inside": {
-                    "stopBy": {
-                      "not": {
-                        "matches": "lit-wrap"
-                      }
-                    },
-                    "matches": "lit-form",
+                  "not": {
                     "inside": {
                       "stopBy": {
                         "not": {
-                          "any": [
-                            {
-                              "matches": "union-wrap"
-                            },
-                            {
-                              "matches": "union"
-                            }
-                          ]
+                          "matches": "lit-wrap"
                         }
                       },
-                      "all": [
-                        {
-                          "matches": "top-union"
-                        },
-                        {
-                          "matches": "has-str"
-                        }
-                      ]
+                      "matches": "inner-tuple"
                     }
                   }
                 },
                 {
-                  "matches": "elem-bytes",
-                  "pattern": "$E",
-                  "inside": {
-                    "stopBy": {
-                      "not": {
-                        "matches": "lit-wrap"
-                      }
-                    },
-                    "matches": "lit-form",
-                    "inside": {
-                      "stopBy": {
-                        "not": {
-                          "any": [
+                  "any": [
+                    {
+                      "matches": "elem-str",
+                      "pattern": "$E",
+                      "inside": {
+                        "stopBy": {
+                          "not": {
+                            "matches": "lit-wrap"
+                          }
+                        },
+                        "matches": "lit-form",
+                        "inside": {
+                          "stopBy": {
+                            "not": {
+                              "any": [
+                                {
+                                  "matches": "union-wrap"
+                                },
+                                {
+                                  "matches": "union"
+                                }
+                              ]
+                            }
+                          },
+                          "all": [
                             {
-                              "matches": "union-wrap"
+                              "matches": "top-union"
                             },
                             {
-                              "matches": "union"
+                              "matches": "has-str"
                             }
                           ]
                         }
-                      },
-                      "all": [
-                        {
-                          "matches": "top-union"
-                        },
-                        {
-                          "matches": "has-bytes"
-                        }
-                      ]
-                    }
-                  }
-                },
-                {
-                  "matches": "elem-int",
-                  "pattern": "$E",
-                  "inside": {
-                    "stopBy": {
-                      "not": {
-                        "matches": "lit-wrap"
                       }
                     },
-                    "matches": "lit-form",
-                    "inside": {
-                      "stopBy": {
-                        "not": {
-                          "any": [
+                    {
+                      "matches": "elem-bytes",
+                      "pattern": "$E",
+                      "inside": {
+                        "stopBy": {
+                          "not": {
+                            "matches": "lit-wrap"
+                          }
+                        },
+                        "matches": "lit-form",
+                        "inside": {
+                          "stopBy": {
+                            "not": {
+                              "any": [
+                                {
+                                  "matches": "union-wrap"
+                                },
+                                {
+                                  "matches": "union"
+                                }
+                              ]
+                            }
+                          },
+                          "all": [
                             {
-                              "matches": "union-wrap"
+                              "matches": "top-union"
                             },
                             {
-                              "matches": "union"
+                              "matches": "has-bytes"
                             }
                           ]
                         }
-                      },
-                      "all": [
-                        {
-                          "matches": "top-union"
-                        },
-                        {
-                          "matches": "has-int"
-                        }
-                      ]
-                    }
-                  }
-                },
-                {
-                  "matches": "elem-float",
-                  "pattern": "$E",
-                  "inside": {
-                    "stopBy": {
-                      "not": {
-                        "matches": "lit-wrap"
                       }
                     },
-                    "matches": "lit-form",
-                    "inside": {
-                      "stopBy": {
-                        "not": {
-                          "any": [
+                    {
+                      "matches": "elem-int",
+                      "pattern": "$E",
+                      "inside": {
+                        "stopBy": {
+                          "not": {
+                            "matches": "lit-wrap"
+                          }
+                        },
+                        "matches": "lit-form",
+                        "inside": {
+                          "stopBy": {
+                            "not": {
+                              "any": [
+                                {
+                                  "matches": "union-wrap"
+                                },
+                                {
+                                  "matches": "union"
+                                }
+                              ]
+                            }
+                          },
+                          "all": [
                             {
-                              "matches": "union-wrap"
+                              "matches": "top-union"
                             },
                             {
-                              "matches": "union"
+                              "matches": "has-int"
                             }
                           ]
                         }
-                      },
-                      "all": [
-                        {
-                          "matches": "top-union"
-                        },
-                        {
-                          "matches": "has-float"
-                        }
-                      ]
-                    }
-                  }
-                },
-                {
-                  "matches": "elem-complex",
-                  "pattern": "$E",
-                  "inside": {
-                    "stopBy": {
-                      "not": {
-                        "matches": "lit-wrap"
                       }
                     },
-                    "matches": "lit-form",
-                    "inside": {
-                      "stopBy": {
-                        "not": {
-                          "any": [
+                    {
+                      "matches": "elem-float",
+                      "pattern": "$E",
+                      "inside": {
+                        "stopBy": {
+                          "not": {
+                            "matches": "lit-wrap"
+                          }
+                        },
+                        "matches": "lit-form",
+                        "inside": {
+                          "stopBy": {
+                            "not": {
+                              "any": [
+                                {
+                                  "matches": "union-wrap"
+                                },
+                                {
+                                  "matches": "union"
+                                }
+                              ]
+                            }
+                          },
+                          "all": [
                             {
-                              "matches": "union-wrap"
+                              "matches": "top-union"
                             },
                             {
-                              "matches": "union"
+                              "matches": "has-float"
                             }
                           ]
                         }
-                      },
-                      "all": [
-                        {
-                          "matches": "top-union"
-                        },
-                        {
-                          "matches": "has-complex"
-                        }
-                      ]
-                    }
-                  }
-                },
-                {
-                  "matches": "elem-bool",
-                  "pattern": "$E",
-                  "inside": {
-                    "stopBy": {
-                      "not": {
-                        "matches": "lit-wrap"
                       }
                     },
-                    "matches": "lit-form",
-                    "inside": {
-                      "stopBy": {
-                        "not": {
-                          "any": [
+                    {
+                      "matches": "elem-complex",
+                      "pattern": "$E",
+                      "inside": {
+                        "stopBy": {
+                          "not": {
+                            "matches": "lit-wrap"
+                          }
+                        },
+                        "matches": "lit-form",
+                        "inside": {
+                          "stopBy": {
+                            "not": {
+                              "any": [
+                                {
+                                  "matches": "union-wrap"
+                                },
+                                {
+                                  "matches": "union"
+                                }
+                              ]
+                            }
+                          },
+                          "all": [
                             {
-                              "matches": "union-wrap"
+                              "matches": "top-union"
                             },
                             {
-                              "matches": "union"
+                              "matches": "has-complex"
                             }
                           ]
                         }
-                      },
-                      "all": [
-                        {
-                          "matches": "top-union"
+                      }
+                    },
+                    {
+                      "matches": "elem-bool",
+                      "pattern": "$E",
+                      "inside": {
+                        "stopBy": {
+                          "not": {
+                            "matches": "lit-wrap"
+                          }
                         },
-                        {
-                          "matches": "has-bool"
+                        "matches": "lit-form",
+                        "inside": {
+                          "stopBy": {
+                            "not": {
+                              "any": [
+                                {
+                                  "matches": "union-wrap"
+                                },
+                                {
+                                  "matches": "union"
+                                }
+                              ]
+                            }
+                          },
+                          "all": [
+                            {
+                              "matches": "top-union"
+                            },
+                            {
+                              "matches": "has-bool"
+                            }
+                          ]
                         }
-                      ]
+                      }
                     }
-                  }
+                  ]
                 }
               ]
+            },
+            "inner-tuple": {
+              "kind": "tuple",
+              "inside": {
+                "stopBy": {
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "parenthesized_expression"
+                      },
+                      {
+                        "kind": "type"
+                      }
+                    ]
+                  }
+                },
+                "any": [
+                  {
+                    "kind": "tuple"
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "subscript"
+                      },
+                      {
+                        "kind": "type_parameter"
+                      }
+                    ],
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  }
+                ]
+              }
             }
           },
           "rule": {
@@ -712,7 +748,7 @@
       "violation": {
         "anchor": "capture.E",
         "code": "PYI051",
-        "message": "Drop `$E` from this `Literal`: the union already has `$B`, which covers it. Remove the `Literal` if nothing is left; keep it only if the values are listed for editor suggestions.",
+        "message": "Drop `$E` from this `Literal`: the union already includes `$B`, which covers it. Remove the whole `Literal` if no values are left.",
         "suppress": {
           "noqa": {
             "codes": [

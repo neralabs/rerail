@@ -245,6 +245,14 @@
                             "kind": "type",
                             "matches": "base-exc"
                           }
+                        },
+                        {
+                          "not": {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "regex": "^,$"
+                            }
+                          }
                         }
                       ]
                     }
@@ -285,6 +293,14 @@
                       },
                       "min": 2,
                       "max": 2
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "regex": "^,$"
+                      }
                     }
                   }
                 ]
@@ -585,7 +601,6 @@
               {
                 "inside": {
                   "stopBy": "neighbor",
-                  "field": "subscript",
                   "kind": "subscript",
                   "all": [
                     {
@@ -624,6 +639,142 @@
                       }
                     }
                   ]
+                },
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "kind": "subscript"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "tuple",
+                  "all": [
+                    {
+                      "count": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "comment"
+                              },
+                              {
+                                "regex": "^[(),]$"
+                              }
+                            ]
+                          }
+                        },
+                        "min": 2,
+                        "max": 2
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "none-lit"
+                      }
+                    }
+                  ],
+                  "inside": {
+                    "stopBy": {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "parenthesized_expression"
+                          },
+                          {
+                            "kind": "type"
+                          }
+                        ]
+                      }
+                    },
+                    "any": [
+                      {
+                        "kind": "subscript",
+                        "all": [
+                          {
+                            "matches": "body"
+                          },
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "field": "value",
+                              "matches": "union-ref"
+                            }
+                          },
+                          {
+                            "count": {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "not": {
+                                  "any": [
+                                    {
+                                      "kind": "comment"
+                                    },
+                                    {
+                                      "regex": "^[\\[\\],]$"
+                                    }
+                                  ]
+                                }
+                              },
+                              "min": 2,
+                              "max": 2
+                            }
+                          },
+                          {
+                            "not": {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "regex": "^,$"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "kind": "type_parameter",
+                        "all": [
+                          {
+                            "count": {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "type"
+                              },
+                              "min": 1,
+                              "max": 1
+                            }
+                          },
+                          {
+                            "not": {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "regex": "^,$"
+                              }
+                            }
+                          }
+                        ],
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "generic_type",
+                          "all": [
+                            {
+                              "matches": "body"
+                            },
+                            {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "matches": "union-ref"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
                 }
               },
               {

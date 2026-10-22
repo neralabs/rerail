@@ -203,7 +203,7 @@
       "violation": {
         "anchor": "capture.NAME",
         "code": "PYI029",
-        "message": "Remove this `$NAME` definition from the stub; its signature is the same as the one every class inherits from `object`, so declaring it adds nothing.",
+        "message": "Remove this `$NAME` definition from the stub; a `$NAME` returning `str` is inherited from `object`, so declaring it is almost always redundant.",
         "suppress": {
           "noqa": {
             "codes": [

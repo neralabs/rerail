@@ -3,7 +3,7 @@
   "id": "ruff-pyi055-unnecessary-type-union",
   "revision": 1,
   "mode": "steer",
-  "description": "Combine several type[...] members of a union into a single type[...], as in type[int | str]; the meaning is the same and the annotation is shorter.",
+  "description": "Combine several type-of-class members of a union into one type over the union of those classes; the meaning is unchanged and the annotation is shorter.",
   "scope": {"include": ["**/*"], "exclude": []},
   "clauses": [
     {
@@ -241,11 +241,24 @@
             "inside": {
               "stopBy": "end",
               "kind": "module",
-              "has": {"stopBy": "neighbor", "kind": "future_import_statement"}
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "future_import_statement",
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {"kind": "dotted_name", "regex": "^annotations$"},
+                    {
+                      "kind": "aliased_import",
+                      "has": {"stopBy": "neighbor", "kind": "dotted_name", "regex": "^annotations$"}
+                    }
+                  ]
+                }
+              }
             }
           },
           "in-string-annotation": {
-            "any": [{"kind": "string"}, {"kind": "concatenated_string"}],
+            "matches": "plain-string",
             "parse": {
               "grammar": "annotation",
               "has": {
@@ -253,6 +266,82 @@
                 "any": [{"matches": "bad-union", "capture": "UNION"}, {"matches": "in-string-annotation"}]
               }
             }
+          },
+          "escaped-or-concatenated": {
+            "any": [
+              {"kind": "concatenated_string"},
+              {
+                "kind": "string",
+                "regex": "^[uU]?['\"]+[\\s\\S]*\\\\([\\\\'\"abfnrtv0-7xNuU]|\\r|\\n)"
+              }
+            ]
+          },
+          "plain-string": {
+            "kind": "string",
+            "not": {"regex": "^[uU]?['\"]+[\\s\\S]*\\\\([\\\\'\"abfnrtv0-7xNuU]|\\r|\\n)"}
+          },
+          "pipe-flat": {"any": [{"kind": "parenthesized_expression"}, {"matches": "pipe-bin"}]},
+          "pipe-types-in": {
+            "any": [
+              {"matches": "type-member"},
+              {"matches": "pipe-flat", "has": {"stopBy": "neighbor", "matches": "pipe-types-in"}}
+            ]
+          },
+          "pipe-many-types": {
+            "matches": "pipe-flat",
+            "has": {
+              "stopBy": "neighbor",
+              "any": [
+                {"matches": "pipe-many-types"},
+                {
+                  "matches": "pipe-types-in",
+                  "precedes": {"stopBy": "end", "matches": "pipe-types-in"}
+                }
+              ]
+            }
+          },
+          "in-pipe": {
+            "any": [
+              {"inside": {"stopBy": "neighbor", "matches": "pipe-bin"}},
+              {
+                "inside": {"stopBy": "neighbor", "kind": "parenthesized_expression", "matches": "in-pipe"}
+              }
+            ]
+          },
+          "bad-pipe-union": {
+            "all": [
+              {"matches": "pipe-bin"},
+              {"matches": "pipe-many-types"},
+              {"not": {"matches": "in-pipe"}}
+            ]
+          },
+          "in-relocated-annotation": {
+            "any": [{"kind": "string"}, {"kind": "concatenated_string"}],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {"matches": "bad-pipe-union", "capture": "UNION"},
+                  {"matches": "in-relocated-annotation"}
+                ]
+              }
+            }
+          },
+          "in-escaped-or-concatenated-annotation": {
+            "any": [
+              {
+                "matches": "escaped-or-concatenated",
+                "all": [{"matches": "in-relocated-annotation"}]
+              },
+              {
+                "matches": "plain-string",
+                "parse": {
+                  "grammar": "annotation",
+                  "has": {"stopBy": "end", "matches": "in-escaped-or-concatenated-annotation"}
+                }
+              }
+            ]
           }
         }
       }
@@ -307,6 +396,17 @@
     {
       "id": "unnecessary-type-union-in-string",
       "forbid": {"ast": {"language": "python", "rule": {"matches": "in-string-annotation"}}},
+      "violation": {
+        "anchor": "capture.UNION",
+        "code": "PYI055",
+        "message": "Merge the `type[X]` members of this union into one `type[...]`, e.g. `type[int | str]` instead of `type[int] | type[str]`; the meaning is the same.",
+        "suppress": {"noqa": {"codes": ["PYI055"]}},
+        "each": "UNION"
+      }
+    },
+    {
+      "id": "unnecessary-type-union-in-escaped-or-concatenated-string",
+      "forbid": {"ast": {"language": "python", "rule": {"matches": "in-escaped-or-concatenated-annotation"}}},
       "violation": {
         "anchor": "capture.UNION",
         "code": "PYI055",

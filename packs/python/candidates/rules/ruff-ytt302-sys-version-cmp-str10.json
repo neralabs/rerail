@@ -32,13 +32,34 @@
                     "type": "str",
                     "regex": "^[\\x00-\\x7f]$"
                   },
-                  "not": {
-                    "has": {
-                      "stopBy": "end",
-                      "kind": "string_start",
-                      "regex": "[fFtT]"
+                  "all": [
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "string_start",
+                          "regex": "[fFtT]"
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "string",
+                            "regex": "(?:^|[^\\\\])(?:\\\\\\\\)*\\r\\n"
+                          },
+                          {
+                            "has": {
+                              "stopBy": "end",
+                              "kind": "string",
+                              "regex": "(?:^|[^\\\\])(?:\\\\\\\\)*\\r\\n"
+                            }
+                          }
+                        ]
+                      }
                     }
-                  }
+                  ]
                 },
                 {
                   "kind": "parenthesized_expression",

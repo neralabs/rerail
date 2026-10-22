@@ -97,7 +97,6 @@
             "has": {
               "stopBy": "neighbor",
               "kind": "string_content",
-              "regex": "\\A(?:[^\\S\\n]*(?:[-~=#]+[^\\S\\n]*)?\\n)*(?:[^\\S\\n]*(?:[^\\s\\-~=#]|[-~=#]+(?:[^\\S\\n]+\\S|[^\\s\\-~=#]))[^\\n]*\\n)*(?:[^\\n]*[^\\s.\\\\\\-~=#]|[^\\n]*[^\\s\\-~=#][^\\n]*[-~=#]|[^\\S\\n]*[-~=#]+(?:[^\\S\\n]+[-~=#]+)+)[^\\S\\n]*(?:\\n[^\\S\\n]*(?:[-~=#]+[^\\S\\n]*)?(?:\\n[\\s\\S]*)?)?\\z",
               "not": {
                 "any": [
                   {
@@ -107,6 +106,36 @@
                     "regex": "\\A\\s*:?(?:Arg(?:ument)?s|Attention|Attributes|Caution|Danger|Error|Examples?|Extended Summary|Hint|Important|Keyword Arg(?:ument)?s|Methods|Notes?|Other (?:Arg(?:ument)?s|Param(?:eter)?s)|Parameters|Raises|Receives|References|Returns?|See Also|Short Summary|Tip|Todo|Warnings?|Warns|Yields?)[^\\S\\n\\r]*(?:[\\n\\r]|\\z)"
                   }
                 ]
+              },
+              "pattern": "$DOC"
+            },
+            "compare": {
+              "left": "FLAG",
+              "op": "eq",
+              "right": "MARK",
+              "text": "source"
+            }
+          },
+          "transform": {
+            "LF": {
+              "replace": {
+                "source": "$DOC",
+                "replace": "\\r\\n?",
+                "by": "\n"
+              }
+            },
+            "FLAG": {
+              "replace": {
+                "source": "$LF",
+                "replace": "\\A(?:[^\\S\\n]*(?:[-~=#]+[^\\S\\n]*)?\\n)*(?:[^\\S\\n]*(?:[^\\s\\-~=#]|[-~=#]+(?:[^\\S\\n]+\\S|[^\\s\\-~=#]))[^\\n]*\\n)*(?:[^\\n]*[^\\s.\\\\\\-~=#]|[^\\n]*[^\\s\\-~=#][^\\n]*[-~=#]|[^\\S\\n]*[-~=#]+(?:[^\\S\\n]+[-~=#]+)+)[^\\S\\n]*(?:\\n[^\\S\\n]*(?:[-~=#]+[^\\S\\n]*)?(?:\\n[\\s\\S]*)?)?\\z",
+                "by": "!"
+              }
+            },
+            "MARK": {
+              "replace": {
+                "source": "$DOC",
+                "replace": "^[\\s\\S]*$",
+                "by": "!"
               }
             }
           }

@@ -429,22 +429,22 @@
                   "inside": {
                     "stopBy": "neighbor",
                     "kind": "type",
-                    "nthChild": "1",
-                    "inside": {
-                      "stopBy": "neighbor",
-                      "kind": "type_parameter",
-                      "inside": {
-                        "stopBy": "neighbor",
-                        "matches": "annotated-g"
+                    "matches": "ann-slot",
+                    "not": {
+                      "follows": {
+                        "stopBy": "end",
+                        "regex": "^,$"
                       }
                     }
                   }
                 },
                 {
-                  "nthChild": "2",
-                  "inside": {
-                    "stopBy": "neighbor",
-                    "matches": "annotated-s"
+                  "matches": "ann-slot",
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "regex": "^,$"
+                    }
                   }
                 }
               ]
@@ -455,23 +455,51 @@
                   "inside": {
                     "stopBy": "neighbor",
                     "kind": "type",
-                    "nthChild": "2",
-                    "inside": {
-                      "stopBy": "neighbor",
-                      "kind": "type_parameter",
-                      "inside": {
-                        "stopBy": "neighbor",
-                        "matches": "annotated-g"
+                    "matches": "ann-slot",
+                    "all": [
+                      {
+                        "follows": {
+                          "stopBy": "end",
+                          "regex": "^,$"
+                        }
+                      },
+                      {
+                        "not": {
+                          "follows": {
+                            "stopBy": "end",
+                            "regex": "^,$",
+                            "follows": {
+                              "stopBy": "end",
+                              "regex": "^,$"
+                            }
+                          }
+                        }
                       }
-                    }
+                    ]
                   }
                 },
                 {
-                  "nthChild": "3",
-                  "inside": {
-                    "stopBy": "neighbor",
-                    "matches": "annotated-s"
-                  }
+                  "matches": "ann-slot",
+                  "all": [
+                    {
+                      "follows": {
+                        "stopBy": "end",
+                        "regex": "^,$"
+                      }
+                    },
+                    {
+                      "not": {
+                        "follows": {
+                          "stopBy": "end",
+                          "regex": "^,$",
+                          "follows": {
+                            "stopBy": "end",
+                            "regex": "^,$"
+                          }
+                        }
+                      }
+                    }
+                  ]
                 }
               ]
             },
@@ -481,22 +509,18 @@
                   "inside": {
                     "stopBy": "neighbor",
                     "kind": "type",
-                    "nthChild": "n+2",
-                    "inside": {
-                      "stopBy": "neighbor",
-                      "kind": "type_parameter",
-                      "inside": {
-                        "stopBy": "neighbor",
-                        "matches": "annotated-g"
-                      }
+                    "matches": "ann-slot",
+                    "follows": {
+                      "stopBy": "end",
+                      "regex": "^,$"
                     }
                   }
                 },
                 {
-                  "nthChild": "n+3",
-                  "inside": {
-                    "stopBy": "neighbor",
-                    "matches": "annotated-s"
+                  "matches": "ann-slot",
+                  "follows": {
+                    "stopBy": "end",
+                    "regex": "^,$"
                   }
                 }
               ]
@@ -726,7 +750,13 @@
                             },
                             "follows": {
                               "stopBy": "end",
-                              "matches": "plain-param"
+                              "matches": "plain-param",
+                              "not": {
+                                "precedes": {
+                                  "stopBy": "end",
+                                  "kind": "positional_separator"
+                                }
+                              }
                             }
                           },
                           "field": "parameters"
@@ -781,7 +811,13 @@
                             },
                             "follows": {
                               "stopBy": "end",
-                              "matches": "plain-param"
+                              "matches": "plain-param",
+                              "not": {
+                                "precedes": {
+                                  "stopBy": "end",
+                                  "kind": "positional_separator"
+                                }
+                              }
                             }
                           },
                           "field": "parameters"
@@ -1018,7 +1054,18 @@
                         ]
                       },
                       "field": "type"
-                    }
+                    },
+                    "all": [
+                      {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "value",
+                            "matches": "dep-arg-some"
+                          }
+                        }
+                      }
+                    ]
                   },
                   {
                     "matches": "typed-param",
@@ -1069,6 +1116,15 @@
                           },
                           "field": "type"
                         }
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "value",
+                            "matches": "dep-arg-some"
+                          }
+                        }
                       }
                     ]
                   },
@@ -1076,6 +1132,7 @@
                     "matches": "typed-param",
                     "has": {
                       "stopBy": "neighbor",
+                      "field": "type",
                       "has": {
                         "stopBy": "end",
                         "kind": "call",
@@ -1084,19 +1141,46 @@
                             "matches": "elem-meta"
                           },
                           {
-                            "matches": "depends-call"
+                            "matches": "dep-call-some"
                           },
                           {
-                            "precedes": {
-                              "stopBy": "end",
-                              "kind": "call",
-                              "matches": "depends-call"
-                            }
+                            "any": [
+                              {
+                                "inside": {
+                                  "stopBy": "neighbor",
+                                  "kind": "type",
+                                  "precedes": {
+                                    "stopBy": "end",
+                                    "kind": "type",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "matches": "dep-call-some"
+                                    }
+                                  }
+                                }
+                              },
+                              {
+                                "precedes": {
+                                  "stopBy": "end",
+                                  "matches": "dep-call-some"
+                                }
+                              }
+                            ]
                           }
                         ]
-                      },
-                      "field": "type"
-                    }
+                      }
+                    },
+                    "all": [
+                      {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "value",
+                            "matches": "dep-arg-some"
+                          }
+                        }
+                      }
+                    ]
                   }
                 ]
               }
@@ -1197,6 +1281,158 @@
                     "kind": "parenthesized_expression",
                     "matches": "route-arg"
                   }
+                }
+              ]
+            },
+            "ann-slot": {
+              "any": [
+                {
+                  "kind": "type",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "type_parameter",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "annotated-g"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "annotated-s"
+                  },
+                  "follows": {
+                    "stopBy": "end",
+                    "regex": "^\\[$"
+                  }
+                }
+              ]
+            },
+            "dep-target": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "kind": "identifier"
+                  }
+                }
+              ]
+            },
+            "dep-arg-some": {
+              "matches": "depends-call",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "argument_list",
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "matches": "dep-target",
+                      "not": {
+                        "follows": {
+                          "stopBy": "end",
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "comment"
+                              },
+                              {
+                                "regex": "^\\($"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "kind": "keyword_argument",
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "name",
+                            "regex": "^dependency$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "value",
+                            "matches": "dep-target"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            "first-ident-slot": {
+              "any": [
+                {
+                  "kind": "type",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier"
+                  },
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "regex": "^,$"
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "follows": {
+                    "stopBy": "end",
+                    "regex": "^\\[$"
+                  },
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "regex": "^,$"
+                    }
+                  }
+                }
+              ]
+            },
+            "dep-call-some": {
+              "matches": "depends-call",
+              "any": [
+                {
+                  "matches": "dep-arg-some"
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "argument_list",
+                    "regex": "^\\(\\s*\\)$"
+                  },
+                  "any": [
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "type",
+                        "follows": {
+                          "stopBy": "end",
+                          "matches": "first-ident-slot"
+                        }
+                      }
+                    },
+                    {
+                      "follows": {
+                        "stopBy": "end",
+                        "matches": "first-ident-slot"
+                      }
+                    }
+                  ]
                 }
               ]
             }

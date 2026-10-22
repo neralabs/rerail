@@ -17,6 +17,16 @@
         "ast": {
           "language": "python",
           "utils": {
+            "trivia": {
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                }
+              ]
+            },
             "builtin-map": {
               "any": [
                 {
@@ -90,14 +100,7 @@
                     "follows": {
                       "stopBy": {
                         "not": {
-                          "any": [
-                            {
-                              "kind": "comment"
-                            },
-                            {
-                              "kind": "line_continuation"
-                            }
-                          ]
+                          "matches": "trivia"
                         }
                       },
                       "regex": "^\\.$"
@@ -157,62 +160,59 @@
                 }
               ]
             },
+            "split-attr": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "identifier",
+                        "regex": "^split$",
+                        "follows": {
+                          "stopBy": {
+                            "not": {
+                              "matches": "trivia"
+                            }
+                          },
+                          "regex": "^\\.$"
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "dunder-version",
+                        "precedes": {
+                          "stopBy": {
+                            "not": {
+                              "matches": "trivia"
+                            }
+                          },
+                          "regex": "^\\.$"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "split-attr"
+                  }
+                }
+              ]
+            },
             "version-split": {
               "kind": "call",
               "all": [
                 {
                   "has": {
                     "stopBy": "neighbor",
-                    "kind": "attribute",
-                    "precedes": {
-                      "stopBy": "neighbor",
-                      "kind": "argument_list"
-                    },
-                    "all": [
-                      {
-                        "has": {
-                          "stopBy": "neighbor",
-                          "kind": "identifier",
-                          "regex": "^split$",
-                          "follows": {
-                            "stopBy": {
-                              "not": {
-                                "any": [
-                                  {
-                                    "kind": "comment"
-                                  },
-                                  {
-                                    "kind": "line_continuation"
-                                  }
-                                ]
-                              }
-                            },
-                            "regex": "^\\.$"
-                          }
-                        }
-                      },
-                      {
-                        "has": {
-                          "stopBy": "neighbor",
-                          "matches": "dunder-version",
-                          "precedes": {
-                            "stopBy": {
-                              "not": {
-                                "any": [
-                                  {
-                                    "kind": "comment"
-                                  },
-                                  {
-                                    "kind": "line_continuation"
-                                  }
-                                ]
-                              }
-                            },
-                            "regex": "^\\.$"
-                          }
-                        }
-                      }
-                    ]
+                    "matches": "split-attr",
+                    "field": "function"
                   }
                 },
                 {
@@ -227,10 +227,7 @@
                             "not": {
                               "any": [
                                 {
-                                  "kind": "comment"
-                                },
-                                {
-                                  "kind": "line_continuation"
+                                  "matches": "trivia"
                                 },
                                 {
                                   "regex": "^[(),]$"
@@ -260,14 +257,7 @@
                                     "precedes": {
                                       "stopBy": {
                                         "not": {
-                                          "any": [
-                                            {
-                                              "kind": "comment"
-                                            },
-                                            {
-                                              "kind": "line_continuation"
-                                            }
-                                          ]
+                                          "matches": "trivia"
                                         }
                                       },
                                       "regex": "^=$"
@@ -281,14 +271,7 @@
                                     "follows": {
                                       "stopBy": {
                                         "not": {
-                                          "any": [
-                                            {
-                                              "kind": "comment"
-                                            },
-                                            {
-                                              "kind": "line_continuation"
-                                            }
-                                          ]
+                                          "matches": "trivia"
                                         }
                                       },
                                       "regex": "^=$"
@@ -337,10 +320,7 @@
                         }
                       }
                     ],
-                    "precedes": {
-                      "stopBy": "neighbor",
-                      "kind": "argument_list"
-                    }
+                    "field": "function"
                   }
                 },
                 {
@@ -355,10 +335,7 @@
                             "not": {
                               "any": [
                                 {
-                                  "kind": "comment"
-                                },
-                                {
-                                  "kind": "line_continuation"
+                                  "matches": "trivia"
                                 },
                                 {
                                   "regex": "^[(),]$"
@@ -377,14 +354,7 @@
                           "follows": {
                             "stopBy": {
                               "not": {
-                                "any": [
-                                  {
-                                    "kind": "comment"
-                                  },
-                                  {
-                                    "kind": "line_continuation"
-                                  }
-                                ]
+                                "matches": "trivia"
                               }
                             },
                             "regex": "^\\($"
@@ -418,8 +388,7 @@
                   "any": [
                     {
                       "matches": "map-int-version",
-                      "pattern": "$C",
-                      "capture": "C"
+                      "pattern": "$R"
                     },
                     {
                       "matches": "check-in-string"
@@ -433,7 +402,7 @@
             "any": [
               {
                 "matches": "map-int-version",
-                "pattern": "$C"
+                "regex": "(?s)^(?:\\*(?:[\\s\\\\]|#[^\\n]*)*)?(?P<R>.*)$"
               },
               {
                 "matches": "check-in-string"
@@ -443,10 +412,10 @@
         }
       },
       "violation": {
-        "anchor": "capture.C",
+        "anchor": "capture.R",
         "code": "RUF048",
         "message": "`int` fails on non-numeric version parts such as `post1`; parse with `packaging.version.parse(...)` instead, unless the version is known to be purely numeric.",
-        "each": "C",
+        "each": "R",
         "suppress": {
           "noqa": {
             "codes": [

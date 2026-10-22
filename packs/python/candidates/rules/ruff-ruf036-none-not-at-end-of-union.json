@@ -93,6 +93,108 @@
         {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "typevar-head"}}
        ]
       },
+      "cast-head": {
+       "any": [
+        {
+         "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+         "resolves": {"import": ["typing.cast", "typing_extensions.cast", "_typeshed.cast"]}
+        },
+        {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "cast-head"}}
+       ]
+      },
+      "alias-type-head": {
+       "any": [
+        {
+         "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+         "resolves": {"import": ["typing.TypeAliasType", "typing_extensions.TypeAliasType", "_typeshed.TypeAliasType"]}
+        },
+        {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "alias-type-head"}}
+       ]
+      },
+      "namedtuple-head": {
+       "any": [
+        {
+         "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+         "resolves": {"import": ["typing.NamedTuple", "typing_extensions.NamedTuple", "_typeshed.NamedTuple"]}
+        },
+        {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "namedtuple-head"}}
+       ]
+      },
+      "typeddict-head": {
+       "any": [
+        {
+         "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+         "resolves": {"import": ["typing.TypedDict", "typing_extensions.TypedDict", "_typeshed.TypedDict"]}
+        },
+        {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "typeddict-head"}}
+       ]
+      },
+      "type-alias-head": {
+       "any": [
+        {
+         "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+         "resolves": {"import": ["typing.TypeAlias", "typing_extensions.TypeAlias", "_typeshed.TypeAlias"]}
+        },
+        {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "type-alias-head"}}
+       ]
+      },
+      "typeform-head": {
+       "any": [
+        {"any": [{"kind": "identifier"}, {"kind": "attribute"}], "resolves": {"import": ["typing.TypeForm", "typing_extensions.TypeForm", "_typeshed.TypeForm"]}},
+        {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "typeform-head"}}
+       ]
+      },
+      "typeform-args": {
+       "inside": {
+        "stopBy": "neighbor",
+        "kind": "argument_list",
+        "inside": {"stopBy": "neighbor", "kind": "call", "has": {"stopBy": "neighbor", "field": "function", "matches": "typeform-head"}}
+       }
+      },
+      "mypy-head": {
+       "any": [
+        {"any": [{"kind": "identifier"}, {"kind": "attribute"}], "resolves": {"import": ["mypy_extensions.Arg", "mypy_extensions.DefaultArg", "mypy_extensions.NamedArg", "mypy_extensions.DefaultNamedArg", "mypy_extensions.VarArg", "mypy_extensions.KwArg"]}},
+        {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "mypy-head"}}
+       ]
+      },
+      "mypy-args": {
+       "inside": {
+        "stopBy": "neighbor",
+        "kind": "argument_list",
+        "inside": {"stopBy": "neighbor", "kind": "call", "has": {"stopBy": "neighbor", "field": "function", "matches": "mypy-head"}}
+       }
+      },
+      "store-target": {
+       "any": [
+        {"inside": {"stopBy": "neighbor", "field": "left", "any": [{"kind": "assignment"}, {"kind": "augmented_assignment"}, {"kind": "for_statement"}, {"kind": "for_in_clause"}]}},
+        {"inside": {"stopBy": "neighbor", "any": [{"kind": "delete_statement"}, {"kind": "as_pattern_target"}]}},
+        {
+         "inside": {
+          "stopBy": "neighbor",
+          "any": [{"kind": "pattern_list"}, {"kind": "tuple_pattern"}, {"kind": "list_pattern"}, {"kind": "list_splat_pattern"}, {"kind": "expression_list"}, {"kind": "tuple"}, {"kind": "list"}, {"kind": "parenthesized_expression"}, {"kind": "list_splat"}],
+          "matches": "store-target"
+         }
+        }
+       ]
+      },
+      "pair-value": {"follows": {"stopBy": "end", "regex": "^:$"}, "inside": {"stopBy": "neighbor", "kind": "pair", "inside": {"stopBy": "neighbor", "kind": "dictionary"}}},
+      "legacy-fields": {
+       "inside": {
+        "stopBy": "neighbor",
+        "kind": "argument_list",
+        "has": {"stopBy": "neighbor", "matches": "positional"},
+        "not": {
+         "has": {
+          "stopBy": "neighbor",
+          "any": [
+           {"nthChild": {"position": "n+3", "ofRule": {"matches": "positional"}}},
+           {"not": {"kind": "none"}, "nthChild": {"position": 2, "ofRule": {"matches": "positional"}}}
+          ],
+          "matches": "positional"
+         }
+        }
+       }
+      },
       "pipe-bin": {"kind": "binary_operator", "has": {"stopBy": "neighbor", "field": "operator", "regex": "^\\|$"}},
       "pipe": {"any": [{"matches": "pipe-bin"}, {"kind": "union_type"}]},
       "union-sub": {
@@ -239,6 +341,7 @@
        }
       },
       "call-type-argument": {
+       "not": {"kind": "call"},
        "any": [
         {
          "all": [
@@ -260,29 +363,211 @@
           {"nthChild": {"position": "n+2", "ofRule": {"not": {"kind": "comment"}}}}
          ]
         },
-        {"all": [{"matches": "typevar-args"}, {"kind": "keyword_argument"}]}
+        {"all": [{"matches": "typevar-args"}, {"kind": "keyword_argument", "has": {"stopBy": "neighbor", "field": "name", "regex": "^(bound|default)$"}}]},
+        {
+         "all": [
+          {"matches": "cast-args"},
+          {"matches": "positional"},
+          {"nthChild": {"position": 1, "ofRule": {"not": {"kind": "comment"}}}}
+         ]
+        },
+        {
+         "all": [
+          {"matches": "cast-args"},
+          {"kind": "keyword_argument", "has": {"stopBy": "neighbor", "field": "name", "regex": "^typ$"}}
+         ]
+        },
+        {
+         "all": [
+          {"matches": "alias-args"},
+          {"matches": "positional"},
+          {"nthChild": {"position": 2, "ofRule": {"not": {"kind": "comment"}}}}
+         ]
+        },
+        {
+         "all": [
+          {"matches": "alias-args"},
+          {"kind": "keyword_argument", "has": {"stopBy": "neighbor", "field": "name", "regex": "^(value|type_params)$"}}
+         ]
+        },
+        {"all": [{"matches": "namedtuple-args"}, {"kind": "keyword_argument"}]},
+        {"matches": "pair-value", "inside": {"stopBy": "neighbor", "kind": "pair", "inside": {"stopBy": "neighbor", "kind": "dictionary", "inside": {"stopBy": "neighbor", "kind": "dictionary_splat", "matches": "namedtuple-args"}}}},
+        {"all": [{"matches": "typeddict-args"}, {"kind": "dictionary_splat"}]},
+        {"all": [{"matches": "typeddict-args"}, {"kind": "keyword_argument", "has": {"stopBy": "neighbor", "field": "name", "regex": "^extra_items$"}}]},
+        {"all": [{"matches": "typeddict-args"}, {"matches": "legacy-fields"}, {"kind": "keyword_argument", "not": {"has": {"stopBy": "neighbor", "field": "name", "regex": "^total$"}}}]},
+        {"all": [{"matches": "typeform-args"}, {"matches": "positional"}, {"nthChild": {"position": 1, "ofRule": {"matches": "positional"}}}]},
+        {"all": [{"matches": "mypy-args"}, {"matches": "positional"}, {"nthChild": {"position": 1, "ofRule": {"matches": "positional"}}}]},
+        {
+         "all": [
+          {"matches": "mypy-args"},
+          {"kind": "keyword_argument", "has": {"stopBy": "neighbor", "field": "name", "regex": "^type$"}},
+          {"not": {"inside": {"stopBy": "neighbor", "has": {"stopBy": "neighbor", "matches": "positional"}}}}
+         ]
+        },
+        {"matches": "typed-dict-class-keyword"},
+        {"matches": "alias-value"},
+        {"matches": "field-type"}
+       ]
+      },
+
+      "cast-args": {
+       "inside": {
+        "stopBy": "neighbor",
+        "kind": "argument_list",
+        "inside": {
+         "stopBy": "neighbor",
+         "kind": "call",
+         "has": {"stopBy": "neighbor", "field": "function", "matches": "cast-head"}
+        }
+       }
+      },
+      "alias-args": {
+       "inside": {
+        "stopBy": "neighbor",
+        "kind": "argument_list",
+        "inside": {
+         "stopBy": "neighbor",
+         "kind": "call",
+         "has": {"stopBy": "neighbor", "field": "function", "matches": "alias-type-head"}
+        }
+       }
+      },
+      "namedtuple-args": {
+       "inside": {
+        "stopBy": "neighbor",
+        "kind": "argument_list",
+        "inside": {
+         "stopBy": "neighbor",
+         "kind": "call",
+         "has": {"stopBy": "neighbor", "field": "function", "matches": "namedtuple-head"}
+        }
+       }
+      },
+      "typeddict-args": {
+       "inside": {
+        "stopBy": "neighbor",
+        "kind": "argument_list",
+        "inside": {
+         "stopBy": "neighbor",
+         "kind": "call",
+         "has": {"stopBy": "neighbor", "field": "function", "matches": "typeddict-head"}
+        }
+       }
+      },
+      "alias-value": {
+       "follows": {"stopBy": "end", "regex": "^=$"},
+       "inside": {
+        "stopBy": "neighbor",
+        "kind": "assignment",
+        "has": {
+         "stopBy": "neighbor",
+         "field": "type",
+         "has": {"stopBy": "neighbor", "matches": "type-alias-head"}
+        }
+       }
+      },
+      "typed-dict-class-keyword": {
+       "kind": "keyword_argument",
+       "has": {"stopBy": "neighbor", "field": "name", "regex": "^extra_items$"},
+       "inside": {
+        "stopBy": "neighbor",
+        "kind": "argument_list",
+        "has": {"stopBy": "neighbor", "matches": "typeddict-head"},
+        "inside": {"stopBy": "neighbor", "kind": "class_definition"}
+       }
+      },
+      "field-type": {
+       "any": [
+        {
+         "follows": {"stopBy": "end", "regex": "^:$"},
+         "inside": {
+          "stopBy": "neighbor",
+          "kind": "pair",
+          "inside": {
+           "stopBy": "neighbor",
+           "kind": "dictionary",
+           "all": [
+            {"matches": "positional"},
+            {"nthChild": {"position": "n+2", "ofRule": {"not": {"kind": "comment"}}}}
+           ],
+           "inside": {
+            "stopBy": "neighbor",
+            "kind": "argument_list",
+            "inside": {
+             "stopBy": "neighbor",
+             "kind": "call",
+             "has": {"stopBy": "neighbor", "field": "function", "matches": "typeddict-head"}
+            }
+           }
+          }
+         }
+        },
+        {
+         "nthChild": {"position": 2, "ofRule": {"not": {"kind": "comment"}}},
+         "not": {"precedes": {"stopBy": "end", "not": {"any": [{"regex": "^[,\\])]$"}, {"matches": "trivia"}]}}},
+         "inside": {
+          "stopBy": "neighbor",
+          "any": [{"kind": "tuple"}, {"kind": "list"}],
+          "inside": {
+           "stopBy": "neighbor",
+           "any": [{"kind": "tuple"}, {"kind": "list"}],
+           "all": [
+            {"matches": "positional"},
+            {"nthChild": {"position": "n+2", "ofRule": {"not": {"kind": "comment"}}}}
+           ],
+           "inside": {
+            "stopBy": "neighbor",
+            "kind": "argument_list",
+            "inside": {
+             "stopBy": "neighbor",
+             "kind": "call",
+             "has": {"stopBy": "neighbor", "field": "function", "matches": "namedtuple-head"}
+            }
+           }
+          }
+         }
+        }
        ]
       },
       "positional": {
        "not": {
         "any": [
          {"kind": "keyword_argument"},
-         {"kind": "list_splat"},
          {"kind": "dictionary_splat"},
-         {"matches": "trivia"}
+         {"matches": "trivia"},
+         {"regex": "^[(),]$"}
         ]
        }
       },
-      "slot-context": {
+      "typeddict-value": {
+       "matches": "pair-value",
        "inside": {
-        "stopBy": {"matches": "boundary"},
-        "kind": "subscript",
-        "has": {
+        "stopBy": "neighbor",
+        "kind": "pair",
+        "inside": {
          "stopBy": "neighbor",
-         "field": "value",
-         "any": [{"matches": "generic-head"}, {"matches": "annotated-head"}]
+         "kind": "dictionary",
+         "inside": {"stopBy": "neighbor", "kind": "subscript", "has": {"stopBy": "neighbor", "field": "value", "matches": "typeddict-head"}}
         }
        }
+      },
+      "slot-context": {
+       "not": {"inside": {"stopBy": "end", "kind": "subscript", "matches": "store-target"}},
+       "any": [
+        {"matches": "typeddict-value"},
+        {
+         "inside": {
+          "stopBy": {"matches": "boundary"},
+          "any": [
+           {"matches": "typeddict-value", "not": {"kind": "call"}},
+           {
+            "kind": "subscript",
+            "has": {"stopBy": "neighbor", "field": "value", "any": [{"matches": "generic-head"}, {"matches": "annotated-head"}]}
+           }
+          ]
+         }
+        }
+       ]
       },
       "typedef": {
        "any": [

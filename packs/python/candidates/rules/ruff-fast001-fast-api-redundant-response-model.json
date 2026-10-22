@@ -283,6 +283,15 @@
                     },
                     {
                       "kind": "tuple"
+                    },
+                    {
+                      "kind": "type"
+                    },
+                    {
+                      "kind": "generic_type"
+                    },
+                    {
+                      "kind": "type_parameter"
                     }
                   ],
                   "not": {
@@ -330,7 +339,19 @@
                         "kind": "type",
                         "has": {
                           "stopBy": "neighbor",
-                          "pattern": "$RET"
+                          "pattern": "$RET",
+                          "matches": "type-shape",
+                          "any": [
+                            {
+                              "matches": "plain-shape",
+                              "pattern": "$RETS"
+                            },
+                            {
+                              "not": {
+                                "matches": "plain-shape"
+                              }
+                            }
+                          ]
                         }
                       },
                       "not": {
@@ -372,6 +393,92 @@
                   }
                 }
               ]
+            },
+            "in-multi": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  }
+                },
+                {
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "tuple"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "parenthesized_expression"
+                      },
+                      {
+                        "kind": "type"
+                      }
+                    ],
+                    "matches": "in-multi"
+                  }
+                }
+              ]
+            },
+            "risky-node": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "tuple"
+                    },
+                    {
+                      "kind": "subscript"
+                    },
+                    {
+                      "kind": "type_parameter"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$",
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "regex": "^[\\])]$"
+                    },
+                    "not": {
+                      "follows": {
+                        "stopBy": "end",
+                        "regex": "^,$"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "tuple",
+                  "matches": "in-multi"
+                }
+              ]
+            },
+            "plain-shape": {
+              "not": {
+                "any": [
+                  {
+                    "matches": "risky-node"
+                  },
+                  {
+                    "has": {
+                      "stopBy": "end",
+                      "matches": "risky-node"
+                    }
+                  }
+                ]
+              }
             }
           },
           "rule": {
@@ -387,7 +494,18 @@
                   "stopBy": "neighbor",
                   "field": "value",
                   "pattern": "$RM",
-                  "matches": "type-shape"
+                  "matches": "type-shape",
+                  "any": [
+                    {
+                      "matches": "plain-shape",
+                      "pattern": "$RMS"
+                    },
+                    {
+                      "not": {
+                        "matches": "plain-shape"
+                      }
+                    }
+                  ]
                 }
               },
               {
@@ -425,7 +543,24 @@
                     "kind": "module",
                     "has": {
                       "stopBy": "neighbor",
-                      "kind": "future_import_statement"
+                      "kind": "future_import_statement",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "kind": "dotted_name",
+                            "regex": "^annotations$"
+                          },
+                          {
+                            "kind": "aliased_import",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "dotted_name",
+                              "regex": "^annotations$"
+                            }
+                          }
+                        ]
+                      }
                     }
                   }
                 }
@@ -437,15 +572,15 @@
                   "left": "RM",
                   "op": "eq",
                   "right": "RET",
-                  "text": "structure"
+                  "text": "tokens"
                 }
               },
               {
                 "compare": {
-                  "left": "RM",
+                  "left": "NRM",
                   "op": "eq",
-                  "right": "RET",
-                  "text": "tokens"
+                  "right": "NRET",
+                  "text": "source"
                 }
               }
             ]
@@ -453,6 +588,38 @@
           "file": {
             "path": {
               "notRegex": "\\.pyi$"
+            }
+          },
+          "transform": {
+            "TRM": {
+              "replace": {
+                "source": "$RMS",
+                "replace": "#[^\\n]*|\\s|\\\\|[()]",
+                "by": "",
+                "default": "!"
+              }
+            },
+            "TRET": {
+              "replace": {
+                "source": "$RETS",
+                "replace": "#[^\\n]*|\\s|\\\\|[()]",
+                "by": "",
+                "default": "?"
+              }
+            },
+            "NRM": {
+              "replace": {
+                "source": "$TRM",
+                "replace": ",(\\]|$)",
+                "by": "${1}"
+              }
+            },
+            "NRET": {
+              "replace": {
+                "source": "$TRET",
+                "replace": ",(\\]|$)",
+                "by": "${1}"
+              }
             }
           }
         }

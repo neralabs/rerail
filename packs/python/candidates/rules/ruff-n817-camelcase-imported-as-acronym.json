@@ -49,7 +49,7 @@
                       },
                       {
                         "not": {
-                          "regex": "^(?:tearDownClass|setUpModule|asyncSetUp|asyncTearDown|setUpTestData|failureException|longMessage|maxDiff)$"
+                          "regex": "^(?:setUp|tearDown|setUpClass|tearDownClass|setUpModule|tearDownModule|asyncSetUp|asyncTearDown|setUpTestData|failureException|longMessage|maxDiff)$"
                         }
                       }
                     ]

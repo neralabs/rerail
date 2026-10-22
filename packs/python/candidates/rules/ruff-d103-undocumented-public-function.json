@@ -4,12 +4,7 @@
   "revision": 1,
   "mode": "steer",
   "description": "Document each public Python function with a docstring describing its behavior, arguments and return value.",
-  "scope": {
-    "include": [
-      "**/*"
-    ],
-    "exclude": []
-  },
+  "scope": { "include": ["**/*"], "exclude": [] },
   "clauses": [
     {
       "id": "undocumented-public-function",
@@ -17,143 +12,141 @@
         "ast": {
           "language": "python",
           "file": {
-            "module": {
-              "notRegex": "(?:^|\\.)(?:_|_[^_.][^.]*|__[^.]*[^_.]_?)(?:\\.|$)"
-            },
-            "path": {
-              "notRegex": "\\.pyi$"
-            }
+            "module": { "notRegex": "(?:^|\\.)(?:_|_[^_.][^.]*|__[^.]*[^_.]_?)(?:\\.|$)" },
+            "path": { "notRegex": "\\.pyi$" }
           },
           "utils": {
             "doc-string": {
               "any": [
-                {
-                  "kind": "string",
-                  "not": {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "kind": "string_start",
-                      "regex": "[bBfFtT]"
-                    }
-                  }
-                },
+                { "kind": "string", "not": { "has": { "stopBy": "neighbor", "kind": "string_start", "regex": "[bBfFtT]" } } },
                 {
                   "kind": "concatenated_string",
                   "not": {
                     "has": {
                       "stopBy": "neighbor",
                       "kind": "string",
-                      "has": {
-                        "stopBy": "neighbor",
-                        "kind": "string_start",
-                        "regex": "[bBfFtT]"
-                      }
+                      "has": { "stopBy": "neighbor", "kind": "string_start", "regex": "[bBfFtT]" }
                     }
                   }
                 },
-                {
-                  "kind": "parenthesized_expression",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "matches": "doc-string"
-                  }
-                }
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "doc-string" } }
               ]
             },
             "docstring": {
               "kind": "expression_statement",
               "all": [
-                {
-                  "not": {
-                    "follows": {
-                      "stopBy": "end",
-                      "not": {
-                        "kind": "comment"
-                      }
-                    }
-                  }
-                },
-                {
-                  "has": {
-                    "stopBy": "neighbor",
-                    "matches": "doc-string"
-                  }
-                },
-                {
-                  "not": {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "regex": "^,$"
-                    }
-                  }
-                }
-              ]
-            },
-            "dunder-all": {
-              "any": [
-                {
-                  "kind": "assignment"
-                },
-                {
-                  "kind": "augmented_assignment"
-                }
-              ],
-              "inside": {
-                "stopBy": "neighbor",
-                "kind": "expression_statement"
-              },
-              "has": {
-                "stopBy": "neighbor",
-                "field": "left",
-                "kind": "identifier",
-                "regex": "^__all__$"
-              }
-            },
-            "paren-string": {
-              "any": [
-                {
-                  "kind": "string",
-                  "pattern": "$S",
-                  "compare": {
-                    "left": "S",
-                    "op": "eq",
-                    "right": "N",
-                    "text": "unquoted"
-                  }
-                },
-                {
-                  "kind": "parenthesized_expression",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "matches": "paren-string"
-                  }
-                }
+                { "not": { "follows": { "stopBy": "end", "not": { "kind": "comment" } } } },
+                { "has": { "stopBy": "neighbor", "matches": "doc-string" } },
+                { "not": { "has": { "stopBy": "neighbor", "regex": "^,$" } } }
               ]
             },
             "overload-ref": {
               "any": [
                 {
-                  "any": [
-                    {
-                      "kind": "identifier"
+                  "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                  "resolves": { "import": ["typing.overload", "typing_extensions.overload", "_typeshed.overload"] }
+                },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "overload-ref" } }
+              ]
+            },
+            "all-stmt": {
+              "any": [{ "kind": "assignment" }, { "kind": "augmented_assignment" }],
+              "inside": { "stopBy": "neighbor", "kind": "expression_statement" },
+              "has": { "stopBy": "neighbor", "field": "left", "regex": "^[(\\s]*__all__[\\s)]*$" }
+            },
+            "all-value": {
+              "any": [
+                { "inside": { "stopBy": "neighbor", "field": "right", "matches": "all-stmt" } },
+                { "inside": { "stopBy": "neighbor", "field": "right", "kind": "assignment", "matches": "all-value" } },
+                { "inside": { "stopBy": "neighbor", "kind": "parenthesized_expression", "matches": "all-value" } },
+                { "inside": { "stopBy": "neighbor", "field": "left", "kind": "binary_operator", "matches": "all-value" } }
+              ]
+            },
+            "all-list": {
+              "any": [
+                { "matches": "all-value" },
+                { "inside": { "stopBy": "neighbor", "field": "right", "kind": "binary_operator", "matches": "all-value" } },
+                { "inside": { "stopBy": "neighbor", "kind": "parenthesized_expression", "matches": "all-list" } },
+                { "inside": { "stopBy": "neighbor", "field": "value", "kind": "named_expression", "matches": "all-list" } }
+              ]
+            },
+            "list-arg": {
+              "any": [
+                { "inside": { "stopBy": "neighbor", "kind": "parenthesized_expression", "matches": "list-arg" } },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "argument_list",
+                    "count": {
+                      "has": { "stopBy": "neighbor", "not": { "any": [{ "regex": "^[(),]$" }, { "kind": "comment" }] } },
+                      "max": 1
                     },
-                    {
-                      "kind": "attribute"
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "call",
+                      "matches": "all-list",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "function",
+                        "any": [
+                          { "kind": "subscript", "has": { "stopBy": "neighbor", "field": "value", "matches": "list-func" } },
+                          { "matches": "list-func" }
+                        ]
+                      }
                     }
-                  ],
-                  "resolves": {
-                    "import": [
-                      "typing.overload",
-                      "typing_extensions.overload",
-                      "_typeshed.overload"
-                    ]
+                  }
+                }
+              ]
+            },
+            "list-func": {
+              "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+              "resolves": { "global": ["list", "tuple"], "import": ["builtins.list", "builtins.tuple"] }
+            },
+            "all-entry": {
+              "any": [
+                { "inside": { "stopBy": "neighbor", "kind": "parenthesized_expression", "matches": "all-entry" } },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [{ "kind": "list" }, { "kind": "tuple" }, { "kind": "expression_list" }],
+                    "matches": "all-list"
                   }
                 },
                 {
-                  "kind": "parenthesized_expression",
-                  "has": {
+                  "inside": {
                     "stopBy": "neighbor",
-                    "matches": "overload-ref"
+                    "any": [{ "kind": "list" }, { "kind": "tuple" }, { "kind": "set" }],
+                    "matches": "list-arg"
+                  }
+                }
+              ]
+            },
+            "listed": {
+              "any": [
+                {
+                  "not": {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "module",
+                      "has": {
+                        "stopBy": { "any": [{ "kind": "function_definition" }, { "kind": "class_definition" }] },
+                        "matches": "all-stmt"
+                      }
+                    }
+                  }
+                },
+                { "binds": { "exported": true } },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "module",
+                    "has": {
+                      "stopBy": { "any": [{ "kind": "function_definition" }, { "kind": "class_definition" }] },
+                      "kind": "string",
+                      "pattern": "$S",
+                      "compare": { "left": "S", "op": "eq", "right": "N", "text": "unquoted" },
+                      "matches": "all-entry"
+                    }
                   }
                 }
               ]
@@ -168,29 +161,12 @@
               "field": "name",
               "kind": "function_definition",
               "not": {
-                "inside": {
-                  "stopBy": "end",
-                  "any": [
-                    {
-                      "kind": "function_definition"
-                    },
-                    {
-                      "kind": "class_definition"
-                    }
-                  ]
-                }
+                "inside": { "stopBy": "end", "any": [{ "kind": "function_definition" }, { "kind": "class_definition" }] }
               },
               "all": [
                 {
                   "not": {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "field": "body",
-                      "has": {
-                        "stopBy": "neighbor",
-                        "matches": "docstring"
-                      }
-                    }
+                    "has": { "stopBy": "neighbor", "field": "body", "has": { "stopBy": "neighbor", "matches": "docstring" } }
                   }
                 },
                 {
@@ -201,83 +177,14 @@
                       "has": {
                         "stopBy": "neighbor",
                         "kind": "decorator",
-                        "has": {
-                          "stopBy": "neighbor",
-                          "matches": "overload-ref"
-                        }
+                        "has": { "stopBy": "neighbor", "matches": "overload-ref" }
                       }
                     }
                   }
                 }
               ]
             },
-            "all": [
-              {
-                "any": [
-                  {
-                    "not": {
-                      "inside": {
-                        "stopBy": "end",
-                        "kind": "module",
-                        "has": {
-                          "stopBy": {
-                            "any": [
-                              {
-                                "kind": "function_definition"
-                              },
-                              {
-                                "kind": "class_definition"
-                              }
-                            ]
-                          },
-                          "matches": "dunder-all"
-                        }
-                      }
-                    }
-                  },
-                  {
-                    "binds": {
-                      "exported": true
-                    }
-                  },
-                  {
-                    "inside": {
-                      "stopBy": "end",
-                      "kind": "module",
-                      "has": {
-                        "stopBy": {
-                          "any": [
-                            {
-                              "kind": "function_definition"
-                            },
-                            {
-                              "kind": "class_definition"
-                            }
-                          ]
-                        },
-                        "matches": "dunder-all",
-                        "has": {
-                          "stopBy": "end",
-                          "kind": "parenthesized_expression",
-                          "inside": {
-                            "stopBy": "neighbor",
-                            "any": [
-                              {
-                                "kind": "list"
-                              },
-                              {
-                                "kind": "tuple"
-                              }
-                            ]
-                          },
-                          "matches": "paren-string"
-                        }
-                      }
-                    }
-                  }
-                ]
-              }
-            ]
+            "matches": "listed"
           }
         }
       },
@@ -285,13 +192,7 @@
         "anchor": "witness.span",
         "code": "D103",
         "message": "Add a docstring as the first statement of function `$N`, describing what it does, its arguments and its return value.",
-        "suppress": {
-          "noqa": {
-            "codes": [
-              "D103"
-            ]
-          }
-        }
+        "suppress": { "noqa": { "codes": ["D103"] } }
       }
     }
   ]

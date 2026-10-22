@@ -105,7 +105,7 @@
       "violation": {
         "anchor": "capture.F",
         "code": "PTH115",
-        "message": "Use `Path($S).readlink()` from pathlib instead of `os.readlink($S)`; it returns a `Path`, not a string, so adjust code that uses the result.",
+        "message": "Use `Path($S).readlink()` from pathlib instead of `os.readlink($S)`; it returns a `Path`, not a string, so adjust code that uses the result, and leave bytes paths alone.",
         "suppress": {
           "noqa": {
             "codes": [

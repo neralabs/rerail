@@ -16,43 +16,391 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": {
-            "kind": "module",
-            "regex": "(?s)\\bassert\\b.*:=",
-            "has": {
-              "stopBy": "end",
-              "kind": "identifier",
-              "not": {
-                "inside": {
-                  "kind": "assert_statement",
-                  "stopBy": "end"
+          "utils": {
+            "in-assert": {
+              "inside": {
+                "kind": "assert_statement",
+                "stopBy": "end"
+              }
+            },
+            "scope-node": {
+              "any": [
+                {
+                  "kind": "function_definition"
+                },
+                {
+                  "kind": "lambda"
+                },
+                {
+                  "kind": "module"
+                },
+                {
+                  "kind": "class_definition"
+                }
+              ]
+            },
+            "in-sc": {
+              "inside": {
+                "stopBy": {
+                  "matches": "scope-node"
+                },
+                "matches": "scope-node",
+                "pattern": "$SC"
+              }
+            },
+            "in-sc-past-class": {
+              "inside": {
+                "stopBy": {
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "lambda"
+                    },
+                    {
+                      "kind": "module"
+                    }
+                  ]
+                },
+                "any": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "kind": "lambda"
+                  },
+                  {
+                    "kind": "module"
+                  }
+                ],
+                "pattern": "$SC"
+              }
+            },
+            "chain-break": {
+              "any": [
+                {
+                  "kind": "delete_statement",
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "identifier",
+                    "pattern": "$NAME",
+                    "not": {
+                      "inside": {
+                        "stopBy": "end",
+                        "any": [
+                          {
+                            "kind": "attribute"
+                          },
+                          {
+                            "kind": "subscript"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "not": {
+                    "inside": {
+                      "stopBy": "end",
+                      "any": [
+                        {
+                          "kind": "if_statement"
+                        },
+                        {
+                          "kind": "while_statement"
+                        },
+                        {
+                          "kind": "match_statement"
+                        },
+                        {
+                          "kind": "except_clause"
+                        },
+                        {
+                          "kind": "else_clause"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "kind": "except_clause",
+                  "has": {
+                    "field": "value",
+                    "kind": "as_pattern",
+                    "has": {
+                      "field": "alias",
+                      "has": {
+                        "kind": "identifier",
+                        "pattern": "$NAME"
+                      }
+                    }
+                  }
+                }
+              ],
+              "matches": "in-sc",
+              "layout": {
+                "after": {
+                  "to": "capture.W",
+                  "breaks": {
+                    "min": 0
+                  }
                 }
               },
-              "resolves": {
-                "binding": {
-                  "site": {
-                    "kind": "named_expression",
-                    "pattern": "$W",
-                    "inside": {
-                      "kind": "assert_statement",
-                      "stopBy": "end"
-                    },
-                    "has": {
-                      "field": "name",
-                      "pattern": "$NAME"
+              "not": {
+                "layout": {
+                  "after": {
+                    "to": "capture.R",
+                    "breaks": {
+                      "min": 0
                     }
                   }
                 }
               }
+            },
+            "earlier-read": {
+              "pattern": "$NAME",
+              "all": [
+                {
+                  "pattern": "$R"
+                },
+                {
+                  "layout": {
+                    "after": {
+                      "to": "capture.W",
+                      "breaks": {
+                        "min": 0
+                      }
+                    }
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "matches": "in-sc"
+                    },
+                    {
+                      "matches": "in-sc-past-class"
+                    },
+                    {
+                      "inside": {
+                        "stopBy": {
+                          "matches": "scope-node"
+                        },
+                        "any": [
+                          {
+                            "kind": "parameters"
+                          },
+                          {
+                            "kind": "lambda_parameters"
+                          }
+                        ],
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "matches": "in-sc"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "any": [
+                    {
+                      "resolves": {
+                        "binding": {
+                          "stopAtGlobal": true,
+                          "scope": [
+                            "function",
+                            "lambda",
+                            "module",
+                            "class"
+                          ],
+                          "site": {
+                            "matches": "in-sc",
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "except_clause"
+                                },
+                                {
+                                  "inside": {
+                                    "stopBy": "neighbor",
+                                    "kind": "except_clause"
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "inside": {
+                        "kind": "module",
+                        "stopBy": "end",
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "assignment",
+                          "matches": "in-sc",
+                          "has": {
+                            "field": "left",
+                            "pattern": "$NAME"
+                          },
+                          "all": [
+                            {
+                              "has": {
+                                "field": "type",
+                                "kind": "type"
+                              }
+                            },
+                            {
+                              "not": {
+                                "has": {
+                                  "field": "right",
+                                  "regex": "[^\\s]"
+                                }
+                              }
+                            }
+                          ],
+                          "layout": {
+                            "after": {
+                              "to": "capture.R",
+                              "breaks": {
+                                "min": 0
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "not": {
+                    "inside": {
+                      "kind": "module",
+                      "stopBy": "end",
+                      "has": {
+                        "stopBy": "end",
+                        "matches": "chain-break"
+                      }
+                    }
+                  }
+                }
+              ]
             }
+          },
+          "rule": {
+            "kind": "named_expression",
+            "pattern": "$W",
+            "matches": "in-assert",
+            "all": [
+              {
+                "has": {
+                  "field": "name",
+                  "pattern": "$NAME"
+                }
+              },
+              {
+                "matches": "in-sc"
+              },
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "kind": "module",
+                      "stopBy": "end",
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "identifier",
+                        "not": {
+                          "matches": "in-assert"
+                        },
+                        "any": [
+                          {
+                            "resolves": {
+                              "binding": {
+                                "site": {
+                                  "kind": "named_expression",
+                                  "pattern": "$S"
+                                }
+                              }
+                            },
+                            "compare": {
+                              "left": "W",
+                              "op": "eq",
+                              "right": "S",
+                              "text": "node"
+                            }
+                          },
+                          {
+                            "matches": "earlier-read"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": {
+                        "matches": "scope-node"
+                      },
+                      "kind": "function_definition",
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "function_definition",
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "nonlocal_statement",
+                          "has": {
+                            "kind": "identifier",
+                            "pattern": "$NAME"
+                          }
+                        }
+                      },
+                      "not": {
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "identifier",
+                          "pattern": "$NAME",
+                          "binds": {},
+                          "matches": "in-sc",
+                          "layout": {
+                            "before": {
+                              "to": "capture.W",
+                              "breaks": {
+                                "min": 0
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": {
+                        "matches": "scope-node"
+                      },
+                      "kind": "module"
+                    },
+                    "has": {
+                      "field": "name",
+                      "binds": {
+                        "latest": true,
+                        "exported": true
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
           }
         }
       },
       "violation": {
         "anchor": "capture.W",
         "code": "RUF018",
-        "each": "W",
-        "message": "Assign `$NAME` in a separate statement before the `assert`; with `python -O` the assert is skipped, so later uses of `$NAME` would see no assignment.",
+        "message": "Assign `$NAME` in its own statement before the `assert` and assert on `$NAME`; under `python -O` asserts are skipped, so code outside the assert would not see this assignment.",
         "suppress": {
           "noqa": {
             "codes": [

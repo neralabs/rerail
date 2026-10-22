@@ -70,6 +70,49 @@
                 ]
               }
             ]
+          },
+          "name-target": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "parenthesized_expression"
+                  },
+                  {
+                    "kind": "tuple_pattern",
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "regex": "^,$"
+                      }
+                    }
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "name-target"
+                }
+              }
+            ]
+          },
+          "named-alias-site": {
+            "any": [
+              {
+                "kind": "type_alias_statement"
+              },
+              {
+                "kind": "assignment",
+                "matches": "alias-site",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "left",
+                  "matches": "name-target"
+                }
+              }
+            ]
           }
         }
       }
@@ -97,7 +140,7 @@
           },
           "file": {
             "path": {
-              "regex": "\\.py$"
+              "notRegex": "\\.pyi$"
             }
           }
         }
@@ -143,6 +186,54 @@
         "anchor": "witness.span",
         "code": "PYI047",
         "message": "Nothing in this file uses the private type alias `$NAME`. Use it, rename it without the underscore if other modules import it, or remove it once nothing does.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI047"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "unused-comprehension-variable-in-stub-alias",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$NAME",
+            "regex": "^_",
+            "binds": {
+              "scope": "comprehension",
+              "latest": true,
+              "used": false
+            },
+            "inside": {
+              "stopBy": {
+                "any": [
+                  {
+                    "kind": "block"
+                  },
+                  {
+                    "kind": "module"
+                  }
+                ]
+              },
+              "matches": "named-alias-site"
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI047",
+        "message": "The comprehension variable `$NAME` in this stub type alias is never read. Replace the comprehension with a plain type expression; stubs only declare types.",
         "suppress": {
           "noqa": {
             "codes": [

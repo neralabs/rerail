@@ -26,18 +26,38 @@
                   "has": { "stopBy": "neighbor", "matches": "io-open" }
                 }
               ]
+            },
+            "io-open-call": {
+              "kind": "call",
+              "has": { "stopBy": "neighbor", "field": "function", "matches": "io-open" }
+            },
+            "call-in-string": {
+              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    { "matches": "io-open-call", "capture": "C" },
+                    { "matches": "call-in-string" }
+                  ]
+                }
+              }
             }
           },
           "rule": {
-            "kind": "call",
-            "has": { "stopBy": "neighbor", "field": "function", "matches": "io-open" }
+            "any": [
+              { "matches": "io-open-call", "pattern": "$C" },
+              { "matches": "call-in-string" }
+            ]
           }
         }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "capture.C",
+        "each": "C",
         "code": "UP020",
-        "message": "Call the builtin `open` instead of `io.open`; they are the same function in Python 3. Skip it if the file rebinds `open` to something else.",
+        "message": "Call the builtin `open` instead of `io.open`; they are the same function in Python 3. If `open` is rebound in this scope, use `builtins.open`.",
         "suppress": { "noqa": { "codes": ["UP020"] } }
       }
     }

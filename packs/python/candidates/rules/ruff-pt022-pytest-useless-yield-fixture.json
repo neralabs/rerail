@@ -129,6 +129,13 @@
                   "kind": "function_definition"
                 },
                 {
+                  "kind": "decorated_definition",
+                  "has": {
+                    "field": "definition",
+                    "kind": "function_definition"
+                  }
+                },
+                {
                   "kind": "lambda"
                 },
                 {
@@ -264,7 +271,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PT022",
-        "message": "Nothing runs after this `yield`, so use `return` and change a `Generator[T, None, None]` return annotation to `T`. Keep `yield` if a local object (temp dir, open file) must stay alive until teardown.",
+        "message": "Nothing runs after this `yield`: use `return`, and annotate the value type instead of `Generator[T, ...]` or `Iterator[T]`. Keep `yield` if a local object (temp dir, open file) must stay alive.",
         "suppress": {
           "noqa": {
             "codes": [

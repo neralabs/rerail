@@ -77,7 +77,13 @@
                   }
                 }
               }
-            ]
+            ],
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "regex": "^,$"
+              }
+            }
           }
         }
       },

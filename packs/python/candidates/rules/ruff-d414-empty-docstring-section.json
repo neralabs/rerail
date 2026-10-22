@@ -111,16 +111,14 @@
           },
           "directive-hides-header": {
             "regex": "(?m)(?:^[ ]{0}\\.\\.[ ][^\\n]*(?:\\n(?:[^\\S\\n]*|[ ]{1}[^\\n]*))*\\n[ ]{1}[^\\S\\n]*(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|x(?:amples?|tended summary))|hint|important|keyword arg(?:s|uments)|methods|notes?|other (?:arg(?:s|uments)|param(?:eters|s))|parameters|r(?:aises|e(?:ceives|ferences|turns?))|s(?:ee also|hort summary)|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*$|^[ ]{4}\\.\\.[ ][^\\n]*(?:\\n(?:[^\\S\\n]*|[ ]{5}[^\\n]*))*\\n[ ]{5}[^\\S\\n]*(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|x(?:amples?|tended summary))|hint|important|keyword arg(?:s|uments)|methods|notes?|other (?:arg(?:s|uments)|param(?:eters|s))|parameters|r(?:aises|e(?:ceives|ferences|turns?))|s(?:ee also|hort summary)|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*$|^[ ]{8}\\.\\.[ ][^\\n]*(?:\\n(?:[^\\S\\n]*|[ ]{9}[^\\n]*))*\\n[ ]{9}[^\\S\\n]*(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|x(?:amples?|tended summary))|hint|important|keyword arg(?:s|uments)|methods|notes?|other (?:arg(?:s|uments)|param(?:eters|s))|parameters|r(?:aises|e(?:ceives|ferences|turns?))|s(?:ee also|hort summary)|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*$)"
-          }
-        }
-      }
-    },
-    {
-      "id": "empty-docstring-section-numpy",
-      "forbid": {
-        "ast": {
-          "language": "python",
-          "rule": {
+          },
+          "empty-section-numpy-part1": {
+            "regex": "(?m)(?:^[^\\S\\n]*\\n[ ]{0,4}(?P<L>(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields))):?[^\\S\\n]*$|(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?P<N>(?:A(?i:ttributes)|E(?i:x(?:amples|tended summary))|M(?i:ethods)|N(?i:otes)|O(?i:ther param(?:eters|s))|P(?i:arameters)|R(?i:(?:aises|e(?:ceives|ferences|turns)))|S(?i:(?:ee also|hort summary))|W(?i:arn(?:ings|s))|Y(?i:ields))):?[^\\S\\n]*$)(?:(?:\\n[^\\S\\n]*)*(?:\\n[^\\S\\n]*-+[^\\S\\n]*$(?:\\n[^\\S\\n]*)*)?\\z|(?:(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$)?(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields)):?[^\\S\\n]*$|(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$\\n[^\\S\\n]*(?:A(?i:ttributes)|E(?i:x(?:amples|tended summary))|M(?i:ethods)|N(?i:otes)|O(?i:ther param(?:eters|s))|P(?i:arameters)|R(?i:(?:aises|e(?:ceives|ferences|turns)))|S(?i:(?:ee also|hort summary))|W(?i:arn(?:ings|s))|Y(?i:ields)):?[^\\S\\n]*$)"
+          },
+          "empty-section-numpy-part2": {
+            "regex": "(?m)(?:(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?:A(?i:ttributes)|E(?i:x(?:amples|tended summary))|M(?i:ethods)|N(?i:otes)|O(?i:ther param(?:eters|s))|P(?i:arameters)|R(?i:(?:aises|e(?:ceives|ferences|turns)))|S(?i:(?:ee also|hort summary))|W(?i:arn(?:ings|s))|Y(?i:ields)):?[^\\S\\n]*$|^[^\\S\\n]*\\n[ ]{0,4}(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields)):?[^\\S\\n]*$)(?:(?:(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$)?(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?P<K>(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields))):?[^\\S\\n]*$|(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$\\n[^\\S\\n]*(?P<J>(?:A(?i:ttributes)|E(?i:x(?:amples|tended summary))|M(?i:ethods)|N(?i:otes)|O(?i:ther param(?:eters|s))|P(?i:arameters)|R(?i:(?:aises|e(?:ceives|ferences|turns)))|S(?i:(?:ee also|hort summary))|W(?i:arn(?:ings|s))|Y(?i:ields))):?[^\\S\\n]*$)(?:(?:\\n[^\\S\\n]*)*(?:\\n[^\\S\\n]*-+[^\\S\\n]*$(?:\\n[^\\S\\n]*)*)?\\z|(?:(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$)?(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields)):?[^\\S\\n]*$|(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$\\n[^\\S\\n]*(?:A(?i:ttributes)|E(?i:x(?:amples|tended summary))|M(?i:ethods)|N(?i:otes)|O(?i:ther param(?:eters|s))|P(?i:arameters)|R(?i:(?:aises|e(?:ceives|ferences|turns)))|S(?i:(?:ee also|hort summary))|W(?i:arn(?:ings|s))|Y(?i:ields)):?[^\\S\\n]*$)"
+          },
+          "empty-section-numpy": {
             "kind": "string_content",
             "inside": {
               "stopBy": "neighbor",
@@ -128,13 +126,10 @@
             },
             "any": [
               {
-                "regex": "(?m)(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?P<N>(?:A(?i:ttributes)|E(?i:x(?:amples|tended summary))|M(?i:ethods)|N(?i:otes)|O(?i:ther param(?:eters|s))|P(?i:arameters)|R(?i:(?:aises|e(?:ceives|ferences|turns)))|S(?i:(?:ee also|hort summary))|W(?i:arn(?:ings|s))|Y(?i:ields))):?[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)*(?:\\n[^\\S\\n]*-+[^\\S\\n]*$(?:\\n[^\\S\\n]*)*)?\\z|(?:(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$)?(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields)):?[^\\S\\n]*$|(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$\\n[^\\S\\n]*(?:A(?i:ttributes)|E(?i:x(?:amples|tended summary))|M(?i:ethods)|N(?i:otes)|O(?i:ther param(?:eters|s))|P(?i:arameters)|R(?i:(?:aises|e(?:ceives|ferences|turns)))|S(?i:(?:ee also|hort summary))|W(?i:arn(?:ings|s))|Y(?i:ields)):?[^\\S\\n]*$)"
+                "matches": "empty-section-numpy-part1"
               },
               {
-                "regex": "(?m)(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?:A(?i:ttributes)|E(?i:x(?:amples|tended summary))|M(?i:ethods)|N(?i:otes)|O(?i:ther param(?:eters|s))|P(?i:arameters)|R(?i:(?:aises|e(?:ceives|ferences|turns)))|S(?i:(?:ee also|hort summary))|W(?i:arn(?:ings|s))|Y(?i:ields)):?[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$)?(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?P<N>(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields))):?[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)*(?:\\n[^\\S\\n]*-+[^\\S\\n]*$(?:\\n[^\\S\\n]*)*)?\\z|(?:(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$)?(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields)):?[^\\S\\n]*$|(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$\\n[^\\S\\n]*(?:A(?i:ttributes)|E(?i:x(?:amples|tended summary))|M(?i:ethods)|N(?i:otes)|O(?i:ther param(?:eters|s))|P(?i:arameters)|R(?i:(?:aises|e(?:ceives|ferences|turns)))|S(?i:(?:ee also|hort summary))|W(?i:arn(?:ings|s))|Y(?i:ields)):?[^\\S\\n]*$)"
-              },
-              {
-                "regex": "(?m)(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?:A(?i:ttributes)|E(?i:x(?:amples|tended summary))|M(?i:ethods)|N(?i:otes)|O(?i:ther param(?:eters|s))|P(?i:arameters)|R(?i:(?:aises|e(?:ceives|ferences|turns)))|S(?i:(?:ee also|hort summary))|W(?i:arn(?:ings|s))|Y(?i:ields)):?[^\\S\\n]*$(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$\\n[^\\S\\n]*(?P<N>(?:A(?i:ttributes)|E(?i:x(?:amples|tended summary))|M(?i:ethods)|N(?i:otes)|O(?i:ther param(?:eters|s))|P(?i:arameters)|R(?i:(?:aises|e(?:ceives|ferences|turns)))|S(?i:(?:ee also|hort summary))|W(?i:arn(?:ings|s))|Y(?i:ields))):?[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)*(?:\\n[^\\S\\n]*-+[^\\S\\n]*$(?:\\n[^\\S\\n]*)*)?\\z|(?:(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$)?(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields)):?[^\\S\\n]*$|(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$\\n[^\\S\\n]*(?:A(?i:ttributes)|E(?i:x(?:amples|tended summary))|M(?i:ethods)|N(?i:otes)|O(?i:ther param(?:eters|s))|P(?i:arameters)|R(?i:(?:aises|e(?:ceives|ferences|turns)))|S(?i:(?:ee also|hort summary))|W(?i:arn(?:ings|s))|Y(?i:ields)):?[^\\S\\n]*$)"
+                "matches": "empty-section-numpy-part2"
               }
             ],
             "all": [
@@ -147,6 +142,92 @@
                 }
               }
             ]
+          },
+          "empty-section-google-part1": {
+            "all": [
+              {
+                "regex": "(?m)(?:^[^\\S\\n]*\\n[ ]{0,4}(?P<L>(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?))):?[^\\S\\n]*$|(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?P<N>(?:A(?i:(?:rg(?:s|uments)|tt(?:ention|ributes)))|C(?i:aution)|D(?i:anger)|E(?i:(?:rror|xamples?))|H(?i:int)|I(?i:mportant)|K(?i:eyword arg(?:s|uments))|M(?i:ethods)|N(?i:otes?)|O(?i:ther arg(?:s|uments))|R(?i:(?:aises|e(?:ferences|turns?)))|S(?i:ee also)|T(?i:(?:ip|odo))|W(?i:arn(?:ings?|s))|Y(?i:ields?))):?[^\\S\\n]*$)(?:(?:\\n[^\\S\\n]*)*(?:\\n[^\\S\\n]*-+[^\\S\\n]*$(?:\\n[^\\S\\n]*)*)?\\z|(?:(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$)?(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*$|(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$\\n[^\\S\\n]*(?:A(?i:(?:rg(?:s|uments)|tt(?:ention|ributes)))|C(?i:aution)|D(?i:anger)|E(?i:(?:rror|xamples?))|H(?i:int)|I(?i:mportant)|K(?i:eyword arg(?:s|uments))|M(?i:ethods)|N(?i:otes?)|O(?i:ther arg(?:s|uments))|R(?i:(?:aises|e(?:ferences|turns?)))|S(?i:ee also)|T(?i:(?:ip|odo))|W(?i:arn(?:ings?|s))|Y(?i:ields?)):?[^\\S\\n]*$)"
+              },
+              {
+                "not": {
+                  "matches": "numpy-mode"
+                }
+              }
+            ]
+          },
+          "empty-section-google-part2": {
+            "all": [
+              {
+                "regex": "(?m)(?:(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?:A(?i:(?:rg(?:s|uments)|tt(?:ention|ributes)))|C(?i:aution)|D(?i:anger)|E(?i:(?:rror|xamples?))|H(?i:int)|I(?i:mportant)|K(?i:eyword arg(?:s|uments))|M(?i:ethods)|N(?i:otes?)|O(?i:ther arg(?:s|uments))|R(?i:(?:aises|e(?:ferences|turns?)))|S(?i:ee also)|T(?i:(?:ip|odo))|W(?i:arn(?:ings?|s))|Y(?i:ields?)):?[^\\S\\n]*$|^[^\\S\\n]*\\n[ ]{0,4}(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*$)(?:(?:(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$)?(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?P<K>(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?))):?[^\\S\\n]*$|(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$\\n[^\\S\\n]*(?P<J>(?:A(?i:(?:rg(?:s|uments)|tt(?:ention|ributes)))|C(?i:aution)|D(?i:anger)|E(?i:(?:rror|xamples?))|H(?i:int)|I(?i:mportant)|K(?i:eyword arg(?:s|uments))|M(?i:ethods)|N(?i:otes?)|O(?i:ther arg(?:s|uments))|R(?i:(?:aises|e(?:ferences|turns?)))|S(?i:ee also)|T(?i:(?:ip|odo))|W(?i:arn(?:ings?|s))|Y(?i:ields?))):?[^\\S\\n]*$)(?:(?:\\n[^\\S\\n]*)*(?:\\n[^\\S\\n]*-+[^\\S\\n]*$(?:\\n[^\\S\\n]*)*)?\\z|(?:(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$)?(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*$|(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$\\n[^\\S\\n]*(?:A(?i:(?:rg(?:s|uments)|tt(?:ention|ributes)))|C(?i:aution)|D(?i:anger)|E(?i:(?:rror|xamples?))|H(?i:int)|I(?i:mportant)|K(?i:eyword arg(?:s|uments))|M(?i:ethods)|N(?i:otes?)|O(?i:ther arg(?:s|uments))|R(?i:(?:aises|e(?:ferences|turns?)))|S(?i:ee also)|T(?i:(?:ip|odo))|W(?i:arn(?:ings?|s))|Y(?i:ields?)):?[^\\S\\n]*$)"
+              },
+              {
+                "not": {
+                  "matches": "numpy-mode"
+                }
+              }
+            ]
+          },
+          "empty-section-google": {
+            "kind": "string_content",
+            "inside": {
+              "stopBy": "neighbor",
+              "matches": "docstring"
+            },
+            "any": [
+              {
+                "matches": "empty-section-google-part1"
+              },
+              {
+                "matches": "empty-section-google-part2"
+              }
+            ],
+            "all": [
+              {
+                "not": {
+                  "matches": "numpy-mode"
+                }
+              },
+              {
+                "not": {
+                  "matches": "directive-hides-header"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "empty-docstring-section-numpy-lowercase-after-blank",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "empty-section-numpy"
+          }
+        }
+      },
+      "violation": {
+        "code": "D414",
+        "anchor": "capture.L",
+        "each": "L",
+        "message": "Document the `$L` section or remove its header; a header with nothing under it is misleading.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "D414"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "empty-docstring-section-numpy-capitalized",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "empty-section-numpy"
           }
         }
       },
@@ -165,39 +246,84 @@
       }
     },
     {
-      "id": "empty-docstring-section-google",
+      "id": "empty-docstring-section-numpy-next-header",
       "forbid": {
         "ast": {
           "language": "python",
           "rule": {
-            "kind": "string_content",
-            "inside": {
-              "stopBy": "neighbor",
-              "matches": "docstring"
-            },
-            "any": [
-              {
-                "regex": "(?m)(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?P<N>(?:A(?i:(?:rg(?:s|uments)|tt(?:ention|ributes)))|C(?i:aution)|D(?i:anger)|E(?i:(?:rror|xamples?))|H(?i:int)|I(?i:mportant)|K(?i:eyword arg(?:s|uments))|M(?i:ethods)|N(?i:otes?)|O(?i:ther arg(?:s|uments))|R(?i:(?:aises|e(?:ferences|turns?)))|S(?i:ee also)|T(?i:(?:ip|odo))|W(?i:arn(?:ings?|s))|Y(?i:ields?))):?[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)*(?:\\n[^\\S\\n]*-+[^\\S\\n]*$(?:\\n[^\\S\\n]*)*)?\\z|(?:(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$)?(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*$|(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$\\n[^\\S\\n]*(?:A(?i:(?:rg(?:s|uments)|tt(?:ention|ributes)))|C(?i:aution)|D(?i:anger)|E(?i:(?:rror|xamples?))|H(?i:int)|I(?i:mportant)|K(?i:eyword arg(?:s|uments))|M(?i:ethods)|N(?i:otes?)|O(?i:ther arg(?:s|uments))|R(?i:(?:aises|e(?:ferences|turns?)))|S(?i:ee also)|T(?i:(?:ip|odo))|W(?i:arn(?:ings?|s))|Y(?i:ields?)):?[^\\S\\n]*$)"
-              },
-              {
-                "regex": "(?m)(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?:A(?i:(?:rg(?:s|uments)|tt(?:ention|ributes)))|C(?i:aution)|D(?i:anger)|E(?i:(?:rror|xamples?))|H(?i:int)|I(?i:mportant)|K(?i:eyword arg(?:s|uments))|M(?i:ethods)|N(?i:otes?)|O(?i:ther arg(?:s|uments))|R(?i:(?:aises|e(?:ferences|turns?)))|S(?i:ee also)|T(?i:(?:ip|odo))|W(?i:arn(?:ings?|s))|Y(?i:ields?)):?[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$)?(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?P<N>(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?))):?[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)*(?:\\n[^\\S\\n]*-+[^\\S\\n]*$(?:\\n[^\\S\\n]*)*)?\\z|(?:(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$)?(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*$|(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$\\n[^\\S\\n]*(?:A(?i:(?:rg(?:s|uments)|tt(?:ention|ributes)))|C(?i:aution)|D(?i:anger)|E(?i:(?:rror|xamples?))|H(?i:int)|I(?i:mportant)|K(?i:eyword arg(?:s|uments))|M(?i:ethods)|N(?i:otes?)|O(?i:ther arg(?:s|uments))|R(?i:(?:aises|e(?:ferences|turns?)))|S(?i:ee also)|T(?i:(?:ip|odo))|W(?i:arn(?:ings?|s))|Y(?i:ields?)):?[^\\S\\n]*$)"
-              },
-              {
-                "regex": "(?m)(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?:A(?i:(?:rg(?:s|uments)|tt(?:ention|ributes)))|C(?i:aution)|D(?i:anger)|E(?i:(?:rror|xamples?))|H(?i:int)|I(?i:mportant)|K(?i:eyword arg(?:s|uments))|M(?i:ethods)|N(?i:otes?)|O(?i:ther arg(?:s|uments))|R(?i:(?:aises|e(?:ferences|turns?)))|S(?i:ee also)|T(?i:(?:ip|odo))|W(?i:arn(?:ings?|s))|Y(?i:ields?)):?[^\\S\\n]*$(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$\\n[^\\S\\n]*(?P<N>(?:A(?i:(?:rg(?:s|uments)|tt(?:ention|ributes)))|C(?i:aution)|D(?i:anger)|E(?i:(?:rror|xamples?))|H(?i:int)|I(?i:mportant)|K(?i:eyword arg(?:s|uments))|M(?i:ethods)|N(?i:otes?)|O(?i:ther arg(?:s|uments))|R(?i:(?:aises|e(?:ferences|turns?)))|S(?i:ee also)|T(?i:(?:ip|odo))|W(?i:arn(?:ings?|s))|Y(?i:ields?))):?[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)*(?:\\n[^\\S\\n]*-+[^\\S\\n]*$(?:\\n[^\\S\\n]*)*)?\\z|(?:(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$)?(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*$|(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$\\n[^\\S\\n]*(?:A(?i:(?:rg(?:s|uments)|tt(?:ention|ributes)))|C(?i:aution)|D(?i:anger)|E(?i:(?:rror|xamples?))|H(?i:int)|I(?i:mportant)|K(?i:eyword arg(?:s|uments))|M(?i:ethods)|N(?i:otes?)|O(?i:ther arg(?:s|uments))|R(?i:(?:aises|e(?:ferences|turns?)))|S(?i:ee also)|T(?i:(?:ip|odo))|W(?i:arn(?:ings?|s))|Y(?i:ields?)):?[^\\S\\n]*$)"
-              }
-            ],
-            "all": [
-              {
-                "not": {
-                  "matches": "numpy-mode"
-                }
-              },
-              {
-                "not": {
-                  "matches": "directive-hides-header"
-                }
-              }
+            "matches": "empty-section-numpy"
+          }
+        }
+      },
+      "violation": {
+        "code": "D414",
+        "anchor": "capture.K",
+        "each": "K",
+        "message": "Document the `$K` section or remove its header; a header with nothing under it is misleading.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "D414"
             ]
+          }
+        }
+      }
+    },
+    {
+      "id": "empty-docstring-section-numpy-after-underline",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "empty-section-numpy"
+          }
+        }
+      },
+      "violation": {
+        "code": "D414",
+        "anchor": "capture.J",
+        "each": "J",
+        "message": "Document the `$J` section or remove its header; a header with nothing under it is misleading.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "D414"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "empty-docstring-section-google-lowercase-after-blank",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "empty-section-google"
+          }
+        }
+      },
+      "violation": {
+        "code": "D414",
+        "anchor": "capture.L",
+        "each": "L",
+        "message": "Document the `$L` section or remove its header; a header with nothing under it is misleading.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "D414"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "empty-docstring-section-google-capitalized",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "empty-section-google"
           }
         }
       },
@@ -206,6 +332,54 @@
         "anchor": "capture.N",
         "each": "N",
         "message": "Document the `$N` section or remove its header; a header with nothing under it is misleading.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "D414"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "empty-docstring-section-google-next-header",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "empty-section-google"
+          }
+        }
+      },
+      "violation": {
+        "code": "D414",
+        "anchor": "capture.K",
+        "each": "K",
+        "message": "Document the `$K` section or remove its header; a header with nothing under it is misleading.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "D414"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "empty-docstring-section-google-after-underline",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "empty-section-google"
+          }
+        }
+      },
+      "violation": {
+        "code": "D414",
+        "anchor": "capture.J",
+        "each": "J",
+        "message": "Document the `$J` section or remove its header; a header with nothing under it is misleading.",
         "suppress": {
           "noqa": {
             "codes": [

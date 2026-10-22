@@ -12,182 +12,213 @@
   },
   "clauses": [
     {
-      "id": "collection-literal-concatenation",
-      "forbid": {
-        "ast": {
-          "language": "python",
-          "utils": {
-            "splat-ok": {
-              "any": [
-                {
-                  "kind": "identifier"
-                },
-                {
-                  "kind": "attribute"
-                },
-                {
-                  "kind": "call"
-                },
-                {
-                  "kind": "subscript",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "field": "subscript",
-                    "kind": "slice"
-                  },
-                  "not": {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "regex": "^,$"
-                    }
-                  }
-                },
-                {
-                  "kind": "parenthesized_expression",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "matches": "splat-ok"
-                  }
-                }
-              ]
-            },
-            "list-expr": {
-              "any": [
-                {
-                  "kind": "list"
-                },
-                {
-                  "kind": "parenthesized_expression",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "matches": "list-expr"
-                  }
-                },
-                {
-                  "matches": "list-add"
-                }
-              ]
-            },
-            "tuple-expr": {
-              "any": [
-                {
-                  "kind": "tuple"
-                },
-                {
-                  "kind": "parenthesized_expression",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "matches": "tuple-expr"
-                  }
-                },
-                {
-                  "matches": "tuple-add"
-                }
-              ]
-            },
-            "list-add": {
-              "kind": "binary_operator",
-              "has": {
-                "field": "operator",
-                "regex": "^\\+$"
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "splat-ok": {
+            "any": [
+              {
+                "kind": "identifier"
               },
-              "any": [
-                {
-                  "all": [
-                    {
-                      "has": {
-                        "field": "left",
-                        "matches": "list-expr"
-                      }
-                    },
-                    {
-                      "has": {
-                        "field": "right",
-                        "any": [
-                          {
-                            "matches": "splat-ok"
-                          },
-                          {
-                            "matches": "list-expr"
-                          }
-                        ]
-                      }
-                    }
-                  ]
-                },
-                {
-                  "all": [
-                    {
-                      "has": {
-                        "field": "left",
-                        "matches": "splat-ok"
-                      }
-                    },
-                    {
-                      "has": {
-                        "field": "right",
-                        "matches": "list-expr"
-                      }
-                    }
-                  ]
-                }
-              ]
-            },
-            "tuple-add": {
-              "kind": "binary_operator",
-              "has": {
-                "field": "operator",
-                "regex": "^\\+$"
+              {
+                "kind": "attribute"
               },
-              "any": [
-                {
-                  "all": [
-                    {
-                      "has": {
-                        "field": "left",
-                        "matches": "tuple-expr"
-                      }
-                    },
-                    {
-                      "has": {
-                        "field": "right",
-                        "any": [
-                          {
-                            "matches": "splat-ok"
-                          },
-                          {
-                            "matches": "tuple-expr"
-                          }
-                        ]
-                      }
-                    }
-                  ]
+              {
+                "kind": "call"
+              },
+              {
+                "kind": "subscript",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "slice"
                 },
-                {
-                  "all": [
-                    {
-                      "has": {
-                        "field": "left",
-                        "matches": "splat-ok"
-                      }
-                    },
-                    {
-                      "has": {
-                        "field": "right",
-                        "matches": "tuple-expr"
-                      }
-                    }
-                  ]
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  }
                 }
-              ]
-            }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "splat-ok"
+                }
+              }
+            ]
           },
-          "rule": {
+          "list-expr": {
+            "any": [
+              {
+                "kind": "list"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "list-expr"
+                }
+              },
+              {
+                "matches": "list-add"
+              }
+            ]
+          },
+          "tuple-expr": {
+            "any": [
+              {
+                "kind": "tuple"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "tuple-expr"
+                }
+              },
+              {
+                "matches": "tuple-add"
+              }
+            ]
+          },
+          "list-add": {
             "kind": "binary_operator",
             "has": {
-              "field": "operator",
+              "stopBy": "neighbor",
               "regex": "^\\+$"
             },
+            "any": [
+              {
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "list-expr",
+                      "precedes": {
+                        "stopBy": "end",
+                        "regex": "^\\+$"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "list-or-splat",
+                      "follows": {
+                        "stopBy": "end",
+                        "regex": "^\\+$"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "splat-ok",
+                      "precedes": {
+                        "stopBy": "end",
+                        "regex": "^\\+$"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "list-expr",
+                      "follows": {
+                        "stopBy": "end",
+                        "regex": "^\\+$"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "list-or-splat": {
+            "any": [
+              {
+                "matches": "splat-ok"
+              },
+              {
+                "matches": "list-expr"
+              }
+            ]
+          },
+          "tuple-add": {
+            "kind": "binary_operator",
+            "has": {
+              "stopBy": "neighbor",
+              "regex": "^\\+$"
+            },
+            "any": [
+              {
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "tuple-expr",
+                      "precedes": {
+                        "stopBy": "end",
+                        "regex": "^\\+$"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "tuple-or-splat",
+                      "follows": {
+                        "stopBy": "end",
+                        "regex": "^\\+$"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "splat-ok",
+                      "precedes": {
+                        "stopBy": "end",
+                        "regex": "^\\+$"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "tuple-expr",
+                      "follows": {
+                        "stopBy": "end",
+                        "regex": "^\\+$"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "tuple-or-splat": {
+            "any": [
+              {
+                "matches": "splat-ok"
+              },
+              {
+                "matches": "tuple-expr"
+              }
+            ]
+          },
+          "concat": {
+            "kind": "binary_operator",
             "any": [
               {
                 "matches": "list-add"
@@ -205,11 +236,47 @@
                 },
                 "kind": "binary_operator",
                 "has": {
-                  "field": "operator",
+                  "stopBy": "neighbor",
                   "regex": "^\\+$"
                 }
               }
             }
+          },
+          "type-string": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "concat",
+                    "capture": "E"
+                  },
+                  {
+                    "matches": "type-string"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "collection-literal-concatenation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "concat"
           }
         }
       },
@@ -224,6 +291,30 @@
             ]
           }
         }
+      }
+    },
+    {
+      "id": "collection-literal-concatenation-in-string-type",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "type-string"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.E",
+        "code": "RUF005",
+        "message": "Write one literal with unpacking, such as `[*a, 1, *b]` or `(*a, 1)`, instead of adding collections with `+`. Keep `+` if an operand defines its own `__add__`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF005"
+            ]
+          }
+        },
+        "each": "E"
       }
     }
   ]

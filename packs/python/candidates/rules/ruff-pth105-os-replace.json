@@ -132,7 +132,7 @@
    "violation": {
     "anchor": "capture.F",
     "code": "PTH105",
-    "message": "Use `Path(src).replace(dst)` instead of `os.replace(src, dst)`; it returns a `Path`, so leave it where the paths are bytes or `src_dir_fd`/`dst_dir_fd` come through `**kwargs`.",
+    "message": "Use `Path(src).replace(dst)` instead of `os.replace(src, dst)`; leave it where the paths are bytes or `src_dir_fd`/`dst_dir_fd` come through `**kwargs`.",
     "suppress": {
      "noqa": {
       "codes": [

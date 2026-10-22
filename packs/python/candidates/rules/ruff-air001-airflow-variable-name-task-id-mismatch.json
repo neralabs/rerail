@@ -167,6 +167,31 @@
                 }
               ]
             },
+            "ops-chain": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "attribute",
+                    "regex": "^operators$"
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "object",
+                    "matches": "ops-chain"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "ops-chain"
+                  }
+                }
+              ]
+            },
             "ops-callee": {
               "any": [
                 {
@@ -205,7 +230,10 @@
                   },
                   "any": [
                     {
-                      "regex": "\\.\\s*operators\\s*\\."
+                      "has": {
+                        "field": "object",
+                        "matches": "ops-chain"
+                      }
                     },
                     {
                       "has": {

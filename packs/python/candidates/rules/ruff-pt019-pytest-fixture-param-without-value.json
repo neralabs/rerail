@@ -592,7 +592,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "PT019",
-        "message": "If the test never reads `$N`, activate it with `@pytest.mark.usefixtures(\"$N\")` instead of a parameter; if it does read it, drop the leading underscore.",
+        "message": "If the test never reads `$N`, remove the parameter and add `@pytest.mark.usefixtures(\"$N\")` to the test; if it reads the value, leave it as is.",
         "suppress": {
           "noqa": {
             "codes": [

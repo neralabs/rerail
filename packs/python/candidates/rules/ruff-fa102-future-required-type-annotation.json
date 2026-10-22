@@ -273,26 +273,7 @@
       "kind": "type",
       "has": {
        "stopBy": "neighbor",
-       "any": [
-        {
-         "matches": "dataclass-meta-head"
-        },
-        {
-         "kind": "generic_type",
-         "has": {
-          "stopBy": "neighbor",
-          "matches": "dataclass-meta-head"
-         }
-        },
-        {
-         "kind": "subscript",
-         "has": {
-          "stopBy": "neighbor",
-          "field": "value",
-          "matches": "dataclass-meta-head"
-         }
-        }
-       ]
+       "matches": "dataclass-meta-expr"
       },
       "inside": {
        "stopBy": "neighbor",
@@ -401,6 +382,62 @@
         }
        }
       ]
+     },
+     "dataclass-meta-expr": {
+      "any": [
+       {
+        "matches": "dataclass-meta-head"
+       },
+       {
+        "kind": "generic_type",
+        "has": {
+         "stopBy": "neighbor",
+         "matches": "dataclass-meta-head"
+        }
+       },
+       {
+        "kind": "subscript",
+        "has": {
+         "stopBy": "neighbor",
+         "field": "value",
+         "matches": "dataclass-meta-head"
+        }
+       },
+       {
+        "kind": "parenthesized_expression",
+        "has": {
+         "stopBy": "neighbor",
+         "matches": "dataclass-meta-expr"
+        }
+       }
+      ]
+     },
+     "misgrouped-union": {
+      "kind": "union_type",
+      "not": {
+       "matches": "future-seen"
+      },
+      "has": {
+       "stopBy": "neighbor",
+       "kind": "type",
+       "follows": {
+        "stopBy": "end",
+        "kind": "type"
+       },
+       "has": {
+        "stopBy": "neighbor",
+        "kind": "binary_operator",
+        "has": {
+         "stopBy": "neighbor",
+         "regex": "^\\|$"
+        }
+       }
+      },
+      "all": [
+       {
+        "matches": "in-runtime-annotation"
+       }
+      ]
      }
     }
    }
@@ -453,7 +490,7 @@
    "violation": {
     "anchor": "capture.ANN",
     "code": "FA102",
-    "message": "Add `from __future__ import annotations` to the module; this built-in generic is evaluated at runtime and fails before Python 3.9. If annotations are read at runtime, use the typing alias instead.",
+    "message": "Add `from __future__ import annotations`; this subscripted standard-library generic is evaluated at runtime and fails before Python 3.9. If annotations are read at runtime, use the `typing` alias.",
     "suppress": {
      "noqa": {
       "codes": [
@@ -525,6 +562,74 @@
    },
    "violation": {
     "anchor": "capture.ANN",
+    "code": "FA102",
+    "message": "Add `from __future__ import annotations` to the module; this `|` union is evaluated at runtime and fails before Python 3.10. If annotations are read at runtime, use `Optional` or `Union` instead.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "FA102"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "future-required-pep604-union-prefix-2",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "file": {
+      "path": {
+       "notRegex": "\\.pyi$"
+      }
+     },
+     "when": {
+      "pythonVersion": {
+       "max": "3.9"
+      }
+     },
+     "rule": {
+      "matches": "misgrouped-union",
+      "regex": "^(?<INNER>(?:[^\\[\\]()|\\s#\"']|\"[^\"\\n]*\"|'[^'\\n]*'|(?:\\[(?:[^\\[\\]()]|(?:\\[[^\\[\\]()]*\\]|\\([^\\[\\]()]*\\)))*\\]|\\((?:[^\\[\\]()]|(?:\\[[^\\[\\]()]*\\]|\\([^\\[\\]()]*\\)))*\\)))+(?:\\s*(?:#[^\\n]*\\s*)?\\|\\s*(?:#[^\\n]*\\s*)?(?:[^\\[\\]()|\\s#\"']|\"[^\"\\n]*\"|'[^'\\n]*'|(?:\\[(?:[^\\[\\]()]|(?:\\[[^\\[\\]()]*\\]|\\([^\\[\\]()]*\\)))*\\]|\\((?:[^\\[\\]()]|(?:\\[[^\\[\\]()]*\\]|\\([^\\[\\]()]*\\)))*\\)))+){1})\\s*(?:#[^\\n]*\\s*)?\\|\\s*(?:#[^\\n]*\\s*)?"
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.INNER",
+    "code": "FA102",
+    "message": "Add `from __future__ import annotations` to the module; this `|` union is evaluated at runtime and fails before Python 3.10. If annotations are read at runtime, use `Optional` or `Union` instead.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "FA102"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "future-required-pep604-union-prefix-3",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "file": {
+      "path": {
+       "notRegex": "\\.pyi$"
+      }
+     },
+     "when": {
+      "pythonVersion": {
+       "max": "3.9"
+      }
+     },
+     "rule": {
+      "matches": "misgrouped-union",
+      "regex": "^(?<INNER>(?:[^\\[\\]()|\\s#\"']|\"[^\"\\n]*\"|'[^'\\n]*'|(?:\\[(?:[^\\[\\]()]|(?:\\[[^\\[\\]()]*\\]|\\([^\\[\\]()]*\\)))*\\]|\\((?:[^\\[\\]()]|(?:\\[[^\\[\\]()]*\\]|\\([^\\[\\]()]*\\)))*\\)))+(?:\\s*(?:#[^\\n]*\\s*)?\\|\\s*(?:#[^\\n]*\\s*)?(?:[^\\[\\]()|\\s#\"']|\"[^\"\\n]*\"|'[^'\\n]*'|(?:\\[(?:[^\\[\\]()]|(?:\\[[^\\[\\]()]*\\]|\\([^\\[\\]()]*\\)))*\\]|\\((?:[^\\[\\]()]|(?:\\[[^\\[\\]()]*\\]|\\([^\\[\\]()]*\\)))*\\)))+){2})\\s*(?:#[^\\n]*\\s*)?\\|\\s*(?:#[^\\n]*\\s*)?"
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.INNER",
     "code": "FA102",
     "message": "Add `from __future__ import annotations` to the module; this `|` union is evaluated at runtime and fails before Python 3.10. If annotations are read at runtime, use `Optional` or `Union` instead.",
     "suppress": {
