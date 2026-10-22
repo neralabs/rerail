@@ -1,6 +1,7 @@
 /**
  * Runs the javascript and typescript packs over the ESLint test set and checks Rerail reports every finding ESLint
- * reported. The set is real files from open-source history, each at the commit that introduced a violation of one rule
+ * reported, and nothing where ESLint reports nothing. The set is real files from open-source history, each at the commit
+ * that introduced a violation of one rule, beside a copy with every finding of that rule fixed by hand
  * (s3://nera-test-fixtures/eslint-test-set/; built by benchmark-repos' `.lint/build-test-set.mjs`). Each file is
  * evaluated for its own rule, through the same workspace path the repository audit takes.
  *
@@ -20,8 +21,8 @@ import { evaluateWorkspace, pointOf, type SourceFile } from "../languages/runner
 /** The set this checkout is checked against. A new set is a new key and digest here. */
 const FIXTURE = {
   bucket: "nera-test-fixtures",
-  key: "eslint-test-set/2026-10-21/eslint-test-set.zip",
-  sha256: "8f564d915efb4e49777524de6c10103a5efc28b783dd778e1ceb537cf6d5df4b",
+  key: "eslint-test-set/2026-10-21.2/eslint-test-set.zip",
+  sha256: "dc8f2955ffd78ed9853b19a0aa10e976bf711be221195c171fbf62aceff90d41",
 };
 const PACKS = ["javascript", "typescript"];
 const CACHE = join(RERAIL_ROOT, ".rerail", "cache", "eslint-test-set");
@@ -29,6 +30,8 @@ const CACHE = join(RERAIL_ROOT, ".rerail", "cache", "eslint-test-set");
 const findingSchema = z.object({ line: z.number().int().positive(), column: z.number().int().positive(), message: z.string() });
 const entrySchema = z.object({
   file: z.string(),
+  /** The same file with every finding of the rule fixed by hand: ESLint reports nothing for the rule in it. */
+  fixed: z.string().nullable(),
   rule: z.string(),
   rerailRule: z.string(),
   pack: z.string(),
@@ -100,8 +103,11 @@ interface RuleResult {
   expected: number;
   caught: number;
   missed: Miss[];
-  /** Rerail findings ESLint does not report: reported, not failed. */
+  /** Rerail findings ESLint does not report on the originals: reported, not failed. */
   extra: number;
+  /** Fixed copies checked, and Rerail's findings of the rule on them: each fails, since ESLint reports none. */
+  fixedFiles: number;
+  falseAlarms: Miss[];
   /** Engine failures other than `source-partial`, per file. */
   failures: string[];
 }
@@ -124,10 +130,10 @@ for (const [ruleId, ruleEntries] of [...byRule].sort(([left], [right]) => compar
     errors.push(`${ruleId}: no such rule in the ${PACKS.join(" or ")} pack`);
     continue;
   }
-  const files: SourceFile[] = ruleEntries.map(entry => {
-    const language = languageFor(entry.file);
-    if (language === undefined) throw new Error(`${entry.file}: no language routes it`);
-    return { path: entry.file, language, source: readFileSync(join(root, entry.file), "utf8") };
+  const files: SourceFile[] = ruleEntries.flatMap(entry => (entry.fixed === null ? [entry.file] : [entry.file, entry.fixed])).map(path => {
+    const language = languageFor(path);
+    if (language === undefined) throw new Error(`${path}: no language routes it`);
+    return { path, language, source: readFileSync(join(root, path), "utf8") };
   });
   // One workspace per rule: a file's AST work budget is shared by the rules beside it.
   const evaluation = await evaluateWorkspace([rule.compiled], files);
@@ -135,7 +141,7 @@ for (const [ruleId, ruleEntries] of [...byRule].sort(([left], [right]) => compar
   const found = evaluation.violations.filter(violation => violation.ruleId === rule.policyId).map(violation => pointOf(violation, sources));
   const result: RuleResult = {
     rule: ruleId, eslintRule: rule.rule.upstream.rule, candidate: rule.candidate, match: rule.rule.match,
-    files: files.length, expected: 0, caught: 0, missed: [], extra: 0,
+    files: ruleEntries.length, expected: 0, caught: 0, missed: [], extra: 0, fixedFiles: 0, falseAlarms: [],
     failures: evaluation.failures.filter(failure => !INFORMATIONAL_FAILURE_CODES.has(failure.code)).map(failure => `${failure.path ?? "?"}: ${failure.code}: ${failure.message}`),
   };
   const syntaxErrorFiles = new Set(evaluation.failures.flatMap(failure => (failure.code.startsWith("source-") && failure.path !== undefined ? [failure.path] : [])));
@@ -152,16 +158,23 @@ for (const [ruleId, ruleEntries] of [...byRule].sort(([left], [right]) => compar
       }
     }
     result.extra += unmatched.length;
+    if (entry.fixed !== null) {
+      result.fixedFiles += 1;
+      for (const point of found.filter(point => point.path === entry.fixed))
+        result.falseAlarms.push({ file: entry.fixed, line: point.line, column: point.column ?? 0, message: `reported on the fixed copy of ${entry.file}`, url: entry.source.url, syntaxErrors: syntaxErrorFiles.has(entry.fixed) });
+    }
   }
   results.push(result);
 }
 
 const missedRules = results.filter(result => result.missed.length > 0);
+const alarmRules = results.filter(result => result.falseAlarms.length > 0);
 const total = (key: "expected" | "caught" | "extra"): number => results.reduce((sum, result) => sum + result[key], 0);
 const missed = results.flatMap(result => result.missed.map(miss => ({ ...miss, candidate: result.candidate })));
 const lines = [
   `ESLint test set ${FIXTURE.key}: ${entries.length} files; ${results.length} rules checked.`,
   `Rerail caught ${total("caught")} of ${total("expected")} ESLint findings; ${total("extra")} more findings ESLint did not report.`,
+  `Fixed copies: ${results.reduce((sum, result) => sum + result.fixedFiles, 0)}; Rerail reported its rule on ${new Set(results.flatMap(result => result.falseAlarms.map(alarm => alarm.file))).size} of them (${results.reduce((sum, result) => sum + result.falseAlarms.length, 0)} findings).`,
   `Missed ${missed.length}: ${missed.filter(miss => !miss.candidate).length} by shipped rules, ${missed.filter(miss => miss.candidate).length} by candidates; ${missed.filter(miss => miss.syntaxErrors).length} in files the engine read with syntax errors.`,
   "",
 ];
@@ -170,12 +183,18 @@ for (const result of missedRules) {
   for (const miss of result.missed.slice(0, 5)) lines.push(`  ${miss.file}:${miss.line}:${miss.column} ${miss.message}${miss.syntaxErrors ? " [syntax errors]" : ""}`);
   if (result.missed.length > 5) lines.push(`  … ${result.missed.length - 5} more`);
 }
+for (const result of alarmRules) {
+  lines.push(`${result.rule}${result.candidate ? " (candidate)" : ""}: ${result.falseAlarms.length} findings on fixed copies, where ESLint reports none`);
+  for (const alarm of result.falseAlarms.slice(0, 5)) lines.push(`  ${alarm.file}:${alarm.line}:${alarm.column}${alarm.syntaxErrors ? " [syntax errors]" : ""}`);
+  if (result.falseAlarms.length > 5) lines.push(`  … ${result.falseAlarms.length - 5} more`);
+}
 for (const result of results.filter(entry => entry.failures.length > 0)) {
   lines.push(`${result.rule}: ${result.failures.length} engine failures`);
   for (const failure of result.failures.slice(0, 3)) lines.push(`  ${failure}`);
 }
 for (const error of errors) lines.push(`error: ${error}`);
-lines.push("", missedRules.length === 0 && errors.length === 0 ? "Every ESLint finding caught." : `${missedRules.length} rules missed findings.`);
+const ok = missedRules.length === 0 && alarmRules.length === 0 && errors.length === 0;
+lines.push("", ok ? "Every ESLint finding caught, and nothing reported on the fixed copies." : `${missedRules.length} rules missed findings; ${alarmRules.length} rules reported on fixed copies.`);
 console.log(lines.join("\n"));
 if (values.json !== undefined) writeFileSync(values.json, JSON.stringify({ fixture: FIXTURE, results, errors }, null, 2) + "\n");
-process.exitCode = missedRules.length === 0 && errors.length === 0 ? 0 : 1;
+process.exitCode = ok ? 0 : 1;
