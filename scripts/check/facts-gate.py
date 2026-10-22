@@ -272,7 +272,8 @@ def check_a_replay(d: Path, env: dict) -> tuple[bool, str, dict]:
     ok = t.get("false_positives", 0) == 0 and not bad and t.get("rows", 0) == want
     summary = (f"{matched}/{t.get('rows', 0)} calls (recorded {want}), {t.get('false_positives', 0)} FP, "
                f"{t.get('false_negatives', 0)} FN, {t.get('failures', 0)} failures"
-               + (", misses all accepted residue" if not bad else f", unaccepted misses: {'; '.join(bad[:5])}"))
+               + ("" if not bad else f", unaccepted misses: {'; '.join(bad[:5])}")
+               + (", misses all accepted residue" if not bad and r["mismatches"] else ""))
     return ok, summary, {"totals": t, "unaccepted": bad, "recorded_calls": want}
 
 
@@ -300,7 +301,7 @@ def check_a_repo(d: Path, env: dict) -> tuple[bool, str, dict]:
           and not files["missing"] and not files["extra"] and files["walked"] == files["oracle"])
     actual = t["expected"] - t["false_negatives"] + t["false_positives"]
     summary = (f"{actual}/{t['expected']} findings, {t['false_positives']} FP, {t['false_negatives']} FN, "
-               f"{t['failures']} failures ({'all accepted residue' if not bad else f'{len(bad)} unaccepted'}), "
+               f"{t['failures']} failures{'' if not t['failures'] else (' (all accepted residue)' if not bad else f' ({len(bad)} unaccepted)')}, "
                f"{files['walked']}/{files['oracle']} files")
     return ok, summary, {"totals": t, "files": files, "unaccepted_failures": bad[:20]}
 
