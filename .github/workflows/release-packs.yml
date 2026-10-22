@@ -11,7 +11,8 @@ name: Release packs
 #   published under `next` instead, so the hold stays. The dist-tags job then lists each published pack's dist-tags in
 #   the run summary and fails if one is not where it was published. A pack never published at all needs its first
 #   publish by hand; the run reports it and fails after publishing the others.
-# A pull request touching packs runs the validation and packing as a dry run and publishes nothing.
+# A pull request touching packs runs the validation and packing as a dry run and publishes nothing, and fails if it
+# changes what a pack publishes without a changeset naming that pack (the Release pull request is not checked).
 # `workflow_dispatch` points `latest` at released pack versions, to put one back: naming a pack and an older version
 # puts it back and holds it there (`held`), and naming the pack alone, at its package.json version, promotes it again
 # and releases the hold. With no inputs, every pack whose released version is not `latest` yet, less any pack held.
@@ -53,6 +54,31 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # A change to what a pack publishes is released only through a changeset (docs/pack-format.md, "Versioning and
+  # release"). The Release pull request writes versions and changelogs from the changesets and is not checked.
+  changesets:
+    name: Changesets
+    if: github.event_name == 'pull_request' && github.head_ref != 'changeset-release/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # The full history, so the diff can reach the merge base with the pull request's base.
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Every pack whose published files changed has a changeset
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: node scripts/release/packs-changesets.mjs "$BASE"
+
   plan:
     name: Packs to publish
     if: github.event_name != 'workflow_dispatch'
