@@ -42,7 +42,11 @@ fn compile_batch6(policies: &str) -> Vec<eval::Rule> {
         .map(|check| {
             let doc = policy_doc(policies, check);
             let (config, scope) = call_config(&doc, &event);
-            eval::Rule::compile(&doc, &config, scope.as_ref(), &facts::GRAMMAR).unwrap_or_else(|e| panic!("compile {check}: {e}"))
+            let r = eval::Rule::compile(&doc, &config, scope.as_ref(), &facts::GRAMMAR).unwrap_or_else(|e| panic!("compile {check}: {e}"));
+            if std::env::var_os("FACTS_MEMTRACE").is_some() {
+                eprintln!("compiled {check}: rss {} MB", cur_rss() >> 20);
+            }
+            r
         })
         .collect()
 }

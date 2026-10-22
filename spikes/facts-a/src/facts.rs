@@ -8,7 +8,7 @@ use std::rc::Rc;
 use std::sync::{Arc, LazyLock};
 
 pub const NONE: u32 = u32::MAX;
-pub const SCHEMA_VERSION: u32 = 0;
+pub const SCHEMA_VERSION: u32 = 1;
 
 /// Process-wide interner for kind and field names (the contract's `sym`).
 pub struct Symbols {
@@ -90,6 +90,11 @@ pub struct Facts {
     pub kind_offsets: Vec<u32>,
     pub kind_nodes: Vec<u32>,
     pub syntax_errors: bool,
+    /// The native tape the facts came from (absent when read from a fact file): the input of the
+    /// parser facts computed on demand (`typedefs`).
+    pub tape: Option<TapeDoc>,
+    /// `string_type_definition` (SCHEMA § 1.3), computed on first use.
+    pub typedefs: std::cell::OnceCell<Result<Vec<crate::typedefs::Annotation>, String>>,
 }
 
 pub enum Built {
@@ -168,6 +173,8 @@ pub fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>, source: Arc<String>) -> F
         kind_offsets: Vec::new(),
         kind_nodes: Vec::new(),
         syntax_errors: !doc.syntax_error_ranges().is_empty(),
+        tape: Some(doc.clone()),
+        typedefs: Default::default(),
     };
     for id in 0..n as u32 {
         let node = doc.node(id);
@@ -248,6 +255,14 @@ impl Facts {
     pub fn parent(&self, id: u32) -> Option<u32> {
         let p = self.parent[id as usize];
         (p != NONE).then_some(p)
+    }
+    /// `string_type_definition` (SCHEMA § 1.3): computed from the tape on first use.
+    pub fn typedefs(&self) -> Result<&[crate::typedefs::Annotation], String> {
+        let r = self.typedefs.get_or_init(|| match &self.tape {
+            Some(t) => crate::typedefs::build(t),
+            None => Err("string_type_definition needs the parse (facts read from a fact file)".into()),
+        });
+        r.as_deref().map_err(Clone::clone)
     }
     /// Approximate resident bytes of the columns (excluding source).
     pub fn bytes(&self) -> usize {

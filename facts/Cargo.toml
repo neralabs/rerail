@@ -8,6 +8,10 @@ description = "Facts engine (Phase 2): rule IR, SQL and pattern front ends, per-
 [lib]
 path = "src/lib.rs"
 
+[features]
+# Seeded mutants for the gate (`FACTS_MUTANT=<n>`, `src/mutant.rs`). Never shipped.
+mutants = []
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

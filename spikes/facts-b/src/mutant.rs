@@ -1,0 +1,20 @@
+//! Seeded mutants for the gate (G2.6). With the `mutants` cargo feature, `on(n)` is true when the
+//! environment variable `FACTS_MUTANT` equals `n`; without the feature it is a constant `false`,
+//! so release builds carry no mutant code paths.
+//!
+//! Mutants owned here (the delta rules):
+//! - 4: join drops the (w, w) pair (the ΔR⋈ΔS term of the bilinear expansion).
+//! - 5: presence / count reduce ignores negative deltas (retractions not counted).
+//! - 6: recursion stops after one step: records a fixpoint step derives at round ≥ 2 are dropped.
+
+#[cfg(feature = "mutants")]
+pub fn on(n: u32) -> bool {
+    static M: std::sync::LazyLock<Option<u32>> = std::sync::LazyLock::new(|| std::env::var("FACTS_MUTANT").ok().and_then(|v| v.parse().ok()));
+    *M == Some(n)
+}
+
+#[cfg(not(feature = "mutants"))]
+#[inline(always)]
+pub fn on(_n: u32) -> bool {
+    false
+}

@@ -6,6 +6,9 @@ mod edits;
 mod extract;
 mod facts;
 mod flow;
+mod gen;
+mod membership;
+mod mutant;
 mod oracle;
 mod replay;
 mod rules;
@@ -40,6 +43,20 @@ fn main() {
                 plurality: args.iter().any(|a| a == "--plurality"),
             },
         ),
+        "greplay" => gen::drive::run(
+            &PathBuf::from(arg(&args, "--run-dir").expect("--run-dir")),
+            gen::drive::Opts {
+                events: arg(&args, "--events").map(PathBuf::from),
+                limit: arg(&args, "--limit").map(|x| x.parse().unwrap()),
+                oracle: !args.iter().any(|a| a == "--no-oracle"),
+                fail_fast: args.iter().any(|a| a == "--fail-fast"),
+                clusters: !args.iter().any(|a| a == "--flat"),
+                track: args.iter().any(|a| a == "--track"),
+                plans: arg(&args, "--plans").map(|s| s.split(',').map(str::to_owned).collect()).unwrap_or_default(),
+                real: arg(&args, "--real").map(PathBuf::from),
+                parity: arg(&args, "--parity").map(PathBuf::from),
+            },
+        ),
         "edits" => edits::run(
             &PathBuf::from(arg(&args, "--out").expect("--out")),
             arg(&args, "--seed").map(|x| x.parse().unwrap()).unwrap_or(0x5EED_B),
@@ -47,6 +64,12 @@ fn main() {
             arg(&args, "--commits-repo").map(PathBuf::from).as_deref(),
         ),
         "hops" => hops(),
+        // `b3sum FILE…`: content hashes as the store keys them (scripts/jobs.py).
+        "b3sum" => {
+            for p in &args[2..] {
+                println!("{}  {p}", blake3::hash(&std::fs::read(p).unwrap()).to_hex());
+            }
+        }
         "divergence" => divergence(&PathBuf::from(arg(&args, "--run-dir").expect("--run-dir")), args.iter().any(|a| a == "--plurality")),
         "dump" => {
             let p = args.get(2).expect("file");

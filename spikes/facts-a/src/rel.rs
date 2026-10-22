@@ -384,9 +384,27 @@ fn store(t: Table, schema: &Schema) -> Table {
     Table { schema: schema.clone(), rows }
 }
 
+/// `FACTS_MEMTRACE=1`: per stored stage, its rows, an estimate of its bytes (row boxes, values
+/// and text payloads, shared texts counted per reference) and the process's current RSS.
+fn memtrace(name: &str, t: &Table) {
+    if std::env::var_os("FACTS_MEMTRACE").is_none() {
+        return;
+    }
+    let mut bytes = 0usize;
+    for r in &t.rows {
+        bytes += 16 + r.len() * std::mem::size_of::<V>();
+        for v in r.iter() {
+            if let V::Text(s) = v {
+                bytes += s.len();
+            }
+        }
+    }
+    eprintln!("memtrace {name}: {} rows x {} cols ~{} MB, rss {} MB", t.rows.len(), t.schema.cols.len(), bytes >> 20, crate::repo::cur_rss() >> 20);
+}
+
 pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
     let mut out = RelOutcome { findings: Vec::new(), failure: None, stage_ns: Vec::new() };
-    let mut db = Db { tables: Default::default(), source: part.source, path: part.path, regexes: Default::default() };
+    let mut db = Db { tables: Default::default(), source: part.source, path: part.path };
     for ((name, _), t) in plan.inputs.iter().zip(part.inputs) {
         db.tables.insert(name.to_ascii_lowercase(), Rc::new(t));
     }
@@ -444,6 +462,7 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
                         Err(e) => panic!("FACTS_A3_CHECK: stage {name}: SQL failed ({e}), kernel succeeded"),
                     }
                 }
+                memtrace(name, &t);
                 db.tables.insert(name.to_ascii_lowercase(), Rc::new(t));
                 out.stage_ns.push((format!("view:{name}"), ns));
             }
@@ -482,6 +501,7 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
                         eprintln!("    {r:?}");
                     }
                 }
+                memtrace(&name, &t);
                 db.tables.insert(name.to_ascii_lowercase(), Rc::new(t));
                 out.stage_ns.push((name.clone(), t0.elapsed().as_nanos() as u64));
             }

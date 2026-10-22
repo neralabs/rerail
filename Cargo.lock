@@ -752,6 +752,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlparser",
+ "zstd",
 ]
 
 [[package]]
@@ -763,6 +764,8 @@ dependencies = [
  "differential-dataflow",
  "libc",
  "parking_lot",
+ "regex",
+ "rerail-facts",
  "rustc-hash",
  "serde",
  "serde_json",

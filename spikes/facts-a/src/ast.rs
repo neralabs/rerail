@@ -249,7 +249,7 @@ impl<'a> Compiler<'a> {
             terms.push(self.kind(k)?);
         }
         if let Some(rx) = r.get("regex").and_then(Json::as_str) {
-            terms.push(Rule::Regex(Regex::new(rx).map_err(|e| format!("{at}/regex: {e}"))?));
+            terms.push(Rule::Regex(crate::rx::get(rx).map_err(|e| format!("{at}/regex: {e}"))?));
         }
         if let Some(c) = r.get("capture") {
             let c = c.as_str().ok_or("capture must be a name")?;
@@ -267,7 +267,7 @@ impl<'a> Compiler<'a> {
             let o = obj(fp, "filePath")?;
             let get = |k: &str| -> Result<Option<Regex>, String> {
                 o.get(k)
-                    .map(|v| Regex::new(v.as_str().unwrap_or("")).map_err(|e| e.to_string()))
+                    .map(|v| crate::rx::get(v.as_str().unwrap_or("")).map_err(|e| e.to_string()))
                     .transpose()
             };
             terms.push(Rule::FilePath { regex: get("regex")?, not_regex: get("notRegex")? });
@@ -485,7 +485,7 @@ impl<'a> Compiler<'a> {
         };
         let regex = o
             .get("regex")
-            .map(|r| Regex::new(r.as_str().unwrap_or("")).map_err(|e| format!("{at}: {e}")))
+            .map(|r| crate::rx::get(r.as_str().unwrap_or("")).map_err(|e| format!("{at}: {e}")))
             .transpose()?;
         Ok(Rule::Value(ValueTest { eq, regex }))
     }
@@ -1522,7 +1522,7 @@ impl<'a> Eval<'a> {
             return known;
         }
         let end = self.f.subtree_end[n as usize];
-        let mut i = n + 1;
+        let mut i = n + 1 + crate::mutant::on(3) as u32;
         let mut unknown = false;
         let mut res = F;
         while i < end {
@@ -1982,13 +1982,52 @@ impl<'a> Eval<'a> {
         Some(true)
     }
 
-    // --- parse (matcher/parse.rs): pythonFString only ---
+    // --- parse (matcher/parse.rs): pythonFString, and annotation over `string_type_definition` ---
     fn parse(&self, node: Bound, p: &ParseTest, env: &mut Env) -> bool {
         let Bound::Node(n) = node else { return false };
         match p.grammar {
             ParseGrammar::Annotation => {
-                self.refuse("parse grammar `annotation` (Ruff string type definitions) is not in schema v0".into());
-                false
+                // Native `ParseTest::tree_at`: a host of kind string/concatenated_string holds a
+                // tree iff it is a string type definition of the file's scope table (S4,
+                // SCHEMA § 1.3); the tree's rule runs on its root and exports its captures.
+                let kind = facts::name(self.f.kind[n as usize]);
+                if &*kind != "string" && &*kind != "concatenated_string" {
+                    return false;
+                }
+                let root = {
+                    let cached = self.parsed_hosts.borrow().get(&n).copied();
+                    match cached {
+                        Some(r) => r,
+                        None => {
+                            let r = match self.f.typedefs() {
+                                Err(why) => {
+                                    self.refuse(why);
+                                    None
+                                }
+                                Ok(defs) => crate::typedefs::at(defs, self.f.start[n as usize] as usize, self.f.end[n as usize] as usize).map(|a| {
+                                    let mut parsed = self.parsed.borrow_mut();
+                                    let base = parsed.len() as u32;
+                                    for rec in &a.nodes {
+                                        let parent = if rec.parent == NONE { NONE } else { base + rec.parent };
+                                        parsed.push(ParsedNode { kind: rec.kind, start: rec.start, end: rec.end, text: rec.text.clone(), parent, named: rec.named });
+                                    }
+                                    (base, parsed.len() as u32)
+                                }),
+                            };
+                            self.parsed_hosts.borrow_mut().insert(n, r);
+                            r
+                        }
+                    }
+                };
+                let Some((root, _)) = root else { return false };
+                let mut inner = Env::default();
+                if !self.m(&p.rule, Bound::Parsed(root), &mut inner) {
+                    return false;
+                }
+                for (name, b) in inner.vars {
+                    env.set(name, b);
+                }
+                true
             }
             ParseGrammar::PythonFString => {
                 let kind = facts::name(self.f.kind[n as usize]);
