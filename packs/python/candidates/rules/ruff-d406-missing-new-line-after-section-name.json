@@ -116,11 +116,11 @@
                 "any": [
                  {
                   "not": {
-                   "regex": "\\n[^\\S\\n]*(?i:attributes|references|examples|see also|warnings|methods|returns|raises|yields|notes|warns):[^\\S\\n]*(?m:$)(?:\\z|\\n[^\\S\\n]*(?m:$)|\\n[^\\S\\n]*(?:[^\\s\\-]|-+(?:[^\\S\\n]+\\S|[^\\s\\-])))"
+                   "regex": "(?:(?m:^)[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?i:attributes|references|examples|see also|warnings|methods|returns|raises|yields|notes|warns):[^\\S\\n]*(?m:$)(?:\\z|\\n[^\\S\\n]*(?m:$)|\\n[^\\S\\n]*(?:[^\\s\\-]|-+(?:[^\\S\\n]+\\S|[^\\s\\-])))"
                   }
                  },
                  {
-                  "regex": "(?s)\\n[^\\S\\n]*(?i:attributes|references|examples|see also|warnings|methods|returns|raises|yields|notes|warns):?[^\\S\\n]*(?m:$)\\n[^\\S\\n]*-+[^\\S\\n]*(?m:$).*?\\n[^\\S\\n]*(?i:attributes|references|examples|see also|warnings|methods|returns|raises|yields|notes|warns):[^\\S\\n]*(?m:$)(?:\\z|\\n[^\\S\\n]*(?m:$)|\\n[^\\S\\n]*(?:[^\\s\\-]|-+(?:[^\\S\\n]+\\S|[^\\s\\-])))"
+                  "regex": "(?s)\\n[^\\S\\n]*(?i:attributes|references|examples|see also|warnings|methods|returns|raises|yields|notes|warns):?[^\\S\\n]*(?m:$)\\n[^\\S\\n]*-+[^\\S\\n]*(?m:$).*?(?:(?m:^)[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?i:attributes|references|examples|see also|warnings|methods|returns|raises|yields|notes|warns):[^\\S\\n]*(?m:$)(?:\\z|\\n[^\\S\\n]*(?m:$)|\\n[^\\S\\n]*(?:[^\\s\\-]|-+(?:[^\\S\\n]+\\S|[^\\s\\-])))"
                  }
                 ]
                }

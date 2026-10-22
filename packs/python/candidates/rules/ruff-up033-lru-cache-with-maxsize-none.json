@@ -1,0 +1,68 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up033-lru-cache-with-maxsize-none",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use functools.cache instead of functools.lru_cache with maxsize=None; it is the same unbounded cache without the call.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "lru-cache-maxsize-none",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": { "pythonVersion": { "min": "3.9" } },
+          "utils": {
+            "none-literal": {
+              "any": [
+                { "kind": "none" },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "none-literal" } }
+              ]
+            },
+            "decorator-expression": {
+              "any": [
+                { "inside": { "stopBy": "neighbor", "kind": "decorator" } },
+                { "inside": { "stopBy": "neighbor", "kind": "parenthesized_expression", "matches": "decorator-expression" } }
+              ]
+            },
+            "function-decorator": {
+              "kind": "decorator",
+              "inside": { "stopBy": "neighbor", "kind": "decorated_definition", "has": { "stopBy": "neighbor", "field": "definition", "kind": "function_definition" } }
+            }
+          },
+          "rule": {
+            "kind": "argument_list",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "call",
+              "field": "arguments",
+              "matches": "decorator-expression",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "function",
+                "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                "resolves": { "import": ["functools.lru_cache"] }
+              }
+            },
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "keyword_argument",
+              "all": [
+                { "nthChild": { "position": 1, "ofRule": { "not": { "kind": "comment" } } } },
+                { "nthChild": { "position": 1, "reverse": true, "ofRule": { "not": { "kind": "comment" } } } }
+              ],
+              "has": { "stopBy": "neighbor", "field": "name", "kind": "identifier", "regex": "^maxsize$" },
+              "matches": "keyword-none"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP033",
+        "message": "Use `functools.cache` as the decorator instead of `lru_cache(maxsize=None)`; it is the same unbounded cache and needs no call.",
+        "suppress": { "noqa": { "codes": ["UP033"] } }
+      }
+    }
+  ]
+}

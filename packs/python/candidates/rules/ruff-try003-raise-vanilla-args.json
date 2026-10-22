@@ -1,0 +1,87 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-try003-raise-vanilla-args",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Define long exception messages inside the exception class instead of formatting them at the raise site; the message then stays consistent wherever it is raised.",
+  "scope": {
+    "include": ["**/*"],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "raise-vanilla-args",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "not-implemented": {
+              "any": [
+                {
+                  "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                  "resolves": {
+                    "global": ["NotImplementedError"],
+                    "import": ["builtins.NotImplementedError"]
+                  }
+                },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "not-implemented" } }
+              ]
+            },
+            "text-part": {
+              "kind": "string",
+              "not": { "has": { "stopBy": "neighbor", "kind": "string_start", "regex": "[bBtT]" } },
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "string_content",
+                "any": [
+                  { "regex": "\\s" },
+                  {
+                    "regex": "(?:^|[^\\\\])(?:\\\\\\\\)*\\\\(?:[ntrfv]|x(?:20|09|0[a-dA-D]|85|[aA]0)|u0020|040)",
+                    "inside": { "stopBy": "neighbor", "kind": "string", "not": { "has": { "stopBy": "neighbor", "kind": "string_start", "regex": "[rR]" } } }
+                  }
+                ]
+              }
+            },
+            "message": {
+              "any": [
+                { "matches": "text-part" },
+                { "kind": "concatenated_string", "has": { "stopBy": "neighbor", "matches": "text-part" } },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "message" } }
+              ]
+            },
+            "raised": {
+              "any": [
+                {
+                  "inside": { "stopBy": "neighbor", "kind": "raise_statement" },
+                  "not": { "inside": { "stopBy": "neighbor", "kind": "raise_statement", "field": "cause" } }
+                },
+                { "inside": { "stopBy": "neighbor", "kind": "parenthesized_expression", "matches": "raised" } }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "matches": "raised",
+            "not": { "has": { "stopBy": "neighbor", "field": "function", "matches": "not-implemented" } },
+            "has": {
+              "stopBy": "neighbor",
+              "field": "arguments",
+              "kind": "argument_list",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "message",
+                "not": { "follows": { "stopBy": "end", "regex": "^,$" } }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "TRY003",
+        "message": "Move this message into the exception class (for example its `__init__`) and pass only the varying values here. Leave built-in exceptions you can't reasonably subclass.",
+        "suppress": { "noqa": { "codes": ["TRY003"] } }
+      }
+    }
+  ]
+}

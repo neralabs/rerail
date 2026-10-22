@@ -116,11 +116,11 @@
                 "any": [
                  {
                   "not": {
-                   "regex": "\\n[^\\S\\n]*(?i:attributes|references|examples|see also|warnings|methods|returns|raises|yields|notes|warns):[^\\S\\n]*(?m:$)(?:\\z|\\n[^\\S\\n]*(?m:$)|\\n[^\\S\\n]*(?:[^\\s\\-]|-+(?:[^\\S\\n]+\\S|[^\\s\\-])))"
+                   "regex": "(?:(?m:^)[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?i:attributes|references|examples|see also|warnings|methods|returns|raises|yields|notes|warns):[^\\S\\n]*(?m:$)(?:\\z|\\n[^\\S\\n]*(?m:$)|\\n[^\\S\\n]*(?:[^\\s\\-]|-+(?:[^\\S\\n]+\\S|[^\\s\\-])))"
                   }
                  },
                  {
-                  "regex": "(?s)\\n[^\\S\\n]*(?i:attributes|references|examples|see also|warnings|methods|returns|raises|yields|notes|warns):?[^\\S\\n]*(?m:$)\\n[^\\S\\n]*-+[^\\S\\n]*(?m:$).*?\\n[^\\S\\n]*(?i:attributes|references|examples|see also|warnings|methods|returns|raises|yields|notes|warns):[^\\S\\n]*(?m:$)(?:\\z|\\n[^\\S\\n]*(?m:$)|\\n[^\\S\\n]*(?:[^\\s\\-]|-+(?:[^\\S\\n]+\\S|[^\\s\\-])))"
+                  "regex": "(?s)\\n[^\\S\\n]*(?i:attributes|references|examples|see also|warnings|methods|returns|raises|yields|notes|warns):?[^\\S\\n]*(?m:$)\\n[^\\S\\n]*-+[^\\S\\n]*(?m:$).*?(?:(?m:^)[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?i:attributes|references|examples|see also|warnings|methods|returns|raises|yields|notes|warns):[^\\S\\n]*(?m:$)(?:\\z|\\n[^\\S\\n]*(?m:$)|\\n[^\\S\\n]*(?:[^\\s\\-]|-+(?:[^\\S\\n]+\\S|[^\\s\\-])))"
                  }
                 ]
                }
@@ -138,10 +138,10 @@
           "regex": "\\n[^\\S\\n]*(?P<NAME>(?i:extended summary|other parameters|short summary|other params|attributes|references|parameters|examples|see also|warnings|receives|methods|returns|raises|yields|notes|warns)):?[^\\S\\n]*(?m:$)\\n[^\\S\\n]*(?:-+=|=+-)[-=]*[^\\S\\n]*(?m:$)"
          },
          {
-          "regex": "(?m:^)[^\\S\\n]*\\n[^\\S\\n]*(?P<NAME>(?i:extended summary|other parameters|short summary|other params|attributes|references|parameters|examples|see also|warnings|receives|methods|returns|raises|yields|notes|warns)):?[^\\S\\n]*(?m:$)(?:\\z|(?:\\n[^\\S\\n]*)*(?:\\z|\\n[^\\S\\n]*(?:[^\\s\\-=]|-+(?:[^\\S\\n]+\\S|[^\\s\\-])|=+(?:[^\\S\\n]+\\S|[^\\s=]))))"
+          "regex": "(?m:^)[^\\S\\n]*\\n[^\\S\\n]*(?P<NAME>(?i:extended summary|other parameters|short summary|other params|attributes|references|parameters|examples|see also|warnings|receives|methods|returns|raises|yields|notes|warns)):?[^\\S\\n]*(?m:$)(?:\\z|(?:\\n[^\\S\\n]*)*(?:\\z|\\n[^\\S\\n]*(?:\\b|[^\\s\\w\\-=]|-+(?:[^\\S\\n]+\\S|[^\\s\\-])|=+(?:[^\\S\\n]+\\S|[^\\s=]))))"
          },
          {
-          "regex": "[,;.\\-\\\\/\\]})][^\\S\\n]*\\n[^\\S\\n]*(?P<NAME>(?:A(?i:ttributes)|E(?i:xtended summary|xamples)|M(?i:ethods)|N(?i:otes)|O(?i:ther parameters|ther params)|P(?i:arameters)|R(?i:eferences|eceives|eturns|aises)|S(?i:hort summary|ee also)|W(?i:arnings|arns)|Y(?i:ields))):?[^\\S\\n]*(?m:$)(?:\\z|(?:\\n[^\\S\\n]*)*(?:\\z|\\n[^\\S\\n]*(?:[^\\s\\-=]|-+(?:[^\\S\\n]+\\S|[^\\s\\-])|=+(?:[^\\S\\n]+\\S|[^\\s=]))))"
+          "regex": "[,;.\\-\\\\/\\]})][^\\S\\n]*\\n[^\\S\\n]*(?P<NAME>(?:A(?i:ttributes)|E(?i:xtended summary|xamples)|M(?i:ethods)|N(?i:otes)|O(?i:ther parameters|ther params)|P(?i:arameters)|R(?i:eferences|eceives|eturns|aises)|S(?i:hort summary|ee also)|W(?i:arnings|arns)|Y(?i:ields))):?[^\\S\\n]*(?m:$)(?:\\z|(?:\\n[^\\S\\n]*)*(?:\\z|\\n[^\\S\\n]*(?:\\b|[^\\s\\w\\-=]|-+(?:[^\\S\\n]+\\S|[^\\s\\-])|=+(?:[^\\S\\n]+\\S|[^\\s=]))))"
          },
          {
           "regex": "\\n[^\\S\\n]*(?i:extended summary|other parameters|short summary|other params|attributes|references|parameters|examples|see also|warnings|receives|methods|returns|raises|yields|notes|warns):?[^\\S\\n]*(?m:$)\\n[^\\S\\n]*(?P<NAME>=+)[^\\S\\n]*(?m:$)"
