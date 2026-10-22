@@ -8,48 +8,72 @@ Install [Git LFS](https://git-lfs.com) before you clone, and run `git lfs instal
 (`model/model.safetensors`) and the engine's Unicode names table (`native/src/code_rule_dsl/value/names/names.bin`,
 compiled into the engine) are stored in LFS (`.gitattributes`); without it a checkout holds pointer files, and neither
 the engine build nor the model works. In a checkout made without it, run `git lfs pull`. Then `npm ci`,
-`npm run build` and, for the pack tests, `npm run fixtures:pull` ([Pack test data](#pack-test-data)).
+`npm run build` and, for the pack tests, `npm run fixtures:pull` and `npm run fixtures:derive`
+([Pack test data](#pack-test-data)).
 
 Generated files are listed, with the command that rewrites each, in
 [scripts/generate/README.md](scripts/generate/README.md); edit the generator, not its output.
 
 ## Pack test data
 
-A rule pack's test data lives in S3, not git: under each `packs/<id>/upstream/<tool>/`, the tool's test cases
+A rule pack's test data is not in git. Under each `packs/<id>/upstream/<tool>/` it is the tool's test cases
 (`fixtures/`, `tests/`, the case lists `cases.json` and `*.cases.json`, `fixtures.upstream-check.json`, the
-complexity pack's `lizard-*.tsv`) and the tool's recorded answers on them (`*.expected.json`). The patterns are
-`PACK_FIXTURE_PATTERNS` in [scripts/s3/pack-fixtures.mjs](scripts/s3/pack-fixtures.mjs); everything else under
-`upstream/<tool>/` (`gates.yaml`, the recorders, `UPSTREAM.md`, `goldens.tsv`, `recording.lock`) stays in git. Each
-file's key is `rerail/` and its repository path in the bucket `s3://nera-test-fixtures` (us-east-2).
+complexity pack's `lizard-*.tsv`), the tool's recorded answers on them (`*.expected.json`), and `authored/`. The
+patterns are `PACK_FIXTURE_PATTERNS` in [scripts/s3/pack-fixtures.mjs](scripts/s3/pack-fixtures.mjs); everything
+else under `upstream/<tool>/` (`gates.yaml`, the generators and recorders, `UPSTREAM.md`, `goldens.tsv`,
+`recording.lock`) stays in git. The data is of two kinds:
 
-Fetch it once after cloning, and again whenever a merged change touched it:
+- **Authored**: what Rerail wrote for the tool to score, which nothing can regenerate: the files the tool's own
+  `upstream/<tool>/UPSTREAM.md` lists as Rerail's (pack check 6 reads the same list), and everything under
+  `upstream/<tool>/authored/`, the place for a contributor's code corpus and its ground truth when the corpus is no
+  public repository a pin can name. It lives in S3: each file's key is `rerail/` and its repository path in the bucket
+  `s3://nera-test-fixtures` (us-east-2).
+- **Derived**: everything else, upstream's tests copied or derived and the tool's recorded answers on them.
+  `npm run fixtures:derive` makes it from the tool-pack's pins, running the pack's generator and then writing the case
+  sources the port readiness recorder names (recipes in [scripts/pack-data/recipes/](scripts/pack-data/recipes/)). It
+  is never committed and never uploaded: CI derives it and keeps it in its Actions cache, keyed by every input of the
+  derivation (`.github/workflows/pack-test-data.yml`).
+
+Fetch the authored part once after cloning, and again whenever a merged change touched it; derive the rest after
+either, and after a change to a pin or a generator:
 
 ```sh
 aws sso login                # or any AWS credentials with read access to s3://nera-test-fixtures/rerail/
-npm run fixtures:pull        # aws s3 sync into packs/; add -- --dry-run to see what it would fetch
+npm run fixtures:pull        # the authored files, into packs/; add -- --dry-run to see what it would fetch
+npm run fixtures:derive      # every tool-pack; -- --pack <id> [--tool <tool>] for some
 ```
 
-It needs the [AWS CLI v2](https://aws.amazon.com/cli/) and read access; ask a maintainer for access. `.gitignore`
-covers the patterns, so the pulled files never show in `git status`. Files your branch tracks win: a pull puts each
-tracked file back to its committed content (or keeps your working-tree edit of it). Without the data, the pack tests
-(`npm test`, `npm run test:conformance`, `cargo test`) and the recorders fail with an instruction to run
-`npm run fixtures:pull`.
+`fixtures:pull` needs the [AWS CLI v2](https://aws.amazon.com/cli/) and read access; ask a maintainer for access.
+`fixtures:derive` needs the network (the pinned upstreams and their packages), `uv`, and for the PHP and Blade packs
+the pinned PHP (`conformance/recorders/port-readiness/runtimes/php/build.sh`) and Composer, for the Rust pack
+`rustup`; it installs everything else under `.rerail/pack-data/`. It fails when a derivation changes a tracked file
+or an authored one; `--compare <dir>` compares the result with another copy of the data byte for byte. Clippy's
+answers are Linux's in CI (`#[cfg(target_os = "linux")]` code in the tokio corpus): derived on macOS they differ
+there. `.gitignore` covers the patterns, so neither kind shows in `git status`. Files your branch tracks win: a
+pull puts each tracked file back to its committed content (or keeps your working-tree edit of it). Without the data,
+the pack tests (`npm test`, `npm run test:conformance`, `cargo test`) and the recorders fail with an instruction to
+pull and derive.
+
+An upstream release is a pin change and nothing else: change the pins (the generator's constants, `gates.yaml`, the
+runtime under `conformance/recorders/port-readiness/runtimes/`), run `npm run fixtures:derive -- --pack <id> --tool
+<tool> --update`, which rewrites the derived data and keeps the tracked files it changes (a licence table) for the
+commit, and record the tool-pack again (`npm run port-readiness:record`). Nothing is uploaded; CI derives the new
+data on the pull request.
 
 ### Adding or changing a pack
 
-Check the pack's test data into your pull request, so review sees it and CI runs on it:
-
-- a pack with a code corpus and ground truth, upstream's answers on it: the corpus and the recordings;
-- otherwise, the pack's contract is that it passes its upstream's own test suite: the upstream tests' cases the
-  recorder copies and upstream's recorded answers on them.
-
-The recorders and generators write these files and print the command that adds them. Because `.gitignore` covers
-them, add them with `git add -f`, e.g. `git add -f -- packs/<id>/upstream/<tool>/fixtures
-packs/<id>/upstream/<tool>/fixtures.expected.json`. The usual rules for third-party material apply to them (below).
+Check the authored test data you add or change into your pull request, so review sees it and CI runs on it: the
+cases you wrote for the tool (listed in its `UPSTREAM.md`), or a code corpus with its ground truth under
+`upstream/<tool>/authored/`. Never check in derived data: a pull request that changes upstream's tests or answers
+changes the pins or the generator that makes them, and CI derives them (structure metric #3 fails on any tracked
+derived file). The generators and recorders print the command that adds the authored files they wrote. Because
+`.gitignore` covers them, add them with `git add -f`, e.g. `git add -f --
+packs/<id>/upstream/<tool>/fixtures/rerail`. The usual rules for third-party material apply (below).
 
 ### Merging (maintainers)
 
-Before merging such a pull request, a maintainer moves its pack test data to S3 and deletes it from the pull request:
+Before merging such a pull request, a maintainer moves its authored test data to S3 and deletes it from the pull
+request:
 
 ```sh
 npm run fixtures:push -- --dry-run   # what it would upload
@@ -57,12 +81,12 @@ npm run fixtures:push                # upload, verify by downloading back, then 
 git commit -m "Move pack test data to S3"
 ```
 
-`fixtures:push` runs with the maintainer's own AWS credentials (write access to the bucket). It refuses a dirty index
-and tracked pack test data edited in the working tree; it uploads every tracked file the patterns match to its key,
-downloads each back and compares bytes, and only then removes them from the index, printing each, and leaves the files
-on disk. It never deletes from S3: a pull request that removes pack test data needs the maintainer to delete those keys
-(`aws s3 rm`); the bucket is versioned, so nothing is lost. Structure metric #3 (`npm run check`) fails while any pack
-test data is tracked, so a pull request cannot merge before the push.
+`fixtures:push` runs with the maintainer's own AWS credentials (write access to the bucket). It refuses a dirty index,
+tracked pack test data edited in the working tree, and tracked derived data; it uploads every tracked authored file to
+its key, downloads each back and compares bytes, and only then removes them from the index, printing each, and leaves
+the files on disk. It never deletes from S3: a pull request that removes authored data needs the maintainer to delete
+those keys (`aws s3 rm`); the bucket is versioned, so nothing is lost. Structure metric #3 (`npm run check`) fails while
+any authored data is tracked, so a pull request cannot merge before the push.
 
 ## Licence of contributions
 

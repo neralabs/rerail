@@ -18,7 +18,7 @@ It follows the [pack structure and validation contract](../../docs/pack-format.m
 | `candidates/rules/` | The 22 candidate code-rule documents (`rerail.policy/v1`), one per port, named for its id |
 | `conformance.json` | Every port (all candidates): its upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tool and the pinned corpora |
 | `divergences.json` | Declared disagreements with SQLFluff |
-| `upstream/sqlfluff/` | SQLFluff's copied tests (`fixtures/`, and Rerail's own PostgreSQL cases beside them in `fixtures/rerail/`, listed as `RERAIL_CASES` in `generate.py`), its recordings (`fixtures.expected.json`, `fixtures.cases.json`, `corpus-<name>.expected.json`) and the recorder (`generate.py`, sharing `fixtures/sql/common.py`). All but the recorder are pack test data, in S3: `npm run fixtures:pull` |
+| `upstream/sqlfluff/` | SQLFluff's copied tests (`fixtures/`, and Rerail's own PostgreSQL cases beside them in `fixtures/rerail/`, listed as `RERAIL_CASES` in `generate.py`), its recordings (`fixtures.expected.json`, `fixtures.cases.json`, `corpus-<name>.expected.json`) and the recorder (`generate.py`, sharing `fixtures/sql/common.py`). All but the recorder are pack test data, not in git: `npm run fixtures:derive` makes them from the pins, and `npm run fixtures:pull` fetches Rerail's own cases |
 | `licenses/sqlfluff/` | SQLFluff's licence and `UPSTREAM.md`, listing every copied file |
 
 ## Rules that would start off
@@ -96,11 +96,12 @@ path:line:column`).
 
 ## Re-recording and scoring
 
-Re-recording runs offline against the pinned SQLFluff 4.4.0, in the venv that `fixtures/sql/common.py` documents:
+Re-recording is deriving the pack's test data ([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)), which is
+never committed: the recipe (`scripts/pack-data/recipes/sql.ts`) runs `upstream/sqlfluff/generate.py`, in `fixtures`
+mode and then `corpus` mode, against the pinned SQLFluff 4.4.0, in the venv that `fixtures/sql/common.py` pins:
 
 ```sh
-.rerail/tools/sql/venv/bin/python packs/sql/upstream/sqlfluff/generate.py fixtures
-.rerail/tools/sql/venv/bin/python packs/sql/upstream/sqlfluff/generate.py corpus
+npm run fixtures:derive -- --pack sql
 ```
 
 Scoring one rule with every false positive and false negative printed:

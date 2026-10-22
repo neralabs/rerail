@@ -95,21 +95,34 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # Every tool-pack's derived data derived again from its pins, failing where it differs from what the cache holds for
+  # the same inputs, beside the authored data from S3 (.github/workflows/pack-test-data.yml): the record check and the
+  # gates below read its artifact. id-token: its legs read the authored data from S3.
+  pack-test-data:
+    name: Pack test data, derived again
+    # Forks that turn scheduled workflows back on skip it; change the owner if the repository moves.
+    if: github.repository_owner == 'neralabs'
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/pack-test-data.yml
+    with:
+      rederive: true
+
   # The drift check runs the recorder with --check: upstream on its own tests and on the corpus files the goldens name,
   # never the rest of the corpus. It reports when upstream moved and writes nothing, so the night tells main without
   # quietly re-recording main behind the maintainers. Read-only, and saving no cache: the recorder runs upstream's code
-  # and unlocked Composer packages, and a save after that would hand main's scope whatever that code wrote. id-token
-  # reads the packs' test data from S3: --check compares upstream's case sources with them.
+  # and unlocked Composer packages, and a save after that would hand main's scope whatever that code wrote. --check
+  # compares upstream's case sources with the derived ones, from the pack-test-data artifact.
   record-check:
     name: Recordings match upstream (${{ matrix.pack }} · ${{ matrix.tool }})
-    needs: build
+    needs: [build, pack-test-data]
     # Forks that turn scheduled workflows back on skip it; change the owner if the repository moves.
     if: github.repository_owner == 'neralabs'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
       contents: read
-      id-token: write
     strategy:
       fail-fast: false
       # Every gated tool-pack.
@@ -154,7 +167,7 @@ jobs:
 
       - uses: ./.github/actions/lfs
 
-      - uses: ./.github/actions/pack-fixtures
+      - uses: ./.github/actions/pack-test-data
 
       - uses: ./.github/actions/node-deps
 
@@ -203,16 +216,15 @@ jobs:
 
   gates:
     name: Port readiness, uncached
-    needs: build
+    needs: [build, pack-test-data]
     # Forks that turn scheduled workflows back on skip it; change the owner if the repository moves.
     if: github.repository_owner == 'neralabs'
     # The called report job asks for these to post on pull requests; a scheduled run posts nothing. The called gates
-    # job reads the packs' test data from S3.
+    # job reads the pack-test-data artifact.
     permissions:
       contents: read
       issues: write
       pull-requests: write
-      id-token: write
     uses: ./.github/workflows/port-readiness.yml
     with:
       no-cache: true

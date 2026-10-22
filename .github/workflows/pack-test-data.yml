@@ -1,0 +1,214 @@
+name: Pack test data
+
+# The packs' test data (CONTRIBUTING.md, "Pack test data"), for the jobs that read it: one artifact, `pack-test-data`,
+# a tar of every file PACK_FIXTURE_PATTERNS (scripts/s3/pack-fixtures.mjs) matches, at its repository path. Consumers
+# extract it with .github/actions/pack-test-data. Of that data,
+#
+# - the authored part (what each tool's UPSTREAM.md lists as Rerail's, and upstream/<tool>/authored/) comes from S3,
+#   under the repository's OIDC read role (.github/actions/pack-fixtures; a pull request's tracked copies win);
+# - the derived part (upstream's tests, copied or derived, and the tools' recorded answers) is never in git or S3:
+#   each tool-pack's leg restores it from the Actions cache, keyed by the sha256 of every input of its derivation
+#   (`npm run fixtures:derive -- --key`: the tool directory, the pack's generators and conformance manifests, the
+#   recipe, the recorder's code for a gated tool-pack, and the authored data), and on a miss derives it from the pins
+#   (`npm run fixtures:derive`), with the runtimes the port readiness gates install, and saves it.
+#
+# So an upstream release is a pin change: the first run after it derives the tool-pack's data, and every later run
+# with the same inputs restores it. A derivation runs on Linux, which is what CI's answers are (Clippy's differ on
+# macOS). Called by ci.yml, port-readiness-nightly.yml and release-packs.yml; only for pushes and same-repository pull
+# requests, since S3 is read under an OIDC token GitHub gives no fork's or Dependabot's pull request.
+
+on:
+  workflow_call:
+    inputs:
+      rederive:
+        description: >-
+          Derive every tool-pack even when the cache holds its data, and fail where the fresh derivation differs from
+          the cached one (the nightly): a transitive package or an upstream download that moved under a pin.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Plan the pack test data legs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      legs: ${{ steps.plan.outputs.legs }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/node-deps
+
+      - id: plan
+        name: List the tool-packs
+        run: echo "legs=$(npm run -s fixtures:derive -- --list)" >> "$GITHUB_OUTPUT"
+
+  derive:
+    name: Pack test data (${{ matrix.pack }} · ${{ matrix.tool }})
+    needs: plan
+    runs-on: ubuntu-24.04
+    # A miss derives the tool-pack from scratch: javascript/eslint lints 10,000 upstream cases.
+    timeout-minutes: 60
+    # id-token: reading the authored data from S3 (pack-fixtures). The callers grant the same.
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.legs) }}
+    env:
+      PACK: ${{ matrix.pack }}
+      TOOL: ${{ matrix.tool }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # First: the authored data is an input of the derivation, and part of its key.
+      - uses: ./.github/actions/pack-fixtures
+
+      - uses: ./.github/actions/node-deps
+
+      - id: key
+        name: Key this tool-pack's derivation by its inputs
+        run: |
+          set -euo pipefail
+          echo "key=pack-test-data-$PACK-$TOOL-$(npm run -s fixtures:derive -- --key --pack "$PACK" --tool "$TOOL")" >> "$GITHUB_OUTPUT"
+          echo "tar=$RUNNER_TEMP/pack-test-data/$PACK--$TOOL.tar" >> "$GITHUB_OUTPUT"
+
+      # A hit is the data an earlier run derived from exactly these inputs.
+      - id: cache
+        name: Restore the derived data
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ steps.key.outputs.tar }}
+          key: ${{ steps.key.outputs.key }}
+
+      - id: plan
+        name: Decide whether to derive
+        env:
+          HIT: ${{ steps.cache.outputs.cache-hit == 'true' }}
+          REDERIVE: ${{ inputs.rederive }}
+        run: |
+          if [ "$HIT" != "true" ] || [ "$REDERIVE" = "true" ]; then echo "derive=true" >> "$GITHUB_OUTPUT"; else echo "derive=false" >> "$GITHUB_OUTPUT"; fi
+
+      # The recordings the lock names, when an earlier gates run saved them: the derivation then checks every case
+      # source against them (the port readiness gates' key).
+      - id: lock
+        name: Read the recordings this commit's lock names
+        if: steps.plan.outputs.derive == 'true' && matrix.gated
+        run: |
+          set -euo pipefail
+          lock="packs/$PACK/upstream/$TOOL/recording.lock"
+          recording="$(jq -r '.files["recording.json"].sha256' "$lock")"
+          corpus="$(jq -r '.files["corpus.json"].sha256' "$lock")"
+          {
+            echo "key=port-readiness-recording-$PACK-$TOOL-$recording-$corpus"
+            echo "paths<<EOF"
+            echo ".rerail/port-readiness/recordings/$recording.json"
+            echo ".rerail/port-readiness/recordings/$corpus.json"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Restore the recordings this commit names
+        if: steps.plan.outputs.derive == 'true' && matrix.gated
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ steps.lock.outputs.paths }}
+          key: ${{ steps.lock.outputs.key }}
+
+      # The runtimes as the port readiness gates install them: uv for the Python runtimes, the pinned PHP build and
+      # Composer for PHP and Blade. Clippy's toolchain is the one packs/rust/upstream/common.py pins, which the recipe
+      # installs with the runner's rustup.
+      - name: Set up uv
+        if: steps.plan.outputs.derive == 'true' && matrix.uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+
+      - name: Set up the pinned PHP and Composer
+        if: steps.plan.outputs.derive == 'true' && matrix.php
+        uses: ./.github/actions/php
+
+      # The generators and the recorder run upstream's code and the packages they resolve, so the step gets no token.
+      - name: Derive the data from the pins
+        if: steps.plan.outputs.derive == 'true'
+        run: npm run fixtures:derive -- --pack "$PACK" --tool "$TOOL"
+
+      # On a hit (rederive), the fresh data goes beside the cached tar and must be the same files with the same bytes.
+      - name: Pack the tool-pack's test data
+        if: steps.plan.outputs.derive == 'true'
+        env:
+          TAR: ${{ steps.key.outputs.tar }}
+          HIT: ${{ steps.cache.outputs.cache-hit == 'true' }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$TAR")"
+          fresh="$TAR"
+          [ "$HIT" = "true" ] && fresh="$TAR.fresh"
+          npm run -s fixtures:derive -- --files --pack "$PACK" --tool "$TOOL" | tar --null -T - -cf "$fresh"
+          if [ "$HIT" = "true" ]; then
+            mkdir -p "$RUNNER_TEMP/cached" "$RUNNER_TEMP/fresh"
+            tar -xf "$TAR" -C "$RUNNER_TEMP/cached"
+            tar -xf "$fresh" -C "$RUNNER_TEMP/fresh"
+            if ! diff -r -q "$RUNNER_TEMP/cached" "$RUNNER_TEMP/fresh"; then
+              echo "::error::$PACK/$TOOL: a fresh derivation differs from the data cached for the same inputs; something under its pins moved (a transitive package, a download): pin it"
+              exit 1
+            fi
+          fi
+
+      - name: Save the derived data
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ steps.key.outputs.tar }}
+          key: ${{ steps.key.outputs.key }}
+
+      - name: Upload the tool-pack's test data
+        uses: actions/upload-artifact@v7
+        with:
+          name: pack-test-data-${{ matrix.pack }}--${{ matrix.tool }}
+          path: ${{ steps.key.outputs.tar }}
+          retention-days: 1
+          if-no-files-found: error
+
+  # One artifact, so every consumer downloads one name.
+  merge:
+    name: Pack test data
+    needs: derive
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Download every tool-pack's test data
+        uses: actions/download-artifact@v8
+        with:
+          pattern: pack-test-data-*
+          path: ${{ runner.temp }}/legs
+          merge-multiple: true
+
+      - name: Put it in one tar
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/tree" "$RUNNER_TEMP/out"
+          for tar in "$RUNNER_TEMP"/legs/*.tar; do tar -xf "$tar" -C "$RUNNER_TEMP/tree"; done
+          tar -cf "$RUNNER_TEMP/out/pack-test-data.tar" -C "$RUNNER_TEMP/tree" packs
+
+      - name: Upload the packs' test data
+        uses: actions/upload-artifact@v7
+        with:
+          name: pack-test-data
+          path: ${{ runner.temp }}/out/pack-test-data.tar
+          retention-days: 7
+          if-no-files-found: error

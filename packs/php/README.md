@@ -99,13 +99,14 @@ function greet(string $name, int $count): string
 }
 ```
 
-Re-recording runs offline against the pinned tool versions, with PHP 8.5.11:
+Re-recording is deriving the pack's test data ([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)), which is
+never committed: the recipe (`scripts/pack-data/recipes/php.ts`) runs each tool's `generate.py`, in `fixtures` mode
+and then `corpus` mode over laravel and symfony, against the pinned tool versions, with the pinned PHP 8.5.11
+(`conformance/recorders/port-readiness/runtimes/php/build.sh`) and Composer:
 
 ```sh
-python3 upstream/phpcs/generate.py fixtures <PHP_CodeSniffer checkout at 4.0.4> <composer project with squizlabs/php_codesniffer 4.0.4>
-python3 upstream/phpstan/generate.py fixtures <phpstan-src checkout at 2.2.16> <composer project with phpstan/phpstan 2.2.16>
-python3 upstream/psalm/generate.py fixtures <Psalm checkout at 6.19.1> <composer project with vimeo/psalm 6.19.1>
-python3 upstream/<tool>/generate.py corpus <composer project> laravel=<laravel checkout> symfony=<symfony checkout>
+npm run fixtures:derive -- --pack php                 # every tool
+npm run fixtures:derive -- --pack php --tool psalm    # one
 ```
 
 The Psalm recorder reads which code Psalm leaves unanalysed with the usage-corpus generator it shares with the engine's

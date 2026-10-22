@@ -104,7 +104,7 @@ it on main and writes the table to the job summary (docs/port-readiness.md, "Ups
 packs/<pack>/upstream/<tool>/gates.yaml         the tool-pack's manifest (manifest.ts)
 packs/<pack>/upstream/<tool>/recording.lock     which recording this commit is judged against (recording/store.ts)
 packs/<pack>/upstream/<tool>/goldens.tsv        goldens of matches-upstream-tests, by document id, imported from NRV
-packs/<pack>/upstream/<tool>/fixtures/          the case sources the recording names: pack test data, in S3 (npm run fixtures:pull)
+packs/<pack>/upstream/<tool>/fixtures/          the case sources the recording names: pack test data, derived from the pins (npm run fixtures:derive)
 
 .rerail/port-readiness/recordings/<sha256>.json          the recordings themselves, recorded (or restored from CI's cache), by digest
   recording.json                                upstream's recorded answers (recording/schema.ts, rerail.port-readiness-recording/v2)
@@ -124,7 +124,7 @@ recorded sha256 (a download or git fetch failed); those results are not cached. 
 the pack's `rules/` together through rerail's bundled-rule loader, on every run, so a conflict between rules (a
 duplicate id) fails it.
 
-Offline, `not-overfit` runs regexes over the committed case sources only, not every upstream test file; test words stay
+Offline, `not-overfit` runs regexes over the checkout's case sources only, not every upstream test file; test words stay
 complete. The report's method text says so.
 
 ## Packs that are not gated

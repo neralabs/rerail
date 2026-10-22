@@ -1,0 +1,20 @@
+name: Pack test data
+description: >-
+  Puts the packs' test data (every file PACK_FIXTURE_PATTERNS in scripts/s3/pack-fixtures.mjs matches under
+  packs/*/upstream/<tool>/) into the checkout, from the `pack-test-data` artifact the pack-test-data workflow
+  (.github/workflows/pack-test-data.yml) uploaded earlier in the same run: the authored part pulled from S3 and the
+  derived part restored from the Actions cache or derived from the pins. The job needs that workflow's job among its
+  `needs`. Use it right after `actions/checkout`.
+
+runs:
+  using: composite
+  steps:
+    - name: Download the packs' test data
+      uses: actions/download-artifact@v8
+      with:
+        name: pack-test-data
+        path: ${{ runner.temp }}/pack-test-data
+
+    - name: Extract it into the checkout
+      shell: bash
+      run: tar -xf "$RUNNER_TEMP/pack-test-data/pack-test-data.tar"

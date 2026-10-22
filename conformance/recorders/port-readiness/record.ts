@@ -219,8 +219,14 @@ export const CASE_LAYOUTS: Record<GatesManifest["adapter"], CaseLayout> = {
   },
 };
 
-/** Every file under the tool-pack directory's fixtures/, by the sha256 of its bytes. */
-export function committedSources(directory: string): CommittedSources {
+/**
+ * Every file under the tool-pack directory's fixtures/, by the sha256 of its bytes, and every case source `listed` (the
+ * tool's rows in its licence's UPSTREAM.md, tool-relative) that a layout named for its bytes (`<sha256 prefix><ext>`),
+ * on disk or not. A layout reuses a committed file of the same bytes, so where a case's source went depends on the
+ * files there when it was first recorded; the listed names keep that placement when the derived files are made afresh
+ * (npm run fixtures:derive), where only the generators' files are on disk.
+ */
+export function committedSources(directory: string, listed: readonly string[] = []): CommittedSources {
   const byDigest = new Map<string, string[]>();
   const walk = (relativeDirectory: string): void => {
     const absolute = join(directory, relativeDirectory);
@@ -235,8 +241,24 @@ export function committedSources(directory: string): CommittedSources {
     }
   };
   walk("fixtures");
-  for (const files of byDigest.values()) files.sort(byText);
-  return (bytes) => byDigest.get(sha256(bytes)) ?? [];
+  const byPrefix = new Map<string, string[]>();
+  for (const file of listed) {
+    const prefix = /^([0-9a-f]{12})(?:\.[^/]*)?$/u.exec(file.split("/").pop() ?? "")?.[1];
+    if (prefix !== undefined && file.startsWith("fixtures/")) byPrefix.set(prefix, [...(byPrefix.get(prefix) ?? []), file]);
+  }
+  return (bytes) => {
+    const digest = sha256(bytes);
+    return [...new Set([...(byDigest.get(digest) ?? []), ...(byPrefix.get(digest.slice(0, 12)) ?? [])])].sort(byText);
+  };
+}
+
+/** The tool's files a licence's UPSTREAM.md table lists (`| \`upstream/<tool>/<file>\` |`), tool-relative. */
+export function listedCopies(text: string, tool: string): string[] {
+  const prefix = `upstream/${tool}/`;
+  return text.split("\n").flatMap((line) => {
+    const file = /^\|\s*`([^`]+)`/u.exec(line)?.[1];
+    return file !== undefined && file.startsWith(prefix) ? [file.slice(prefix.length)] : [];
+  });
 }
 
 /** A path's directories, innermost first: `a/b/c.py` gives `a/b` and `a`. */
@@ -361,12 +383,22 @@ async function goldenCorpus(directory: string, cacheRoot: string, inCorpus: (pat
   return { files: [...catalog.files, ...(await buildRerailCorpora(corpora, cacheRoot, inCorpus, runner, wanted)).files], golden };
 }
 
-/** Run the live adapter and build the recording; writes nothing. */
-export async function recordToolPack(options: RecordOptions): Promise<Recorded> {
+/** A tool-pack's live adapter and where its cases' sources go: `place` gives a case's file (null: not copied) and keeps its source. */
+interface CasePlacement {
+  manifest: GatesManifest;
+  names: string[];
+  adapter: PackAdapter;
+  notCopied: string[];
+  place(testCase: UpstreamCase): string | null;
+  /** Every source placed so far, by file: the first case placed at a file supplies its bytes. */
+  sources: Map<string, CaseCopy>;
+}
+
+async function casePlacement(options: RecordOptions): Promise<CasePlacement> {
   const { root, pack: packId, tool, cacheRoot, runner } = options;
   const manifest = readGatesManifest(root, packId, tool);
-  // A tool-pack recorded before (it has a lock) keeps its case sources in S3, not git: over a checkout that lacks them
-  // the recorder would take every source for new and copy them all again.
+  // A tool-pack recorded before (it has a lock) has its case sources derived beside the lock (npm run fixtures:derive
+  // runs the generators first): over a checkout that lacks them the recorder would take every source for new.
   const directory = toolPackDirectory(root, packId, tool);
   const caseSources = join(root, "packs", packId, "upstream", tool, "fixtures");
   if (existsSync(join(directory, RECORDING_LOCK)) && !existsSync(caseSources)) throw new Error(missingPackFixture(caseSources));
@@ -385,13 +417,47 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
     if (!fixtureBytes.has(fixture)) fixtureBytes.set(fixture, upstreamBytes(fixture));
     return fixtureBytes.get(fixture);
   };
-  const committed = committedSources(directory);
+  const licence = join(root, "packs", packId, "licenses", manifest.rerail.project, "UPSTREAM.md");
+  const committed = committedSources(directory, existsSync(licence) ? listedCopies(readFileSync(licence, "utf8"), tool) : []);
   const notCopied = notCopiedPrefixes(root, packId);
+  const sources = new Map<string, CaseCopy>();
+  return {
+    manifest,
+    names,
+    adapter,
+    notCopied,
+    sources,
+    place(testCase) {
+      const bytes = upstreamBytesOf(testCase.fixture) ?? Buffer.from(testCase.source, "utf8");
+      const file = notCopied.some((prefix) => testCase.fixture.startsWith(prefix)) ? null : layout.file({ fixture: testCase.fixture, path: readPath(testCase), bytes }, committed);
+      if (file !== null && !sources.has(file)) sources.set(file, { file, fixture: testCase.fixture, bytes });
+      return file;
+    },
+  };
+}
+
+/**
+ * The case sources a recording of the tool-pack names, with upstream's bytes, sorted by file: what recordToolPack's
+ * `sources` would be, without asking upstream about any corpus file or parser. `npm run fixtures:derive` writes them
+ * after the tool-pack's generators.
+ */
+export async function recordCaseSources(options: RecordOptions): Promise<CaseCopy[]> {
+  const { names, adapter, place, sources } = await casePlacement(options);
+  for (const name of names) {
+    if (adapter.rule(name) === undefined) continue;
+    for (const testCase of adapter.cases(name)) place(testCase);
+  }
+  return [...sources.values()].sort((a, b) => byText(a.file, b.file));
+}
+
+/** Run the live adapter and build the recording; writes nothing. */
+export async function recordToolPack(options: RecordOptions): Promise<Recorded> {
+  const { root, pack: packId, tool, cacheRoot, runner } = options;
+  const { manifest, names, adapter, notCopied, place, sources } = await casePlacement(options);
 
   const nameSets: GatesRecording["nameSets"] = {};
   const rules: Record<string, RecordedRule> = {};
   const absent: string[] = [];
-  const sources = new Map<string, CaseCopy>();
   const verdictInputs = new Map<string, { path: string; script: boolean; source: string; sha256: string }>();
   const allCases: UpstreamCase[] = [];
   for (const name of names) {
@@ -417,9 +483,7 @@ export async function recordToolPack(options: RecordOptions): Promise<Recorded> 
     const probe = adapter.toSpan(name, "a\nb", 0, 3);
     const cases: RecordedCase[] = adapter.cases(name).map((testCase) => {
       allCases.push(testCase);
-      const bytes = upstreamBytesOf(testCase.fixture) ?? Buffer.from(testCase.source, "utf8");
-      const file = notCopied.some((prefix) => testCase.fixture.startsWith(prefix)) ? null : layout.file({ fixture: testCase.fixture, path: readPath(testCase), bytes }, committed);
-      if (file !== null && !sources.has(file)) sources.set(file, { file, fixture: testCase.fixture, bytes });
+      const file = place(testCase);
       if (file !== null) {
         const entry = { path: readPath({ ...testCase, path: recordedPath(testCase.path, testCase.fixture) }), script: testCase.script === true, source: testCase.source, sha256: sha256(testCase.source) };
         verdictInputs.set(`${entry.path}\0${entry.script}\0${entry.sha256}`, entry);
@@ -672,6 +736,11 @@ export function inlineTextsSource(manifest: GatesManifest): string {
 /** How the note that lists the recording in UPSTREAM.md starts; the recorder finds an earlier note by it. */
 const RECORDING_NOTE_START = `> \`${RECORDING_FILE}\` is a port readiness recording`;
 
+/** Whether an UPSTREAM.md holds the note that lists the recording (withRecordingNote's). */
+export function hasRecordingNote(text: string): boolean {
+  return text.split("\n").some((line) => line.startsWith(RECORDING_NOTE_START));
+}
+
 /** Width a written note is wrapped to, `> ` included. */
 const NOTE_WIDTH = 120;
 
@@ -735,15 +804,15 @@ export interface WrittenRecording extends RecordingDiff {
  * Write the recording into the local cache, the `recording.lock` that names it, and the missing case sources; list the
  * copies in UPSTREAM.md.
  *
- * The lock and UPSTREAM.md are committed. The copied case sources are pack test data, which live in S3: a pull request
- * checks them in with `git add -f`, and a maintainer moves them to S3 before merging (CONTRIBUTING.md, "Pack test
- * data"). The recordings are neither; they go to the cache the gates read, so iterating locally needs no network:
+ * The lock and UPSTREAM.md are committed. The copied case sources are derived pack test data, never committed:
+ * `npm run fixtures:derive` writes them from the pins as this would (CONTRIBUTING.md, "Pack test data"). The
+ * recordings are neither; they go to the cache the gates read, so iterating locally needs no network:
  * record, then run the gates, and they read what was just recorded because the lock names it.
  */
 export async function writeRecording(root: string, pack: string, tool: string, recorded: Recorded, options: { cacheRoot: string }): Promise<WrittenRecording> {
   const directory = toolPackDirectory(root, pack, tool);
   const diff = diffRecording(root, pack, tool, recorded, options.cacheRoot);
-  if (diff.conflicting.length > 0) throw new Error(`packs/${pack}/upstream/${tool}: committed case sources differ from upstream's: ${diff.conflicting.slice(0, 5).join(", ")}`);
+  if (diff.conflicting.length > 0) throw new Error(`packs/${pack}/upstream/${tool}: the checkout's case sources differ from upstream's (derive them again: npm run fixtures:derive -- --pack ${pack} --tool ${tool}): ${diff.conflicting.slice(0, 5).join(", ")}`);
 
   // The summary compares against the recording the committed lock named, where it is still in the cache. Without a
   // lock the report says it is a first recording; with one whose recording cannot be read, that what moved is unknown.

@@ -21,7 +21,7 @@ contract](../../docs/pack-format.md)).
 | `candidates/rules/` | The candidates' code-rule documents (`rerail.policy/v1`), scored but never shipped |
 | `conformance.json` | Every port (shipped under `rules/`, or a candidate under `candidates/rules/`): its upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tools, the pinned corpora (BookStack, Filament, Bagisto) and the `calls` exemption with its evidence |
 | `divergences.json` | Declared disagreements with the tools |
-| `upstream/<tool>/` | The tool's copied tests (`fixtures/`), its recordings (`fixtures.expected.json`, `corpus-<name>.expected.json`; both pack test data, in S3: `npm run fixtures:pull`) and the recorder (`generate.py` with its PHP helpers, sharing `upstream/common.py`; the template capture tlint's and stillat/blade-parser's test readers run, and stillat/blade-parser's reader itself, are the port readiness recorder's, under `conformance/recorders/port-readiness/adapters/`) |
+| `upstream/<tool>/` | The tool's copied tests (`fixtures/`), its recordings (`fixtures.expected.json`, `corpus-<name>.expected.json`; both pack test data, derived from the pins: `npm run fixtures:derive`) and the recorder (`generate.py` with its PHP helpers, sharing `upstream/common.py`; the template capture tlint's and stillat/blade-parser's test readers run, and stillat/blade-parser's reader itself, are the port readiness recorder's, under `conformance/recorders/port-readiness/adapters/`) |
 | `upstream/<tool>/gates.yaml`, `recording.lock` | The port readiness gates' manifest for the tool and the lock naming its recordings (kept out of git, by sha256) ([docs/port-readiness.md](../../docs/port-readiness.md)) |
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
 
@@ -171,15 +171,14 @@ Passes (`resources/views/users/card.blade.php`):
 <span>{{ initials($user->name) }}</span>
 ```
 
-Re-recording runs offline against the pinned tool versions, with PHP 8.5.11 (each recorder's docstring has the setup):
+Re-recording is deriving the pack's test data ([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)), which is
+never committed: the recipe (`scripts/pack-data/recipes/blade.ts`) runs each tool's `generate.py`, in `fixtures` mode
+and then `corpus` mode over bookstack, filament and bagisto, against the pinned tool versions, with the pinned PHP
+8.5.11 first on `PATH` (each recorder's docstring has the setup):
 
 ```sh
-python3 upstream/bladestan/generate.py fixtures <bladestan checkout at 0.11.7>
-python3 upstream/tlint/generate.py fixtures <tlint checkout at v9.7.0> <composer project with tightenco/tlint 9.7.0>
-python3 upstream/blade-parser/generate.py fixtures <blade-parser checkout at v2.1.0> <composer project with stillat/blade-parser 2.1.0>
-python3 upstream/bladestan/generate.py corpus <bladestan checkout> bookstack=<checkout> filament=<checkout> bagisto=<checkout>
-python3 upstream/tlint/generate.py corpus <tlint composer project> bookstack=<checkout> filament=<checkout> bagisto=<checkout>
-python3 upstream/blade-parser/generate.py corpus <blade-parser composer project> bookstack=<checkout> filament=<checkout> bagisto=<checkout>
+npm run fixtures:derive -- --pack blade                    # every tool
+npm run fixtures:derive -- --pack blade --tool bladestan   # one
 ```
 
 Scoring one rule with every false positive and false negative printed:

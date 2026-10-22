@@ -29,13 +29,15 @@ The pack follows the [pack structure and validation contract](../../docs/pack-fo
 | `licenses/<project>/` | The upstream licence and `UPSTREAM.md`, listing every copied file and extracted case |
 | `candidates/` | Ports still being evaluated, scored but never shipped: the code-rule documents (`rules/`, written by `build.mjs` from `specs.mjs`, except the hand-written `react-no-array-index-key.json`); `probes/` holds the hand-labelled React fact probes |
 
-Re-recording runs offline against the pinned tools (eslint 9.39.5, @typescript-eslint/parser 8.70.1, typescript
-5.9.3) and the plugins' upstream checkouts, installed under `.rerail/tools/react`, with the corpus checkout under
-`.rerail/corpora/react`:
+Re-recording is deriving the pack's test data ([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)), which is
+never committed: the recipe (`scripts/pack-data/recipes/react.ts`) runs each plugin's `generate.mjs` against the
+pinned tools (eslint 9.39.5, @typescript-eslint/parser 8.70.1, typescript 5.9.3), the plugins' upstream checkouts and
+the corpus. The fixtures Rerail wrote (`UPSTREAM.md`) are authored: a change to them goes in your pull request with
+`git add -f`.
 
 ```sh
-node upstream/eslint-plugin-react/generate.mjs [--tools <dir>] [--corpora <dir>] [--no-corpora]
-node upstream/eslint-plugin-react-hooks/generate.mjs [--tools <dir>] [--corpora <dir>] [--no-corpora]
+npm run fixtures:derive -- --pack react                                     # both plugins
+npm run fixtures:derive -- --pack react --tool eslint-plugin-react-hooks    # one
 ```
 
 Rewriting the rule documents and `conformance.json` after editing `candidates/specs.mjs`, then scoring one rule with

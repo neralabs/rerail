@@ -32,11 +32,13 @@ TypeScript they report overloads, declaration merges and type names, and with bo
 port would report the same violation again. `no-loss-of-precision` and `prefer-spread`, which typescript-eslint leaves
 to the core rule on TypeScript, run on every ECMA file.
 
-Re-recording runs offline against the pinned tool versions (the recorder's header lists them):
+Re-recording is deriving the pack's test data ([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)), which is
+never committed: the recipe (`scripts/pack-data/recipes/javascript.ts`) runs each tool's recorder against the pinned
+tool versions and upstream commit (the recorder's header lists them):
 
 ```sh
-node upstream/generate.mjs --tools <dir> --eslint <ESLint checkout at v10.11.0>
-node upstream/eslint-plugin-unicorn/generate.mjs --tools <dir> --unicorn <eslint-plugin-unicorn checkout at v76.0.0>
+npm run fixtures:derive -- --pack javascript                                 # every tool
+npm run fixtures:derive -- --pack javascript --tool eslint-plugin-unicorn    # one
 ```
 
 Scoring one rule with every false positive and false negative printed:

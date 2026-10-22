@@ -74,11 +74,15 @@ Per rule (TP / FP / FN, explained points in parentheses):
 
 ## Recording and scoring
 
-Re-recording runs offline against Clippy 0.1.99 and Rust 1.99.0:
+Re-recording is deriving the pack's test data ([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)), which is
+never committed: the recipe (`scripts/pack-data/recipes/rust.ts`) runs `upstream/clippy/generate.py` against Clippy
+0.1.99 and Rust 1.99.0 (installed with `rustup`), in `fixtures` mode and then `corpus` mode over ripgrep and tokio.
+CI's answers are Linux's: tokio has `#[cfg(target_os = "linux")]` code, so `corpus-tokio.expected.json` derived on
+macOS differs. The probes Rerail wrote (`fixtures/rerail/`) are authored: a change to them goes in your pull request
+with `git add -f`.
 
 ```sh
-python3 upstream/clippy/generate.py fixtures <rust-clippy checkout at tag rust-1.99.0> <scratch directory>
-python3 upstream/clippy/generate.py corpus <cargo target root> ripgrep=<ripgrep checkout> tokio=<tokio checkout>
+npm run fixtures:derive -- --pack rust
 ```
 
 Scoring one rule with every false positive and false negative printed:

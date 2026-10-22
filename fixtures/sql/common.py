@@ -1,7 +1,8 @@
 """Pins shared by the SQL pack's offline generators (fixtures/sql/). Run offline by a maintainer, never in CI.
 
 Tools live under the gitignored `<checkout>/.rerail/tools/sql/` and corpora under `<checkout>/.rerail/corpora/sql/`, where
-`<checkout>` is the nearest ancestor holding `.rerail/corpora/sql` (sub-worktrees under `.rerail/wt/` find it this way).
+`<checkout>` is the nearest ancestor holding `.rerail/corpora/sql` (sub-worktrees under `.rerail/wt/` find it this way),
+or under `$RERAIL_SQL_CORPORA` when it is set (`npm run fixtures:derive` provisions them there, by checkout name).
 Every generator calls `check_pins()` first and refuses to run against any other tool version.
 
 Setup (from `<checkout>/.rerail/tools/sql`):
@@ -19,6 +20,7 @@ from __future__ import annotations
 import ctypes
 import glob
 import hashlib
+import os
 import pathlib
 import sys
 import warnings
@@ -28,6 +30,8 @@ HERE = pathlib.Path(__file__).resolve().parent
 
 
 def _checkout() -> pathlib.Path:
+    if os.environ.get("RERAIL_SQL_CORPORA"):
+        return HERE.parents[1]
     for parent in HERE.parents:
         if (parent / ".rerail/corpora/sql").is_dir():
             return parent
@@ -35,7 +39,7 @@ def _checkout() -> pathlib.Path:
 
 
 CHECKOUT = _checkout()
-CORPUS_ROOT = CHECKOUT / ".rerail/corpora/sql"
+CORPUS_ROOT = pathlib.Path(os.environ.get("RERAIL_SQL_CORPORA") or CHECKOUT / ".rerail/corpora/sql").resolve()
 TOOLS_ROOT = CHECKOUT / ".rerail/tools/sql"
 GRAMMAR_ROOT = TOOLS_ROOT / "grammars"
 

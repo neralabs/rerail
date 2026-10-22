@@ -279,7 +279,7 @@ export function toolPackChecks(inputs: RecordedInputs): Check[] {
   }
   // A recording whose case carries no sha256 of its source is stale.
   const sourceMismatches: string[] = [];
-  // Case sources are pack test data, in S3: a checkout without them is told to pull them, not to re-record.
+  // Case sources are pack test data, not in git: a checkout without them is told to pull and derive them, not to re-record.
   const unpulled: string[] = [];
   for (const [file, digests] of [...recordedDigests].sort(([a], [b]) => (a < b ? -1 : 1))) {
     const recorded = digests.size === 1 ? [...digests][0] : undefined;

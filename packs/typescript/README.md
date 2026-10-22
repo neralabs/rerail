@@ -25,12 +25,14 @@ It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack type
 | `candidates/rules/` | Ports still being evaluated, never shipped: typescript-eslint and @vitest/eslint-plugin 1.6.27 ports that fail a rule gate ([docs/port-readiness.md](../../docs/port-readiness.md)) or rerail's pack contract. Each but `prefer-optional-chain` (it requires type information, which the recordings do not have) and `no-explicit-any` (the fixtures recording does not cover it yet) is listed in `conformance.json`, scored and reported on the fixtures, never gated; the vscode recording covers the shipped rules only. The three `vitest-*.json` documents are generated: edit `scripts/generate/packs/typescript-vitest-policies.mjs`, not the JSON, and run `node scripts/generate/packs/typescript-vitest-policies.mjs` from the repository root |
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
 
-Re-recording runs offline against the pinned tool versions (the recorder's header lists them):
+Re-recording is deriving the pack's test data ([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)), which is
+never committed: the recipe (`scripts/pack-data/recipes/typescript.ts`) runs each tool's recorder against the pinned
+tool versions, the upstream checkouts and the vscode corpus (the recorder's header lists them). The fixtures Rerail
+wrote (`fixtures/*/rerail-*`) are authored: a change to them goes in your pull request with `git add -f`.
 
 ```sh
-node upstream/generate.mjs --tools <dir> --typescript-eslint <typescript-eslint checkout at v8.70.1> \
-  --fixtures --corpus vscode=<vscode checkout>
-node upstream/eslint-plugin-vitest/generate.mjs --tools <dir> --vitest <eslint-plugin-vitest checkout at v1.6.27>
+npm run fixtures:derive -- --pack typescript                                # every tool
+npm run fixtures:derive -- --pack typescript --tool eslint-plugin-vitest    # one
 ```
 
 Scoring one rule with every false positive and false negative printed:

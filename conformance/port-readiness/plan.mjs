@@ -39,7 +39,9 @@ export const ROOTS = Object.freeze([
   "package-lock.json",
   ".github/workflows/ci.yml",
   ".github/workflows/port-readiness.yml",
+  ".github/workflows/pack-test-data.yml",
   ".github/actions/**",
+  "scripts/pack-data/**",
 ]);
 
 /**

@@ -10,7 +10,7 @@ import { readGatesManifest, recordedRuntimes } from "../../../conformance/port-r
 import { gatesCorpusSchema, gatesRecordingSchema, recordingText, spanOf } from "../../../conformance/port-readiness/recording/schema.js";
 import { readCachedRecording, recordingLockSchema, recordingLockText, writeCachedRecording } from "../../../conformance/port-readiness/recording/store.js";
 import type { PackAdapter, UpstreamFile } from "../../../conformance/port-readiness/types.js";
-import { CASE_LAYOUTS, committedSources, CONTEXT_FILES, diffRecording, notCopiedPrefixes, recordToolPack, withUpstreamRows, writeRecording, type AdapterFactory } from "../../../conformance/recorders/port-readiness/record.js";
+import { CASE_LAYOUTS, committedSources, CONTEXT_FILES, diffRecording, listedCopies, notCopiedPrefixes, recordToolPack, withUpstreamRows, writeRecording, type AdapterFactory, type CommittedSources } from "../../../conformance/recorders/port-readiness/record.js";
 import { extensionList, RUNTIMES_DIRECTORY, runtimePinDigests, unpinnedComposerDependencies, unpinnedNpmDependencies, unpinnedPythonDependencies, withoutMachinePaths } from "../../../conformance/recorders/port-readiness/runtimes.js";
 import { PACKAGE_ROOT } from "../../../src/engine/index.js";
 
@@ -231,6 +231,25 @@ test("an ESLint case reuses a committed source with its bytes, its own directory
       "| `upstream/eslint/fixtures/default-case/0f0f0f0f0f0f.js` | `tests/lib/rules/default-case.js` | derived |",
       "| `upstream/eslint/fixtures/default-case-last/001.js` | `tests/lib/rules/default-case-last.js` | derived |",
     ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a case reuses a source its licence table lists under its bytes' name, on disk or not, as a derivation finds it", () => {
+  const root = mkdtempSync(join(tmpdir(), "gates-layout-"));
+  try {
+    const code = "let a = 1;";
+    const named = `${createHash("sha256").update(code).digest("hex").slice(0, 12)}.ts`;
+    const table = ["| File | Upstream path | Copy |", "|---|---|---|",
+      `| \`upstream/typescript-eslint/fixtures/no-redeclare/${named}\` | \`packages/eslint-plugin/tests/rules/no-redeclare.test.ts\` | derived |`,
+      "| `upstream/other/fixtures/x/aaaaaaaaaaaa.ts` | `x` | derived |", ""].join("\n");
+    const listed = listedCopies(table, "typescript-eslint");
+    assert.deepEqual(listed, [`fixtures/no-redeclare/${named}`]);
+    const place = (committed: CommittedSources) =>
+      CASE_LAYOUTS.eslint.file({ fixture: "packages/eslint-plugin/tests/rules/no-shadow/no-shadow.test.ts#0/valid[1]", path: "file.ts", bytes: Buffer.from(code) }, committed);
+    assert.equal(place(committedSources(root, listed)), `fixtures/no-redeclare/${named}`);
+    assert.equal(place(committedSources(root)), `fixtures/no-shadow/${named}`);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

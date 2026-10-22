@@ -1,13 +1,15 @@
-name: Pack test data
+name: Authored pack test data
 description: >-
-  Puts the packs' test data (packs/*/upstream/<tool>/fixtures/, tests/, *.expected.json and the rest of
-  PACK_FIXTURE_PATTERNS in scripts/s3/pack-fixtures.mjs) into the checkout. It is not in git: it lives in
+  Puts the packs' authored test data into the checkout: what each tool's own upstream/<tool>/UPSTREAM.md lists as
+  Rerail's, and upstream/<tool>/authored/ (scripts/s3/pack-fixtures.mjs). It is not in git: it lives in
   s3://nera-test-fixtures/rerail/, at the paths it has in the repository, and a pull request that adds or changes it
-  checks it in until a maintainer moves it to S3 before merging (CONTRIBUTING.md). `fixtures:pull` syncs the bucket into
-  packs/ and then restores every such file the commit still tracks, so a pull request's own data wins over S3's.
-  Use it right after `actions/checkout`. The job needs `id-token: write` (and `contents: read`), a reusable workflow's
-  caller must grant it too, and it runs only for pushes and same-repository pull requests: GitHub gives a fork's or
-  Dependabot's pull request no OIDC token.
+  checks it in until a maintainer moves it to S3 before merging (CONTRIBUTING.md). `fixtures:pull` syncs those files
+  from the bucket and then restores every such file the commit still tracks, so a pull request's own data wins over
+  S3's. The derived data is `npm run fixtures:derive`'s: jobs that read the packs' test data take the whole of it from
+  the pack-test-data workflow (.github/actions/pack-test-data), which uses this action. Use it right after
+  `actions/checkout`. The job needs `id-token: write` (and `contents: read`), a reusable workflow's caller must grant
+  it too, and it runs only for pushes and same-repository pull requests: GitHub gives a fork's or Dependabot's pull
+  request no OIDC token.
 
 runs:
   using: composite
@@ -19,6 +21,6 @@ runs:
         role-to-assume: arn:aws:iam::696860996542:role/github-actions-test-fixtures-read
         aws-region: us-east-2
 
-    - name: Pull the packs' test data from S3
+    - name: Pull the packs' authored test data from S3
       shell: bash
       run: node scripts/s3/pack-fixtures.mjs pull

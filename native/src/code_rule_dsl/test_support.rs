@@ -11,15 +11,16 @@ use std::path::{Path, PathBuf};
 
 pub(super) const CAPABILITIES: &str = include_str!("capabilities.json");
 
-/// Pack test data at `relative` (a repository path under `packs/<id>/upstream/<tool>/`), which lives in
-/// S3, not git (scripts/s3/pack-fixtures.mjs): its path in the checkout, or a failure saying to fetch it.
+/// Pack test data at `relative` (a repository path under `packs/<id>/upstream/<tool>/`), which is not in
+/// git (scripts/s3/pack-fixtures.mjs): its path in the checkout, or a failure saying to fetch and derive it.
 pub(super) fn pack_test_data(relative: &str) -> PathBuf {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join(relative);
     assert!(
         path.exists(),
-        "{relative} is missing: pack test data lives in S3, not git: run `npm run fixtures:pull` \
+        "{relative} is missing: pack test data is not in git: run `npm run fixtures:pull` (what Rerail \
+         wrote, from S3) and `npm run fixtures:derive` (the rest, from the pinned upstreams) \
          (CONTRIBUTING.md, \"Pack test data\")"
     );
     path

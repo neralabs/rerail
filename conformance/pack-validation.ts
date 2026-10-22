@@ -404,8 +404,8 @@ function readLicences(directory: string): Licences {
 }
 
 /**
- * The failures for listed files (file, the UPSTREAM.md listing it) the pack directory lacks. Pack test data lives in S3,
- * not git, so a checkout without it lacks every listed copy: one failure per record says to pull it.
+ * The failures for listed files (file, the UPSTREAM.md listing it) the pack directory lacks. Pack test data is not in
+ * git, so a checkout without it lacks every listed copy: one failure per record says to pull and derive it.
  */
 function missingListed(directory: string, listed: Iterable<readonly [file: string, record: string]>): string[] {
   const failures: string[] = [];
@@ -425,7 +425,9 @@ function missingListed(directory: string, listed: Iterable<readonly [file: strin
 
 /**
  * Files Rerail wrote under `upstream/<tool>/` subdirectories (a corpus authored for the tool to score), as the tool's own
- * `upstream/<tool>/UPSTREAM.md` lists them, pack-relative. A record may list only its tool's files.
+ * `upstream/<tool>/UPSTREAM.md` lists them, pack-relative, and every file under `upstream/<tool>/authored/`, the place
+ * of a contributor's corpus and its ground truth (AUTHORED_CORPUS_PATTERN, scripts/s3/pack-fixtures.mjs). A record may
+ * list only its tool's files.
  */
 function readAuthored(directory: string): { authored: Set<string>; failures: string[] } {
   const authored = new Set<string>();
@@ -434,6 +436,7 @@ function readAuthored(directory: string): { authored: Set<string>; failures: str
   const upstream = join(directory, "upstream");
   if (!existsSync(upstream)) return { authored, failures };
   for (const tool of readdirSync(upstream, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name).sort(compareDeterministicStrings)) {
+    for (const file of filesUnder(directory, join(upstream, tool, "authored"))) authored.add(file);
     const record = `upstream/${tool}/UPSTREAM.md`;
     if (!existsSync(join(directory, record))) continue;
     for (const line of readFileSync(join(directory, record), "utf8").split("\n")) {

@@ -1,9 +1,8 @@
 // Records lizard 1.24.0's cyclomatic complexity for the complexity rule pack's parity corpus
 // (fixtures/ beside this file) into lizard-1.24.0.tsv beside this file, which
-// test/complexity-rules.test.ts reads. Run by hand after changing the corpus:
-//   node packs/complexity/upstream/lizard/generate.mjs
-// It needs uv on PATH. lizard is never a runtime or CI dependency: the TSV is recorded once. The corpus and the TSV are
-// pack test data, kept in S3 (CONTRIBUTING.md, "Pack test data").
+// test/engine/code-rule/complexity-rules.test.ts reads. `npm run fixtures:derive -- --pack complexity` runs it after
+// the corpus changes; it needs uv on PATH. lizard is never a runtime dependency; CI runs it only to derive the TSV. The
+// corpus is authored pack test data, in S3; the TSV is derived, never committed (CONTRIBUTING.md, "Pack test data").
 import { spawnSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { relative } from "node:path";

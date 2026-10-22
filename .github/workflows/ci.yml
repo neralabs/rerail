@@ -17,8 +17,8 @@ concurrency:
 # rule packs from npm with one. GitHub withholds secrets from fork and Dependabot pull requests, so those jobs run on
 # pushes and same-repository pull requests only; there a missing secret or variable is a configuration error and
 # fails the job. The jobs that read the packs' test data (the Rust tests, unit tests, conformance harnesses and port
-# readiness) are guarded the same way: the data is in S3, not git (.github/actions/pack-fixtures), and they read it
-# under an OIDC token, which GitHub does not give those pull requests either.
+# readiness) are guarded the same way: they take it from the pack-test-data job (.github/workflows/pack-test-data.yml),
+# which pulls its authored part from S3 under an OIDC token, which GitHub does not give those pull requests either.
 #
 # The Version packs pull request (changeset-release/main, from version-packs.yml) changes only pack versions,
 # changelogs and package-lock.json, and is rewritten on every push to main. It runs the licence and lint jobs only:
@@ -82,9 +82,10 @@ jobs:
   # generated TS module); package.json holds the cargo commands, .gitattributes the LFS objects the
   # engine embeds. Pushes to main always run the Rust jobs.
   #
-  # The filters see only the git diff. The packs' test data is in S3 (CONTRIBUTING.md), so a change to it alone would
-  # trigger nothing; none is made alone: a pull request checks its data in, and the maintainer who moves it to S3
-  # before merging deletes it from git in the same pull request, so packs/** still matches.
+  # The filters see only the git diff. The packs' test data is not in git (CONTRIBUTING.md), and no change to it is made
+  # alone: the derived part changes with the pins and generators that make it, and a pull request checks the authored
+  # part in, which the maintainer who moves it to S3 before merging deletes from git in the same pull request, so
+  # packs/** still matches.
   #
   # Port readiness is filtered on pushes to main as well, against the push's previous head (main takes squash merges
   # only and no force pushes, so a push is one commit), but only when CI finished green on that head. Otherwise (it
@@ -151,7 +152,10 @@ jobs:
               - '.gitattributes'
               - '.github/actions/lfs/**'
               - '.github/actions/pack-fixtures/**'
+              - '.github/actions/pack-test-data/**'
+              - '.github/workflows/pack-test-data.yml'
               - 'scripts/s3/**'
+              - 'scripts/pack-data/**'
             # A rule's verdict depends on its document, the pack's recordings, the gate code and the engine.
             port-readiness:
               - 'packs/**'
@@ -166,14 +170,34 @@ jobs:
               - 'package-lock.json'
               - '.github/workflows/ci.yml'
               - '.github/workflows/port-readiness.yml'
+              - '.github/workflows/pack-test-data.yml'
               - '.github/actions/**'
+              - 'scripts/pack-data/**'
+
+  # The packs' test data, one artifact for every job below that reads it: the authored part from S3, the derived part
+  # from the Actions cache or derived from the pins (.github/workflows/pack-test-data.yml).
+  pack-test-data:
+    name: Pack test data
+    if: >-
+      ${{
+        github.head_ref != 'changeset-release/main' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
+    # id-token: its legs read the authored data from S3.
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/pack-test-data.yml
 
   # rustfmt and clippy, and the engine's own tests, side by side; nothing downstream waits for them.
   # Each keeps its own cache: clippy's check metadata and the test binaries share no artifacts. The tests read the
-  # packs' test data (pack-fixtures, below), so the job runs where an OIDC token is given (the note at the top).
+  # packs' test data (the pack-test-data job's artifact), so the job runs where that job does (the note at the top).
   rust:
     name: Rust engine (${{ matrix.name }})
-    needs: changes
+    needs: [changes, pack-test-data]
     if: >-
       ${{
         needs.changes.outputs.rust != 'false' && github.head_ref != 'changeset-release/main' &&
@@ -184,10 +208,8 @@ jobs:
       }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    # id-token: the tests leg reads the packs' test data from S3.
     permissions:
       contents: read
-      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -214,7 +236,7 @@ jobs:
 
       # The clippy leg only compiles the tests; the tests leg runs them, and three read pack test data.
       - if: matrix.task == 'test'
-        uses: ./.github/actions/pack-fixtures
+        uses: ./.github/actions/pack-test-data
 
       # rust-toolchain.toml is the single pin: rustup reads it whenever cargo runs in this repository,
       # so the toolchain installed here must be the same channel.
@@ -322,7 +344,7 @@ jobs:
   # its accepted gaps); the nightly judges every rule regardless.
   port-readiness:
     name: Port readiness
-    needs: [changes, build]
+    needs: [changes, build, pack-test-data]
     if: >-
       ${{
         needs.changes.outputs.port-readiness != 'false' &&
@@ -331,12 +353,11 @@ jobs:
           (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
         )
       }}
-    # The report job posts the results as a pull request comment; the gates read the packs' test data from S3.
+    # The report job posts the results as a pull request comment; the gates read the pack-test-data job's artifact.
     permissions:
       contents: read
       issues: write
       pull-requests: write
-      id-token: write
     uses: ./.github/workflows/port-readiness.yml
     with:
       base: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -346,7 +367,7 @@ jobs:
   # Both shards read the packs' test data (packs.test.ts, complexity-rules.test.ts and the native tests share them).
   unit:
     name: Unit tests (${{ matrix.shard }}/2)
-    needs: build
+    needs: [build, pack-test-data]
     if: >-
       ${{
         github.event_name != 'pull_request' ||
@@ -356,7 +377,6 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -370,7 +390,7 @@ jobs:
 
       - uses: ./.github/actions/lfs
 
-      - uses: ./.github/actions/pack-fixtures
+      - uses: ./.github/actions/pack-test-data
 
       - uses: ./.github/actions/node-deps
         with:
@@ -457,10 +477,10 @@ jobs:
           RERAIL_INSTALLED_PACKS_NPM: "1"
         run: npx vitest run integration/installed-packs.test.ts
 
-  # The conformance harnesses score every pack's ported rules on its test data, read from S3.
+  # The conformance harnesses score every pack's ported rules on its test data (the pack-test-data job's artifact).
   tools:
     name: Scripts, reference examples, conformance, and rule playground
-    needs: build
+    needs: [build, pack-test-data]
     if: >-
       ${{
         github.event_name != 'pull_request' ||
@@ -470,7 +490,6 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-      id-token: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -480,7 +499,7 @@ jobs:
 
       - uses: ./.github/actions/lfs
 
-      - uses: ./.github/actions/pack-fixtures
+      - uses: ./.github/actions/pack-test-data
 
       - uses: ./.github/actions/node-deps
         with:

@@ -20,7 +20,8 @@ import { repositoryPath } from "../../support/oracles.js";
 
 const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../../../native/src/code_rule_dsl/", import.meta.url));
 const LIZARD = repositoryPath("packs", "complexity", "upstream", "lizard");
-// Pack test data, in S3: a checkout without it fails here, saying to run `npm run fixtures:pull`.
+// Pack test data, not in git (the corpus authored, in S3; the TSV derived): a checkout without it fails here, saying to
+// run `npm run fixtures:pull` and `npm run fixtures:derive`.
 const CORPUS = requirePackFixture(repositoryPath("packs", "complexity", "upstream", "lizard", "fixtures"));
 const capabilities = readFileSync(join(CODE_RULE_DIRECTORY, "capabilities.json"), "utf8");
 const runtime = loadNativeBinding().CodeRuleDslRuntime;

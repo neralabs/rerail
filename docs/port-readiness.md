@@ -35,7 +35,7 @@ report shows every failure, not only the first.
 
 Tool-pack checks come before any gate. When one fails, every rule of the tool-pack fails with it: a shipped rule blocks
 and a candidate is not ready to promote. They fail when the recording is stale (`corpus-pins` and the recording checks),
-when a committed case source is not the bytes upstream's answers were recorded on (`case-sources`), when a task or
+when a case source in the checkout is not the bytes upstream's answers were recorded on (`case-sources`), when a task or
 corpus a golden names could not be fetched (`corpus-complete`, usually a failed download: run again), or when the pack's shipped rules do not load together through rerail's bundled-rule
 loader (`bundled-load`, for example two documents with one id).
 
@@ -220,18 +220,23 @@ packs/<id>/upstream/<tool>/
 ├── gates.yaml          upstream pins, recommended configurations, known parser gaps, real-code gaps, and the team's decisions for the tool
 ├── recording.lock      the manifest: which recording this commit's rules are judged against (conformance/port-readiness/recording/store.ts)
 ├── goldens.tsv         the rules' goldens, imported from NRV
-└── fixtures/           upstream's test files, copied (listed in licenses/<project>/UPSTREAM.md); pack test data, in S3
+└── fixtures/           upstream's test files, copied (listed in licenses/<project>/UPSTREAM.md); pack test data, not in git
 ```
 
-`fixtures/` is pack test data: it is not in git but in `s3://nera-test-fixtures/rerail/`, at the paths it has here, and
-`npm run fixtures:pull` puts it in the checkout ([CONTRIBUTING.md](../CONTRIBUTING.md#pack-test-data)). Without it the
-`case-sources` check fails, and the recorder refuses to record a tool-pack that has a lock, both saying to pull it.
-Every CI job that runs the gates or the recorder pulls it first, under the repository's OIDC role
-(`.github/actions/pack-fixtures`), so the gates run for pushes and same-repository pull requests only: GitHub gives a
-fork's or Dependabot's pull request no OIDC token. A pull request that adds or changes case sources checks them in,
-and the pull wins over S3 for every file the commit tracks; the maintainer who merges it moves them to S3 and deletes
-them from git in the same pull request. CI picks the legs from the git diff (`ci.yml`'s filter and `plan.mjs`), so that
-deletion is what selects them; no change reaches S3 alone.
+`fixtures/` is pack test data, not in git ([CONTRIBUTING.md](../CONTRIBUTING.md#pack-test-data)): `npm run
+fixtures:derive` makes upstream's copies and the case sources the recorder names from the pins, and `npm run
+fixtures:pull` fetches the cases Rerail wrote from `s3://nera-test-fixtures/rerail/`, at the paths they have here.
+Without it the `case-sources` check fails, and the recorder refuses to record a tool-pack that has a lock, both saying
+to pull and derive it. In CI the gates and the recorder read it from the `pack-test-data` artifact
+(`.github/actions/pack-test-data`) that the caller's pack-test-data job uploads first
+(`.github/workflows/pack-test-data.yml`): the authored part pulled from S3 under the repository's OIDC role, the
+derived part restored from the Actions cache or derived from the pins. So the gates run for pushes and same-repository
+pull requests only: GitHub gives a fork's or Dependabot's pull request no OIDC token. A pull request never checks in a
+case source: it changes the pins, a generator or the recorder, and CI derives the case sources from its commit. A pull
+request that adds or changes authored cases checks them in, and the pull wins over S3 for every file the commit
+tracks; the maintainer who merges it moves them to S3 and deletes them from git in the same pull request. CI picks the
+legs from the git diff (`ci.yml`'s filter and `plan.mjs`), so that deletion is what selects them; no change reaches S3
+alone.
 
 ### The recordings are not in the tree
 
@@ -251,15 +256,16 @@ a copy, never the source: GitHub evicts one unused for a week, and the leg then 
 
 **A leg records what the cache does not hold.** On a miss the leg records the tool-pack itself: it installs the pinned
 runtimes, runs `port-readiness:record` with this commit's recorder, and fails unless the recorder wrote exactly the
-lock, case sources and `UPSTREAM.md` the commit has. It compares every file under the tool-pack and the pack's
-`licenses/`, tracked or not, since pulled test data is git-ignored and `git status` would not show a case source the
-recorder added. The lock names no recorder version, so a release of rerail leaves it as it was. Only then does the leg
-save the two recordings, and nothing else: the recorder ran upstream's code and the Composer packages it resolved, so
-the leg saves neither the corpus nor its results. The recorder runs without the job's token. A new tool-pack, a new
-port or a pin bump therefore goes green on its own pull request, with nobody to start a recording: the commit's lock is
-checked against upstream run in CI, and what records the answers (the recorder, its adapters and runtimes) is in the
-pull request's diff, as the gate code that judges them is. A lock pointed at a recording of the pull request's own
-making fails the same way, since CI's recording does not match it.
+lock and `UPSTREAM.md` the commit has and the case sources the pack-test-data job derived from it. It compares every
+file under the tool-pack and the pack's `licenses/`, tracked or not, since pack test data is git-ignored and
+`git status` would not show a case source the recorder added; such a file is one `npm run fixtures:derive` does not
+make, and the derivation is what needs the fix. The lock names no recorder version, so a release of rerail leaves it
+as it was. Only then does the leg save the two recordings, and nothing else: the recorder ran upstream's code and the
+Composer packages it resolved, so the leg saves neither the corpus nor its results. The recorder runs without the
+job's token. A new tool-pack, a new port or a pin bump therefore goes green on its own pull request, with nobody to
+start a recording: the commit's lock is checked against upstream run in CI, and what records the answers (the
+recorder, its adapters and runtimes) is in the pull request's diff, as the gate code that judges them is. A lock
+pointed at a recording of the pull request's own making fails the same way, since CI's recording does not match it.
 
 GitHub scopes a pull request's cache entries to that pull request, so main reads only what main's own pushes and the
 nightly saved; an entry a pull request saved holds the bytes its own recorder made, which the pull request could as
@@ -271,11 +277,11 @@ saved it; a first recording when the base has no lock) into its job summary and 
 
 `port-readiness:record` writes the recording into the local cache, the `recording.lock` beside it, and any case source
 the recording names that the tool-pack's `fixtures/` lacks, with its row in `UPSTREAM.md`. The lock and `UPSTREAM.md`
-are committed; the case sources are pack test data, checked in with the pull request (`git add -f`, which the recorder
-prints: pulled test data is git-ignored) and moved to S3 before it merges; the recordings are neither. Record again
-after adding a port, changing a tool's pins, adding a corpus or importing a golden whose file `corpus.json` does not
-answer; it needs `uv`, the network, the pinned upstream runtimes (`conformance/recorders/port-readiness/runtimes/`) and
-the pack test data (`npm run fixtures:pull`):
+are committed; the case sources are derived pack test data, which `npm run fixtures:derive` writes from the pins after
+the generator, as the recorder would, and which are never committed; the recordings are neither. Record again after
+adding a port, changing a tool's pins, adding a corpus or importing a golden whose file `corpus.json` does not answer;
+it needs `uv`, the network, the pinned upstream runtimes (`conformance/recorders/port-readiness/runtimes/`) and the
+pack test data (`npm run fixtures:pull` and `npm run fixtures:derive`):
 
 ```sh
 npm run port-readiness:record -- --pack python --tool ruff
@@ -294,11 +300,15 @@ PATH="$PWD/.rerail/php/8.5.11/bin:$PATH" npm run port-readiness:record -- --pack
 Locally that is all: the lock names what was just recorded and the gates read it out of the cache, so iterating on a
 port needs no network. A maintainer's flow for a pull request that changes a tool-pack:
 
-1. Record locally, run the gates, and commit the lock, `UPSTREAM.md` and any new case sources (`git add -f`).
-2. CI's gate leg misses the cache, records the tool-pack from the pull request's commit, fails unless it wrote the same
-   files, and saves the recordings in the pull request's cache scope.
-3. Before merging, a maintainer runs `npm run fixtures:push`, which uploads the pull request's pack test data to S3 and
-   untracks it, and pushes that commit; CI then pulls the data from S3 instead.
+1. Derive the tool-pack's test data (`npm run fixtures:derive -- --pack <id> --tool <tool>`, with `--update` after a
+   pin bump), record locally, run the gates, and commit the lock and `UPSTREAM.md`, with any authored cases
+   (`git add -f`). A case source the recorder wrote that the derivation did not is a bug in the derivation: fix it
+   rather than commit the file.
+2. CI's gate leg misses the cache, records the tool-pack from the pull request's commit over the data the
+   pack-test-data job derived from it, fails unless it wrote the same files, and saves the recordings in the pull
+   request's cache scope.
+3. Before merging, a maintainer runs `npm run fixtures:push` when the pull request tracks authored test data, which
+   uploads it to S3 and untracks it, and pushes that commit; CI then pulls it from S3 instead.
 4. The first push to `main` after the merge records the tool-pack once more, in `main`'s scope, and every later run
    and pull request reads it from there.
 
@@ -389,8 +399,9 @@ Rust's stable channel manifest (what rustup installs as `stable`; GitHub's relea
 by hand and rate-limited without a token). Versions compare by their numeric components, a leading `v` dropped. The job
 prints one table row per tool-pack, appends the table to the job summary (`GITHUB_STEP_SUMMARY`), annotates each failing
 tool-pack with `::error::`, and fails when a pin is behind, the pins disagree, or a registry cannot be read: a check that
-cannot see upstream's releases does not pass. A failure is a prompt to bump the pins and record the tool-pack again
-("Recording" above), not a broken build; until then the gates keep judging the rules against the pinned release.
+cannot see upstream's releases does not pass. A failure is a prompt to bump the pins, derive the tool-pack's test data
+again (`npm run fixtures:derive -- --pack <id> --tool <tool> --update`) and record it again ("Recording" above), not a
+broken build; until then the gates keep judging the rules against the pinned release.
 
 ## CI
 
@@ -400,11 +411,13 @@ report job that writes the summary and fails when anything blocking failed. A pu
 previous head only when CI finished green there; after a red, cancelled or missing run it runs port readiness
 whatever it touches, so a failing shipped rule, or a change whose queued run was replaced, is never skipped past.
 
-Port readiness runs for pushes and same-repository pull requests only, because every leg pulls the packs' test data
-from S3 under an OIDC token (`id-token: write`, which `ci.yml` and the nightly grant the called workflow), and GitHub
-gives a fork's or Dependabot's pull request none. The plan sees only the git diff: a change to pack test data alone
-would plan no leg, so none is made alone (the maintainer who moves a pull request's data to S3 deletes it from git in
-that pull request, which plans its tool-packs).
+Port readiness runs for pushes and same-repository pull requests only, because every leg reads the packs' test data
+from the pack-test-data job's artifact, whose authored part that job pulls from S3 under an OIDC token
+(`id-token: write`, which `ci.yml` and the nightly grant the called workflows), and GitHub gives a fork's or
+Dependabot's pull request none. The plan sees only the git diff: derived data changes only with a pin, a generator or
+a recipe, which the diff shows, and a change to authored data alone would plan no leg, so none is made alone (the
+maintainer who moves a pull request's data to S3 deletes it from git in that pull request, which plans its
+tool-packs).
 
 The plan (`conformance/port-readiness/plan.mjs`) gives each gated tool-pack one leg, or one per shard. A pull request
 judges only the tool-packs of the packs it touches: a change under `packs/<pack>/` plans that pack's tool-packs, while
