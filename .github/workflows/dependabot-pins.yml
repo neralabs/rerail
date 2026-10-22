@@ -1,0 +1,91 @@
+name: Dependabot pins
+
+# Dependabot bumps package.json and its lockfile alone. Some files pin a version in step with a dependency: the
+# standalone OMP host's version and release digests and the playground's SDK follow the OMP SDK, and the ast-grep
+# differential test's reference follows the ast-grep CLI (scripts/deps/sync-pins.mjs). On a Dependabot pull request this
+# brings them along and pushes the result to its branch, so the pull request arrives complete; `npm run check` fails on
+# any pull request that leaves one behind.
+#
+# The push uses the neralabs-ci app, because a push with the workflow's own token starts no CI run. A Dependabot run
+# sees Dependabot secrets only, so the app's key is stored there under its Actions name (RELEASE_APP_PRIVATE_KEY), and
+# its client id too (RELEASE_APP_CLIENT_ID) when variables are not passed to it. No step that runs project or
+# dependency code holds a write token: the sync runs without `npm ci` and installs nothing, and the app token is made
+# only for the push. Once this pushes, Dependabot stops rebasing the branch on its own; comment
+# `@dependabot recreate` for a fresh one, which this run then completes again.
+
+on:
+  pull_request:
+    paths:
+      - package.json
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependabot-pins-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    name: Bring pinned versions along
+    if: github.actor == 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout the Dependabot branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Sync the pins with package.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/deps/sync-pins.mjs
+
+      - id: changed
+        name: Anything to push?
+        run: |
+          if git diff --quiet; then echo "changed=false" >> "$GITHUB_OUTPUT"; else echo "changed=true" >> "$GITHUB_OUTPUT"; fi
+          git diff --stat
+
+      - name: Require the app's credentials as Dependabot secrets
+        if: steps.changed.outputs.changed == 'true'
+        env:
+          CLIENT_ID: ${{ vars.RELEASE_APP_CLIENT_ID || secrets.RELEASE_APP_CLIENT_ID }}
+          PRIVATE_KEY_SET: ${{ secrets.RELEASE_APP_PRIVATE_KEY != '' }}
+        run: |
+          if [ -z "$CLIENT_ID" ] || [ "$PRIVATE_KEY_SET" != "true" ]; then
+            echo "::error::Add the neralabs-ci app's RELEASE_APP_PRIVATE_KEY (and RELEASE_APP_CLIENT_ID) as Dependabot secrets, or run npm run deps:sync on this branch and push."
+            exit 1
+          fi
+
+      - id: app-token
+        name: Get the neralabs-ci app token
+        if: steps.changed.outputs.changed == 'true'
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID || secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      # The commit is the app's bot user's, as GitHub attributes it.
+      - name: Commit and push to the Dependabot branch
+        if: steps.changed.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BOT: ${{ steps.app-token.outputs.app-slug }}[bot]
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          git config user.name "$BOT"
+          id="$(gh api "/users/${BOT}" --jq .id)"
+          git config user.email "${id}+${BOT}@users.noreply.github.com"
+          git commit --quiet --all --message "Bring pinned versions along with the dependency bump" --message "npm run deps:sync (scripts/deps/sync-pins.mjs)."
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${BRANCH}"
