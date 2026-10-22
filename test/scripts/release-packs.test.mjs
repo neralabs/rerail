@@ -1,11 +1,12 @@
-// scripts/release/packs.mjs: what a pack release run publishes, what a promotion moves to `latest`, the lockfile sync
-// after `changeset version`, the publish gate's reading of the pack validation, and the patch-only bumps of packs below
-// 1.0.0.
+// scripts/release/packs.mjs: what a pack release run publishes and under which dist-tag, what a promotion moves to
+// `latest`, the lockfile sync after `changeset version`, the publish gate's reading of the pack validation, and the
+// patch-only bumps of packs below 1.0.0.
 
 import { describe, expect, it } from "vitest";
 import {
   changesetBumpFailures,
   gateFailures,
+  heldPacks,
   listPacks,
   packIds,
   planPacks,
@@ -209,7 +210,7 @@ describe("releasePacks", () => {
     return {
       calls,
       steps: {
-        publish: (file) => (calls.push(`publish ${file}`), published[file] ?? { ok: true, output: "" }),
+        publish: (file, distTag) => (calls.push(`publish ${file} ${distTag}`), published[file] ?? { ok: true, output: "" }),
         assertRestricted: async (name) => void calls.push(`restricted ${name}`),
         tag: (tag) => void calls.push(`tag ${tag}`),
         log: () => {},
@@ -219,19 +220,34 @@ describe("releasePacks", () => {
 
   it("skips a version already tagged, so a re-run with the first run's tarballs reaches the rest", async () => {
     const { calls, steps } = recording();
-    await releasePacks([entry("a", "0.2.0"), entry("b", "0.2.0")], ["@neralabs/rerail-pack-a@0.2.0"], steps);
-    expect(calls).toEqual(["publish b-0.2.0.tgz", "restricted @neralabs/rerail-pack-b", "tag @neralabs/rerail-pack-b@0.2.0"]);
+    const released = await releasePacks([entry("a", "0.2.0"), entry("b", "0.2.0")], ["@neralabs/rerail-pack-a@0.2.0"], steps);
+    expect(calls).toEqual(["publish b-0.2.0.tgz latest", "restricted @neralabs/rerail-pack-b", "tag @neralabs/rerail-pack-b@0.2.0"]);
+    expect(released).toEqual([{ name: "@neralabs/rerail-pack-b", version: "0.2.0", distTag: "latest" }]);
+  });
+
+  it("publishes a held pack under next, leaving its latest where it was put back, and every other under latest", async () => {
+    const { calls, steps } = recording();
+    const released = await releasePacks([entry("a", "0.2.0"), entry("b", "0.2.0")], [], steps, ["@neralabs/rerail-pack-a"]);
+    expect(calls.filter((call) => call.startsWith("publish"))).toEqual(["publish a-0.2.0.tgz next", "publish b-0.2.0.tgz latest"]);
+    expect(released.map(({ distTag }) => distTag)).toEqual(["next", "latest"]);
   });
 
   it("checks and tags a version the registry already has without its tag, without publishing it again", async () => {
     const { calls, steps } = recording({ "a-0.2.0.tgz": { ok: false, output: conflict } });
     await releasePacks([entry("a", "0.2.0")], [], steps);
-    expect(calls).toEqual(["publish a-0.2.0.tgz", "restricted @neralabs/rerail-pack-a", "tag @neralabs/rerail-pack-a@0.2.0"]);
+    expect(calls).toEqual(["publish a-0.2.0.tgz latest", "restricted @neralabs/rerail-pack-a", "tag @neralabs/rerail-pack-a@0.2.0"]);
   });
 
   it("stops at any other publish failure, tagging nothing", async () => {
     const { calls, steps } = recording({ "a-0.2.0.tgz": { ok: false, output: "npm error code ENEEDAUTH" } });
     await expect(releasePacks([entry("a", "0.2.0"), entry("b", "0.2.0")], [], steps)).rejects.toThrow("npm publish @neralabs/rerail-pack-a@0.2.0 failed");
-    expect(calls).toEqual(["publish a-0.2.0.tgz"]);
+    expect(calls).toEqual(["publish a-0.2.0.tgz latest"]);
+  });
+});
+
+describe("heldPacks", () => {
+  it("holds a pack whose held dist-tag is its latest, not one whose hold was overtaken, and reports one npm could not read", () => {
+    const distTags = { held: { latest: "0.1.3", held: "0.1.3", next: "0.1.4" }, stale: { latest: "0.1.4", held: "0.1.2" }, plain: { latest: "0.1.4" }, unread: null };
+    expect(heldPacks(Object.keys(distTags), (name) => distTags[name])).toEqual({ held: ["held"], unreadable: ["unread"] });
   });
 });

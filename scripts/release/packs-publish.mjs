@@ -1,18 +1,20 @@
 #!/usr/bin/env node
-// Publishes the tarballs packs-pack.ts wrote to <dir>, each under `next` and restricted, checks that the registry
+// Publishes the tarballs packs-pack.ts wrote to <dir>, each restricted and under `latest` (under `next` for a pack
+// named in $HELD, space-separated ids that packs-plan.mjs found held at an older `latest`), checks that the registry
 // does not show it to an anonymous reader, and tags the released commit `<name>@<version>` on GitHub. Any failed run
 // can be run again, with the same tarballs or fresh ones: a version already tagged is skipped, and one already on the
 // registry without its tag is checked and tagged, not published again (releasePacks in packs.mjs).
 //
 // In the release workflow npm authenticates through trusted publishing and the commit is $GITHUB_SHA. By hand (a
 // pack's first publish), npm uses your login, gh your GitHub login with write access, and the commit is HEAD, which
-// must be clean and pushed. Both are checked before anything is published.
+// must be clean and pushed. Both are checked before anything is published. Writes `released` (each
+// `<name>@<version>:<dist-tag>` it released, space-separated, for dist-tags-check.mjs) to $GITHUB_OUTPUT when it is set.
 //
-//   node scripts/release/packs-publish.mjs <dir>
+//   [HELD="<id> ..."] node scripts/release/packs-publish.mjs <dir>
 import { execFileSync, spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { assertCommitOnGitHub, createReleaseTag, PUBLISH_TAG, REGISTRY, releasePacks, releaseTags, ROOT } from "./packs.mjs";
+import { assertCommitOnGitHub, createReleaseTag, listPacks, REGISTRY, releasePacks, releaseTags, ROOT } from "./packs.mjs";
 
 const git = (args) => execFileSync("git", args, { cwd: ROOT, encoding: "utf8" }).trim();
 
@@ -34,8 +36,8 @@ async function assertRestricted(name) {
  * npm asks for a 2FA code or browser approval only when both are one. Its `npm error` lines, the publish conflict
  * included, go to stderr, which is captured and shown when npm exits.
  */
-function publish(path) {
-  const run = spawnSync("npm", ["publish", path, "--registry", REGISTRY, "--access", "restricted", "--tag", PUBLISH_TAG], { stdio: ["inherit", "inherit", "pipe"], encoding: "utf8" });
+function publish(path, distTag) {
+  const run = spawnSync("npm", ["publish", path, "--registry", REGISTRY, "--access", "restricted", "--tag", distTag], { stdio: ["inherit", "inherit", "pipe"], encoding: "utf8" });
   process.stderr.write(run.stderr ?? "");
   if (run.error !== undefined) throw run.error;
   return { ok: run.status === 0, output: run.stderr };
@@ -48,9 +50,20 @@ const manifest = JSON.parse(readFileSync(join(out, "manifest.json"), "utf8"));
 const commit = releasedCommit();
 assertCommitOnGitHub(commit);
 
-await releasePacks(manifest, releaseTags(), {
-  publish: (file) => publish(join(out, file)),
-  assertRestricted,
-  tag: (tag) => createReleaseTag(tag, commit),
-  log: (line) => console.log(line),
-});
+const heldIds = (process.env.HELD ?? "").split(/\s+/u).filter((id) => id !== "");
+const held = listPacks().filter((pack) => heldIds.includes(pack.id)).map((pack) => pack.name);
+
+const released = await releasePacks(
+  manifest,
+  releaseTags(),
+  {
+    publish: (file, distTag) => publish(join(out, file), distTag),
+    assertRestricted,
+    tag: (tag) => createReleaseTag(tag, commit),
+    log: (line) => console.log(line),
+  },
+  held,
+);
+if (process.env.GITHUB_OUTPUT !== undefined) {
+  appendFileSync(process.env.GITHUB_OUTPUT, `released=${released.map(({ name, version, distTag }) => `${name}@${version}:${distTag}`).join(" ")}\n`);
+}

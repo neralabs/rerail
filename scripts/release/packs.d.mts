@@ -13,6 +13,7 @@ export const ROOT: string;
 export const PACKS: string;
 export const REGISTRY: string;
 export const PUBLISH_TAG: string;
+export const HELD_PUBLISH_TAG: string;
 export function releaseTag(name: string, version: string): string;
 export function releaseTags(): string[];
 export function createReleaseTag(tag: string, sha: string): string;
@@ -23,12 +24,13 @@ export function releasePacks(
   manifest: readonly { name: string; version: string; file: string }[],
   tags: readonly string[],
   steps: {
-    publish(file: string): { ok: boolean; output: string };
+    publish(file: string, distTag: string): { ok: boolean; output: string };
     assertRestricted(name: string): Promise<void>;
     tag(tag: string): void;
     log(line: string): void;
   },
-): Promise<void>;
+  held?: readonly string[],
+): Promise<{ name: string; version: string; distTag: string }[]>;
 export function planPacks(packs: readonly ReleasePack[], tags: readonly string[]): { publish: string[]; first: string[] };
 export interface PromotionCandidate extends ReleasePack {
   hold?: boolean;
@@ -39,6 +41,7 @@ export interface Promotion extends ReleasePack {
   release: boolean;
 }
 export const HOLD_TAG: string;
+export function heldPacks(names: readonly string[], distTagsOf: (name: string) => Record<string, string> | null): { held: string[]; unreadable: string[] };
 export function promotionRequest(packs: readonly ReleasePack[], id: string | undefined, version: string | undefined): { packs: PromotionCandidate[]; named: boolean };
 export function planPromotions(
   packs: readonly PromotionCandidate[],
