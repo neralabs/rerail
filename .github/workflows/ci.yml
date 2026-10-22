@@ -658,3 +658,24 @@ jobs:
           cat "$results/codex.log"
           cat "$results/cursor.log"
           exit "$status"
+
+  # The one check main's ruleset requires: every job above passed or was skipped by its own condition (a path filter,
+  # a pull request without secrets, the Release pull request). A failed or cancelled job fails it, so a pull request
+  # cannot merge red. Requiring each job instead would leave a skipped matrix job pending under its unexpanded name.
+  ci-passed:
+    name: CI passed
+    if: always()
+    needs: [licenses, lint, changes, rust, build, port-readiness, unit, integration, installed-packs, tools, real-sessions, provider-smoke]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every job to pass or be skipped
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          failed="$(jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped") | "\(.key): \(.value.result)"' <<<"$NEEDS")"
+          if [ -n "$failed" ]; then
+            while IFS= read -r line; do echo "::error::$line"; done <<<"$failed"
+            exit 1
+          fi
