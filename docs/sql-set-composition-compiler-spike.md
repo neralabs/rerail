@@ -3126,3 +3126,128 @@ It runs the relational differential suite and preserves raw results, generated S
 Raw component artifacts are in `/tmp/rerail-components-20261022-second`.
 Raw B023 regression artifacts are in `/tmp/rerail-components-b023-20261022`.
 The next kernel starts with three-valued conjunction and withheld captures, then extends that outcome contract to ordered search and count.
+
+### Milestone 2: explicit outcomes and withheld captures — started 2026-10-22
+
+This kernel lowers three-valued rules into typed demand and outcome relations.
+Each outcome contains its demand key, an explicit false/true/unknown tag, and observable binding columns.
+SQL null denotes an absent binding or an unreached test, never an unknown verdict.
+Conjunctions retain local withheld-capture columns and evaluate later terms only where their inputs remain available.
+Failed or unknown composites restore their input bindings.
+
+Ordered alternatives and searches retain the first decisive candidate at their original boundary.
+A binding candidate's unknown outcome is decisive; a capture-free candidate's unknown outcome permits a later true answer.
+Counts aggregate true and unknown candidates into lower and upper bounds.
+An exported count requires an exact value.
+
+The initial admission contract permits total structural leaves, whole-node captures, and the existing synthetic unknown leaf.
+It excludes fallible semantic leaves, recursive outcome components, enumeration, and rule-based traversal stops.
+Candidate evaluation can precede ordered reduction only under this total, effect-free contract.
+Native work and depth budgets remain separate gates.
+The implementation must retain exact capture identity without intermediate JSON environments or native composition callbacks.
+
+The first profile exposed repeated dependency expansion during preparation.
+A conjunction over 32 call roots generated 57 CTEs and used 44,778 VM instructions.
+Preparation took 22.194 ms; execution took less than one millisecond.
+The same shape created 634 automatic-index entries.
+Its SQL text contained only 9,792 bytes, so text length alone did not explain the preparation cost.
+
+Node-local operations now use guarded scalar expressions along one input chain.
+These operations no longer join each result back to its demand relation.
+`CASE` prevents evaluation of decided or withheld terms.
+Composite outputs export bindings only on true; their callers keep their original bindings on false or unknown.
+This removes redundant joins used only to restore values that no consumer can observe.
+
+The first suite passed 30 tests and rejected one invalid count fixture in the policy parser.
+The fixture specified a zero minimum without a maximum, which the DSL rejects as vacuous.
+The corrected fixture includes a maximum and still tests exact count exports, unknown counts, offsets, and empty inputs.
+Raw first-draft profiles remain in `/tmp/rerail-outcomes-20261022-first`.
+
+The scalar-chain rewrite passed all 31 tests present at that point.
+On the same 32-root conjunction, preparation fell from 22.194 ms to 2.147 ms.
+VM work fell from 44,778 to 37,092; automatic-index entries fell from 634 to 263.
+The query retained 49 CTEs, so relation count alone also failed to explain preparation cost.
+Repeated references and joins across those relations were the important distinction.
+
+The next profile showed minimum-one counts evaluating every candidate after a known match.
+A capture-free, node-local body now lowers to indexed `EXISTS` probes when the traversal supports a direct probe.
+SQL first asks whether any candidate is true.
+Only if that fails does it ask whether any candidate is unknown.
+Unknown is neither true nor false; negation and nested Boolean bodies preserve that distinction.
+This rewrite excludes exported counts and bodies with capture inputs or outputs.
+Neighbor walks and descendant intervals qualify; other walks retain the generic count relation.
+
+The test harness now compares true and unknown root sets with the native oracle.
+It separately compares exact observable node captures, optional captures, and count exports with both engines.
+A pure equality helper implements native structural capture equality for composite named nodes.
+SQL still owns all rule composition and capture commits.
+The profile records equality requests, reached leaf requests, preparation, VM work, EXPLAIN, and logical relation sizes.
+Separate diagnostic queries provide those sizes; they do not measure physical writes.
+
+### Explicit outcome kernel accepted — 2026-10-22
+
+All 33 relational tests pass, including 11 outcome tests.
+They cover withheld captures, unknown redefinitions, independent false terms, branch rollback, ordered search, exact counts, optional captures, and composite capture witnesses.
+Nested Boolean count probes and multiple files also match the native oracle.
+Unproved semantic leaves, recursive outcomes, and rule-based stops fail admission explicitly.
+Formatting and both `check:native` Clippy configurations pass.
+
+The final profile uses the same source and binary for nine scaling cases:
+
+| Case | Sizes | VM instructions | Regex requests | Automatic-index entries |
+| --- | --- | --- | --- | --- |
+| Independent conjunctions | 16 / 64 / 256 | 37,092 / 146,676 / 585,012 | 48 / 192 / 768 | 263 / 1,079 / 4,343 |
+| Minimum-one count, known first match | 16 / 64 / 256 | 309 / 309 / 309 | 1 / 1 / 1 | 0 / 0 / 0 |
+| Minimum-one count, all unknown | 16 / 64 / 256 | 378 / 618 / 1,578 | 17 / 65 / 257 | 0 / 0 / 0 |
+
+Each kernel uses one traced matching execution and zero frame publications.
+The known-first count uses three node advances at every width.
+Its query has eight CTEs and 1,739 bytes, with no stored candidate relation.
+At width 256, the existence rewrite reduces VM instructions from 40,498 to 309, approximately 131-fold.
+This compares two versions of this kernel, not whole-job runtime.
+All-unknown probes inspect the width once for a true answer, then one candidate for an unknown answer.
+
+The conjunction query has 49 CTEs and 8,854 bytes.
+Final preparation is 2.325 ms at size 16, versus 22.194 ms in the initial draft.
+Preparation and automatic-index entries remain flagged for this shape.
+These costs come from joins across ordered candidate and sequencing relations.
+The largest diagnostic relation equals the number of root demands; independent branches do not form a product.
+Further reduction should combine adjacent local projections and reduce stored joins at proven choice boundaries.
+It must preserve withheld inputs and exact witness selection.
+
+The summary separates measured inefficiencies from admission limitations.
+Preparation receives a flag only above one millisecond and twice execution CPU.
+Logical cardinalities remain explicitly separate from physical writes.
+Raw results, full SQL, EXPLAIN, exact outputs, and hashes accompany the checked-in evidence.
+
+The frozen B023 regression also passes, for 44 unique passing tests in total.
+All 138 file hashes match the reference corpus; the two roots and capture witnesses remain exact.
+Generated SQL retains SHA-256 `84116309b7048f44b706bb74955b99a1bcb5b512d5b365b30a73f78992026aa1`.
+All three samples use 2,812,255 VM instructions, one matching execution, and zero frame publications.
+Median cold kernel CPU is 126.756 ms generated versus 63.504 ms reference.
+The 1.996 ratio passes the twofold gate with almost no timing margin.
+This phase claims unchanged B023 SQL and VM work, not a B023 speed improvement.
+
+Artifacts:
+
+- `benchmark/sql-relational-outcomes-evidence.json`: final profiles, exact outputs, source hashes, iteration comparisons, and B023 regression summary.
+- `benchmark/sql-relational-outcomes.sql`: generated conjunction query.
+- `benchmark/sql-relational-outcomes-count.sql`: generated indexed count query.
+- `/tmp/rerail-outcomes-20261022-final-summary`: raw outcome artifacts and logs.
+- `/tmp/rerail-outcomes-b023-20261022-final`: raw frozen regression artifacts and logs.
+
+Reproduce the outcome evidence with:
+
+```sh
+JEMALLOC_OVERRIDE=/tmp/librerail_jemalloc_check_shim.dylib \
+python3 benchmark/relational-outcomes.py /tmp/rerail-outcome-reproduction
+```
+
+The driver builds the binary unless `--binary` supplies one.
+It hashes all nested relational source files and refuses changed artifacts during measurement.
+The existing component and complete-query drivers now hash nested source files too.
+
+Milestone 2 remains incomplete, and the replacement stays test-only.
+The next phase must define reached semantic-leaf failures and rule-based traversal stops before lowering them.
+Unknown-aware recursion, enumeration, native resource limits, full catalog coverage, and the complete-job 100-execution gate remain pending.
+No production switch or fallback was added.

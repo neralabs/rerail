@@ -1,6 +1,6 @@
 # Transition to direct relational SQL
 
-Status: Milestone 1 complete; Milestone 2 structural components implemented and measured; remaining gates pending, 2026-10-22.
+Status: Milestone 1 complete; Milestone 2 structural components and explicit outcomes implemented; remaining gates pending, 2026-10-22.
 Baseline: `a0051ae8`, including the complete B023 reference query.
 This document changes no production behavior.
 
@@ -35,7 +35,12 @@ The [component evidence](../benchmark/sql-relational-components-evidence.json) i
 The [generated component SQL](../benchmark/sql-relational-components.sql) shows the three-state diamond query.
 All six kernels use one traced matching statement, zero frame publications, and zero automatic-index rows.
 
-Unknown outcomes, reached failures, enumeration, parameterized witnesses, and general recursive components remain pending.
+The next kernel adds explicit true, false, and unknown outcomes for total structural operations.
+It preserves withheld captures, ordered search, alternative commits, and count intervals.
+Whole-node captures use native structural equality, including composite nodes, without native rule composition.
+The [outcome evidence](../benchmark/sql-relational-outcomes-evidence.json) records exact roots, captures, unknown outcomes, EXPLAIN, and scaling.
+
+Real semantic leaves, reached failures, enumeration, parameterized witnesses, and general recursive components remain pending.
 Native work and stack/depth budgets also remain unresolved.
 The compiler remains test-only until the semantic coverage and production cutover gates pass.
 The complete-job 100-execution gate remains a separate requirement.
@@ -229,9 +234,28 @@ They do not represent physical write counts or add to the reported matching exec
 Statement memory is 12,864 bytes in all six kernels; this excludes the recursive queue and temporary storage.
 The evidence does not establish whole-job memory usage or the 100-execution gate.
 
-The next semantic kernel must represent true, false, and unknown outcomes explicitly.
-Start with the existing conjunction tests for withheld captures, then extend the same contract to ordered search and count.
-Later predicates must not turn an unknown binding into a usable capture or move across a reached failure.
+The explicit-outcome kernel now represents false, true, and unknown with integer tags.
+Missing captures remain separate NULL binding columns.
+Conjunctions propagate withheld node captures and allow independent false terms to decide the result.
+Alternatives commit the first decisive branch; capture-bearing unknowns block later alternatives.
+Search preserves candidate order and its native unknown barrier.
+Counts use lower and upper bounds; exported counts require an exact value.
+
+Node-local terms use guarded scalar projections, without demand/result self-joins.
+Eligible capture-free minimum-one counts use indexed existence probes.
+A second probe checks for unknown only when no true candidate exists.
+Other counts retain narrow candidate relations and interval aggregation.
+
+The nine scaling kernels use one traced matching execution each and zero frame publications.
+At widths 16, 64, and 256, a known-first count takes 309 VM instructions and one regex request.
+All-unknown counts take 378, 618, and 1,578 instructions.
+Independent conjunctions take 37,092, 146,676, and 585,012 instructions at sizes 16, 64, and 256.
+The conjunction shape still creates automatic indexes across sequencing relations; the profile flags that remaining cost.
+
+The unknown leaf is currently synthetic and test-only.
+Semantic leaves need explicit contracts before admission.
+Eager candidate evaluation is valid only for the admitted total, effect-free operations.
+Rule-based traversal stops, reached failures, and native resource limits remain outside this proof.
 Milestone 2 remains incomplete until every semantic gate above passes.
 
 Structural recursion uses narrow closure relations like those in B023.
@@ -383,8 +407,13 @@ Missed targets require a documented cost attribution and another focused shape e
 
 ## Next implementation action
 
-The next change adds the relation types, semantic analysis, lowering, and minimal SQL emission for `target-slot`.
-A test-only entry in the B023 harness compiles that utility from the DSL and compares its relation with the native result.
-The following changes compile the entire policy and enforce the reference work bounds.
-Broad catalog migration starts only after that complete generated query passes.
-The journal records each accepted or rejected rewrite, SQL shape, semantic evidence, and measurement artifact.
+Extend explicit outcomes to reached semantic leaves and rule-based traversal stops.
+Start with differential fixtures where an earlier choice hides a failing leaf, and where an unknown stop changes the reachable candidates.
+Define each leaf's outcome, failure, capture, and work-budget contract before SQL lowering.
+Only reached demands may invoke fallible leaves.
+Keep total indexed existence probes where the contract permits them.
+
+The next evidence must include exact native outcomes and failures, generated SQL, EXPLAIN, and scaling.
+It must identify every materialization boundary and show that unreached leaves do no work.
+General recursion, enumeration, resource parity, catalog coverage, and the complete-job execution gate remain later requirements.
+The journal records each accepted or rejected rewrite and its measurement artifact.

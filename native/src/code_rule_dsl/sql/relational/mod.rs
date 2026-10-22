@@ -7,6 +7,7 @@ mod emit;
 mod ir;
 pub(super) mod leaves;
 mod lower;
+mod outcomes;
 mod physical;
 mod recursion;
 mod recursion_tests;
@@ -24,6 +25,9 @@ pub(super) struct Compiled {
 }
 
 pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
+    if grammar.three_valued {
+        return outcomes::compile(grammar);
+    }
     if !crate::code_rule_dsl::matcher::CaptureAnalysis::default()
         .mentions(&grammar.matcher)
         .is_empty()

@@ -11,6 +11,10 @@ use std::{
     },
 };
 
+thread_local! {
+    pub(super) static EQUALITY_REQUESTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 struct Leaves(AssertUnwindSafe<Arc<Batch>>);
 impl Leaves {
     fn pattern(&self, term: usize, file: usize, node: u32) -> Result<bool> {
@@ -39,6 +43,23 @@ pub(in crate::code_rule_dsl::sql) fn register(
     let calls = Arc::new(AtomicUsize::new(0));
     let count = Arc::clone(&calls);
     let keys = Leaves(AssertUnwindSafe(Arc::clone(batch)));
+    let equality = Leaves(AssertUnwindSafe(Arc::clone(batch)));
+    // Atomic structural equality, with native capture semantics. No rule composition runs here.
+    db.create_scalar_function(
+        "relation_capture_equal",
+        3,
+        FunctionFlags::SQLITE_UTF8,
+        move |ctx| {
+            let file = ctx.get::<u32>(0)? as usize;
+            EQUALITY_REQUESTS.set(EQUALITY_REQUESTS.get() + 1);
+            let left = ctx.get::<u32>(1)?;
+            let right = ctx.get::<u32>(2)?;
+            let file = &equality.0.files[file];
+            let mut env = ast_grep_core::meta_var::MetaVarEnv::new();
+            env.insert("capture", node_at(&file.root, left));
+            Ok(env.insert("capture", node_at(&file.root, right)).is_some())
+        },
+    )?;
     db.create_scalar_function(
         "relation_leaf_atom",
         3,

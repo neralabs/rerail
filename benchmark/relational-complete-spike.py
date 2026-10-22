@@ -41,7 +41,7 @@ def main():
                            if a.get("reason") == "compiler-artifact" and a.get("executable")
                            and a["target"]["name"] == "rerail_engine"))
     binary = binary.resolve()
-    sources = sorted((root / "native/src/code_rule_dsl/sql/relational").glob("*.rs"))
+    sources = sorted((root / "native/src/code_rule_dsl/sql/relational").rglob("*.rs"))
     sources += [root / "native/src/code_rule_dsl/sql/spikes/whole_call/b023.rs",
                 root / "native/src/code_rule_dsl/sql/spikes/whole_call/b023.sql",
                 root / "native/src/code_rule_dsl/sql/spikes/whole_call/run.rs",

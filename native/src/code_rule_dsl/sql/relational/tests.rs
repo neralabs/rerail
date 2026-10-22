@@ -16,10 +16,11 @@ pub(in crate::code_rule_dsl::sql) fn measure(
         .map(|(_, s)| (tape(grammar.language, s), FileContext::default()))
         .collect();
     let capture_names: Vec<_> = crate::code_rule_dsl::matcher::CaptureAnalysis::default()
-        .mentions(&grammar.matcher)
-        .into_iter()
+        .binds(&grammar.matcher)
+        .union(&crate::code_rule_dsl::matcher::CaptureAnalysis::default().counts(&grammar.matcher))
+        .cloned()
         .collect();
-    let expected: Vec<Vec<(u32, Vec<u32>)>> = docs
+    let expected: Vec<Vec<(u32, Vec<Value>)>> = docs
         .iter()
         .map(|(doc, _)| {
             let tree = AstGrep::doc(doc.clone());
@@ -36,7 +37,17 @@ pub(in crate::code_rule_dsl::sql) fn measure(
                                     capture_names
                                         .iter()
                                         .map(|name| {
-                                            m.get_env().get_match(name).unwrap().node_id() as u32
+                                            m.get_env()
+                                                .get_match(name)
+                                                .map(|n| json!(n.node_id() as u32))
+                                                .or_else(|| {
+                                                    m.get_env().get_transformed(name).map(|s| {
+                                                        json!(
+                                                            String::from_utf8_lossy(s).into_owned()
+                                                        )
+                                                    })
+                                                })
+                                                .unwrap_or(Value::Null)
                                         })
                                         .collect(),
                                 )
@@ -69,12 +80,17 @@ pub(in crate::code_rule_dsl::sql) fn measure(
                     capture_names
                         .iter()
                         .map(|name| {
-                            let (_, sql::exec::Captured::Node(id)) =
-                                m.captures.iter().find(|(key, _)| key == name).unwrap()
-                            else {
-                                panic!("non-node capture")
-                            };
-                            *id
+                            match m
+                                .captures
+                                .iter()
+                                .find(|(key, _)| key == name)
+                                .map(|(_, v)| v)
+                            {
+                                Some(sql::exec::Captured::Node(id)) => json!(id),
+                                Some(sql::exec::Captured::Count(count)) => json!(count.to_string()),
+                                None => Value::Null,
+                                _ => panic!("unsupported capture output"),
+                            }
                         })
                         .collect::<Vec<_>>()
                 ))
@@ -95,6 +111,7 @@ pub(in crate::code_rule_dsl::sql) fn measure(
             let patterns = super::leaves::register(db, batch).unwrap();
             let started = Started::now();
             let counter_start = profiling::frame_snapshot();
+            let equality_start = super::leaves::EQUALITY_REQUESTS.get();
             let mut statement = db.prepare(&compiled.sql).unwrap();
             let prepare = started.elapsed();
             let trace = ExecutionTrace::start(db);
@@ -105,7 +122,7 @@ pub(in crate::code_rule_dsl::sql) fn measure(
                     let file = row.get::<_, u32>(1).unwrap() as usize;
                     actual[file].push((
                         row.get::<_, u32>(2).unwrap(),
-                        serde_json::from_str::<Vec<u32>>(&row.get::<_, String>(3).unwrap())
+                        serde_json::from_str::<Vec<Value>>(&row.get::<_, String>(3).unwrap())
                             .unwrap(),
                     ));
                 }
@@ -122,6 +139,7 @@ pub(in crate::code_rule_dsl::sql) fn measure(
             let memory = statement.get_status(rusqlite::StatementStatus::MemUsed);
             let elapsed = started.elapsed();
             let cold = kernel_started.elapsed().plus(generation);
+            let equality_calls = super::leaves::EQUALITY_REQUESTS.get() - equality_start;
             let pattern_calls = patterns.load(std::sync::atomic::Ordering::Relaxed);
             let counter_end = profiling::frame_snapshot();
             let counters: [u64; 14] = std::array::from_fn(|i| counter_end[i] - counter_start[i]);
@@ -207,6 +225,23 @@ pub(in crate::code_rule_dsl::sql) fn measure(
                     cardinalities.push(json!({"relation":name,"rows":rows,"diagnostic":true}));
                 }
             }
+            let mut outcomes = Vec::new();
+            if let Some(output) = compiled.relations["outcomeOutput"].as_str() {
+                let prefix = compiled.sql.split_once("-- final matches").unwrap().0;
+                let demand = compiled.relations["outcomeDemand"].as_str().unwrap();
+                outcomes = db.prepare(&format!("{prefix}SELECT d.file,d.node,o.truth FROM {demand} d JOIN {output} o ON o.k=d.k WHERE o.truth<>0 ORDER BY d.file,d.node"))
+                    .unwrap().query_map([], |r| Ok((r.get::<_,u32>(0)? as usize,r.get::<_,u32>(1)?,r.get::<_,u8>(2)?)))
+                    .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
+                for relation in compiled.relations["relations"].as_array().unwrap() {
+                    let name = relation["relation"].as_str().unwrap();
+                    let rows: i64 = db
+                        .query_row(&format!("{prefix}SELECT COUNT(*) FROM {name}"), [], |r| {
+                            r.get(0)
+                        })
+                        .unwrap();
+                    cardinalities.push(json!({"relation":name,"rows":rows,"diagnostic":true}));
+                }
+            }
             (
                 actual,
                 vm,
@@ -221,6 +256,8 @@ pub(in crate::code_rule_dsl::sql) fn measure(
                 counters,
                 cold,
                 executions,
+                outcomes,
+                equality_calls,
             )
         })
     });
@@ -230,11 +267,37 @@ pub(in crate::code_rule_dsl::sql) fn measure(
         assert_eq!(actual, expected, "{}", sources[index].0);
     }
     assert_eq!(counters[4], 0, "no frame publications");
-    json!({"parity":true,"output":expected,"files":sources.len(),"matches":expected.iter().map(Vec::len).sum::<usize>(),
+    if compiled.relations["outcomeOutput"].is_string() {
+        let mut native = Vec::new();
+        for (file, (_, source)) in sources.iter().enumerate() {
+            let doc = tape(grammar.language, source);
+            let len = doc.transducer_len();
+            let tree = AstGrep::doc(doc);
+            crate::code_rule_dsl::matcher::with_file_memo(&tree, || {
+                for id in 0..len as u32 {
+                    if !grammar.applies {
+                        continue;
+                    }
+                    let truth = crate::code_rule_dsl::matcher::leaf_verdict(
+                        &grammar.matcher,
+                        node_at(&tree, id),
+                        &Default::default(),
+                    )
+                    .unwrap();
+                    if truth != Some(false) {
+                        native.push((file, id, if truth == Some(true) { 1u8 } else { 2u8 }));
+                    }
+                }
+            });
+        }
+        assert_eq!(result.13, native, "exact true AND unknown root outcomes");
+    }
+
+    json!({"parity":true,"outcomes":result.13,"output":expected,"files":sources.len(),"matches":expected.iter().map(Vec::len).sum::<usize>(),
       "coldKernelCpuNs":result.11.cpu,"diagnosticCpuNs":elapsed.cpu,"generationCpuNs":generation.cpu,"prepareCpuNs":result.5.cpu,
       "prepareAndExecuteCpuNs":result.6.cpu,"explain":result.7,
       "diagnosticRelationRows":result.8,
-      "patternRequests":result.9,
+      "patternRequests":result.9,"captureEqualityRequests":result.14,
       "timingScope":"Counters enabled. diagnosticCpuNs includes EXPLAIN; prepareAndExecuteCpuNs excludes EXPLAIN, connection setup, and generation. No speedup claim.",
       "baseline":{"diagnosticKernelCpuNs":baseline_time.cpu,"framePublications":baseline_counters[4],"frameAdvances":baseline_counters[2],"matchingStatements":baseline_session.stats().statements},
       "vmSteps":result.1,"automaticIndexRows":result.2,"fullscanSteps":result.3,"statementMemoryBytes":result.4,

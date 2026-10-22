@@ -39,7 +39,7 @@ def main():
                            if a.get("reason") == "compiler-artifact" and a.get("executable")
                            and a["target"]["name"] == "rerail_engine"))
     binary = binary.resolve()
-    sources = sorted((root / "native/src/code_rule_dsl/sql/relational").glob("*.rs"))
+    sources = sorted((root / "native/src/code_rule_dsl/sql/relational").rglob("*.rs"))
     sources.append(Path(__file__).resolve())
     pinned = {path: digest(path) for path in [binary, *sources]}
     env["RERAIL_RELATIONAL_COMPONENT_EVIDENCE"] = str(output / "results.json")
