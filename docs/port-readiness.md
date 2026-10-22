@@ -389,8 +389,54 @@ Rust's stable channel manifest (what rustup installs as `stable`; GitHub's relea
 by hand and rate-limited without a token). Versions compare by their numeric components, a leading `v` dropped. The job
 prints one table row per tool-pack, appends the table to the job summary (`GITHUB_STEP_SUMMARY`), annotates each failing
 tool-pack with `::error::`, and fails when a pin is behind, the pins disagree, or a registry cannot be read: a check that
-cannot see upstream's releases does not pass. A failure is a prompt to bump the pins and record the tool-pack again
-("Recording" above), not a broken build; until then the gates keep judging the rules against the pinned release.
+cannot see upstream's releases does not pass. Until a bump merges the gates keep judging the rules against the pinned
+release, and the job stays red while any pin is behind.
+
+#### Bump pull requests
+
+An upstream release is a pin change: nothing is uploaded. The test data derived from upstream is derived by CI from the
+pins (and cached like the recordings), so moving the pins is the whole change. For every tool-pack behind, the nightly
+opens one pull request on `auto/bump-<pack>-<tool>`:
+
+```sh
+npm run port-readiness:bump -- --pack python --tool ruff [--version 0.17.1] [--dry-run]  # upstream-bump.ts
+```
+
+The bump moves every pin of the release together, and reads each file back to check that only the pins moved:
+
+- `gates.yaml`: `upstream.version`, and `upstream.commit` as the commit the release's GitHub tag names (an annotated tag
+  is followed to its commit), plus an ESLint upstream's `eslint.release.tag`. How an upstream tags its releases is
+  learnt from the pin: the first of `eslint.release.tag`'s form, `v<version>` and `<version>` whose tag of the pinned
+  release names the pinned commit. A release without that tag stops the bump.
+- The runtime's pin file (`package.json`, `pyproject.toml` or `composer.json`): upstream's package, and on npm every
+  package of its scope pinned at the same release (typescript-eslint's packages are released together). A runtime
+  directory named `<name>-<version>` is renamed for the new release, and every `gates.yaml` naming it follows; the other
+  test-time dependencies stay where they are, and the recording shows whether they still fit.
+- `conformance.json`'s `tools[].version`.
+- The generators' pins (`packs/<pack>/upstream/<tool>/*` and the pack's shared `upstream/*` scripts): the commit, npm's
+  `gitHead` of the release where a generator pins that instead (eslint-plugin-react-hooks), a `...VERSION = "<release>"`
+  constant, and an entry keyed by upstream's package (`"eslint-plugin-react": "7.37.5"`). A line naming the commit names
+  its release too, and moves with it.
+- Clippy: `TOOLCHAIN`, `RUSTC_VERSION` and `CLIPPY_VERSION` in `packs/rust/upstream/common.py`, read from the release's
+  channel manifest (`channel-rust-<release>.toml`), and `CLIPPY_COMMIT`, rust-lang/rust-clippy's `rust-<release>` tag.
+  rust-clippy tags `.0` releases only: a point release whose `src/tools/clippy` in rust-lang/rust is the `.0` release's
+  tree keeps the `.0` tag's commit, and one that changed it stops the bump.
+
+The job then derives and records again every tool-pack whose runtime the bump changed (its own, and every tool-pack that
+installs a shared runtime such as `blade`), with the runtimes installed as the record legs install them; the committed
+result is the pins, `recording.lock` and the `UPSTREAM.md` rows of new copies. The recorder runs upstream's code, so
+that job holds no token that can write: it hands a patch to a second job on a fresh runner, which refuses a patch that
+touches anything but the packs and `conformance/recorders/port-readiness/runtimes/`, commits it on the branch from main,
+and opens or updates the pull request with the `neralabs-ci` app's token (CI runs on it, as on the Version packs pull
+request). The body carries the release, upstream's changes since the pin, the pin diff, the tool-packs recorded again,
+each one's per-rule summary of what upstream now answers differently (`port-readiness:record --changes`), and the
+lines that still name the old release: prose (READMEs, comments, `UPSTREAM.md` headers, rule evidence) the bump does not
+rewrite, for the reviewer to settle.
+
+Nothing merges itself. Each night rewrites the branch from main only when the bump it makes changed (a newer release, or
+a different recording), leaves alone a branch someone else pushed to, and does not propose again a release whose pull
+request a maintainer closed without merging. A bump that cannot be made (pins that already disagree, a release without
+a tag) fails its leg with the reason, and the pin stays behind until a maintainer bumps it by hand.
 
 ## CI
 

@@ -236,11 +236,17 @@ test("an ESLint case reuses a committed source with its bytes, its own directory
   }
 });
 
+// The versions come from the manifests, so a bump of the pins (conformance/port-readiness/upstream-bump.ts) keeps this
+// test meaning what it says: a runtime directory is named for the release it installs.
 test("a lock pins every runtime the adapter installs, the environment the pack is linted in among them", () => {
-  assert.deepEqual(recordedRuntimes(readGatesManifest(PACKAGE_ROOT, "next", "eslint-plugin-next")), ["eslint-config-next-16.3.8", "eslint-plugin-next-16.3.8", "parsers"]);
-  assert.deepEqual(recordedRuntimes(readGatesManifest(PACKAGE_ROOT, "python", "ruff")), ["python", "ruff-0.16.9"]);
-  assert.deepEqual(recordedRuntimes(readGatesManifest(PACKAGE_ROOT, "php", "phpcs")), ["php", "phpcs-4.0.4"]);
-  assert.deepEqual(recordedRuntimes(readGatesManifest(PACKAGE_ROOT, "blade", "tlint")), ["blade", "php", "tlint-9.7.0"]);
+  const next = readGatesManifest(PACKAGE_ROOT, "next", "eslint-plugin-next");
+  assert.deepEqual(recordedRuntimes(next), [`eslint-config-next-${next.eslint!.environment!.version}`, `eslint-plugin-next-${next.upstream.version}`, "parsers"]);
+  const ruff = readGatesManifest(PACKAGE_ROOT, "python", "ruff");
+  assert.deepEqual(recordedRuntimes(ruff), ["python", `ruff-${ruff.upstream.version}`]);
+  const phpcs = readGatesManifest(PACKAGE_ROOT, "php", "phpcs");
+  assert.deepEqual(recordedRuntimes(phpcs), ["php", `phpcs-${phpcs.upstream.version}`]);
+  const tlint = readGatesManifest(PACKAGE_ROOT, "blade", "tlint");
+  assert.deepEqual(recordedRuntimes(tlint), ["blade", "php", `tlint-${tlint.upstream.version}`]);
 });
 
 test("a runtime's manifest pins every direct dependency at an exact version", () => {

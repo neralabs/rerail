@@ -89,14 +89,18 @@ request's cache to that pull request, so main reads only what main's pushes and 
 
 ```sh
 npm run port-readiness:upstream-releases   # every pin against its upstream's latest stable release
+npm run port-readiness:bump -- --pack <pack> --tool <tool> [--version <release>] [--dry-run]   # move a tool-pack's pins
 ```
 
 `upstream-releases.ts` reads each gated tool-pack's pin of its upstream twice, `upstream.version` in `gates.yaml` and the
 package its runtime installs (`runtimes/<upstream.runtime>/`: `package.json`, `pyproject.toml` or `composer.json`), and
 the Rust pack's Clippy pin (`TOOLCHAIN` in `packs/rust/upstream/common.py`, with `conformance.json`'s Clippy version). It
 asks npm, PyPI, Packagist and Rust's stable channel manifest for each package's latest stable release, prints a table,
-and exits 1 when a pin is behind it, the pins disagree, or a registry cannot be read. `port-readiness-nightly.yml` runs
-it on main and writes the table to the job summary (docs/port-readiness.md, "Upstream releases").
+and exits 1 when a pin is behind it, the pins disagree, or a registry cannot be read; `--behind <file>` writes the
+tool-packs behind as JSON. `upstream-bump.ts` moves one tool-pack's pins (gates.yaml, the runtime and its directory
+name, conformance.json, the generators' constants; Clippy's toolchain) to a release, resolving its tag's commit on
+GitHub, and lists the prose still naming the old one. `port-readiness-nightly.yml` runs both on main and opens one bump
+pull request per tool-pack behind (docs/port-readiness.md, "Upstream releases").
 
 ## Data
 

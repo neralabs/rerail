@@ -3,8 +3,9 @@ name: Port readiness (nightly)
 # Once a day, and on demand: re-records every gated tool-pack's upstream answers and fails when a committed recording
 # no longer matches the pinned upstream (port-readiness:record --check), then judges every rule again and saves the fresh
 # results for pull requests to read, and fails when an upstream tool has published a stable release newer than the one
-# its tool-pack pins (port-readiness:upstream-releases). Pull requests judge rules against the committed recordings
-# (port-readiness.yml); this job keeps them honest.
+# its tool-pack pins (port-readiness:upstream-releases). For each tool-pack behind, it opens (or updates) one pull request
+# that moves the pins to the new release and records the tool-pack again (port-readiness:bump). Pull requests judge
+# rules against the committed recordings (port-readiness.yml); this job keeps them honest.
 
 on:
   schedule:
@@ -219,14 +220,17 @@ jobs:
 
   # Red when an upstream tool has published a stable release newer than its tool-pack's pin: gates.yaml's version and
   # the runtime's pin under conformance/recorders/port-readiness/runtimes/, against npm, PyPI, Packagist and the Rust
-  # channel (Clippy, pinned by rust-toolchain.toml). The job summary lists every tool-pack. Bumping a pin means
-  # recording the tool-pack again (docs/port-readiness.md, "Upstream releases").
+  # channel (Clippy, pinned by packs/rust/upstream/common.py). The job summary lists every tool-pack. It stays red
+  # while any pin is behind: the bump pull requests below are the fix (docs/port-readiness.md, "Upstream releases").
   upstream-releases:
     name: Upstream releases are not newer than the pins
     # Main's pins; forks that turn scheduled workflows back on skip it.
     if: github.repository_owner == 'neralabs' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    outputs:
+      # The tool-packs behind upstream, as JSON (upstream-releases.ts, behindToolPacks): the bump jobs' matrix.
+      behind: ${{ steps.check.outputs.behind }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -236,5 +240,241 @@ jobs:
 
       - uses: ./.github/actions/node-deps
 
-      - name: Check the upstream releases
-        run: npm run port-readiness:upstream-releases
+      # The list is written before the check's exit code fails the job, so the bump jobs still read it.
+      - id: check
+        name: Check the upstream releases
+        run: |
+          set +e
+          npm run port-readiness:upstream-releases -- --behind "$RUNNER_TEMP/behind.json"
+          status=$?
+          set -e
+          if [ -s "$RUNNER_TEMP/behind.json" ]; then
+            echo "behind=$(jq -c . "$RUNNER_TEMP/behind.json")" >> "$GITHUB_OUTPUT"
+          fi
+          exit "$status"
+
+  # One leg per tool-pack behind upstream: move its pins to the latest stable release (port-readiness:bump), then derive
+  # and record every tool-pack the bump made stale with the runtimes installed as the record legs install them, and keep
+  # what changed in the tree as a patch. The recorder runs upstream's code and unlocked Composer packages, so this job
+  # holds no token that can write: the pull request job below applies the patch on a fresh runner. Only the bump step
+  # gets the read-only GITHUB_TOKEN, for GitHub's API (release tags), and it runs before any upstream code. id-token
+  # reads the packs' hand-written test data from S3; what CI derives from the pinned upstream is derived here at the
+  # new pin, not pulled.
+  bump:
+    name: Bump ${{ matrix.toolPack }} to ${{ matrix.latest }}
+    needs: upstream-releases
+    if: always() && github.repository_owner == 'neralabs' && github.ref == 'refs/heads/main' && needs.upstream-releases.outputs.behind != '' && needs.upstream-releases.outputs.behind != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.upstream-releases.outputs.behind) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      - uses: ./.github/actions/pack-fixtures
+
+      - uses: ./.github/actions/node-deps
+
+      - name: Build the package
+        run: npm run build:js
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+
+      # The php and blade tool-packs run their upstream under the exact PHP their runtime pins, and Composer installs it.
+      - name: Set up the pinned PHP and Composer
+        if: matrix.pack == 'php' || matrix.pack == 'blade'
+        uses: ./.github/actions/php
+
+      - name: Bump the pins
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+          VERSION: ${{ matrix.latest }}
+          GH_TOKEN: ${{ github.token }}
+        run: npm run port-readiness:bump -- --pack "$PACK" --tool "$TOOL" --version "$VERSION" --summary "$RUNNER_TEMP/bump/summary.md" --json "$RUNNER_TEMP/bump/bump.json"
+
+      # The bump names the tool-packs whose recordings it made stale: its own, and any other that installs a runtime it
+      # changed. Each is derived from the new pins and recorded again, its recording.lock and UPSTREAM.md rows rewritten,
+      # and the per-rule summary of what upstream now answers differently kept for the pull request. Clippy is not gated:
+      # nothing is recorded, and CI derives its answers on the pull request.
+      - name: Record the bumped tool-packs again
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bump/changes"
+          mapfile -t legs < <(jq -r '.record[] | "\(.pack) \(.tool)"' "$RUNNER_TEMP/bump/bump.json")
+          for leg in "${legs[@]}"; do
+            read -r pack tool <<< "$leg"
+            npm run fixtures:derive -- --pack "$pack" --tool "$tool" --update --changes "$RUNNER_TEMP/bump/changes/$pack--$tool.md"
+          done
+
+      # Only what git tracks: the derived test data is gitignored and never committed.
+      - name: Keep the bump as a patch
+        run: |
+          set -euo pipefail
+          git add -A -- packs conformance/recorders/port-readiness/runtimes
+          git diff --cached --binary > "$RUNNER_TEMP/bump/bump.patch"
+          git diff --cached --stat
+
+      - name: Upload the bump
+        uses: actions/upload-artifact@v7
+        with:
+          name: bump-${{ matrix.pack }}--${{ matrix.tool }}
+          path: ${{ runner.temp }}/bump/
+          if-no-files-found: error
+          retention-days: 14
+
+  # Commits each leg's patch on auto/bump-<pack>-<tool>, from main, and opens or updates its pull request with the
+  # neralabs-ci app's token (a pull request opened with GITHUB_TOKEN would run no CI). It runs on a fresh runner that
+  # never ran upstream's code, applies only a patch confined to the packs and the recorder's runtimes, and never merges:
+  # a maintainer reviews the pin diff, the per-rule summary and the prose the bump left naming the old release.
+  # Idempotent: a branch whose bump commit already makes the same change is not pushed again, a branch someone else
+  # pushed to is left alone, and a release whose bump pull request a maintainer closed is not proposed again.
+  bump-pull-request:
+    name: Bump pull request (${{ matrix.toolPack }} ${{ matrix.latest }})
+    needs: [upstream-releases, bump]
+    if: always() && github.repository_owner == 'neralabs' && github.ref == 'refs/heads/main' && needs.upstream-releases.outputs.behind != '' && needs.upstream-releases.outputs.behind != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.upstream-releases.outputs.behind) }}
+    steps:
+      # A leg whose bump failed uploaded nothing, and fails here too.
+      - name: Download the bump
+        uses: actions/download-artifact@v8
+        with:
+          name: bump-${{ matrix.pack }}--${{ matrix.tool }}
+          path: ${{ runner.temp }}/bump
+
+      - id: app-token
+        name: Get the neralabs-ci app token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - id: commit
+        name: Commit the bump on its branch
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          branch="auto/bump-$PACK-$TOOL"
+          version="$(jq -r .version "$RUNNER_TEMP/bump/bump.json")"
+          title="Bump $PACK/$TOOL to $version"
+          {
+            echo "branch=$branch"
+            echo "title=$title"
+          } >> "$GITHUB_OUTPUT"
+
+          # A maintainer closed this release's bump without merging it: the nightly stays red, and proposes the next release.
+          if gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state closed --json title,mergedAt \
+            | jq -e --arg title "$title" 'any(.[]; .title == $title and .mergedAt == null)' > /dev/null; then
+            echo "::notice::$title was closed without merging; not proposing it again"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # The patch may touch only the packs' pins, scripts, recordings and licence notes, and the recorder's runtimes,
+          # as regular files.
+          git apply --index --binary "$RUNNER_TEMP/bump/bump.patch"
+          outside="$(git diff --cached --name-only --no-renames | grep -v -E '^(packs/[a-z0-9-]+/(conformance\.json|upstream/.+|licenses/[^/]+/UPSTREAM\.md)|conformance/recorders/port-readiness/runtimes/[a-z0-9._-]+/[^/]+)$' || true)"
+          if [ -n "$outside" ]; then
+            echo "::error::the bump patch touches files outside the pins and recordings:"
+            echo "$outside"
+            exit 1
+          fi
+          if git diff --cached --raw --no-renames | awk '{ print $2 }' | grep -q -E '^(120000|160000)$'; then
+            echo "::error::the bump patch adds a symbolic link or a submodule"
+            exit 1
+          fi
+
+          user_id="$(gh api "/users/${APP_SLUG}%5Bbot%5D" --jq .id)"
+          email="${user_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+          git -c user.name="${APP_SLUG}[bot]" -c user.email="$email" commit --quiet \
+            -m "$title" \
+            -m "Opened by the port readiness nightly: npm run port-readiness:bump -- --pack $PACK --tool $TOOL --version $version, then each tool-pack it made stale derived and recorded again."
+
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          git_auth=(-c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic ${auth}")
+          lease=""
+          if git "${git_auth[@]}" fetch --no-tags --depth=2 origin "+refs/heads/$branch:refs/remotes/origin/$branch" 2> /dev/null; then
+            if [ "$(git log -1 --format='%ae %ce' "origin/$branch")" != "$email $email" ]; then
+              echo "::warning::$branch has a commit the nightly did not make; leaving it alone"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [ "$(git diff --binary "origin/$branch^" "origin/$branch" | git patch-id --stable)" = "$(git diff --binary HEAD^ HEAD | git patch-id --stable)" ]; then
+              echo "$branch already makes this bump"
+              exit 0
+            fi
+            lease="$(git rev-parse "origin/$branch")"
+          fi
+          git "${git_auth[@]}" push --force-with-lease="refs/heads/$branch:$lease" origin "HEAD:refs/heads/$branch"
+
+      # The body is the bump's summary (release links, the pin diff, what is recorded again, what still names the old
+      # release), then each recorded tool-pack's per-rule summary; GitHub caps a body at 65,536 characters.
+      - name: Open or update the pull request
+        if: steps.commit.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BRANCH: ${{ steps.commit.outputs.branch }}
+          TITLE: ${{ steps.commit.outputs.title }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          body="$RUNNER_TEMP/body.md"
+          {
+            cat "$RUNNER_TEMP/bump/summary.md"
+            echo
+            echo "### What upstream answers differently"
+            echo
+            found=false
+            for changes in "$RUNNER_TEMP"/bump/changes/*.md; do
+              [ -e "$changes" ] || continue
+              found=true
+              cat "$changes"
+              echo
+            done
+            if [ "$found" = false ]; then echo "Nothing was recorded."; fi
+            echo
+            echo "---"
+            echo "Opened by the [port readiness nightly]($RUN_URL); it updates this pull request while the release is the latest, and never merges it."
+          } > "$body"
+          if [ "$(wc -c < "$body")" -gt 60000 ]; then
+            head -c 60000 "$body" > "$body.cut"
+            printf '\n\n... cut at 60,000 characters: the run'"'"'s bump artifact holds all of it (%s).\n' "$RUN_URL" >> "$body.cut"
+            mv "$body.cut" "$body"
+          fi
+          number="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$number" ]; then
+            gh pr edit "$number" --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file "$body"
+          else
+            gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" --title "$TITLE" --body-file "$body"
+          fi

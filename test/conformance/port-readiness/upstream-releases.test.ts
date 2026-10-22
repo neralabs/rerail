@@ -228,9 +228,28 @@ test("a pin behind upstream's latest stable release fails and names the tool-pac
   const { code, stdout, summary } = await nightly(root, fakeFetch(upstreamPins(root), (pin) => (pin.toolPack === "demo/bandit" ? "1.10.0" : pin.version)));
   assert.equal(code, 1);
   assert.match(summary, /^\| `demo\/bandit` \| PyPI \| `bandit` \| 1\.9\.4 \| 1\.10\.0 \| behind \|$/mu);
-  assert.match(summary, /^- `demo\/bandit`: bandit 1\.9\.4 is pinned and PyPI's latest stable release is 1\.10\.0: .*npm run port-readiness:record -- --pack demo --tool bandit$/mu);
+  assert.match(summary, /^- `demo\/bandit`: bandit 1\.9\.4 is pinned and PyPI's latest stable release is 1\.10\.0: npm run port-readiness:bump -- --pack demo --tool bandit, then record it again \(the nightly opens this as a pull request\)$/mu);
   assert.match(stdout, /^::error title=Upstream release \(demo\/bandit\)::demo\/bandit behind: /mu);
   assert.doesNotMatch(stdout, /::error title=Upstream release \(rust\/clippy\)/u);
+});
+
+test("--behind lists the tool-packs behind upstream for the nightly to bump, and only those", async () => {
+  const root = checkout(BANDIT_1_9_4);
+  roots.push(root);
+  const behind = join(root, "behind.json");
+  vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+  const code = await main(root, fakeFetch(upstreamPins(root), (pin) => (pin.toolPack === "demo/bandit" ? "1.10.0" : pin.version)), {}, { behind });
+  vi.restoreAllMocks();
+  assert.equal(code, 1);
+  assert.deepEqual(JSON.parse(readFileSync(behind, "utf8")), [{ pack: "demo", tool: "bandit", toolPack: "demo/bandit", pinned: "1.9.4", latest: "1.10.0" }]);
+
+  // A failing check whose pins are not behind upstream (here they disagree) lists nothing to bump.
+  const disagreeing = checkout('[project]\nname = "runtime"\ndependencies = ["bandit==1.9.3"]\n');
+  roots.push(disagreeing);
+  vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+  await main(disagreeing, fakeFetch(upstreamPins(disagreeing), (pin) => pin.version), {}, { behind });
+  vi.restoreAllMocks();
+  assert.deepEqual(JSON.parse(readFileSync(behind, "utf8")), []);
 });
 
 test("gates.yaml and the runtime disagreeing about the pin fails, as does a runtime that pins no release of upstream", async () => {
