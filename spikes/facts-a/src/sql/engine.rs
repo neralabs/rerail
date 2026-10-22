@@ -1047,7 +1047,6 @@ pub struct Db<'a> {
     pub tables: FxHashMap<String, Rc<Table>>,
     pub source: &'a str,
     pub path: &'a str,
-    pub regexes: RefCell<FxHashMap<String, Rc<regex::Regex>>>,
 }
 
 type Index = FxHashMap<Vec<Key>, Vec<u32>>;
@@ -1811,15 +1810,8 @@ impl<'d, 'a> Exec<'d, 'a> {
     }
 
     fn regex(&self, pattern: &str) -> Option<Rc<regex::Regex>> {
-        if let Some(r) = self.db.regexes.borrow().get(pattern) {
-            return Some(r.clone());
-        }
-        match regex::Regex::new(pattern) {
-            Ok(r) => {
-                let r = Rc::new(r);
-                self.db.regexes.borrow_mut().insert(pattern.to_owned(), r.clone());
-                Some(r)
-            }
+        match crate::rx::local(pattern) {
+            Ok(r) => Some(r),
             Err(e) => {
                 self.fail(format!("regex: {e}"));
                 None

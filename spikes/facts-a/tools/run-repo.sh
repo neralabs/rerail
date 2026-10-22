@@ -2,9 +2,10 @@
 # run-repo.sh: one gate timing run of `facts-a repo` under the Phase 1 measurement protocol
 # (release binary, bench-lock, uptime before and after inside the lock, /usr/bin/time -l, a
 # 900 s cap), then its parity against the suite oracle. Prints the run directory.
+# FACTS_RUNS overrides the runs directory (Phase 2: ~/rerail-bench/facts/phase-2/<slice>/runs).
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-R=~/rerail-bench/facts/spike-a/runs/$(date +%Y%m%dT%H%M%S)-repo
+R=${FACTS_RUNS:-~/rerail-bench/facts/spike-a/runs}/$(date +%Y%m%dT%H%M%S)-repo
 mkdir -p "$R"
 BIN=./spikes/facts-a/target/release/facts-a
 CMD="$BIN repo --threads 4 --out-dir $R"

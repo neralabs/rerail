@@ -7,6 +7,7 @@ mod policy;
 mod pyvalue;
 mod rel;
 mod repo;
+mod rx;
 mod spill;
 mod sql;
 mod subst;
