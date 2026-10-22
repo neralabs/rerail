@@ -249,7 +249,7 @@ impl<'a> Compiler<'a> {
             terms.push(self.kind(k)?);
         }
         if let Some(rx) = r.get("regex").and_then(Json::as_str) {
-            terms.push(Rule::Regex(Regex::new(rx).map_err(|e| format!("{at}/regex: {e}"))?));
+            terms.push(Rule::Regex(crate::rx::get(rx).map_err(|e| format!("{at}/regex: {e}"))?));
         }
         if let Some(c) = r.get("capture") {
             let c = c.as_str().ok_or("capture must be a name")?;
@@ -267,7 +267,7 @@ impl<'a> Compiler<'a> {
             let o = obj(fp, "filePath")?;
             let get = |k: &str| -> Result<Option<Regex>, String> {
                 o.get(k)
-                    .map(|v| Regex::new(v.as_str().unwrap_or("")).map_err(|e| e.to_string()))
+                    .map(|v| crate::rx::get(v.as_str().unwrap_or("")).map_err(|e| e.to_string()))
                     .transpose()
             };
             terms.push(Rule::FilePath { regex: get("regex")?, not_regex: get("notRegex")? });
@@ -485,7 +485,7 @@ impl<'a> Compiler<'a> {
         };
         let regex = o
             .get("regex")
-            .map(|r| Regex::new(r.as_str().unwrap_or("")).map_err(|e| format!("{at}: {e}")))
+            .map(|r| crate::rx::get(r.as_str().unwrap_or("")).map_err(|e| format!("{at}: {e}")))
             .transpose()?;
         Ok(Rule::Value(ValueTest { eq, regex }))
     }

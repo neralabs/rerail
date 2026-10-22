@@ -89,7 +89,7 @@ pub struct Rule {
 fn proj_parse(s: &Json, names: &mut Names) -> Result<Proj, String> {
     if let Some(o) = s.as_object() {
         let src = proj_parse(o.get("source").ok_or("projection source")?, names)?;
-        let rx = Regex::new(o["regex"].as_str().ok_or("projection regex")?).map_err(|e| e.to_string())?;
+        let rx = crate::rx::get(o["regex"].as_str().ok_or("projection regex")?).map_err(|e| e.to_string())?;
         let g = o["group"].as_u64().ok_or("projection group")? as usize;
         return Ok(Proj::Regex(Box::new(src), rx, g));
     }
@@ -212,7 +212,7 @@ impl Rule {
                     Kind::ForbidAst { input: i }
                 } else if let Some(r) = f.get("regex") {
                     let rx_list = |k: &str| -> Result<Vec<Regex>, String> {
-                        r.get(k).and_then(Json::as_array).into_iter().flatten().map(|x| Regex::new(x.as_str().unwrap_or("")).map_err(|e| e.to_string())).collect()
+                        r.get(k).and_then(Json::as_array).into_iter().flatten().map(|x| crate::rx::get(x.as_str().unwrap_or("")).map_err(|e| e.to_string())).collect()
                     };
                     if r.get("content").is_some() {
                         return Err(format!("{cid}: regex content gate unsupported"));
@@ -232,7 +232,7 @@ impl Rule {
                             Some("file.path") => RegexSource::Path,
                             s => return Err(format!("{cid}: regex source {s:?}")),
                         },
-                        rx: Regex::new(r["pattern"].as_str().ok_or("pattern")?).map_err(|e| e.to_string())?,
+                        rx: crate::rx::get(r["pattern"].as_str().ok_or("pattern")?).map_err(|e| e.to_string())?,
                         include: rx_list("include")?,
                         exclude: rx_list("exclude")?,
                         lines,

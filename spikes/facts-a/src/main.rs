@@ -11,6 +11,7 @@ mod pyvalue;
 mod rel;
 mod mutant;
 mod repo;
+mod rx;
 mod spill;
 mod sql;
 mod subst;
