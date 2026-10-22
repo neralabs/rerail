@@ -1,0 +1,48 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up039-unnecessary-class-parentheses",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's UP039 (unnecessary-class-parentheses): a class definition whose base-class parentheses hold no positional, starred, keyword or `**` argument (only comments or line continuations, if anything), as in `class A():`. Reported on the parentheses (the argument list, from `(` to `)`).",
+  "scope": {
+    "include": ["**/*"],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unnecessary-class-parentheses",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "argument_list",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "class_definition",
+              "field": "superclasses"
+            },
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "regex": "(?s).",
+                "not": {
+                  "any": [
+                    { "regex": "^[()]$" },
+                    { "kind": "comment" },
+                    { "kind": "line_continuation" }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP039",
+        "message": "Unnecessary parentheses after class definition",
+        "suppress": { "noqa": { "codes": ["UP039"] } }
+      }
+    }
+  ]
+}

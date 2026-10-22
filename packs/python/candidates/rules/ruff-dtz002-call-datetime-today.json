@@ -1,0 +1,109 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-dtz002-call-datetime-today",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Port of Ruff's DTZ002 (call-datetime-today): a call whose callee (parentheses transparent) resolves to `datetime.datetime.today` through the file's imports (Ruff's `resolve_qualified_name`), unless the call (parentheses transparent) is followed by zero or more `.replace(...)` calls and then an `.astimezone` attribute (Ruff's `followed_by_astimezone`; the attribute need not be called), reported on the call.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "call-datetime-today",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "call",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "function",
+       "matches": "callee"
+      },
+      "not": {
+       "matches": "astz-safe"
+      }
+     },
+     "utils": {
+      "callee": {
+       "any": [
+        {
+         "any": [
+          {
+           "kind": "identifier"
+          },
+          {
+           "kind": "attribute"
+          }
+         ],
+         "resolves": {
+          "import": [
+           "datetime.datetime.today"
+          ]
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee"
+         }
+        }
+       ]
+      },
+      "astz-safe": {
+       "inside": {
+        "stopBy": {
+         "not": {
+          "kind": "parenthesized_expression"
+         }
+        },
+        "kind": "attribute",
+        "any": [
+         {
+          "has": {
+           "stopBy": "neighbor",
+           "field": "attribute",
+           "regex": "^astimezone$"
+          }
+         },
+         {
+          "has": {
+           "stopBy": "neighbor",
+           "field": "attribute",
+           "regex": "^replace$"
+          },
+          "inside": {
+           "stopBy": {
+            "not": {
+             "kind": "parenthesized_expression"
+            }
+           },
+           "kind": "call",
+           "matches": "astz-safe"
+          }
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "DTZ002",
+    "message": "`datetime.datetime.today()` used",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "DTZ002"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

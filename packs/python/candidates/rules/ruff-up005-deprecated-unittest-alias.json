@@ -1,0 +1,164 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up005-deprecated-unittest-alias",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's UP005 (deprecated-unittest-alias): the callee of a call (parentheses transparent) that is an attribute `self.<alias>` whose object is the name `self` (parentheses transparent; compared, not resolved) and whose attribute is one of the fifteen deprecated `unittest` aliases Ruff lists (`assertEquals`, `failUnless`, `assert_`, ...). Reported on the attribute; the message names the replacement, as Ruff's does.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "deprecated-unittest-alias",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "self-name": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^self$"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "self-name"
+                  }
+                }
+              ]
+            },
+            "callee-position": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "call",
+                    "field": "function"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "callee-position"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "attribute",
+            "matches": "callee-position",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "object",
+                  "matches": "self-name"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "attribute",
+                  "kind": "identifier",
+                  "regex": "^(?:assertAlmostEquals|assertEquals|assertNotAlmostEquals|assertNotEquals|assertNotRegexpMatches|assertRaisesRegexp|assertRegexpMatches|assert_|failIf|failIfAlmostEqual|failIfEqual|failUnless|failUnlessAlmostEqual|failUnlessEqual|failUnlessRaises)$",
+                  "pattern": "$ALIAS"
+                }
+              }
+            ]
+          },
+          "transform": {
+            "T0": {
+              "replace": {
+                "source": "$ALIAS",
+                "replace": "^(?:assertAlmostEquals|failUnlessAlmostEqual)$",
+                "by": "assertAlmostEqual"
+              }
+            },
+            "T1": {
+              "replace": {
+                "source": "$T0",
+                "replace": "^(?:assertEquals|failUnlessEqual)$",
+                "by": "assertEqual"
+              }
+            },
+            "T2": {
+              "replace": {
+                "source": "$T1",
+                "replace": "^(?:assertNotAlmostEquals|failIfAlmostEqual)$",
+                "by": "assertNotAlmostEqual"
+              }
+            },
+            "T3": {
+              "replace": {
+                "source": "$T2",
+                "replace": "^(?:assertNotEquals|failIfEqual)$",
+                "by": "assertNotEqual"
+              }
+            },
+            "T4": {
+              "replace": {
+                "source": "$T3",
+                "replace": "^(?:assertNotRegexpMatches)$",
+                "by": "assertNotRegex"
+              }
+            },
+            "T5": {
+              "replace": {
+                "source": "$T4",
+                "replace": "^(?:assertRaisesRegexp)$",
+                "by": "assertRaisesRegex"
+              }
+            },
+            "T6": {
+              "replace": {
+                "source": "$T5",
+                "replace": "^(?:assertRegexpMatches)$",
+                "by": "assertRegex"
+              }
+            },
+            "T7": {
+              "replace": {
+                "source": "$T6",
+                "replace": "^(?:assert_|failUnless)$",
+                "by": "assertTrue"
+              }
+            },
+            "T8": {
+              "replace": {
+                "source": "$T7",
+                "replace": "^(?:failIf)$",
+                "by": "assertFalse"
+              }
+            },
+            "TARGET": {
+              "replace": {
+                "source": "$T8",
+                "replace": "^(?:failUnlessRaises)$",
+                "by": "assertRaises"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP005",
+        "message": "`$ALIAS` is deprecated, use `$TARGET`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP005"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

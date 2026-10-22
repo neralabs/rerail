@@ -1,0 +1,60 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up050-useless-class-metaclass-type",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's UP050 (useless-class-metaclass-type): a `metaclass=` keyword argument in a class definition's base-class list whose value (parentheses transparent) resolves to the builtin `type` (Ruff's `match_builtin_expr`: the unshadowed name `type`, or `type` of the `builtins` module through the file's imports). Reported on the keyword argument, from `metaclass` to the end of its value; every such keyword of a class is reported.",
+  "scope": {
+    "include": ["**/*"],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "useless-class-metaclass-type",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "builtin-type": {
+              "any": [
+                {
+                  "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                  "resolves": { "global": ["type"], "import": ["builtins.type"] }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": { "stopBy": "neighbor", "matches": "builtin-type" }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "keyword_argument",
+            "has": { "stopBy": "neighbor", "field": "name", "regex": "^metaclass$" },
+            "all": [
+              { "has": { "stopBy": "neighbor", "field": "value", "matches": "builtin-type" } },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "class_definition",
+                    "field": "superclasses",
+                    "has": { "stopBy": "neighbor", "field": "name", "pattern": "$NAME" }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP050",
+        "message": "Class `$NAME` uses `metaclass=type`, which is redundant",
+        "suppress": { "noqa": { "codes": ["UP050"] } }
+      }
+    }
+  ]
+}

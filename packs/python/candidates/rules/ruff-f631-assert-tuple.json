@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "ruff-f631-assert-tuple",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "Port of Ruff's F631 (assert-tuple) with default settings: an `assert` whose test (not its message) is a non-empty tuple, parenthesized any number of times. Reported on the whole statement.",
+  "description": "Port of Ruff's F631 (assert-tuple) with default settings: an `assert` whose test (not its message) is a non-empty tuple, parenthesized any number of times. Comments and line continuations are not tuple items and may sit between `assert` and the test. Reported on the whole statement.",
   "scope": {
     "include": [
       "**/*"
@@ -17,6 +17,16 @@
         "ast": {
           "language": "python",
           "utils": {
+            "trivia": {
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                }
+              ]
+            },
             "non-empty-tuple": {
               "any": [
                 {
@@ -29,7 +39,7 @@
                           "regex": "^[(),]$"
                         },
                         {
-                          "kind": "comment"
+                          "matches": "trivia"
                         }
                       ]
                     }
@@ -51,7 +61,11 @@
               "stopBy": "neighbor",
               "matches": "non-empty-tuple",
               "follows": {
-                "stopBy": "neighbor",
+                "stopBy": {
+                  "not": {
+                    "matches": "trivia"
+                  }
+                },
                 "regex": "^assert$"
               }
             }

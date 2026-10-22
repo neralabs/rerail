@@ -132,11 +132,14 @@ The fixtures listed below were written by Rerail for the pinned tool to score, b
 | `upstream/ruff/fixtures/rerail/probes/B017-continuation.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/probes/B019-parenthesized-decorator.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/probes/B025-nested-try.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/probes/B905-trivia-and-starred-call.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/probes/E712-comment-in-tuple.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/probes/E713-E714-comment-in-operator.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/probes/F404-concatenated-docstring.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/probes/F602-string-and-name-key.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/probes/F631-F634-continuation-before-test.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/probes/F631-F634-continuation-empty-tuple.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/probes/F722-leading-continuation.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/probes/PIE790-parenthesized-type-checking.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/probes/PIE808-comment-after-start.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/probes/RET504-parenthesized-suppress.py` | written by Rerail |
@@ -144,3 +147,9 @@ The fixtures listed below were written by Rerail for the pinned tool to score, b
 | `upstream/ruff/fixtures/rerail/probes/SIM201-SIM202-dunder-comprehension-lambda.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/probes/SIM220-SIM221-t-strings.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/probes/SIM905-comment-before-argument.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/probes/UP001-parenthesized-target.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/probes/UP003-argument-shapes.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/probes/UP004-parenthesized-bases.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/probes/UP039-line-continuation-in-parentheses.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/probes/UP041-parenthesized-sites.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/probes/W605-format-spec-and-field-edges.py` | written by Rerail |

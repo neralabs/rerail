@@ -1,0 +1,120 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pt027-pytest-unittest-raises-assertion",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's PT027 (pytest-unittest-raises-assertion), `unittest_raises_assertion_call` and `unittest_raises_assertion_binding` in flake8_pytest_style/rules/assertion.rs: a call whose callee (parentheses transparent) is an attribute access `<x>.assertRaises`, `<x>.failUnlessRaises`, `<x>.assertRaisesRegex` or `<x>.assertRaisesRegexp`, whatever `<x>` is. The call path skips a call that is itself (parentheses transparent) the context expression of a `with` item with an `as` target, and the binding path reports it again only when that target is a plain name, so such a call with a tuple, list, attribute, subscript or starred target is not reported. Reported on the callee (the attribute, inside any parentheses), with the attribute name in the message.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "pytest-unittest-raises-assertion",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "callee-position": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "call",
+                    "pattern": "$CALL"
+                  },
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "argument_list"
+                      },
+                      {
+                        "kind": "generator_expression"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "callee-position"
+                  }
+                }
+              ]
+            },
+            "context-with-target": {
+              "inside": {
+                "stopBy": {
+                  "not": {
+                    "kind": "parenthesized_expression"
+                  }
+                },
+                "kind": "as_pattern",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "with_item"
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "as_pattern_target",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "plain-name"
+                    }
+                  }
+                }
+              }
+            },
+            "plain-name": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "plain-name"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "attribute",
+            "has": {
+              "field": "attribute",
+              "pattern": "$ASSERTION",
+              "regex": "^(assertRaises|failUnlessRaises|assertRaisesRegex|assertRaisesRegexp)$"
+            },
+            "matches": "callee-position"
+          },
+          "constraints": {
+            "CALL": {
+              "not": {
+                "matches": "context-with-target"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PT027",
+        "message": "Use `pytest.raises` instead of unittest-style `$ASSERTION`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT027"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

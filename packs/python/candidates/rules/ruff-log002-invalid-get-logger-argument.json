@@ -1,0 +1,185 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-log002-invalid-get-logger-argument",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Port of Ruff's LOG002 (invalid-get-logger-argument): in a call whose callee (parentheses transparent) resolves to `logging.getLogger` through the file's imports, the `name` argument (Ruff's `find_argument_value(\"name\", 0)`: the `name=` keyword, else the first positional argument) when it is (parentheses transparent) the name `__file__` or `__cached__` referring to the module global (no file-local binding shadows it: Ruff's `has_builtin_binding`). Reported on the name.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "invalid-get-logger-argument",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "identifier",
+      "regex": "^(__file__|__cached__)$",
+      "resolves": {
+       "global": [
+        "__file__",
+        "__cached__"
+       ]
+      },
+      "not": {
+       "inside": {
+        "stopBy": "neighbor",
+        "kind": "keyword_argument",
+        "field": "name"
+       }
+      },
+      "any": [
+       {
+        "inside": {
+         "stopBy": {
+          "not": {
+           "kind": "parenthesized_expression"
+          }
+         },
+         "kind": "keyword_argument",
+         "has": {
+          "stopBy": "neighbor",
+          "field": "name",
+          "regex": "^name$"
+         },
+         "inside": {
+          "stopBy": "neighbor",
+          "matches": "get-logger-args"
+         }
+        }
+       },
+       {
+        "matches": "first-positional"
+       }
+      ]
+     },
+     "utils": {
+      "callee": {
+       "any": [
+        {
+         "any": [
+          {
+           "kind": "identifier"
+          },
+          {
+           "kind": "attribute"
+          }
+         ],
+         "resolves": {
+          "import": [
+           "logging.getLogger"
+          ]
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee"
+         }
+        }
+       ]
+      },
+      "get-logger-args": {
+       "kind": "argument_list",
+       "inside": {
+        "stopBy": "neighbor",
+        "kind": "call",
+        "has": {
+         "stopBy": "neighbor",
+         "field": "function",
+         "matches": "callee"
+        }
+       }
+      },
+      "first-positional": {
+       "any": [
+        {
+         "nthChild": {
+          "position": 1,
+          "ofRule": {
+           "not": {
+            "any": [
+             {
+              "kind": "keyword_argument"
+             },
+             {
+              "kind": "dictionary_splat"
+             },
+             {
+              "kind": "comment"
+             },
+             {
+              "kind": "line_continuation"
+             }
+            ]
+           }
+          }
+         },
+         "all": [
+          {
+           "not": {
+            "any": [
+             {
+              "kind": "keyword_argument"
+             },
+             {
+              "kind": "dictionary_splat"
+             },
+             {
+              "kind": "comment"
+             },
+             {
+              "kind": "line_continuation"
+             }
+            ]
+           }
+          }
+         ],
+         "inside": {
+          "stopBy": "neighbor",
+          "matches": "get-logger-args",
+          "not": {
+           "has": {
+            "stopBy": "neighbor",
+            "kind": "keyword_argument",
+            "has": {
+             "stopBy": "neighbor",
+             "field": "name",
+             "regex": "^name$"
+            }
+           }
+          }
+         }
+        },
+        {
+         "inside": {
+          "stopBy": "neighbor",
+          "kind": "parenthesized_expression",
+          "matches": "first-positional"
+         }
+        }
+       ]
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "LOG002",
+    "message": "Use `__name__` with `logging.getLogger()`",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "LOG002"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

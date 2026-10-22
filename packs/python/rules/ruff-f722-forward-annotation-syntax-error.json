@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "ruff-f722-forward-annotation-syntax-error",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "Port of Ruff's F722 (forward-annotation-syntax-error) with default settings: a string Ruff parses as a type definition (a string annotation, a `type` value, a `cast`/`TypeVar` argument, a typing generic's `\"...\"` slice), read with the `annotation` grammar. Three checks: a string Ruff's parser refuses (the parse is one `ERROR` node), reported on the string; each semantic syntax error Ruff's checker reports in a string it parsed (`await` or `yield` outside a function, a walrus rebinding a comprehension variable, duplicate arguments, `__debug__` stored, a name used before its `global`, ...: an `ERROR` node after the expression), reported at the offending node; and Ruff's second error on an `await` evaluated outside any function (\"`await` statement outside of a function\": the string's host is not in a function body with no class between them, and the `await` is not in a lambda's body or a generator expression's element, conditions or later iterables), at the `await`. Strings nested in one (`List['a b']` inside a string annotation) are read too. Not inside a function decorated with a `no_type_check` that resolves to `typing`, `_typeshed` or `typing_extensions` (Ruff's match_typing_expr): its parameters, defaults, return annotation and body. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/F722.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it.",
+  "description": "Port of Ruff's F722 (forward-annotation-syntax-error) with default settings: a string Ruff parses as a type definition (a string annotation, a `type` value, a `cast`/`TypeVar` argument, a typing generic's `\"...\"` slice), read with the `annotation` grammar. Three checks: a string Ruff's parser refuses (the parse is one `ERROR` node), reported on the string, unless its value starts with backslash-newline continuations and then code (the engine's `annotation` grammar refuses a leading `line_continuation`, which Ruff reads as nothing); each semantic syntax error Ruff's checker reports in a string it parsed (`await` or `yield` outside a function, a walrus rebinding a comprehension variable, duplicate arguments, `__debug__` stored, a name used before its `global`, ...: an `ERROR` node after the expression), reported at the offending node; and Ruff's second error on an `await` evaluated outside any function (\"`await` statement outside of a function\": the string's host is not in a function body with no class between them, and the `await` is not in a lambda's body or a generator expression's element, conditions or later iterables), at the `await`. Strings nested in one (`List['a b']` inside a string annotation) are read too. Not inside a function decorated with a `no_type_check` that resolves to `typing`, `_typeshed` or `typing_extensions` (Ruff's match_typing_expr): its parameters, defaults, return annotation and body. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/F722.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it.",
   "scope": {
     "include": [
       "**/*"
@@ -91,6 +91,13 @@
                     "matches": "error-within"
                   }
                 ]
+              },
+              {
+                "not": {
+                  "value": {
+                    "regex": "^(?:\\\\\\r?\\n)+\\S"
+                  }
+                }
               }
             ],
             "not": {

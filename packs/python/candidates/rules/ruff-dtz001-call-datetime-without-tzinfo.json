@@ -1,0 +1,197 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-dtz001-call-datetime-without-tzinfo",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Port of Ruff's DTZ001 (call-datetime-without-tzinfo): a call whose callee (parentheses transparent) resolves to `datetime.datetime` through the file's imports (Ruff's `resolve_qualified_name`), unless the call (parentheses transparent) is followed by zero or more `.replace(...)` calls and then an `.astimezone` attribute (Ruff's `followed_by_astimezone`; the attribute need not be called), and whose `tzinfo` argument (Ruff's `find_argument_value(\"tzinfo\", 7)`: the `tzinfo=` keyword, else positional argument 7 among those before the first starred one; `**kwargs` passes nothing) is missing or is the literal `None` (parentheses transparent). Reported on the call, with Ruff's message for each case.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "shared",
+   "define": {
+    "language": "python",
+    "utils": {
+     "callee": {
+      "any": [
+       {
+        "any": [
+         {
+          "kind": "identifier"
+         },
+         {
+          "kind": "attribute"
+         }
+        ],
+        "resolves": {
+         "import": [
+          "datetime.datetime"
+         ]
+        }
+       },
+       {
+        "kind": "parenthesized_expression",
+        "has": {
+         "stopBy": "neighbor",
+         "matches": "callee"
+        }
+       }
+      ]
+     },
+     "astz-safe": {
+      "inside": {
+       "stopBy": {
+        "not": {
+         "kind": "parenthesized_expression"
+        }
+       },
+       "kind": "attribute",
+       "any": [
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "field": "attribute",
+          "regex": "^astimezone$"
+         }
+        },
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "field": "attribute",
+          "regex": "^replace$"
+         },
+         "inside": {
+          "stopBy": {
+           "not": {
+            "kind": "parenthesized_expression"
+           }
+          },
+          "kind": "call",
+          "matches": "astz-safe"
+         }
+        }
+       ]
+      }
+     },
+     "none-lit": {
+      "any": [
+       {
+        "kind": "none"
+       },
+       {
+        "kind": "parenthesized_expression",
+        "has": {
+         "stopBy": "neighbor",
+         "matches": "none-lit"
+        }
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "no-tzinfo",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "call",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "function",
+       "matches": "callee"
+      },
+      "not": {
+       "matches": "astz-safe"
+      },
+      "arguments": {
+       "signature": [
+        "year",
+        "month",
+        "day",
+        "hour",
+        "minute",
+        "second",
+        "microsecond",
+        "tzinfo"
+       ],
+       "absent": [
+        "tzinfo"
+       ],
+       "mode": "syntactic"
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "DTZ001",
+    "message": "`datetime.datetime()` called without a `tzinfo` argument",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "DTZ001"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "tzinfo-none",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "call",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "function",
+       "matches": "callee"
+      },
+      "not": {
+       "matches": "astz-safe"
+      },
+      "arguments": {
+       "signature": [
+        "year",
+        "month",
+        "day",
+        "hour",
+        "minute",
+        "second",
+        "microsecond",
+        "tzinfo"
+       ],
+       "bind": {
+        "TZ": "tzinfo"
+       },
+       "mode": "syntactic"
+      }
+     },
+     "constraints": {
+      "TZ": {
+       "matches": "none-lit"
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "DTZ001",
+    "message": "`tzinfo=None` passed to `datetime.datetime()`",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "DTZ001"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

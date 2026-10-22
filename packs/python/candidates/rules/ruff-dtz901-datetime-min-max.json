@@ -1,0 +1,168 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-dtz901-datetime-min-max",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Port of Ruff's DTZ901 (datetime-min-max): an attribute expression (any context) resolving to `datetime.datetime.min` or `datetime.datetime.max` through the file's imports (Ruff's `resolve_qualified_name`), reported on it, unless it is (parentheses transparent) the object of a `.time` attribute, or of a `.replace` attribute, whose enclosing expression (Ruff's grandparent: through parentheses, the argument list, a keyword or `**` argument) is a call; for `.replace` that call must also pass a `tzinfo=` keyword that is not the literal `None`.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "datetime-min-max",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "attribute",
+      "resolves": {
+       "import": [
+        "datetime.datetime.min",
+        "datetime.datetime.max"
+       ]
+      },
+      "has": {
+       "stopBy": "neighbor",
+       "field": "attribute",
+       "pattern": "$M"
+      },
+      "not": {
+       "matches": "safe"
+      }
+     },
+     "utils": {
+      "none-lit": {
+       "any": [
+        {
+         "kind": "none"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "none-lit"
+         }
+        }
+       ]
+      },
+      "safe": {
+       "any": [
+        {
+         "inside": {
+          "stopBy": {
+           "not": {
+            "kind": "parenthesized_expression"
+           }
+          },
+          "kind": "attribute",
+          "has": {
+           "stopBy": "neighbor",
+           "field": "attribute",
+           "regex": "^time$"
+          },
+          "inside": {
+           "stopBy": {
+            "not": {
+             "any": [
+              {
+               "kind": "parenthesized_expression"
+              },
+              {
+               "kind": "argument_list"
+              },
+              {
+               "kind": "keyword_argument"
+              },
+              {
+               "kind": "dictionary_splat"
+              }
+             ]
+            }
+           },
+           "kind": "call"
+          }
+         }
+        },
+        {
+         "inside": {
+          "stopBy": {
+           "not": {
+            "kind": "parenthesized_expression"
+           }
+          },
+          "kind": "attribute",
+          "has": {
+           "stopBy": "neighbor",
+           "field": "attribute",
+           "regex": "^replace$"
+          },
+          "inside": {
+           "stopBy": {
+            "not": {
+             "any": [
+              {
+               "kind": "parenthesized_expression"
+              },
+              {
+               "kind": "argument_list"
+              },
+              {
+               "kind": "keyword_argument"
+              },
+              {
+               "kind": "dictionary_splat"
+              }
+             ]
+            }
+           },
+           "kind": "call",
+           "has": {
+            "stopBy": "neighbor",
+            "kind": "argument_list",
+            "has": {
+             "stopBy": "neighbor",
+             "kind": "keyword_argument",
+             "has": {
+              "stopBy": "neighbor",
+              "field": "name",
+              "regex": "^tzinfo$"
+             },
+             "all": [
+              {
+               "has": {
+                "stopBy": "neighbor",
+                "field": "value",
+                "not": {
+                 "matches": "none-lit"
+                }
+               }
+              }
+             ]
+            }
+           }
+          }
+         }
+        }
+       ]
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "DTZ901",
+    "message": "Use of `datetime.datetime.$M` without timezone information",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "DTZ901"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,102 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up001-useless-metaclass-type",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's UP001 (useless-metaclass-type): an assignment statement `__metaclass__ = type` with a single target, the name `__metaclass__` (parentheses transparent, so `(__metaclass__) = type`; not a tuple target, not an annotated assignment, not a chained `a = __metaclass__ = type`), whose value is the name `type` (parentheses transparent; the name is compared, not resolved, as in Ruff), anywhere in the file. Reported on the assignment statement.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "useless-metaclass-type",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "metaclass-target": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^__metaclass__$"
+                },
+                {
+                  "kind": "tuple_pattern",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "metaclass-target"
+                  }
+                }
+              ]
+            },
+            "type-name": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^type$"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "type-name"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "assignment",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "expression_statement"
+            },
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "type"
+              }
+            },
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "left",
+                  "matches": "metaclass-target"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "right",
+                  "matches": "type-name"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP001",
+        "message": "`__metaclass__ = type` is implied",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP001"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

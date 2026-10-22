@@ -1,0 +1,65 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pt009-pytest-unittest-assertion",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's PT009 (pytest-unittest-assertion): a call whose callee (parentheses transparent) is an attribute access named one of unittest's assertion methods Ruff lists (`assertEqual`, `assertTrue`, `assertIsNone`, `failUnless`, `assert_`, ... 41 names), on any object and in any context, syntactically as Ruff matches it (no name resolution). Reported on the callee attribute expression.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unittest-assertion",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "callee": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "kind": "call"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "attribute",
+            "has": {
+              "field": "attribute",
+              "kind": "identifier",
+              "regex": "^(?:assertAlmostEqual|assertAlmostEquals|assertCountEqual|assertDictContainsSubset|assertDictEqual|assertEqual|assertEquals|failIf|failIfAlmostEqual|failIfEqual|failUnless|failUnlessAlmostEqual|failUnlessEqual|assertFalse|assertGreater|assertGreaterEqual|assertIn|assertIs|assertIsInstance|assertIsNone|assertIsNot|assertIsNotNone|assertLess|assertLessEqual|assertListEqual|assertMultiLineEqual|assertNotAlmostEqual|assertNotAlmostEquals|assertNotEqual|assertNotEquals|assertNotIn|assertNotIsInstance|assertNotRegex|assertNotRegexpMatches|assertRegex|assertRegexpMatches|assertSequenceEqual|assertSetEqual|assertTrue|assertTupleEqual|assert_)$",
+              "pattern": "$NAME"
+            },
+            "matches": "callee"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PT009",
+        "message": "Use a regular `assert` instead of unittest-style `$NAME`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT009"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,92 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-log015-root-logger-call",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Port of Ruff's LOG015 (root-logger-call): a call whose callee (parentheses transparent) is a name or attribute resolving through the file's imports (Ruff's `resolve_qualified_name`) to one of the `logging` module's functions `debug`, `info`, `warn`, `warning`, `error`, `critical`, `log` or `exception` (e.g. `logging.info(...)`, or `info(...)` after `from logging import info`), reported on the call. The message names the callee's last identifier, which differs from Ruff's (the resolved function's name) only when the function was imported under an alias.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "root-logger-call",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "call",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "function",
+       "matches": "root-callee"
+      }
+     },
+     "utils": {
+      "root-callee": {
+       "any": [
+        {
+         "kind": "identifier",
+         "resolves": {
+          "import": [
+           "logging.debug",
+           "logging.info",
+           "logging.warn",
+           "logging.warning",
+           "logging.error",
+           "logging.critical",
+           "logging.log",
+           "logging.exception"
+          ]
+         },
+         "pattern": "$M"
+        },
+        {
+         "kind": "attribute",
+         "resolves": {
+          "import": [
+           "logging.debug",
+           "logging.info",
+           "logging.warn",
+           "logging.warning",
+           "logging.error",
+           "logging.critical",
+           "logging.log",
+           "logging.exception"
+          ]
+         },
+         "has": {
+          "stopBy": "neighbor",
+          "field": "attribute",
+          "pattern": "$M"
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "root-callee"
+         }
+        }
+       ]
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "LOG015",
+    "message": "`$M()` call on root logger",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "LOG015"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

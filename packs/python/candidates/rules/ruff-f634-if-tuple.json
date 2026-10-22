@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "ruff-f634-if-tuple",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "Port of Ruff's F634 (if-tuple) with default settings: the test of an `if` or `elif` branch (not a conditional expression, not `while`) that is a non-empty tuple, reported on the tuple (inside any extra parentheses).",
+  "description": "Port of Ruff's F634 (if-tuple) with default settings: the test (the `condition` field) of an `if` or `elif` branch (not a conditional expression, not `while`) that is a non-empty tuple, reported on the tuple (inside any extra parentheses). Comments and line continuations are not tuple items.",
   "scope": {
     "include": [
       "**/*"
@@ -17,6 +17,16 @@
         "ast": {
           "language": "python",
           "utils": {
+            "trivia": {
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                }
+              ]
+            },
             "non-empty-tuple": {
               "any": [
                 {
@@ -29,7 +39,7 @@
                           "regex": "^[(),]$"
                         },
                         {
-                          "kind": "comment"
+                          "matches": "trivia"
                         }
                       ]
                     }
@@ -47,12 +57,9 @@
             "branch-test": {
               "any": [
                 {
-                  "follows": {
-                    "stopBy": "neighbor",
-                    "regex": "^(if|elif)$"
-                  },
                   "inside": {
                     "stopBy": "neighbor",
+                    "field": "condition",
                     "any": [
                       {
                         "kind": "if_statement"

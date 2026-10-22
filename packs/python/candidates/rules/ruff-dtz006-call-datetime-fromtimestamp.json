@@ -1,0 +1,185 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-dtz006-call-datetime-fromtimestamp",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Port of Ruff's DTZ006 (call-datetime-fromtimestamp): a call whose callee (parentheses transparent) resolves to `datetime.datetime.fromtimestamp` through the file's imports (Ruff's `resolve_qualified_name`), unless the call (parentheses transparent) is followed by zero or more `.replace(...)` calls and then an `.astimezone` attribute (Ruff's `followed_by_astimezone`; the attribute need not be called), and whose `tz` argument (Ruff's `find_argument_value(\"tz\", 1)`: the `tz=` keyword, else positional argument 1 among those before the first starred one; `**kwargs` passes nothing) is missing or is the literal `None` (parentheses transparent). Reported on the call, with Ruff's message for each case.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "shared",
+   "define": {
+    "language": "python",
+    "utils": {
+     "callee": {
+      "any": [
+       {
+        "any": [
+         {
+          "kind": "identifier"
+         },
+         {
+          "kind": "attribute"
+         }
+        ],
+        "resolves": {
+         "import": [
+          "datetime.datetime.fromtimestamp"
+         ]
+        }
+       },
+       {
+        "kind": "parenthesized_expression",
+        "has": {
+         "stopBy": "neighbor",
+         "matches": "callee"
+        }
+       }
+      ]
+     },
+     "astz-safe": {
+      "inside": {
+       "stopBy": {
+        "not": {
+         "kind": "parenthesized_expression"
+        }
+       },
+       "kind": "attribute",
+       "any": [
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "field": "attribute",
+          "regex": "^astimezone$"
+         }
+        },
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "field": "attribute",
+          "regex": "^replace$"
+         },
+         "inside": {
+          "stopBy": {
+           "not": {
+            "kind": "parenthesized_expression"
+           }
+          },
+          "kind": "call",
+          "matches": "astz-safe"
+         }
+        }
+       ]
+      }
+     },
+     "none-lit": {
+      "any": [
+       {
+        "kind": "none"
+       },
+       {
+        "kind": "parenthesized_expression",
+        "has": {
+         "stopBy": "neighbor",
+         "matches": "none-lit"
+        }
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "no-tz",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "call",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "function",
+       "matches": "callee"
+      },
+      "not": {
+       "matches": "astz-safe"
+      },
+      "arguments": {
+       "signature": [
+        "timestamp",
+        "tz"
+       ],
+       "absent": [
+        "tz"
+       ],
+       "mode": "syntactic"
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "DTZ006",
+    "message": "`datetime.datetime.fromtimestamp()` called without a `tz` argument",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "DTZ006"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "tz-none",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "call",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "function",
+       "matches": "callee"
+      },
+      "not": {
+       "matches": "astz-safe"
+      },
+      "arguments": {
+       "signature": [
+        "timestamp",
+        "tz"
+       ],
+       "bind": {
+        "TZ": "tz"
+       },
+       "mode": "syntactic"
+      }
+     },
+     "constraints": {
+      "TZ": {
+       "matches": "none-lit"
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "DTZ006",
+    "message": "`tz=None` passed to `datetime.datetime.fromtimestamp()`",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "DTZ006"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

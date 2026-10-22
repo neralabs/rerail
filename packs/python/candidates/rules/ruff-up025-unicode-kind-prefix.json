@@ -1,0 +1,39 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up025-unicode-kind-prefix",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's UP025 (unicode-kind-prefix): every string literal part written with a `u` or `U` prefix (a plain literal or one part of an implicit concatenation, f-string parts aside, inside f-string replacement fields too), one finding per part, reported on the part.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unicode-kind-prefix",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "string",
+            "regex": "^[uU]['\"]"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP025",
+        "message": "Remove unicode literals from strings",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP025"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,71 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-dtz011-call-date-today",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Port of Ruff's DTZ011 (call-date-today): a call whose callee (parentheses transparent) resolves to `datetime.date.today` through the file's imports (Ruff's `resolve_qualified_name`), reported on the call.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "call-date-today",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "call",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "function",
+       "matches": "callee"
+      }
+     },
+     "utils": {
+      "callee": {
+       "any": [
+        {
+         "any": [
+          {
+           "kind": "identifier"
+          },
+          {
+           "kind": "attribute"
+          }
+         ],
+         "resolves": {
+          "import": [
+           "datetime.date.today"
+          ]
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee"
+         }
+        }
+       ]
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "DTZ011",
+    "message": "`datetime.date.today()` used",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "DTZ011"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

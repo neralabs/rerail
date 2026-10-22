@@ -1,0 +1,100 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pt013-pytest-incorrect-pytest-import",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Port of Ruff's PT013 (pytest-incorrect-pytest-import): an `import` statement binding `pytest` or a `pytest.` submodule under an alias other than its own name (`import pytest as pt`, `import pytest.mark as m`; `import pytest as pytest` is fine), once per such alias, and a `from pytest import ...` or `from pytest.<sub> import ...` statement (absolute only: `from .pytest import x` is not one), in any scope. Reported on the whole statement.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "import-as",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "aliased_import",
+            "any": [
+              {
+                "has": {
+                  "field": "name",
+                  "kind": "dotted_name",
+                  "regex": "^pytest[\\s\\\\]*\\."
+                }
+              },
+              {
+                "all": [
+                  {
+                    "has": {
+                      "field": "name",
+                      "kind": "dotted_name",
+                      "regex": "^pytest$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "alias",
+                      "kind": "identifier",
+                      "not": {
+                        "regex": "^pytest$"
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "import_statement",
+              "pattern": "$S"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.S",
+        "code": "PT013",
+        "message": "Incorrect import of `pytest`; use `import pytest` instead",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT013"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "import-from",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "import_from_statement",
+            "has": {
+              "field": "module_name",
+              "kind": "dotted_name",
+              "regex": "^pytest(?:[\\s\\\\]*\\.|$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PT013",
+        "message": "Incorrect import of `pytest`; use `import pytest` instead",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT013"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

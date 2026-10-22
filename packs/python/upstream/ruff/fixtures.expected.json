@@ -1547,11 +1547,14 @@
    "rerail/probes/B017-continuation.py",
    "rerail/probes/B019-parenthesized-decorator.py",
    "rerail/probes/B025-nested-try.py",
+   "rerail/probes/B905-trivia-and-starred-call.py",
    "rerail/probes/E712-comment-in-tuple.py",
    "rerail/probes/E713-E714-comment-in-operator.py",
    "rerail/probes/F404-concatenated-docstring.py",
    "rerail/probes/F602-string-and-name-key.py",
+   "rerail/probes/F631-F634-continuation-before-test.py",
    "rerail/probes/F631-F634-continuation-empty-tuple.py",
+   "rerail/probes/F722-leading-continuation.py",
    "rerail/probes/PIE790-parenthesized-type-checking.py",
    "rerail/probes/PIE808-comment-after-start.py",
    "rerail/probes/RET504-parenthesized-suppress.py",
@@ -1559,6 +1562,12 @@
    "rerail/probes/SIM201-SIM202-dunder-comprehension-lambda.py",
    "rerail/probes/SIM220-SIM221-t-strings.py",
    "rerail/probes/SIM905-comment-before-argument.py",
+   "rerail/probes/UP001-parenthesized-target.py",
+   "rerail/probes/UP003-argument-shapes.py",
+   "rerail/probes/UP004-parenthesized-bases.py",
+   "rerail/probes/UP039-line-continuation-in-parentheses.py",
+   "rerail/probes/UP041-parenthesized-sites.py",
+   "rerail/probes/W605-format-spec-and-field-edges.py",
    "ruff/RUF005.py",
    "ruff/RUF005_slices.py",
    "ruff/RUF006.py",
@@ -11548,6 +11557,18 @@
    "path": "rerail/probes/SIM201-SIM202-dunder-comprehension-lambda.py",
    "line": 6,
    "column": 22
+  },
+  {
+   "rule": "ANN001",
+   "path": "rerail/probes/UP003-argument-shapes.py",
+   "line": 24,
+   "column": 7
+  },
+  {
+   "rule": "ANN001",
+   "path": "rerail/probes/UP004-parenthesized-bases.py",
+   "line": 27,
+   "column": 7
   },
   {
    "rule": "ANN001",
@@ -27253,6 +27274,18 @@
   },
   {
    "rule": "ANN201",
+   "path": "rerail/probes/UP003-argument-shapes.py",
+   "line": 24,
+   "column": 5
+  },
+  {
+   "rule": "ANN201",
+   "path": "rerail/probes/UP004-parenthesized-bases.py",
+   "line": 27,
+   "column": 5
+  },
+  {
+   "rule": "ANN201",
    "path": "ruff/RUF005.py",
    "line": 32,
    "column": 9
@@ -36876,6 +36909,12 @@
    "column": 8
   },
   {
+   "rule": "B013",
+   "path": "rerail/probes/UP041-parenthesized-sites.py",
+   "line": 16,
+   "column": 9
+  },
+  {
    "rule": "B014",
    "path": "flake8_bugbear/B014.py",
    "line": 17,
@@ -41712,6 +41751,12 @@
    "column": 8
   },
   {
+   "rule": "B030",
+   "path": "rerail/probes/UP041-parenthesized-sites.py",
+   "line": 23,
+   "column": 19
+  },
+  {
    "rule": "B031",
    "path": "flake8_bugbear/B031.py",
    "line": 27,
@@ -42616,6 +42661,18 @@
    "path": "rerail/noqa/B905.py",
    "line": 9,
    "column": 1
+  },
+  {
+   "rule": "B905",
+   "path": "rerail/probes/B905-trivia-and-starred-call.py",
+   "line": 14,
+   "column": 1
+  },
+  {
+   "rule": "B905",
+   "path": "rerail/probes/B905-trivia-and-starred-call.py",
+   "line": 18,
+   "column": 3
   },
   {
    "rule": "B905",
@@ -50527,6 +50584,12 @@
   },
   {
    "rule": "D100",
+   "path": "rerail/probes/B905-trivia-and-starred-call.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D100",
    "path": "rerail/probes/E712-comment-in-tuple.py",
    "line": 1,
    "column": 1
@@ -50545,7 +50608,19 @@
   },
   {
    "rule": "D100",
+   "path": "rerail/probes/F631-F634-continuation-before-test.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D100",
    "path": "rerail/probes/F631-F634-continuation-empty-tuple.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D100",
+   "path": "rerail/probes/F722-leading-continuation.py",
    "line": 1,
    "column": 1
   },
@@ -50588,6 +50663,42 @@
   {
    "rule": "D100",
    "path": "rerail/probes/SIM905-comment-before-argument.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D100",
+   "path": "rerail/probes/UP001-parenthesized-target.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D100",
+   "path": "rerail/probes/UP003-argument-shapes.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D100",
+   "path": "rerail/probes/UP004-parenthesized-bases.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D100",
+   "path": "rerail/probes/UP039-line-continuation-in-parentheses.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D100",
+   "path": "rerail/probes/UP041-parenthesized-sites.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D100",
+   "path": "rerail/probes/W605-format-spec-and-field-edges.py",
    "line": 1,
    "column": 1
   },
@@ -55347,6 +55458,72 @@
    "rule": "D101",
    "path": "rerail/probes/SIM201-SIM202-dunder-comprehension-lambda.py",
    "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "D101",
+   "path": "rerail/probes/UP001-parenthesized-target.py",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "D101",
+   "path": "rerail/probes/UP004-parenthesized-bases.py",
+   "line": 5,
+   "column": 7
+  },
+  {
+   "rule": "D101",
+   "path": "rerail/probes/UP004-parenthesized-bases.py",
+   "line": 9,
+   "column": 7
+  },
+  {
+   "rule": "D101",
+   "path": "rerail/probes/UP004-parenthesized-bases.py",
+   "line": 18,
+   "column": 7
+  },
+  {
+   "rule": "D101",
+   "path": "rerail/probes/UP004-parenthesized-bases.py",
+   "line": 22,
+   "column": 7
+  },
+  {
+   "rule": "D101",
+   "path": "rerail/probes/UP004-parenthesized-bases.py",
+   "line": 32,
+   "column": 7
+  },
+  {
+   "rule": "D101",
+   "path": "rerail/probes/UP039-line-continuation-in-parentheses.py",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "D101",
+   "path": "rerail/probes/UP039-line-continuation-in-parentheses.py",
+   "line": 6,
+   "column": 7
+  },
+  {
+   "rule": "D101",
+   "path": "rerail/probes/UP039-line-continuation-in-parentheses.py",
+   "line": 12,
+   "column": 7
+  },
+  {
+   "rule": "D101",
+   "path": "rerail/probes/UP039-line-continuation-in-parentheses.py",
+   "line": 16,
+   "column": 7
+  },
+  {
+   "rule": "D101",
+   "path": "rerail/probes/UP039-line-continuation-in-parentheses.py",
+   "line": 20,
    "column": 7
   },
   {
@@ -72177,6 +72354,18 @@
    "rule": "D103",
    "path": "rerail/probes/RET504-parenthesized-suppress.py",
    "line": 2,
+   "column": 5
+  },
+  {
+   "rule": "D103",
+   "path": "rerail/probes/UP003-argument-shapes.py",
+   "line": 24,
+   "column": 5
+  },
+  {
+   "rule": "D103",
+   "path": "rerail/probes/UP004-parenthesized-bases.py",
+   "line": 27,
    "column": 5
   },
   {
@@ -90925,6 +91114,18 @@
   },
   {
    "rule": "F541",
+   "path": "rerail/probes/UP003-argument-shapes.py",
+   "line": 9,
+   "column": 6
+  },
+  {
+   "rule": "F541",
+   "path": "rerail/probes/UP003-argument-shapes.py",
+   "line": 10,
+   "column": 10
+  },
+  {
+   "rule": "F541",
    "path": "ruff/RUF016.py",
    "line": 3,
    "column": 7
@@ -91530,6 +91731,12 @@
    "column": 1
   },
   {
+   "rule": "F631",
+   "path": "rerail/probes/F631-F634-continuation-before-test.py",
+   "line": 2,
+   "column": 1
+  },
+  {
    "rule": "F632",
    "path": "flake8_commas/COM81.py",
    "line": 219,
@@ -91840,6 +92047,18 @@
    "path": "rerail/noqa/F634.py",
    "line": 13,
    "column": 4
+  },
+  {
+   "rule": "F634",
+   "path": "rerail/probes/F631-F634-continuation-before-test.py",
+   "line": 9,
+   "column": 9
+  },
+  {
+   "rule": "F634",
+   "path": "rerail/probes/F631-F634-continuation-before-test.py",
+   "line": 12,
+   "column": 9
   },
   {
    "rule": "F701",
@@ -92253,6 +92472,18 @@
    "rule": "F722",
    "path": "rerail/noqa/F722.py",
    "line": 9,
+   "column": 4
+  },
+  {
+   "rule": "F722",
+   "path": "rerail/probes/F722-leading-continuation.py",
+   "line": 9,
+   "column": 4
+  },
+  {
+   "rule": "F722",
+   "path": "rerail/probes/F722-leading-continuation.py",
+   "line": 11,
    "column": 4
   },
   {
@@ -118375,6 +118606,78 @@
   },
   {
    "rule": "F821",
+   "path": "rerail/probes/B905-trivia-and-starred-call.py",
+   "line": 4,
+   "column": 5
+  },
+  {
+   "rule": "F821",
+   "path": "rerail/probes/B905-trivia-and-starred-call.py",
+   "line": 6,
+   "column": 5
+  },
+  {
+   "rule": "F821",
+   "path": "rerail/probes/B905-trivia-and-starred-call.py",
+   "line": 8,
+   "column": 5
+  },
+  {
+   "rule": "F821",
+   "path": "rerail/probes/B905-trivia-and-starred-call.py",
+   "line": 10,
+   "column": 5
+  },
+  {
+   "rule": "F821",
+   "path": "rerail/probes/B905-trivia-and-starred-call.py",
+   "line": 12,
+   "column": 5
+  },
+  {
+   "rule": "F821",
+   "path": "rerail/probes/B905-trivia-and-starred-call.py",
+   "line": 14,
+   "column": 5
+  },
+  {
+   "rule": "F821",
+   "path": "rerail/probes/B905-trivia-and-starred-call.py",
+   "line": 14,
+   "column": 8
+  },
+  {
+   "rule": "F821",
+   "path": "rerail/probes/B905-trivia-and-starred-call.py",
+   "line": 18,
+   "column": 7
+  },
+  {
+   "rule": "F821",
+   "path": "rerail/probes/B905-trivia-and-starred-call.py",
+   "line": 18,
+   "column": 10
+  },
+  {
+   "rule": "F821",
+   "path": "rerail/probes/B905-trivia-and-starred-call.py",
+   "line": 19,
+   "column": 7
+  },
+  {
+   "rule": "F821",
+   "path": "rerail/probes/B905-trivia-and-starred-call.py",
+   "line": 19,
+   "column": 10
+  },
+  {
+   "rule": "F821",
+   "path": "rerail/probes/B905-trivia-and-starred-call.py",
+   "line": 20,
+   "column": 7
+  },
+  {
+   "rule": "F821",
    "path": "ruff/RUF005.py",
    "line": 4,
    "column": 1
@@ -124693,6 +124996,12 @@
   },
   {
    "rule": "F841",
+   "path": "rerail/probes/UP041-parenthesized-sites.py",
+   "line": 11,
+   "column": 40
+  },
+  {
+   "rule": "F841",
    "path": "ruff/RUF006.py",
    "line": 63,
    "column": 5
@@ -126268,6 +126577,12 @@
    "path": "pycodestyle/E721.py",
    "line": 21,
    "column": 26
+  },
+  {
+   "rule": "FBT003",
+   "path": "rerail/probes/UP003-argument-shapes.py",
+   "line": 12,
+   "column": 6
   },
   {
    "rule": "FIX001",
@@ -131917,6 +132232,12 @@
   },
   {
    "rule": "INP001",
+   "path": "rerail/probes/B905-trivia-and-starred-call.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "INP001",
    "path": "rerail/probes/E712-comment-in-tuple.py",
    "line": 1,
    "column": 1
@@ -131941,7 +132262,19 @@
   },
   {
    "rule": "INP001",
+   "path": "rerail/probes/F631-F634-continuation-before-test.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "INP001",
    "path": "rerail/probes/F631-F634-continuation-empty-tuple.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "INP001",
+   "path": "rerail/probes/F722-leading-continuation.py",
    "line": 1,
    "column": 1
   },
@@ -131984,6 +132317,42 @@
   {
    "rule": "INP001",
    "path": "rerail/probes/SIM905-comment-before-argument.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "INP001",
+   "path": "rerail/probes/UP001-parenthesized-target.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "INP001",
+   "path": "rerail/probes/UP003-argument-shapes.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "INP001",
+   "path": "rerail/probes/UP004-parenthesized-bases.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "INP001",
+   "path": "rerail/probes/UP039-line-continuation-in-parentheses.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "INP001",
+   "path": "rerail/probes/UP041-parenthesized-sites.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "INP001",
+   "path": "rerail/probes/W605-format-spec-and-field-edges.py",
    "line": 1,
    "column": 1
   },
@@ -141367,6 +141736,36 @@
   },
   {
    "rule": "PIE794",
+   "path": "rerail/probes/UP001-parenthesized-target.py",
+   "line": 3,
+   "column": 5
+  },
+  {
+   "rule": "PIE794",
+   "path": "rerail/probes/UP001-parenthesized-target.py",
+   "line": 6,
+   "column": 5
+  },
+  {
+   "rule": "PIE794",
+   "path": "rerail/probes/UP001-parenthesized-target.py",
+   "line": 8,
+   "column": 5
+  },
+  {
+   "rule": "PIE794",
+   "path": "rerail/probes/UP001-parenthesized-target.py",
+   "line": 11,
+   "column": 5
+  },
+  {
+   "rule": "PIE794",
+   "path": "rerail/probes/UP001-parenthesized-target.py",
+   "line": 12,
+   "column": 5
+  },
+  {
+   "rule": "PIE794",
    "path": "ruff/RUF009.py",
    "line": 98,
    "column": 5
@@ -143235,6 +143634,12 @@
    "rule": "PT015",
    "path": "rerail/noqa/B011.py",
    "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "PT015",
+   "path": "rerail/probes/F631-F634-continuation-before-test.py",
+   "line": 4,
    "column": 1
   },
   {
@@ -159217,6 +159622,12 @@
   },
   {
    "rule": "RUF015",
+   "path": "rerail/probes/B905-trivia-and-starred-call.py",
+   "line": 18,
+   "column": 1
+  },
+  {
+   "rule": "RUF015",
    "path": "ruff/RUF015.py",
    "line": 4,
    "column": 1
@@ -164833,6 +165244,24 @@
   },
   {
    "rule": "SIM105",
+   "path": "rerail/probes/UP041-parenthesized-sites.py",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "SIM105",
+   "path": "rerail/probes/UP041-parenthesized-sites.py",
+   "line": 9,
+   "column": 1
+  },
+  {
+   "rule": "SIM105",
+   "path": "rerail/probes/UP041-parenthesized-sites.py",
+   "line": 14,
+   "column": 1
+  },
+  {
+   "rule": "SIM105",
    "path": "ruff/RUF059_0.py",
    "line": 1,
    "column": 1
@@ -165657,6 +166086,12 @@
    "rule": "SIM114",
    "path": "pyupgrade/UP036_2.py",
    "line": 54,
+   "column": 1
+  },
+  {
+   "rule": "SIM114",
+   "path": "rerail/probes/F631-F634-continuation-before-test.py",
+   "line": 6,
    "column": 1
   },
   {
@@ -177102,6 +177537,36 @@
    "column": 5
   },
   {
+   "rule": "UP001",
+   "path": "rerail/probes/UP001-parenthesized-target.py",
+   "line": 2,
+   "column": 5
+  },
+  {
+   "rule": "UP001",
+   "path": "rerail/probes/UP001-parenthesized-target.py",
+   "line": 3,
+   "column": 5
+  },
+  {
+   "rule": "UP001",
+   "path": "rerail/probes/UP001-parenthesized-target.py",
+   "line": 6,
+   "column": 5
+  },
+  {
+   "rule": "UP001",
+   "path": "rerail/probes/UP001-parenthesized-target.py",
+   "line": 11,
+   "column": 5
+  },
+  {
+   "rule": "UP001",
+   "path": "rerail/probes/UP001-parenthesized-target.py",
+   "line": 15,
+   "column": 1
+  },
+  {
    "rule": "UP003",
    "path": "pycodestyle/E721.py",
    "line": 2,
@@ -177184,6 +177649,78 @@
    "path": "rerail/noqa/E721.py",
    "line": 18,
    "column": 15
+  },
+  {
+   "rule": "UP003",
+   "path": "rerail/probes/UP003-argument-shapes.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "UP003",
+   "path": "rerail/probes/UP003-argument-shapes.py",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "UP003",
+   "path": "rerail/probes/UP003-argument-shapes.py",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "UP003",
+   "path": "rerail/probes/UP003-argument-shapes.py",
+   "line": 11,
+   "column": 1
+  },
+  {
+   "rule": "UP003",
+   "path": "rerail/probes/UP003-argument-shapes.py",
+   "line": 12,
+   "column": 1
+  },
+  {
+   "rule": "UP003",
+   "path": "rerail/probes/UP003-argument-shapes.py",
+   "line": 16,
+   "column": 1
+  },
+  {
+   "rule": "UP003",
+   "path": "rerail/probes/UP003-argument-shapes.py",
+   "line": 17,
+   "column": 1
+  },
+  {
+   "rule": "UP003",
+   "path": "rerail/probes/UP003-argument-shapes.py",
+   "line": 18,
+   "column": 1
+  },
+  {
+   "rule": "UP003",
+   "path": "rerail/probes/UP003-argument-shapes.py",
+   "line": 19,
+   "column": 1
+  },
+  {
+   "rule": "UP003",
+   "path": "rerail/probes/UP003-argument-shapes.py",
+   "line": 20,
+   "column": 1
+  },
+  {
+   "rule": "UP003",
+   "path": "rerail/probes/UP003-argument-shapes.py",
+   "line": 21,
+   "column": 1
+  },
+  {
+   "rule": "UP003",
+   "path": "rerail/probes/UP003-argument-shapes.py",
+   "line": 23,
+   "column": 1
   },
   {
    "rule": "UP004",
@@ -177370,6 +177907,30 @@
    "path": "pyupgrade/UP004.py",
    "line": 159,
    "column": 15
+  },
+  {
+   "rule": "UP004",
+   "path": "rerail/probes/UP004-parenthesized-bases.py",
+   "line": 5,
+   "column": 10
+  },
+  {
+   "rule": "UP004",
+   "path": "rerail/probes/UP004-parenthesized-bases.py",
+   "line": 11,
+   "column": 9
+  },
+  {
+   "rule": "UP004",
+   "path": "rerail/probes/UP004-parenthesized-bases.py",
+   "line": 22,
+   "column": 9
+  },
+  {
+   "rule": "UP004",
+   "path": "rerail/probes/UP004-parenthesized-bases.py",
+   "line": 23,
+   "column": 9
   },
   {
    "rule": "UP004",
@@ -185563,6 +186124,24 @@
   },
   {
    "rule": "UP034",
+   "path": "rerail/probes/UP001-parenthesized-target.py",
+   "line": 3,
+   "column": 6
+  },
+  {
+   "rule": "UP034",
+   "path": "rerail/probes/UP003-argument-shapes.py",
+   "line": 3,
+   "column": 6
+  },
+  {
+   "rule": "UP034",
+   "path": "rerail/probes/UP004-parenthesized-bases.py",
+   "line": 5,
+   "column": 9
+  },
+  {
+   "rule": "UP034",
    "path": "ruff/RUF010.py",
    "line": 58,
    "column": 8
@@ -188659,6 +189238,24 @@
   },
   {
    "rule": "UP039",
+   "path": "rerail/probes/UP039-line-continuation-in-parentheses.py",
+   "line": 1,
+   "column": 8
+  },
+  {
+   "rule": "UP039",
+   "path": "rerail/probes/UP039-line-continuation-in-parentheses.py",
+   "line": 6,
+   "column": 8
+  },
+  {
+   "rule": "UP039",
+   "path": "rerail/probes/UP039-line-continuation-in-parentheses.py",
+   "line": 12,
+   "column": 11
+  },
+  {
+   "rule": "UP039",
    "path": "ruff/RUF008_deferred.py",
    "line": 11,
    "column": 14
@@ -188710,6 +189307,42 @@
    "path": "pyupgrade/UP041.py",
    "line": 34,
    "column": 8
+  },
+  {
+   "rule": "UP041",
+   "path": "rerail/probes/UP041-parenthesized-sites.py",
+   "line": 6,
+   "column": 9
+  },
+  {
+   "rule": "UP041",
+   "path": "rerail/probes/UP041-parenthesized-sites.py",
+   "line": 11,
+   "column": 8
+  },
+  {
+   "rule": "UP041",
+   "path": "rerail/probes/UP041-parenthesized-sites.py",
+   "line": 16,
+   "column": 9
+  },
+  {
+   "rule": "UP041",
+   "path": "rerail/probes/UP041-parenthesized-sites.py",
+   "line": 26,
+   "column": 8
+  },
+  {
+   "rule": "UP041",
+   "path": "rerail/probes/UP041-parenthesized-sites.py",
+   "line": 29,
+   "column": 7
+  },
+  {
+   "rule": "UP041",
+   "path": "rerail/probes/UP041-parenthesized-sites.py",
+   "line": 30,
+   "column": 6
   },
   {
    "rule": "UP043",
@@ -189868,6 +190501,60 @@
    "path": "pyupgrade/UP012.py",
    "line": 115,
    "column": 8
+  },
+  {
+   "rule": "W605",
+   "path": "rerail/probes/W605-format-spec-and-field-edges.py",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "W605",
+   "path": "rerail/probes/W605-format-spec-and-field-edges.py",
+   "line": 3,
+   "column": 11
+  },
+  {
+   "rule": "W605",
+   "path": "rerail/probes/W605-format-spec-and-field-edges.py",
+   "line": 3,
+   "column": 22
+  },
+  {
+   "rule": "W605",
+   "path": "rerail/probes/W605-format-spec-and-field-edges.py",
+   "line": 4,
+   "column": 19
+  },
+  {
+   "rule": "W605",
+   "path": "rerail/probes/W605-format-spec-and-field-edges.py",
+   "line": 5,
+   "column": 19
+  },
+  {
+   "rule": "W605",
+   "path": "rerail/probes/W605-format-spec-and-field-edges.py",
+   "line": 7,
+   "column": 19
+  },
+  {
+   "rule": "W605",
+   "path": "rerail/probes/W605-format-spec-and-field-edges.py",
+   "line": 8,
+   "column": 25
+  },
+  {
+   "rule": "W605",
+   "path": "rerail/probes/W605-format-spec-and-field-edges.py",
+   "line": 9,
+   "column": 19
+  },
+  {
+   "rule": "W605",
+   "path": "rerail/probes/W605-format-spec-and-field-edges.py",
+   "line": 11,
+   "column": 1
   },
   {
    "rule": "YTT101",
