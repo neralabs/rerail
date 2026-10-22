@@ -15,6 +15,7 @@ mod rx;
 mod spill;
 mod sql;
 mod subst;
+mod xexport;
 mod typedefs;
 mod views;
 
@@ -61,6 +62,7 @@ fn main() {
         Some("derived-check") => derived_check::run(&args),
         Some("factfile-bench") => factfile::bench(&args),
         Some("census") => census(&args),
+        Some("xexport") => xexport::main(&args),
         Some("explain") => explain(&args),
         Some("export-volume") => volume::run(&args),
         Some("parse") => {

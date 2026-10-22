@@ -109,6 +109,9 @@ pub struct Store {
     pub syms: Interner,
     pub contents: Vec<Content>,
     pub by_hash: FxHashMap<[u8; 32], Cid>,
+    /// Register contents by hash only (ids for the dataflow) without reading their v0 facts:
+    /// runs whose plans read no Spike B derivation.
+    pub ids_only: bool,
 }
 
 impl Store {
@@ -148,6 +151,12 @@ impl Store {
     pub fn load(&mut self, store_dir: &Path, hash: &[u8; 32]) -> Cid {
         if let Some(&c) = self.by_hash.get(hash) {
             return c;
+        }
+        if self.ids_only {
+            let id = self.contents.len() as Cid;
+            self.contents.push(Content { hash: *hash, ..Default::default() });
+            self.by_hash.insert(*hash, id);
+            return id;
         }
         let p = facts::store_path(store_dir, &facts::hex(hash));
         let bytes = std::fs::read(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()));

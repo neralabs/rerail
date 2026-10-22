@@ -53,6 +53,8 @@ fn main() {
                 clusters: !args.iter().any(|a| a == "--flat"),
                 track: args.iter().any(|a| a == "--track"),
                 plans: arg(&args, "--plans").map(|s| s.split(',').map(str::to_owned).collect()).unwrap_or_default(),
+                real: arg(&args, "--real").map(PathBuf::from),
+                parity: arg(&args, "--parity").map(PathBuf::from),
             },
         ),
         "edits" => edits::run(
@@ -62,6 +64,12 @@ fn main() {
             arg(&args, "--commits-repo").map(PathBuf::from).as_deref(),
         ),
         "hops" => hops(),
+        // `b3sum FILE…`: content hashes as the store keys them (scripts/jobs.py).
+        "b3sum" => {
+            for p in &args[2..] {
+                println!("{}  {p}", blake3::hash(&std::fs::read(p).unwrap()).to_hex());
+            }
+        }
         "divergence" => divergence(&PathBuf::from(arg(&args, "--run-dir").expect("--run-dir")), args.iter().any(|a| a == "--plurality")),
         "dump" => {
             let p = args.get(2).expect("file");
