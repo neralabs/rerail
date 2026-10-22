@@ -1982,13 +1982,52 @@ impl<'a> Eval<'a> {
         Some(true)
     }
 
-    // --- parse (matcher/parse.rs): pythonFString only ---
+    // --- parse (matcher/parse.rs): pythonFString, and annotation over `string_type_definition` ---
     fn parse(&self, node: Bound, p: &ParseTest, env: &mut Env) -> bool {
         let Bound::Node(n) = node else { return false };
         match p.grammar {
             ParseGrammar::Annotation => {
-                self.refuse("parse grammar `annotation` (Ruff string type definitions) is not in schema v0".into());
-                false
+                // Native `ParseTest::tree_at`: a host of kind string/concatenated_string holds a
+                // tree iff it is a string type definition of the file's scope table (S4,
+                // SCHEMA § 1.3); the tree's rule runs on its root and exports its captures.
+                let kind = facts::name(self.f.kind[n as usize]);
+                if &*kind != "string" && &*kind != "concatenated_string" {
+                    return false;
+                }
+                let root = {
+                    let cached = self.parsed_hosts.borrow().get(&n).copied();
+                    match cached {
+                        Some(r) => r,
+                        None => {
+                            let r = match self.f.typedefs() {
+                                Err(why) => {
+                                    self.refuse(why);
+                                    None
+                                }
+                                Ok(defs) => crate::typedefs::at(defs, self.f.start[n as usize] as usize, self.f.end[n as usize] as usize).map(|a| {
+                                    let mut parsed = self.parsed.borrow_mut();
+                                    let base = parsed.len() as u32;
+                                    for rec in &a.nodes {
+                                        let parent = if rec.parent == NONE { NONE } else { base + rec.parent };
+                                        parsed.push(ParsedNode { kind: rec.kind, start: rec.start, end: rec.end, text: rec.text.clone(), parent, named: rec.named });
+                                    }
+                                    (base, parsed.len() as u32)
+                                }),
+                            };
+                            self.parsed_hosts.borrow_mut().insert(n, r);
+                            r
+                        }
+                    }
+                };
+                let Some((root, _)) = root else { return false };
+                let mut inner = Env::default();
+                if !self.m(&p.rule, Bound::Parsed(root), &mut inner) {
+                    return false;
+                }
+                for (name, b) in inner.vars {
+                    env.set(name, b);
+                }
+                true
             }
             ParseGrammar::PythonFString => {
                 let kind = facts::name(self.f.kind[n as usize]);

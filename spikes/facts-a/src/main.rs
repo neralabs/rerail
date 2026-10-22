@@ -1,4 +1,5 @@
 mod ast;
+mod derived_check;
 mod eval;
 mod facts;
 mod factfile;
@@ -10,6 +11,8 @@ mod repo;
 mod spill;
 mod sql;
 mod subst;
+mod typedefs;
+mod views;
 
 use serde_json::{Map, Value as Json, json};
 use std::collections::{BTreeMap, HashMap};
@@ -50,6 +53,8 @@ fn main() {
         Some("repo-compare") => repo::compare(&args),
         Some("store") => factfile::store(&args),
         Some("inspect") => factfile::inspect(&args),
+        Some("derived-check") => derived_check::run(&args),
+        Some("factfile-bench") => factfile::bench(&args),
         Some("parse") => {
             let path = &args[2];
             let source = Arc::new(std::fs::read_to_string(path).unwrap());

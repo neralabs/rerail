@@ -35,13 +35,33 @@ Derived on read, never stored: the children CSR and the kind postings (`facts::i
 
 All columns are integers or text with no declared affinity. `descendants(x)` is the id range `x < d < subtree_end(x)`, never a relation.
 
+### 1.2.1 Declared structure (INVARIANTS I2)
+
+Rewrites may rely on exactly these; each is checked per content in debug builds (`views.rs` structural checks, to land with the compiler's `Plan` metadata).
+
+| relation | key | functional dependencies | order and intervals | cardinality |
+|---|---|---|---|---|
+| `node` | `id` (dense `0..n`) | `id → kind, parent, start, end, start_line, end_line, subtree_end, named, flags, field` | preorder: `id` ascending = document order; `start` non-decreasing in `id`; **interval**: `d` is a proper descendant of `x` iff `x < d < subtree_end(x)`; `parent(x) < x`; root `0` has `parent NULL` | `n` rows; `subtree_end ≤ n` |
+| `child` | `child` | `child → parent, idx` (= `node.parent`); `(parent, idx) → child` | per parent, `idx` ascending = `child` ascending | `n − 1` rows |
+| `field` | `child` | `child → parent, field, rank`; `(parent, field, rank) → child` | per `(parent, field)`, `rank` ascending = `child` ascending | ≤ `n − 1` |
+| `identifier` | `id` (⊆ `node.id`, `kind = 'identifier'`, named) | `id → name` | `id` ascending | ≤ `n` |
+| `line` | `no` (dense `1..L`) | `no → start, end, indent` | `start` strictly ascending in `no` | `L` = terminators + 1 |
+| `py_node` (`N`) | `id` | as `node`; `(parent, ordinal) → id` | `ordinal` = rank among `N`-siblings in `id` order | ≤ `n` |
+| `py_field` | `(parent, field)` | `(parent, field) → child` | | ≤ `n − 1` |
+| `py_owner`, `py_function`, `py_class`, `py_attribute`, `py_call`, `py_assignment` | `id` | `id → *` | rows in `id` order except `py_owner` (level order of its fixpoint) | ≤ `|N|` |
+| `py_method` | `fn` | `fn → cls` | `fn` order | ≤ functions |
+| `py_parameter` | `id` | `id → fn, name, annotation, position`; `(fn, position) → id` | `(fn, id)` order | |
+| `py_decorator` | `child` | `child → fn, id, name` | `(fn, id, child)` order | |
+| `py_import_identifier` | `(import, id)`; `id → import` (imports never nest) | | `(import, id)` order | |
+| `py_context` | `fn` | `fn → *` | `fn` order | ≤ functions |
+
 ### 1.3 Facts that need a parser (extracted, per content)
 
 | relation | columns | definition | status |
 |---|---|---|---|
 | decoded string value | per `string`/`concatenated_string` node | Python literal decoding (`pyvalue.rs`, port of native `value/python.rs`) | on demand, not persisted |
 | f-string parts | per string node | `fstring.rs` (port of native `literal/python_fstring.rs`) | on demand, not persisted |
-| `string_type_definition` | `host:u32` (+ the parsed annotation tree) | the string literals Ruff 0.16.9 reads as type definitions (`string_type_definitions`), as native's scope table computes them (`scope/python/typedefs.rs`, `ScopeTable::annotations`), extracted by **calling** native's builder (visibility only). Per content: the scope table reads one file and never crosses files. | § 6 of the report |
+| `string_type_definition` | `host` (the literal's `[start, end)`) → the parsed annotation tree: per node `kind:sym`, host `[start, end)` (native `Origin::of_node(..).primary()`), `text`, `parent` (index), `named` | the string literals Ruff 0.16.9 reads as type definitions (`string_type_definitions`, nested ones in their outer annotation's range space), as native's scope table computes them (`scope/python/typedefs.rs`, `ScopeTable::annotations`), extracted by **calling** native's `ScopeTable::build_in` (visibility-only changes in `native/`), default reading (no stub, no typing settings, `python_minor` 0), unbounded budget. **Per content**: the scope table reads one file and never crosses files. Built with no module path: native qualifies a `Relative`/`Definition` import binding through the module path, and such a binding can resolve to `typing`/`_typeshed`/`typing_extensions` only when the file's module path starts with one of those names (none in the corpus; a binder must refuse otherwise). Computed on first use per content (`Facts::typedefs`); consumed by `parse: {grammar: annotation}` (`ast.rs`). | report § 6 |
 
 ## 2. Python-derived relations: views over the core
 
@@ -76,11 +96,25 @@ SELECT f.parent, f.field, f.child FROM field f JOIN node c ON c.id=f.child WHERE
 
 #### `py_owner`
 
-per node of `N`: nearest ancestor-or-self `function_definition` (`fn`), `class_definition` (`cls`), outermost `function_definition` (`top_fn`). Stage: `ownership` (11 clauses; syntax spec `ownership` with owners `fn`, `cls`, `top_fn` outermost). Renders: ids rendered.
+per node of `N`: nearest ancestor-or-self `function_definition` (`fn`), `class_definition` (`cls`), outermost `function_definition` (`top_fn`), following `N`-parents only: a node whose parent is not in `N` (an `escape_interpolation` under `string_content`) starts its own chain, as the stage's roots (`edge_parent` not in `nodes`) do. Stage: `ownership` (dump clauses with an `N` node set: state-signatures-1, state-flow-1, state-flow-project-1, state-projection-recovery-2, executor-provenance, quality-conditional-1, legacy-execution-graphs). The syntax spec's `ownership` table (quality-contracts-1/2/3) chains through every named node, excluded kinds included: it is `py_owner_named` restricted to `N`. Renders: ids rendered. Order: the fixpoint's level order (no stage specifies one).
 
 ```sql
 -- view: py_owner
-WITH RECURSIVE o(id,fn,cls,top_fn) AS (SELECT id,CASE WHEN kind='function_definition' THEN id END,CASE WHEN kind='class_definition' THEN id END,CASE WHEN kind='function_definition' THEN id END FROM node WHERE parent IS NULL UNION ALL SELECT c.id,CASE WHEN c.kind='function_definition' THEN c.id ELSE o.fn END,CASE WHEN c.kind='class_definition' THEN c.id ELSE o.cls END,CASE WHEN o.top_fn IS NULL AND c.kind='function_definition' THEN c.id ELSE o.top_fn END FROM o JOIN node c ON c.parent=o.id) SELECT n.id,o.fn,o.cls,o.top_fn FROM py_node n JOIN o ON o.id=n.id
+WITH RECURSIVE o(id,fn,cls,top_fn) AS (SELECT n.id,CASE WHEN n.kind='function_definition' THEN n.id END,CASE WHEN n.kind='class_definition' THEN n.id END,CASE WHEN n.kind='function_definition' THEN n.id END FROM py_node n LEFT JOIN py_node p ON p.id=n.parent WHERE p.id IS NULL UNION ALL SELECT c.id,CASE WHEN c.kind='function_definition' THEN c.id ELSE o.fn END,CASE WHEN c.kind='class_definition' THEN c.id ELSE o.cls END,CASE WHEN o.top_fn IS NULL AND c.kind='function_definition' THEN c.id ELSE o.top_fn END FROM o JOIN py_node c ON c.parent=o.id) SELECT id,fn,cls,top_fn FROM o
+```
+
+#### `py_named`, `py_owner_named`
+
+The all-named node set and its ownership. `step-contracts-1..6` build `nodes` from one `raw_nodes` arm that does not exclude the six kinds: their gate-true `nodes` is every named node, and their `ownership` chains through `string_content`. Every other view is exact for them as well (§ 4), since its stage text filters kinds; `ownership` is `py_owner_named` there.
+
+```sql
+-- view: py_named
+SELECT id, kind, parent, start, "end", row_number() OVER(PARTITION BY parent ORDER BY start,"end",kind)-1 AS ordinal FROM node WHERE named=1
+```
+
+```sql
+-- view: py_owner_named
+WITH RECURSIVE o(id,fn,cls,top_fn) AS (SELECT n.id,CASE WHEN n.kind='function_definition' THEN n.id END,CASE WHEN n.kind='class_definition' THEN n.id END,CASE WHEN n.kind='function_definition' THEN n.id END FROM py_named n LEFT JOIN py_named p ON p.id=n.parent WHERE p.id IS NULL UNION ALL SELECT c.id,CASE WHEN c.kind='function_definition' THEN c.id ELSE o.fn END,CASE WHEN c.kind='class_definition' THEN c.id ELSE o.cls END,CASE WHEN o.top_fn IS NULL AND c.kind='function_definition' THEN c.id ELSE o.top_fn END FROM o JOIN py_named c ON c.parent=o.id) SELECT id,fn,cls,top_fn FROM o
 ```
 
 #### `py_function`
@@ -183,7 +217,15 @@ Their shared texts (state-flow-1, state-flow-project-1) read `string_values`, i.
 
 ## 3. Exported relations (per content; Spike B § 5.1, v1)
 
-Unchanged from Spike B v0 (`spikes/facts-b/src/facts.rs`): `def(name:sym, kind:sym, qualname:sym, line:u32)`, `ref(name:sym)` distinct, `import(module:sym, name:opt_sym, local:sym, top:u8, module_scope:u8)`, `call_edge(caller:sym, callee:sym)` distinct, `def_decorator(qualname:sym, name:sym)`, `dunder_all(literal:u8)`, `dunder_all_name(name:sym)`, `seed(qualname:sym, family:sym)`, `syntax_error()`. Definitions in Spike B § 5.1. Extended by S3's requests (repository plans' leaves), recorded here as they land.
+Schema-level exports from Spike B v0 (`spikes/facts-b/src/facts.rs`), unchanged: `def(name:sym, kind:sym, qualname:sym, line:u32)`, `ref(name:sym)` distinct, `import(module:sym, name:opt_sym, local:sym, top:u8, module_scope:u8)`, `call_edge(caller:sym, callee:sym)` distinct, `def_decorator(qualname:sym, name:sym)`, `dunder_all(literal:u8)`, `dunder_all_name(name:sym)`, `seed(qualname:sym, family:sym)`, `syntax_error()`. Definitions in Spike B § 5.1.
+
+### 3.1 Requested by S3 (repository plans' leaves), per content, schema-level
+
+The native reference/call graph's per-file `Summary` (`native/src/code_rule_dsl/calls/summary.rs`, extractor v18), with the `siblingLinks`/`constructorFields` configuration `internal-dead-code` and `imperative-private-functions/caller` share. Extracted by **calling** native's summary builder (visibility change only), never re-implemented; symbol-level and distinct: `py_module(name)`, `py_def(qualname:sym, start:u32, end:u32, flags:u32)` (ASYNC, CLASS, OPEN, DECORATED, SHADOWED, …), `py_ref(def:sym, name:sym)` (native `references`, marker forms `.<self>.`, `.<super>.`, `.<field>.`, `.<type>.`, `.<bare>.`, `.<base>.`, `^` verbatim), `py_ref_target` (`reference_targets`), `py_alias(local:sym, target:sym)` (`reference_aliases`), `py_decorator(def:sym, name:sym)` (`reference_decorators`), `py_super(class:sym, base:sym, kind:u8)` (bases and metaclass), `py_star(module:sym)`, `py_open()`, `py_open_site(def:sym)`, and the call graph's `edges(def, callee)`, `targets`, `aliases`, `opaque`. Status: scheduled after § 2 and § 1.3 (report § 7).
+
+### 3.2 Plan-level exports (computed by a per-content plan, projected and distinct)
+
+Namespace `x.<rule>.<clause>.<relation>`, stored under the key `(content hash, path, schema version, plan digest)` (INVARIANTS I7; the path is in the key because module names derive from it). S3's list (its report § 5.1) is the interim definition until the compiler emits them from the repository plans' leaves: `quality-project-taxonomy` `cand`; `quality-conditional-1` `class_base`, `canon_sym`, `gated`, `canon_cand`, `ungated`; `required-contracts` `contract_finding`; `state-flow-project-1`/`state-flow-1` `ret_kinds`, `callee`, `project_mode`, `sem_builders`, `helper_sites`; `public-api-triples` `decl_root`, `alias_edge`, `export_cand`, `class_decl`, `base_ref`, `pub_method`, `symbol_traits`, `symbol_family_traits`; `internal-dead-code` `decl`, `base_ref`, `import_sym`, `import_module_prefix`, `export_cand`, `dyn_target`, `annotation_name`, `module_name_use`, `sibling_edge`, `module_init_edge`, `class_member`.
 
 ## 4. Exactness (the differential)
 

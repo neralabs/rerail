@@ -23,7 +23,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 pub const MAGIC: &[u8; 8] = b"RRFACTS\0";
-pub const SCHEMA_VERSION: u32 = 0;
+pub const SCHEMA_VERSION: u32 = crate::facts::SCHEMA_VERSION;
 
 enum Col {
     U32(Vec<u32>),
@@ -65,33 +65,66 @@ impl Strings {
     }
 }
 
-/// A file's facts in the agreed layout.
+/// A fact-file layout: v0 (Spike A/B's), or v1 (SCHEMA.md § 5): `kind` as a u16 and `field` as
+/// a u8 file-string index, `parent`, `start_line`, `end_line` and `line` derived on read, an
+/// optional zstd body. `named_only` drops anonymous nodes (with an `id` column): measured, not
+/// decodable to `Facts` without a re-parse.
+#[derive(Clone, Copy, Debug)]
+pub struct Layout {
+    pub version: u32,
+    pub named_only: bool,
+    pub zstd: Option<i32>,
+}
+pub const V0: Layout = Layout { version: 0, named_only: false, zstd: None };
+/// The layout `store` writes (decided in the report, § 5).
+pub const V1: Layout = Layout { version: 1, named_only: false, zstd: None };
+
+/// A file's facts in the default layout (`V1`).
 pub fn encode(hash: &[u8; 32], f: &Facts) -> Vec<u8> {
+    encode_with(hash, f, V1)
+}
+
+pub fn encode_with(hash: &[u8; 32], f: &Facts, layout: Layout) -> Vec<u8> {
     let mut s = Strings::default();
     let n = f.len();
-    // Process symbols to file symbols, once per distinct kind or field.
+    let v1 = layout.version >= 1;
+    // v1: field names first (u8 index + 1), then kinds (u16 index), then identifier names.
+    let mut field_map: rustc_hash::FxHashMap<u16, u32> = Default::default();
+    let mut field_sym = |c: u16, s: &mut Strings| if c == 0 { NONE } else { *field_map.entry(c).or_insert_with(|| s.sym(GRAMMAR.kinds.field_name(c).unwrap_or(""))) };
+    let fields: Vec<u32> = f.field.iter().map(|&c| field_sym(c, &mut s)).collect();
     let mut kind_map: rustc_hash::FxHashMap<u32, u32> = Default::default();
     let kinds: Vec<u32> = f.kind.iter().map(|&k| *kind_map.entry(k).or_insert_with(|| s.sym(&facts::name(k)))).collect();
-    let mut field_map: rustc_hash::FxHashMap<u16, u32> = Default::default();
-    let fields: Vec<u32> = f
-        .field
-        .iter()
-        .map(|&c| if c == 0 { NONE } else { *field_map.entry(c).or_insert_with(|| s.sym(GRAMMAR.kinds.field_name(c).unwrap_or(""))) })
-        .collect();
     let identifier = facts::lookup("identifier");
     let ids: Vec<u32> = (0..n as u32).filter(|&i| Some(f.kind[i as usize]) == identifier && f.named(i)).collect();
     let id_names: Vec<u32> = ids.iter().map(|&i| s.sym(f.text(i))).collect();
-    let source = f.source.as_bytes();
-    let line_count = f.lines.line(source.len()) + 1;
-    let (mut starts, mut ends, mut indents) = (Vec::with_capacity(line_count), Vec::with_capacity(line_count), Vec::with_capacity(line_count));
-    for l in 0..line_count {
-        let (a, b) = (f.lines.start(l), f.lines.end(l));
-        starts.push(a as u32);
-        ends.push(b as u32);
-        indents.push(source[a..b].iter().take_while(|&&c| c == b' ' || c == b'\t').count() as u16);
-    }
-    let rels: Vec<(&str, usize, Vec<(&str, Col)>)> = vec![
-        (
+    let mut rels: Vec<(&str, usize, Vec<(&str, Col)>)> = Vec::new();
+    if v1 {
+        assert!(s.list.len() <= u16::MAX as usize || kind_map.values().all(|&k| k <= u16::MAX as u32));
+        let keep: Vec<u32> = if layout.named_only { (0..n as u32).filter(|&i| f.named(i)).collect() } else { (0..n as u32).collect() };
+        let pick = |v: &[u32]| keep.iter().map(|&i| v[i as usize]).collect::<Vec<u32>>();
+        let mut cols = Vec::new();
+        if layout.named_only {
+            cols.push(("id", Col::U32(keep.clone())));
+        }
+        cols.push(("kind", Col::U16(keep.iter().map(|&i| kinds[i as usize] as u16).collect())));
+        cols.push(("start", Col::U32(pick(&f.start))));
+        cols.push(("end", Col::U32(pick(&f.end))));
+        cols.push(("subtree_end", Col::U32(pick(&f.subtree_end))));
+        cols.push(("flags", Col::U8(keep.iter().map(|&i| f.flags[i as usize]).collect())));
+        cols.push(("field", Col::U8(keep.iter().map(|&i| { let x = fields[i as usize]; if x == NONE { 0 } else { u8::try_from(x + 1).expect("field index") } }).collect())));
+        rels.push(("node", keep.len(), cols));
+        rels.push(("identifier", ids.len(), vec![("id", Col::U32(ids)), ("name", Col::Sym(id_names))]));
+    } else {
+        let source = f.source.as_bytes();
+        let line_count = f.lines.line(source.len()) + 1;
+        let (mut starts, mut ends, mut indents) = (Vec::with_capacity(line_count), Vec::with_capacity(line_count), Vec::with_capacity(line_count));
+        for l in 0..line_count {
+            let (a, b) = (f.lines.start(l), f.lines.end(l));
+            starts.push(a as u32);
+            ends.push(b as u32);
+            indents.push(source[a..b].iter().take_while(|&&c| c == b' ' || c == b'\t').count() as u16);
+        }
+        rels.push((
             "node",
             n,
             vec![
@@ -105,44 +138,62 @@ pub fn encode(hash: &[u8; 32], f: &Facts) -> Vec<u8> {
                 ("flags", Col::U8(f.flags.clone())),
                 ("field", Col::OptSym(fields)),
             ],
-        ),
-        ("identifier", ids.len(), vec![("id", Col::U32(ids)), ("name", Col::Sym(id_names))]),
-        ("line", line_count, vec![("start", Col::U32(starts)), ("end", Col::U32(ends)), ("indent", Col::U16(indents))]),
-        ("syntax_error", f.syntax_errors as usize, vec![]),
-    ];
+        ));
+        rels.push(("identifier", ids.len(), vec![("id", Col::U32(ids)), ("name", Col::Sym(id_names))]));
+        rels.push(("line", line_count, vec![("start", Col::U32(starts)), ("end", Col::U32(ends)), ("indent", Col::U16(indents))]));
+    }
+    rels.push(("syntax_error", f.syntax_errors as usize, vec![]));
     let rels: Vec<(u32, u32, Vec<(u32, Col)>)> = rels.into_iter().map(|(name, rows, cols)| (s.sym(name), rows as u32, cols.into_iter().map(|(c, v)| (s.sym(c), v)).collect())).collect();
 
-    let mut out = Vec::with_capacity(64 + n * 34);
-    out.extend_from_slice(MAGIC);
-    out.extend_from_slice(&SCHEMA_VERSION.to_le_bytes());
-    out.extend_from_slice(hash);
-    out.extend_from_slice(&(s.list.len() as u32).to_le_bytes());
+    // The body (strings and relations); narrow columns pad to a 4-byte offset from the body
+    // start, which is a 4-byte file offset in both layouts (44- and 48-byte headers).
+    let mut body = Vec::with_capacity(64 + n * 20);
+    body.extend_from_slice(&(s.list.len() as u32).to_le_bytes());
     for st in &s.list {
-        out.extend_from_slice(&(st.len() as u32).to_le_bytes());
-        out.extend_from_slice(st.as_bytes());
+        body.extend_from_slice(&(st.len() as u32).to_le_bytes());
+        body.extend_from_slice(st.as_bytes());
     }
-    out.extend_from_slice(&(rels.len() as u32).to_le_bytes());
+    body.extend_from_slice(&(rels.len() as u32).to_le_bytes());
     for (name, rows, cols) in &rels {
-        out.extend_from_slice(&name.to_le_bytes());
-        out.extend_from_slice(&rows.to_le_bytes());
-        out.extend_from_slice(&(cols.len() as u32).to_le_bytes());
+        body.extend_from_slice(&name.to_le_bytes());
+        body.extend_from_slice(&rows.to_le_bytes());
+        body.extend_from_slice(&(cols.len() as u32).to_le_bytes());
         for (cn, col) in cols {
-            out.extend_from_slice(&cn.to_le_bytes());
-            out.push(col.code());
+            body.extend_from_slice(&cn.to_le_bytes());
+            body.push(col.code());
         }
         for (_, col) in cols {
             match col {
-                Col::U32(v) | Col::Sym(v) | Col::OptU32(v) | Col::OptSym(v) => v.iter().for_each(|x| out.extend_from_slice(&x.to_le_bytes())),
-                Col::U16(v) => v.iter().for_each(|x| out.extend_from_slice(&x.to_le_bytes())),
-                Col::U8(v) => out.extend_from_slice(v),
+                Col::U32(v) | Col::Sym(v) | Col::OptU32(v) | Col::OptSym(v) => v.iter().for_each(|x| body.extend_from_slice(&x.to_le_bytes())),
+                Col::U16(v) => v.iter().for_each(|x| body.extend_from_slice(&x.to_le_bytes())),
+                Col::U8(v) => body.extend_from_slice(v),
             }
-            // Only the narrow columns pad, to a 4-byte file offset (Spike B's writer and reader).
             if matches!(col, Col::U16(_) | Col::U8(_)) {
-                while out.len() % 4 != 0 {
-                    out.push(0);
+                while body.len() % 4 != 0 {
+                    body.push(0);
                 }
             }
         }
+    }
+    let mut out = Vec::with_capacity(48 + body.len());
+    out.extend_from_slice(MAGIC);
+    out.extend_from_slice(&layout.version.to_le_bytes());
+    out.extend_from_slice(hash);
+    if v1 {
+        // u32 flags: bit 0 = zstd body (then u32 raw body length, then the frame).
+        match layout.zstd {
+            None => {
+                out.extend_from_slice(&0u32.to_le_bytes());
+                out.extend_from_slice(&body);
+            }
+            Some(level) => {
+                out.extend_from_slice(&1u32.to_le_bytes());
+                out.extend_from_slice(&(body.len() as u32).to_le_bytes());
+                out.extend_from_slice(&zstd::bulk::compress(&body, level).expect("zstd"));
+            }
+        }
+    } else {
+        out.extend_from_slice(&body);
     }
     out
 }
@@ -172,17 +223,39 @@ pub struct Relation {
     pub cols: BTreeMap<String, (u8, Vec<u32>)>,
 }
 
-/// The header, string table and every relation of a fact file.
+/// The header, string table and every relation of a fact file (versions 0 and 1).
 pub fn read(bytes: &[u8]) -> Result<([u8; 32], Vec<String>, BTreeMap<String, Relation>), String> {
-    let mut r = Reader { b: bytes, at: 0 };
-    if r.bytes(8)? != MAGIC {
+    Ok(read_versioned(bytes)?.1)
+}
+
+/// `read` with the file's schema version.
+pub fn read_versioned(bytes: &[u8]) -> Result<(u32, ([u8; 32], Vec<String>, BTreeMap<String, Relation>)), String> {
+    let mut h = Reader { b: bytes, at: 0 };
+    if h.bytes(8)? != MAGIC {
         return Err("bad magic".into());
     }
-    let version = r.u32()?;
-    if version != SCHEMA_VERSION {
-        return Err(format!("schema version {version}, expected {SCHEMA_VERSION}"));
+    let version = h.u32()?;
+    if version > SCHEMA_VERSION {
+        return Err(format!("schema version {version}, this reader knows 0..={SCHEMA_VERSION}"));
     }
-    let hash: [u8; 32] = r.bytes(32)?.try_into().unwrap();
+    let hash: [u8; 32] = h.bytes(32)?.try_into().unwrap();
+    let decompressed;
+    let body: &[u8] = if version >= 1 {
+        let flags = h.u32()?;
+        if flags & !1 != 0 {
+            return Err(format!("unknown fact-file flags {flags:#x}"));
+        }
+        if flags & 1 != 0 {
+            let raw = h.u32()? as usize;
+            decompressed = zstd::bulk::decompress(&bytes[h.at..], raw).map_err(|e| format!("zstd: {e}"))?;
+            &decompressed
+        } else {
+            &bytes[h.at..]
+        }
+    } else {
+        &bytes[h.at..]
+    };
+    let mut r = Reader { b: body, at: 0 };
     let ns = r.u32()? as usize;
     let mut strings = Vec::with_capacity(ns);
     for _ in 0..ns {
@@ -218,22 +291,27 @@ pub fn read(bytes: &[u8]) -> Result<([u8; 32], Vec<String>, BTreeMap<String, Rel
         }
         rels.insert(name, Relation { rows, cols });
     }
-    Ok((hash, strings, rels))
+    Ok((version, (hash, strings, rels)))
 }
 
 /// A file's `Facts` from its fact file and its source (node text is the source slice).
 pub fn decode(bytes: &[u8], source: Arc<String>) -> Result<Facts, String> {
-    let (hash, strings, mut rels) = read(bytes)?;
+    let (version, (hash, strings, mut rels)) = read_versioned(bytes)?;
     if *blake3::hash(source.as_bytes()).as_bytes() != hash {
         return Err("content hash does not match the source".into());
     }
     let mut node = rels.remove("node").ok_or("no `node` relation")?;
+    if node.cols.contains_key("id") {
+        return Err("named-only fact file: anonymous nodes need a re-parse".into());
+    }
     let mut col = |name: &str| node.cols.remove(name).map(|c| c.1).ok_or_else(|| format!("node.{name} missing"));
     let mut kind_map: rustc_hash::FxHashMap<u32, u32> = Default::default();
-    let kind = col("kind")?.into_iter().map(|k| *kind_map.entry(k).or_insert_with(|| facts::intern(&strings[k as usize]))).collect();
+    let kind: Vec<u32> = col("kind")?.into_iter().map(|k| *kind_map.entry(k).or_insert_with(|| facts::intern(&strings[k as usize]))).collect();
     let mut field_map: rustc_hash::FxHashMap<u32, u16> = Default::default();
-    let mut field = Vec::new();
+    let mut field = Vec::with_capacity(kind.len());
     for x in col("field")? {
+        // v0: string index or NONE; v1: string index + 1, 0 none.
+        let x = if version >= 1 { if x == 0 { NONE } else { x - 1 } } else { x };
         field.push(if x == NONE {
             0
         } else {
@@ -247,16 +325,37 @@ pub fn decode(bytes: &[u8], source: Arc<String>) -> Result<Facts, String> {
             }
         });
     }
+    let lines = Arc::new(LineTable::new(&source, Terminators::Newlines));
+    let start = col("start")?;
+    let end = col("end")?;
+    let subtree_end = col("subtree_end")?;
+    let (parent, start_line, end_line) = if version >= 1 {
+        // Preorder with subtree ends: a node's parent is the innermost open subtree.
+        let mut parent = Vec::with_capacity(kind.len());
+        let mut open: Vec<u32> = Vec::new();
+        for id in 0..kind.len() as u32 {
+            while open.last().is_some_and(|&p| subtree_end[p as usize] <= id) {
+                open.pop();
+            }
+            parent.push(open.last().copied().unwrap_or(NONE));
+            open.push(id);
+        }
+        let sl = start.iter().map(|&b| lines.line(b as usize) as u32 + 1).collect();
+        let el = end.iter().map(|&b| lines.line(b as usize) as u32 + 1).collect();
+        (parent, sl, el)
+    } else {
+        (col("parent")?, col("start_line")?, col("end_line")?)
+    };
     let mut f = Facts {
-        lines: Arc::new(LineTable::new(&source, Terminators::Newlines)),
+        lines,
         source,
         kind,
-        parent: col("parent")?,
-        start: col("start")?,
-        end: col("end")?,
-        start_line: col("start_line")?,
-        end_line: col("end_line")?,
-        subtree_end: col("subtree_end")?,
+        parent,
+        start,
+        end,
+        start_line,
+        end_line,
+        subtree_end,
         flags: col("flags")?.into_iter().map(|x| x as u8).collect(),
         field,
         child_offsets: Vec::new(),
@@ -265,6 +364,8 @@ pub fn decode(bytes: &[u8], source: Arc<String>) -> Result<Facts, String> {
         kind_offsets: Vec::new(),
         kind_nodes: Vec::new(),
         syntax_errors: rels.get("syntax_error").is_some_and(|r| r.rows > 0),
+        tape: None,
+        typedefs: Default::default(),
     };
     facts::index(&mut f);
     Ok(f)
@@ -424,4 +525,114 @@ pub fn inspect(args: &[String]) {
     }
     let relations: Vec<_> = relations.into_iter().map(|((ext, name), (files, rows))| json!({"ext": ext, "relation": name, "files": files, "rows": rows})).collect();
     println!("{}", serde_json::to_string_pretty(&json!({"store": store, "read": read_ok, "relations": relations, "failures": failures})).unwrap());
+}
+
+/// `factfile-bench`: per file, every candidate layout's bytes, write time (encode, and compress
+/// where the layout compresses) and read time (decompress, decode, derive parent/lines, index),
+/// with a round-trip check against the built facts; in memory, no disk I/O. The named-only
+/// layouts cannot be read back into `Facts`: their read cost is a re-parse (`parse_ns`).
+pub fn bench(args: &[String]) {
+    let home = std::env::var("HOME").unwrap();
+    let root = arg(args, "--root").unwrap_or(format!("{home}/rerail-bench/nera-data-layer-2b1504ad"));
+    let root = Path::new(&root);
+    let threads: usize = arg(args, "--threads").map_or(4, |t| t.parse().unwrap());
+    let out_dir = arg(args, "--out-dir").expect("--out-dir");
+    let variants: Vec<(&str, Layout)> = vec![
+        ("v0", V0),
+        ("v1", Layout { version: 1, named_only: false, zstd: None }),
+        ("v1+zstd1", Layout { version: 1, named_only: false, zstd: Some(1) }),
+        ("v1+zstd3", Layout { version: 1, named_only: false, zstd: Some(3) }),
+        ("v1+zstd9", Layout { version: 1, named_only: false, zstd: Some(9) }),
+        ("v1-named", Layout { version: 1, named_only: true, zstd: None }),
+        ("v1-named+zstd3", Layout { version: 1, named_only: true, zstd: Some(3) }),
+    ];
+    let paths = walk(root);
+    let next = AtomicUsize::new(0);
+    // Per file: source bytes, nodes, named nodes, parse ns; per variant: (bytes, write ns, read ns).
+    type Row = (u32, u32, u32, u32, u64, Vec<(u64, u64, u64)>, Vec<String>);
+    let mut rows: Vec<Row> = std::thread::scope(|s| {
+        let hs: Vec<_> = (0..threads)
+            .map(|_| {
+                s.spawn(|| {
+                    let mut out = Vec::new();
+                    loop {
+                        let index = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(path) = paths.get(index) else { break };
+                        let source = Arc::new(std::fs::read_to_string(root.join(path)).unwrap());
+                        let mut ns = facts::BuildNs::default();
+                        let Ok(facts::Built::Facts(f)) = facts::build_timed(path, source.clone(), &mut ns) else { continue };
+                        let hash = blake3::hash(source.as_bytes());
+                        let mut per = Vec::new();
+                        let mut bad = Vec::new();
+                        for (name, l) in &variants {
+                            let t = Instant::now();
+                            let bytes = encode_with(hash.as_bytes(), &f, *l);
+                            let w = t.elapsed().as_nanos() as u64;
+                            let t = Instant::now();
+                            let r = if l.named_only { read(&bytes).map(|_| None) } else { decode(&bytes, source.clone()).map(Some) };
+                            let rd = t.elapsed().as_nanos() as u64;
+                            match r {
+                                Ok(Some(d)) => {
+                                    if let Err(e) = same(&f, &d) {
+                                        bad.push(format!("{path}: {name}: {e}"));
+                                    }
+                                }
+                                Ok(None) => {}
+                                Err(e) => bad.push(format!("{path}: {name}: {e}")),
+                            }
+                            per.push((bytes.len() as u64, w, rd));
+                        }
+                        let named = (0..f.len() as u32).filter(|&i| f.named(i)).count() as u32;
+                        out.push((index as u32, source.len() as u32, f.len() as u32, named, ns.parse + ns.extract, per, bad));
+                    }
+                    out
+                })
+            })
+            .collect();
+        hs.into_iter().flat_map(|h| h.join().unwrap()).collect()
+    });
+    rows.sort_by_key(|r| r.0);
+    let summary = crate::repo::summary;
+    let src_total: u64 = rows.iter().map(|r| r.1 as u64).sum();
+    let nodes_total: u64 = rows.iter().map(|r| r.2 as u64).sum();
+    let mut out = serde_json::Map::new();
+    for (vi, (name, l)) in variants.iter().enumerate() {
+        let bytes: Vec<u64> = rows.iter().map(|r| r.5[vi].0).collect();
+        let total: u64 = bytes.iter().sum();
+        out.insert(name.to_string(), json!({
+            "layout": format!("{l:?}"),
+            "bytes": summary(bytes.clone()),
+            "total_bytes": total,
+            "bytes_per_source_byte": total as f64 / src_total as f64,
+            "bytes_per_node": total as f64 / nodes_total as f64,
+            "ratio_permille": summary(rows.iter().map(|r| r.5[vi].0 * 1000 / (r.1.max(1) as u64)).collect()),
+            "write_ns": summary(rows.iter().map(|r| r.5[vi].1).collect()),
+            "read_ns": summary(rows.iter().map(|r| r.5[vi].2).collect()),
+        }));
+    }
+    let bad: Vec<&String> = rows.iter().flat_map(|r| r.6.iter()).collect();
+    let res = json!({
+        "files": rows.len(),
+        "source_bytes_total": src_total,
+        "nodes_total": nodes_total,
+        "named_nodes_total": rows.iter().map(|r| r.3 as u64).sum::<u64>(),
+        "parse_extract_ns": summary(rows.iter().map(|r| r.4).collect()),
+        "variants": out,
+        "roundtrip_failures": bad,
+    });
+    let mut tsv = String::from("path\tsource_bytes\tnodes\tnamed\tparse_extract_ns");
+    for (name, _) in &variants {
+        tsv.push_str(&format!("\t{name}_bytes\t{name}_write_ns\t{name}_read_ns"));
+    }
+    tsv.push('\n');
+    for r in &rows {
+        tsv.push_str(&format!("{}\t{}\t{}\t{}\t{}", paths[r.0 as usize], r.1, r.2, r.3, r.4));
+        for v in &r.5 {
+            tsv.push_str(&format!("\t{}\t{}\t{}", v.0, v.1, v.2));
+        }
+        tsv.push('\n');
+    }
+    std::fs::write(format!("{out_dir}/per-file.tsv"), tsv).unwrap();
+    std::fs::write(format!("{out_dir}/results.json"), serde_json::to_string_pretty(&res).unwrap()).unwrap();
+    println!("{}", serde_json::to_string_pretty(&res).unwrap());
 }

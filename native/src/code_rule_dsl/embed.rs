@@ -32,7 +32,7 @@
 
 mod compiled_view;
 mod script_block;
-pub(crate) mod segments;
+pub mod segments;
 #[cfg(test)]
 pub(crate) mod test_script;
 #[cfg(test)]

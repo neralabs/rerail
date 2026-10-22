@@ -752,6 +752,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlparser",
+ "zstd",
 ]
 
 [[package]]

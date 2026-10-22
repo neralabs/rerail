@@ -16,7 +16,7 @@ use std::ops::Range;
 /// in file order, none touching the next, and the primary one, which holds the bytes the
 /// stretch's first segment stands for: where the stretch starts.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct FileRanges {
+pub struct FileRanges {
     /// The first range in file order, and the rest after it.
     head: Range<usize>,
     tail: Vec<Range<usize>>,
@@ -90,7 +90,7 @@ impl FileRanges {
 
     /// The range a single span reports: the one where the stretch starts. A stretch standing for
     /// several ranges reports that one, never a range holding bytes between them.
-    pub(crate) fn primary(&self) -> Range<usize> {
+    pub fn primary(&self) -> Range<usize> {
         match self.primary {
             0 => self.head.clone(),
             index => self.tail[index - 1].clone(),
