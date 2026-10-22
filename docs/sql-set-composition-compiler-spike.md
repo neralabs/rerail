@@ -2243,3 +2243,39 @@ The runner ignores that pointer, and independent source and binary hashes establ
 The accepted changes reduce the measured job cost.
 They do not yet give the compiler ast-index's compact relation shape throughout the program.
 The remaining 43.8 million publications justify further work on broad demand production and mutable operator boundaries.
+
+## Relational architecture review — 2026-10-22
+
+The user requested an architectural review before further engine optimization.
+The review is [SQL relational architecture](sql-relational-architecture-review.md).
+This entry records documentation work only.
+It introduces no engine changes or new benchmark results.
+
+The review compares these exact sources:
+
+- Rerail `9207ff453e312f762c8347c67a60ee7665bf8070` and its checked-in frontier evidence.
+- ast-index-spike `9449260fea46fa81358fc638bf95a1566d475e27`, especially subtree identities, anchor selection, semijoins, and materialization.
+- Data-layer PR 2539 at `281f500d7c8d413f17c6a27de2f3c518bb45258a`, including both the fact-query compiler and ServerPlan composition.
+
+The PR review uses its exact head rather than the later `fce4dc7208` checkout cited in earlier notes.
+Its dependent-read strategy composes eligible DAGs through typed relation references.
+Its linter compiler emits one query per declarative specification, while the batch executor still loops over plugins.
+Its bounded recursive traversal does not establish general recursive Rerail semantics.
+
+The current large-plan driver meets the statement budget by scheduling frame operations inside recursive SQL.
+Its program counter, mutable publications, and tick-dependent reads retain substantial interpreter work.
+The immutable fusion subset already uses relation composition, but it still derives its graph from frame-oriented emission.
+The review recommends a typed relational IR before storage decisions, with explicit identities, demand, cardinality, order, unknowns, and effects.
+
+Materialization boundaries must have stable inputs and narrow outputs.
+Selective anchors and subtree reductions precede those boundaries.
+Small physical phase splits remain valid for preparation limits and measured access paths.
+The whole cold job must remain within 100 actual SQL executions across all workers.
+
+Recursion remains in SQL, with specialized state for each recursive component.
+Efficient nonlinear and ordered recursion remains an explicit design proof obligation.
+The review does not claim that a generic continuation CTE solves that performance problem.
+It proposes hand-designed reference kernels before the next compiler implementation pass.
+
+Documentation checks cover local source links, pinned source claims, measurement scope, and prose consistency.
+No engine tests or benchmarks ran because this change only adds the review and this journal entry.
