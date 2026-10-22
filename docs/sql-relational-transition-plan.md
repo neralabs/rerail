@@ -4,6 +4,11 @@ Status: proposed implementation plan, 2026-10-22.
 Baseline: `a0051ae8`, including the complete B023 reference query.
 This document changes no production behavior.
 
+Implementation progress: the first utility slice now compiles and passes its corpus and scaling checks.
+The [target-slot evidence](../benchmark/sql-relational-target-slot-evidence.json) records compiler-generated SQL, EXPLAIN, source hashes, and native/current-engine parity.
+The compiler remains test-only.
+Complete B023 generation, capture-bearing demand, and Milestone 1's full-query performance gates remain outstanding.
+
 The next implementation milestone is a compiler-generated B023 query with the reference query's work bounds.
 It must start from `GrammarMatcher`, without a B023 recognizer or hand-written policy SQL.
 The compiler will build typed relations before SQL emission.

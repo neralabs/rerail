@@ -58,6 +58,142 @@ fn root() -> PathBuf {
         .to_owned()
 }
 
+fn target_slot_policy(mutation: usize) -> crate::code_rule_dsl::CompiledCodeRuleDsl {
+    let mut document: Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            root().join("packs/python/rules/ruff-b023-function-uses-loop-variable.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    document["clauses"][0]["forbid"]["ast"]["rule"] = json!({"matches":"target-slot"});
+    document["clauses"][0]["violation"] =
+        json!({"code":"slot","message":"slot","anchor":"witness.span"});
+    let source = match mutation {
+        0 => document.to_string(),
+        1 => document
+            .to_string()
+            .replace("target-slot", "renamed-destructuring"),
+        2 => document
+            .to_string()
+            .replace("\"assignment\"", "\"expression_statement\""),
+        3 => document.to_string().replace("^for$", "^in$"),
+        _ => unreachable!(),
+    };
+    CodeRuleDslRuntime::compile(source, "json".into(), CAPABILITIES.into()).unwrap()
+}
+
+#[test]
+fn b023_compiler_target_slot_fixtures_and_mutations() {
+    let sources = [
+        "packs/python/upstream/ruff/fixtures/flake8_bugbear/B023.py",
+        "packs/python/upstream/ruff/fixtures/rerail/noqa/B023.py",
+    ].into_iter().map(|path|(path.into(),std::fs::read_to_string(root().join(path)).unwrap()))
+        .chain(std::iter::once(("adversarial.py".into(),
+            "a, (b, [c, *d]) = values\nx: int = 1\nx += 2\nfor e, (f, g) in xs:\n    pass\n[h for (i, j) in xs]\nprint(a, key=b)\n".into())))
+        .collect::<Vec<_>>();
+    let mut counts = Vec::new();
+    for mutation in 0..4 {
+        let policy = target_slot_policy(mutation);
+        let result = sql::relational::tests::measure(&grammar_matchers(&policy)[0], &sources);
+        counts.push(result["matches"].as_u64().unwrap());
+        eprintln!(
+            "target-slot mutation {mutation}: {} matches, {} VM",
+            result["matches"], result["vmSteps"]
+        );
+    }
+    assert_eq!(
+        counts[0], counts[1],
+        "utility names do not select a compiler template"
+    );
+    assert_ne!(
+        counts[0], counts[2],
+        "changed kinds affect the compiled rule"
+    );
+    assert_ne!(
+        counts[0], counts[3],
+        "changed regex affects the compiled rule"
+    );
+}
+
+#[test]
+#[ignore = "set RERAIL_B023_CONFIG and RERAIL_RELATIONAL_OUTPUT"]
+fn b023_compiler_target_slot_corpus() {
+    let config: Value = serde_json::from_str(
+        &std::fs::read_to_string(std::env::var("RERAIL_B023_CONFIG").unwrap()).unwrap(),
+    )
+    .unwrap();
+    let sources = config["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            let p = p.as_str().unwrap();
+            (
+                p.to_owned(),
+                std::fs::read_to_string(Path::new(config["corpus"].as_str().unwrap()).join(p))
+                    .unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let policy = target_slot_policy(0);
+    let mut result = sql::relational::tests::measure(&grammar_matchers(&policy)[0], &sources);
+    result["inputs"]=json!(sources.iter().map(|(path,source)|json!({"path":path,"sha256":format!("{:x}",Sha256::digest(source.as_bytes()))})).collect::<Vec<_>>());
+    eprintln!(
+        "compiled target-slot: {} files, {} matches, {} VM",
+        result["files"], result["matches"], result["vmSteps"]
+    );
+    std::fs::write(
+        std::env::var("RERAIL_RELATIONAL_OUTPUT").unwrap(),
+        serde_json::to_string_pretty(&result).unwrap(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn b023_compiler_target_slot_scaling() {
+    let policy = target_slot_policy(0);
+    let grammar = &grammar_matchers(&policy)[0];
+    let mut records = Vec::new();
+    for size in [32, 128, 512] {
+        for repeated in [false, true] {
+            let source = if repeated {
+                (0..size)
+                    .map(|i| format!("a{i}, (b{i}, *c{i}) = values\n"))
+                    .collect::<String>()
+            } else {
+                format!("a, (b, *c) = values\n{}", "print(value)\n".repeat(size))
+            };
+            let mut result =
+                sql::relational::tests::measure(grammar, &[("scale.py".into(), source)]);
+            result["size"] = json!(size);
+            result["case"] = json!(if repeated {
+                "repeated-targets"
+            } else {
+                "irrelevant-calls"
+            });
+            result.as_object_mut().unwrap().remove("sql");
+            result.as_object_mut().unwrap().remove("relations");
+            result.as_object_mut().unwrap().remove("explain");
+            records.push(result);
+        }
+    }
+    assert_eq!(
+        records[0]["vmSteps"], records[4]["vmSteps"],
+        "irrelevant nodes must not amplify SQL work"
+    );
+    assert_eq!(
+        records[1]["matches"].as_u64().unwrap() * 16,
+        records[5]["matches"].as_u64().unwrap()
+    );
+    assert!(
+        records[5]["vmSteps"].as_u64().unwrap() <= 17 * records[1]["vmSteps"].as_u64().unwrap()
+    );
+    if let Ok(path) = std::env::var("RERAIL_RELATIONAL_SCALE_OUTPUT") {
+        std::fs::write(path, serde_json::to_string_pretty(&records).unwrap()).unwrap();
+    }
+}
+
 fn counters(c: [u64; 14]) -> Value {
     json!({"frameAdvances":c[2],"frameColumns":c[3],"framePublications":c[4],"frameIndexedRows":c[6],
       "regexNodeRequests":c[10],"nodeAdvances":c[11],"nodeColumns":c[12],"nodeFilters":c[13]})

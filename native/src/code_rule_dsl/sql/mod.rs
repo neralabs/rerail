@@ -22,6 +22,8 @@ mod profiling;
 #[path = "spikes/query_shapes.rs"]
 pub(in crate::code_rule_dsl) mod query_shapes;
 mod recursion;
+#[cfg(test)]
+mod relational;
 pub(super) mod select_when;
 mod shapes;
 mod skip;

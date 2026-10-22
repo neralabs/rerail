@@ -2499,3 +2499,100 @@ The 94-fold B023 kernel improvement is not a whole-job prediction.
 The plan names implementation modules, relation contracts, cutover removal points, and the first three reviewable commits.
 Documentation checks cover local links, source references, evidence numbers, sentence length, and whitespace.
 No engine tests rerun because this change contains documentation only.
+
+## Transition phase 1: direct utility compilation — 2026-10-22
+
+The user requested the first transition phase.
+The first implementation slice compiles B023's complete `target-slot` utility from `GrammarMatcher`.
+The replacement remains test-only, as the transition plan requires.
+This slice does not yet compile the complete capture-bearing B023 rule.
+
+The new `sql/relational` modules contain set relations, semantic admission, direct DSL lowering, physical join arms, and SQL emission.
+Each relation has `(file, node)` identity.
+Kinds, regex leaves, Boolean composition, neighbor relations, and positive parent recursion form the initial admitted subset.
+The compiler rejects captures, unknown outcomes, nonlinear recursion, recursive negation, and unsupported traversal forms.
+No frame lowering or SQL reparsing participates in compilation.
+
+The compiler derives recursive seeds and arms from utility definitions.
+A recursive arm must reference its own relation once through strictly ascending parent dependencies.
+That restriction proves structural progress without a program counter or mutable frames.
+Join emission starts with the recursive frontier or selective kind evidence, then uses structural probes.
+The existing `node_regex` primitive supplies only regex leaf evaluation.
+Native code does not evaluate relation composition.
+
+The initial harness compares every node with native execution across multiple files.
+Additional cases rename the utility and change its kinds and regex constants.
+These cases require compilation from the actual DSL instead of policy recognition.
+The first build and semantic checks are in progress.
+
+### First utility slice: results
+
+The direct compiler passes native and current-SQL equality for all 30,335 target slots across the frozen 138 files.
+All source hashes match the complete B023 reference corpus.
+The compiler emits one matching statement and publishes no frames.
+The current SQL engine publishes 6,499,631 frames and advances through 14,306,235 frame rows for the same utility.
+Both kernels use one matching statement, so this result isolates the internal work difference.
+
+The first generated query uses 4,243,601 VM instructions.
+Inspection found an unnecessary AST lookup for every row in a relation alias.
+It also found redundant per-arm DISTINCT operations beneath a set UNION.
+The emitter now preserves relation aliases directly and relies on the UNION's duplicate elimination.
+Single-arm relations retain DISTINCT where their joins can repeat a root.
+These generic changes reduce VM instructions to 3,704,554 and node advances from 167,626 to 137,291.
+
+The final EXPLAIN shows kind postings for both seed branches, parent probes for children, and node-ID probes for siblings.
+The recursive arm reads its frontier, filters destructuring kinds, and probes children.
+The query uses no automatic index entries and reports zero fullscan steps.
+SQLite still uses temporary B-trees for set ordering and final output ordering.
+Zero fullscan steps does not imply zero scans or zero storage inside SQLite.
+
+The utility still returns every target slot in the corpus.
+The complete hand-written B023 reference returns only 457 demanded target slots after region restriction.
+This difference identifies the next major compiler task: derive relevant function/loop regions before utility evaluation.
+The current 3.70-million instruction count does not pass the complete B023 milestone by itself.
+The capture-bearing rule and its full-query comparison remain outstanding.
+
+The upstream fixtures and adversarial file contain 100 target slots.
+Renaming the utility preserves all 100 matches.
+Changing an assignment kind produces 149 matches, and changing the loop keyword regex produces 91 matches.
+Every variant agrees with both oracles.
+The compiler contains no policy name or B023 SQL template.
+
+| Scaling case | Size | Matches | Generated VM instructions |
+| --- | ---: | ---: | ---: |
+| Unrelated calls | 32 | 11 | 663 |
+| Unrelated calls | 128 | 11 | 663 |
+| Unrelated calls | 512 | 11 | 663 |
+| Repeated assignment targets | 32 | 352 | 18,550 |
+| Repeated assignment targets | 128 | 1,408 | 73,942 |
+| Repeated assignment targets | 512 | 5,632 | 295,510 |
+
+These are SQL work measurements, not constant-time parsing or index construction claims.
+The four compiler tests cover neighbor semantics, positive parent recursion, unsupported constructs, and preparation limits.
+The fixture/mutation test, scaling test, and explicit corpus test also pass.
+The three existing B023 reference tests pass, with the corpus reference test left ignored in that regression run.
+Clippy passes with only the existing `regex_creation_in_loops` warning permitted.
+Rust formatting, Python syntax, evidence hashes, and whitespace checks pass.
+
+The current scope has two important limits.
+The compiler does not reproduce native utility work or stack/depth budgets.
+The harness checks logical outputs with generous work allowance and reports any native oracle failure.
+This restriction appears in the relation profile and blocks production integration.
+The complete job's 100-execution gate also remains pending because this slice changes no production path.
+
+The durable evidence and reproduction command are:
+
+- `benchmark/sql-relational-target-slot-evidence.json`: generated SQL, EXPLAIN, counters, scaling, and source/executable hashes.
+- `benchmark/relational-compiler-spike.py`: frozen-input driver with semantic, fixture, scaling, and corpus checks.
+- `/tmp/rerail-relational-phase1-20261022/final`: raw results, frozen inputs, query, and check logs.
+
+```sh
+JEMALLOC_OVERRIDE=/tmp/librerail_jemalloc_check_shim.dylib \
+  python3 benchmark/relational-compiler-spike.py \
+  /tmp/rerail-b023-relational-20261022/final/config.json /absolute/new/output
+```
+
+The allocator override is specific to this development environment.
+The driver builds the optimized test executable unless the caller supplies a matching executable with `--binary`.
+All reported timings retain instrumentation, and their scopes differ between the two kernels.
+This slice makes no repeated-timing speedup claim.
