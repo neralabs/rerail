@@ -843,6 +843,8 @@ struct RelMemo {
     at: Vec<u8>,
     inside: Vec<u8>,
     has: Vec<u8>,
+    /// `inside {rule, field, stopBy: end}` (the field is fixed by the `Field` rule holding it).
+    finside: Vec<u8>,
 }
 
 const T: u8 = 1;
@@ -1647,6 +1649,59 @@ impl<'a> Eval<'a> {
     /// `inside` with a field: an ancestor is tested only where the walk entered it through that
     /// field (relation.rs `find_inside`).
     fn field_inside(&self, node: Bound, field: u16, rule: &Rule, stop: &Stop, env: &mut Env) -> bool {
+        if let (Stop::End, Bound::Node(n)) = (stop, node) {
+            if let Some(key) = self.memo_slot(rule) {
+                let before = self.unknown.get();
+                let found = self.memo_finish(self.field_inside_end_memo(key, rule, field, n));
+                if crate::subst::check_mode() {
+                    let after = self.unknown.replace(before);
+                    let mut e = env.clone();
+                    let want = self.field_inside_unmemoised(node, field, rule, stop, &mut e);
+                    assert!(want == found && self.unknown.get() == after, "FACTS_A3_CHECK: field inside memo at node {n} in {}", self.path);
+                }
+                return found;
+            }
+        }
+        self.field_inside_unmemoised(node, field, rule, stop, env)
+    }
+
+    /// `inside {rule, field, stopBy: end}` at `n`: an ancestor counts when the walk entered it
+    /// through `field` (its first child with that field is the walk's previous node) and its
+    /// verdict holds; true, else unknown, else false, as `inside_end_memo`.
+    fn field_inside_end_memo(&self, key: usize, rule: &Rule, field: u16, n: u32) -> u8 {
+        let combine = |r: u8, v: u8| if r == T || v == T { T } else if r == U || v == U { U } else { F };
+        let mut chain: Vec<(u32, u8)> = Vec::new();
+        let mut c = n;
+        let mut v = loop {
+            let known = self.rel_memo.borrow()[&key].finside.get(c as usize).copied().unwrap_or(0);
+            if known != 0 {
+                break known;
+            }
+            let Some(p) = self.f.parent(c) else {
+                chain.push((c, F));
+                break F;
+            };
+            let entered = self.field_child(Bound::Node(p), field) == Some(Bound::Node(c));
+            let r = if entered { self.verdict_at(key, rule, p) } else { F };
+            chain.push((c, r));
+            if r == T {
+                break T;
+            }
+            c = p;
+        };
+        let mut memo = self.rel_memo.borrow_mut();
+        let fi = &mut memo.get_mut(&key).unwrap().finside;
+        if fi.is_empty() {
+            fi.resize(self.f.len(), 0);
+        }
+        for &(c, r) in chain.iter().rev() {
+            v = combine(r, v);
+            fi[c as usize] = v;
+        }
+        fi[n as usize]
+    }
+
+    fn field_inside_unmemoised(&self, node: Bound, field: u16, rule: &Rule, stop: &Stop, env: &mut Env) -> bool {
         let mut s = self.search_start();
         let mut previous = node;
         let mut found = false;
