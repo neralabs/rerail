@@ -229,11 +229,11 @@ Run one command in the repository you want Rerail in:
 npx @neralabs/rerail setup
 ```
 
-From a Rerail checkout, `just rerail` runs the same set-up. To start in another repository, answer "Use a different folder…" or pass `--repo ~/code/your-repo`.
+From a Rerail checkout, `just rerail` runs the same set-up. To start in another repository, answer "Scan a different repo…" or pass `--repo ~/code/your-repo`.
 
 - **Node 24 or newer.** On an older Node, set-up stops before changing anything and says how to upgrade.
 - **What it does.** It installs Rerail into your home folder (`~/.rerail`), with no admin rights, and turns nothing on. Then it asks before reading the repository you ran it in, shows the rule packs that look right for it with the reason for each, and starts Rerail in that repository only once you say yes: every checkout of it that you have not stopped on its own. It connects the coding agents it finds (Claude Code, Cursor, Codex, OMP and Pi), or only the ones you name, and ends on a short summary and a link to the dashboard. Open a new session when you are ready; Rerail starts there.
-- **Your choices.** You can review the rule packs in the dashboard first, pick rule packs yourself (Rerail then reads no code and the repository is set up with no packs), or name a different folder. Run outside a repository, it asks which folder to start with, or you can skip and later type `/rerail-start` in a session in any repository.
+- **Your choices.** Before the scan: scan this repo, scan a different repo, or skip the scan and pick rule packs yourself (Rerail then reads no code, and you can pick none). After it: start Rerail with the packs shown, change the rule packs, or not now (nothing is installed or turned on). Run outside a repository, it asks which folder to start with, or you can skip and later type `/rerail-start` in a session in any repository.
 - **In a terminal**, answer each question there: move with ↑/↓ and press Enter, or type its number.
 - **From a coding agent**, ask it to install Rerail and give it this section. A coding agent runs `npx @neralabs/rerail setup --relay`: set-up then prints each question for the coding agent to ask you as written, with the command to run for each answer (`rerail setup --relay --answer … --repo … --agents …`), even where the coding agent runs commands in a terminal. Without `--relay`, set-up asks this way whenever it has no terminal to ask in. The coding agent waits for your reply and runs the command for the answer you gave.
 - **If your coding agent can't install it, run the same line in a terminal.**

@@ -154,7 +154,7 @@ describe("/rerail-start in OMP and Pi", { timeout: SETUP_TIMEOUT_MS }, () => {
     const last = await pickSetup(ui, steps(setup, environment));
 
     expect(last).toMatchObject({ step: "done", question: null });
-    expect(last!.screen).toContain("Set-up stopped. Nothing was installed or turned on.");
+    expect(last!.screen).toContain("Set-up stopped. No rule packs were installed and nothing was turned on.");
     expect(environment.connections).toEqual([]);
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
     expect(existsSync(repositoryIdentityLocation(setup.repo).identityPath)).toBe(false);

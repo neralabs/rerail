@@ -69,20 +69,22 @@ person says yes.
    to read it.
 3. **Recommend** — the repository's files and `package.json` dependencies are
    matched against the rule packs; each pack that fits is shown with its rule
-   count, why it matched and the folder it would be added in, with the coding
-   agents found and not found. A repository that matches no rule pack is
-   offered none; it can still start, and add rule packs in the dashboard later.
-   The screen also lists the rules of those packs that will start off or
-   with options taken from the repository's own lint config (see below).
-4. **Confirm** — start, review the packs in the dashboard first (the review
-   link opens `#rule-packs?review=1` scoped to the repository and checkout,
-   and set-up asks again rather than waiting on the browser), name the coding
-   agents to connect, or pick rule packs yourself (the repository is set up
-   with no packs and no code is read). See [Rule scoping](rule-scoping.md#set-up)
-   for how each answer attaches packs.
+   count, why it matched and the folder it would be added in, and the coding
+   agents it will connect ("Will connect to: …"; `--agents` names others). A
+   repository that matches no rule pack is offered none; it can still start,
+   and add rule packs in the dashboard later. The screen also lists the rules
+   of those packs that will start off or with options taken from the
+   repository's own lint config (see below).
+4. **Confirm** — "Yes, start Rerail" (`--answer start`) installs the packs
+   shown and starts; "Change rule packs…" (`--answer choose`) picks from every
+   pack set-up fetched instead; "Not now" (`--answer not-now`) installs,
+   connects and turns on nothing. Picking rule packs yourself without a scan
+   is the question before ("Skip, I'll pick packs", `--answer pick-myself`:
+   no code is read). See [Rule scoping](rule-scoping.md#set-up) for how each
+   answer attaches packs.
 5. **Start, in this repository** — the chosen coding agents (all found,
-   unless named) are connected, the recommended packs (or the ones kept on in
-   the review) are attached to the repository, and the repository is started:
+   unless named) are connected, the recommended or chosen packs are attached
+   to the repository, and the repository is started:
    every checkout of it, the one set-up ran in included, that has not been
    stopped on its own. Other repositories stay off. Connecting writes persistent registrations, all pointing at
    `~/.rerail/current`, so hooks follow an update without being rewritten; `rerail update` registers the new version
@@ -246,8 +248,9 @@ set-up; Ctrl-D cancels it. The folder and rule-pack prompts read a typed line.
 **Without a terminal** (stdin or stdout is not a TTY, as when a coding agent
 runs it), or with `--relay`, each run prints the next question for the coding
 agent to relay, as written, with one command per answer, and exits 0. The
-coding agent runs set-up again with the person's answer: `--answer <yes|other-folder|pick-myself|start|review|choose|other|skip>`,
-`--repo <folder>`, `--agents <ids>` (`omp,pi,claude-code,codex,cursor`) and
+coding agent runs set-up again with the person's answer: `--answer <allow|decline|yes|other-folder|pick-myself|start|choose|not-now|folder|skip>`,
+`--repo <folder>`, `--agents <ids>` (`omp,pi,claude-code,codex,cursor`; it
+works on its own, with any answer, and no question asks for it) and
 `--packs <id@version,…>` (the exact versions an answer installs; `none` for
 none).
 Each answer run starts from what it is told, so running one twice repeats no

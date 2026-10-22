@@ -323,7 +323,7 @@ describe("T4 / C4 recommended rule packs", () => {
 describe("T5 not now", () => {
   it.each(LANES)("says nothing was installed or turned on, and how to start later (%s)", lane => {
     const text = stripAnsi(renderNotNow(lane));
-    expect(text).toContain("● Set-up stopped. Nothing was installed or turned on.");
+    expect(text).toContain("● Set-up stopped. No rule packs were installed and nothing was turned on.");
     expect(text).toContain(`Start Rerail in this repo whenever you’re ready with ${lane === "terminal" ? "rerail start" : "/rerail-start"}.`);
   });
 });

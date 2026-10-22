@@ -10,7 +10,6 @@ import type { CheckoutContext, RepositoryKey, RepositoryStartState, RuleSetting 
 import { repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
 import { listRepositories, lookupCheckout, recordCheckout } from "../engine/catalog/repository-registry.js";
 import {
-  awaitingStartAfterReview,
   checkoutName,
   checkoutStatus,
   onRuleCount,
@@ -20,7 +19,7 @@ import {
   workspaceStartState,
   type RepositorySetupIo,
 } from "../runtime/repository-start.js";
-import { addAttachment, recordSetUp, removeAttachment, setRuleSetting } from "../engine/catalog/rule-configuration.js";
+import { recordSetUp } from "../engine/catalog/rule-configuration.js";
 import { loadRulePacks, recommendRulePacks, rulePackPackageName, type RulePack, type RulePackRecommendation } from "../engine/catalog/rule-packs.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import type { RuleCatalog } from "../engine/catalog/repository-model.js";
@@ -219,9 +218,28 @@ interface Run {
   readonly steps: readonly SetupQuestionId[];
 }
 
-/** The main flow's questions: whether Rerail may see sessions (asked once), whether to scan the repo, and the confirm question. */
-function mainSteps(environment: SetupEnvironment, readRepo: boolean): SetupQuestionId[] {
-  return [...(environment.sessionsApproved() ? [] : ["sessions" as const]), ...(readRepo ? ["read-repo" as const] : []), "confirm-packs"];
+/**
+ * The main flow's questions: whether Rerail may see sessions (asked once), whether to scan the repo (or, without one,
+ * which project), and the confirm question, which a repository set up already never gets.
+ */
+function mainSteps(environment: SetupEnvironment, readRepo: boolean, confirmPacks = true): SetupQuestionId[] {
+  return [
+    ...(environment.sessionsApproved() ? [] : ["sessions" as const]),
+    ...(readRepo ? ["read-repo" as const] : []),
+    ...(confirmPacks ? ["confirm-packs" as const] : []),
+  ];
+}
+
+/**
+ * The steps a run for `repository` asks, read before it asks any: undefined, or the home folder, asks which project
+ * (counted as the scan step) and then the confirm question; `chosen` (named by the person) skips the scan question, as
+ * an earlier set-up's offer of the review does; a repository set up already is asked neither.
+ */
+function stepsFor(environment: SetupEnvironment, databasePath: string, repository: Repository | undefined, chosen: boolean): SetupQuestionId[] {
+  if (repository === undefined || isHomeFolder(repository.root)) return mainSteps(environment, true);
+  const state = setUpState(repository.root, databasePath);
+  if (state === "set-up") return mainSteps(environment, false, false);
+  return mainSteps(environment, !chosen && state === "not-set-up");
 }
 
 /** The Rerail home set-up installs packs into, and so reads them back from: its pack store's. */
@@ -408,7 +426,7 @@ function packLabels(packs: readonly { packId: string; folder: string }[]): strin
 /**
  * The rule settings the repository's own lint config gives the rules of packs `packIds`, owned by the repository,
  * read from its files now. None for a rule the repository has a setting of its own for in that folder (one the person
- * made in the dashboard's review stands).
+ * made in the dashboard stands).
  */
 function lintConfigSettings(database: RerailDatabase, home: string, root: string, repositoryKey: RepositoryKey, packIds: readonly string[]): RuleSetting[] {
   const own = new Set(database.select({ folder: ruleSettings.folder, targetId: ruleSettings.targetId }).from(ruleSettings).where(and(
@@ -430,20 +448,19 @@ function otherStartedRepositories(database: RerailDatabase, repositoryKey: Repos
 }
 
 /**
- * Where set-up finds the repository at `root`, read-only, like `workspaceStartState`. `review-offered`: set-up offered
- * the dashboard's review and the person has changed nothing there yet. `awaiting-start`: set-up offered the review,
- * the person set the repository up there (the first change adds the kept packs), and nobody has started or stopped it
- * yet. Either way set-up goes on to its confirm question. A repository set up any other way and never started
- * (`rerail rules add`, a coding agent, `rules import`) is `set-up`: `rerail start` just starts it.
+ * Where set-up finds the repository at `root`, read-only, like `workspaceStartState`. `review-offered`: an earlier
+ * version's set-up offered the dashboard's review and the person has changed nothing there; set-up goes on to its
+ * confirm question. A repository set up any way, the dashboard's review included, is `set-up`: `rerail start` just
+ * starts it with the packs it has.
  */
-function setUpState(root: string, databasePath: string): "not-set-up" | "review-offered" | "awaiting-start" | "set-up" {
+function setUpState(root: string, databasePath: string): "not-set-up" | "review-offered" | "set-up" {
   if (!existsSync(databasePath)) return "not-set-up";
   const database = openRerailDatabase(databasePath, { readonly: true });
   try {
     const checkout = lookupCheckout(database, root);
     if (checkout === undefined) return "not-set-up";
     if (!checkoutStatus(database, checkout).setUp) return setupReviewOffered(database, checkout.repositoryKey) ? "review-offered" : "not-set-up";
-    return awaitingStartAfterReview(database, checkout.repositoryKey) ? "awaiting-start" : "set-up";
+    return "set-up";
   } finally {
     database.$client.close();
   }
@@ -487,11 +504,11 @@ async function connect(run: Run, repository: Repository | undefined): Promise<re
 
 /** What starting Rerail adds to the repository. */
 type StartWith =
-  /** The packs set-up recommended, each at its folder; after the dashboard's review, the packs kept on there instead. */
+  /** The packs set-up recommended, each at its folder. */
   | { readonly kind: "recommended"; readonly packs: readonly RulePackRecommendation[] }
   /**
-   * Exactly the packs the person chose, replacing any the dashboard's review added. `readRepository`: whether the
-   * repository's lint config may be read for them; not when the person said Rerail may not read the repository.
+   * Exactly the packs the person chose. `readRepository`: whether the repository's lint config may be read for them;
+   * not when the person said Rerail may not read the repository.
    */
   | { readonly kind: "chosen"; readonly packs: readonly RulePackRecommendation[]; readonly readRepository: boolean };
 
@@ -499,39 +516,27 @@ const recommended = (packs: readonly RulePackRecommendation[]): StartWith => ({ 
 const chosenPacks = (packs: readonly RulePackRecommendation[], readRepository: boolean): StartWith => ({ kind: "chosen", packs, readRepository });
 
 /**
- * Set the repository up and start Rerail in it: every checkout without its own stop. A repository that is not set up
- * adds `startWith`'s packs, each at its folder. One the dashboard's review set up keeps the packs kept on there for
- * recommended packs, and swaps them for chosen ones: until Rerail starts, only the person in the dashboard adds packs
- * to it. The packs' rules take the settings the repository's lint config gives them, unless the person said Rerail may
- * not read the repository. Returns how many rule packs are added, or undefined when the repository was set up
- * otherwise, or started (or stopped) already.
+ * Set the repository up and start Rerail in it: every checkout without its own stop. It adds `startWith`'s packs, each
+ * at its folder, and their rules take the settings the repository's lint config gives them, unless the person said
+ * Rerail may not read the repository. Returns how many rule packs are added, or undefined when the repository was set
+ * up already (another set-up run, the dashboard, `rerail rules add`) and so is left as it is.
  */
 function turnOn(run: Run, repository: Repository, startWith: StartWith): number | undefined {
   const readRepository = startWith.kind === "recommended" || startWith.readRepository;
   const adding = startWith.packs.map(({ pack, folder }) => ({ packId: pack.id, folder }));
   return withCheckout(run, repository, (database, checkout) => {
     const { repositoryKey } = checkout;
-    if (!checkoutStatus(database, checkout).setUp) {
-      recordSetUp(database, repositoryKey, {
-        packs: adding,
-        settings: readRepository ? lintConfigSettings(database, packsHome(run), repository.root, repositoryKey, adding.map(({ packId }) => packId)) : [],
-      });
-    } else if (!awaitingStartAfterReview(database, repositoryKey)) {
-      return undefined;
-    } else {
-      if (startWith.kind === "chosen") {
-        for (const { packId, folder } of attachedPacks(database, repositoryKey)) removeAttachment(database, { repositoryKey, folder, sourceKind: "pack", sourceId: packId });
-        for (const { packId, folder } of adding) addAttachment(database, { repositoryKey, folder, sourceKind: "pack", sourceId: packId });
-      }
-      const kept = [...new Set(attachedPacks(database, repositoryKey).map(({ packId }) => packId))];
-      if (readRepository) for (const setting of lintConfigSettings(database, packsHome(run), repository.root, repositoryKey, kept)) setRuleSetting(database, setting);
-    }
+    if (checkoutStatus(database, checkout).setUp) return undefined;
+    recordSetUp(database, repositoryKey, {
+      packs: adding,
+      settings: readRepository ? lintConfigSettings(database, packsHome(run), repository.root, repositoryKey, adding.map(({ packId }) => packId)) : [],
+    });
     startSetUpRepository(database, checkout, run.request.repository === true);
     return new Set(attachedPacks(database, repositoryKey).map(({ packId }) => packId)).size;
   });
 }
 
-/** Steps 5 and 6. The packs kept on in the dashboard's review win over recommended ones; chosen ones replace them. */
+/** Steps 5 and 6. */
 async function start(run: Run, repository: Repository, startWith: StartWith): Promise<SetupOutcome> {
   await connect(run, repository);
   if (turnOn(run, repository, startWith) === undefined) return alreadySetUp(run, repository, true);
@@ -782,7 +787,7 @@ async function setUpOneRepository(run: Run, repository: Repository, chosen: bool
   const state = setUpState(repository.root, run.databasePath);
   if (state === "set-up") return alreadySetUp(run, repository);
   // An earlier set-up offered the dashboard's review here, so it had the go-ahead to read: never back to the read-repo question.
-  const reviewing = state === "awaiting-start" || state === "review-offered";
+  const reviewOffered = state === "review-offered";
   const { agentsError, ...request } = run.request;
   if (answer === "pick-myself") {
     if (agentsError === undefined) return pickPacksMyself(run, repository);
@@ -791,7 +796,7 @@ async function setUpOneRepository(run: Run, repository: Repository, chosen: bool
     return askToRead({ ...run, request }, repository);
   }
   if (agentsError !== undefined) return confirm(run, repository, undefined);
-  if (chosen || reviewing || answer === "yes" || answer === "start" || answer === "choose") return confirm(run, repository, answer);
+  if (chosen || reviewOffered || answer === "yes" || answer === "start" || answer === "choose") return confirm(run, repository, answer);
   return askToRead(run, repository);
 }
 
@@ -825,13 +830,12 @@ export function checkSetupAnswer(answer: string | undefined): string | undefined
 
 /** `rerail setup` after the install: T2b once, then steps 3 to 6 for the repository named or found, or E3 and E5 without one. */
 export async function runSetup(io: RepositorySetupIo, request: SetupRequest): Promise<SetupOutcome> {
-  const run: Run = {
-    io,
-    request,
-    databasePath: request.databasePath ?? defaultRerailDatabasePath(),
-    // A `--repo` folder that is not there asks the no-repo question, which counts as the read-repo step.
-    steps: mainSteps(request.environment, request.repo === undefined || repositoryAt(request.repo) === undefined),
-  };
+  const databasePath = request.databasePath ?? defaultRerailDatabasePath();
+  // The allow answer's `--repo` is not the person's naming of it (below).
+  const steps = request.repo === undefined
+    ? stepsFor(request.environment, databasePath, repositoryHere(request.cwd), false)
+    : stepsFor(request.environment, databasePath, repositoryAt(request.repo), request.answer !== "allow");
+  const run: Run = { io, request, databasePath, steps };
   const approval = await approveSessions(run, checkSetupAnswer(request.answer), request.repo);
   if ("status" in approval) return approval;
   const { answer } = approval;
@@ -856,16 +860,17 @@ export async function runSetup(io: RepositorySetupIo, request: SetupRequest): Pr
  * steps 3 to 6. Unlike `rerail setup`, the folder is the repository even outside Git.
  */
 export async function runRepositorySetup(workspace: string, io: RepositorySetupIo, options: RepositorySetupOptions): Promise<RepositoryStartReport> {
-  const run: Run = {
-    io,
-    request: { ...options, cwd: workspace },
-    databasePath: options.databasePath ?? defaultRerailDatabasePath(),
-    steps: mainSteps(options.environment, true),
-  };
   const checked = checkSetupAnswer(options.answer);
   const repository = repositoryAt(workspace);
   if (repository === undefined) throw new Error(`There is no folder at ${workspace}. Nothing was read.`);
   if (isHomeFolder(repository.root)) throw new Error(HOME_FOLDER_REFUSED);
+  const databasePath = options.databasePath ?? defaultRerailDatabasePath();
+  const run: Run = {
+    io,
+    request: { ...options, cwd: workspace },
+    databasePath,
+    steps: stepsFor(options.environment, databasePath, repository, false),
+  };
   // Read before set-up writes anything: stopped, or started but not set up.
   const previous = workspaceStartState(repository.root, run.databasePath);
   // The allow answer carries the folder on, as one set-up still asks before reading (`runSetup`).

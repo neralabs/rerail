@@ -558,13 +558,13 @@ export function renderRecommendedPacks(input: RecommendedPacksInput, lane: Setup
 
 // ── T5 · Not now ───────────────────────────────────────────────────────────
 
-/** After "Not now": nothing was installed, connected or turned on. */
+/** After "Not now": no rule pack installed, nothing connected or turned on. Set-up may have installed Rerail itself. */
 export function renderNotNow(lane: SetupLane): string {
   const style = styleFor(lane);
   const start = lane === "terminal" ? "rerail start" : "/rerail-start";
   return lines([
     ...(lane === "terminal" ? [""] : []),
-    bullet("Set-up stopped. Nothing was installed or turned on.", style),
+    bullet("Set-up stopped. No rule packs were installed and nothing was turned on.", style),
     `  ${style.dim(`Start Rerail in this repo whenever you’re ready with ${start}.`)}`,
   ]);
 }
@@ -822,7 +822,7 @@ export function renderAnswerHint(count: number): string {
   return TERMINAL_STYLE.yellow(`Type a number from 1 to ${count}.`);
 }
 
-/** After "Use a different folder…" or "Type the folder…". */
+/** After "Scan a different repo…" or "Type the folder…". */
 export function renderFolderPrompt(): string {
   return `  ${TERMINAL_STYLE.bold("Which folder?")} `;
 }

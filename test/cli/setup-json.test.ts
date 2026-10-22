@@ -163,7 +163,7 @@ describe("rerail setup --json", { timeout: SETUP_TIMEOUT_MS }, () => {
 
     const done = await runSetupStep(requestFrom(notNow.next.args, setup, environment));
     expect(done).toMatchObject({ step: "done", question: null });
-    expect(done.screen).toContain("Set-up stopped. Nothing was installed or turned on.");
+    expect(done.screen).toContain("Set-up stopped. No rule packs were installed and nothing was turned on.");
     expectPersonText(done);
     expect(environment.connections).toEqual([]);
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
