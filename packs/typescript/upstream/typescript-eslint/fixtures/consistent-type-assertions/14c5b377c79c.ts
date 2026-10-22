@@ -1,0 +1,1 @@
+const x = () => bar as Foo;

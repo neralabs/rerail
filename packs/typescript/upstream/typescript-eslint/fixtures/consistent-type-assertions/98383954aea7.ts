@@ -1,0 +1,1 @@
+const x = (a as A) + b;

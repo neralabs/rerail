@@ -74,6 +74,13 @@ const exemptionSchema = z.strictObject({
 });
 export type CapabilityExemption = z.infer<typeof exemptionSchema>;
 
+/**
+ * A port whose violations need not carry the suppression comment its upstream tool honours (conformance/pack-validation.ts,
+ * check 4): `rule` is the port's `id`, `reason` why its document does not model the comment yet.
+ */
+const suppressionExemptionSchema = z.strictObject({ rule: nonEmpty, reason: z.string().trim().min(20) });
+export type SuppressionExemption = z.infer<typeof suppressionExemptionSchema>;
+
 export const packSchema = z
   .strictObject({
     pack: z.string().regex(/^[a-z0-9][a-z0-9-]*$/u),
@@ -82,6 +89,8 @@ export const packSchema = z
     capabilities: z.array(nonEmpty).min(1),
     /** Declared capabilities T4 covers by exemption instead of a rule. */
     exemptCapabilities: z.array(exemptionSchema).default([]),
+    /** Ports exempt from carrying their upstream tool's suppression comment, each with its reason. */
+    suppressionExemptions: z.array(suppressionExemptionSchema).default([]),
     corpora: z.array(corpusSchema),
     tools: z.array(toolSchema),
     rules: z.array(ruleSchema),
@@ -105,6 +114,9 @@ export const packSchema = z
     }
     for (const { capability } of pack.exemptCapabilities)
       if (!capabilities.has(capability)) issue(`exemption for ${capability}, which the pack does not declare`);
+    for (const rule of duplicates(pack.suppressionExemptions.map(exemption => exemption.rule))) issue(`duplicate suppression exemption for ${rule}`);
+    const rules = new Set(pack.rules.map(rule => rule.id));
+    for (const { rule } of pack.suppressionExemptions) if (!rules.has(rule)) issue(`suppression exemption for ${rule}, which is not a rule of the pack`);
   });
 export type Pack = z.infer<typeof packSchema>;
 
@@ -121,7 +133,8 @@ export type UpstreamFinding = z.infer<typeof findingSchema>;
 
 /**
  * One analysis unit, evaluated in its own workspace as the upstream rule test analyses it: a file, or several files
- * analysed together (a cross-file fixture).
+ * analysed together (a cross-file fixture). A `package.json` in a unit is no source: it gives the unit's ECMA sources
+ * their nearest manifest.
  */
 const unitSchema = z.union([nonEmpty, z.array(nonEmpty).min(1)]);
 

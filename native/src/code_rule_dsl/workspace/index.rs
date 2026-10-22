@@ -1,8 +1,9 @@
 //! Repository indexing: the host drives the index of the attached Git worktree one bounded chunk
 //! per call (`WorkspaceIndexTask`), restoring completed clean directories and reading the rest.
 //!
-//! File set: the index evaluates exactly the files the host's walk selects (`walk`); Git and
-//! Rerail ignore rules decide only which of them the store may restore.
+//! File set: the index evaluates exactly the files the host's walk selects (`walk`), which leaves
+//! out what Git ignores only when the host follows `.gitignore`; `.rerailignore` and Rerail's
+//! built-in ignores decide only which of them the store may restore.
 //!
 //! Memory bound: a chunk reads at most `INDEX_BATCH_FILES` files and stops reading once it holds
 //! `INDEX_BATCH_BYTES` of source, so it holds less than that plus one file (at most
@@ -19,8 +20,9 @@ use super::{
     Candidates, REUSE_DIRECTORY_RESULTS, REUSE_LOCAL_RESULTS, WorkspaceState, check_closed,
 };
 use crate::code_rule_dsl::json::{invalid, json_error};
-use crate::code_rule_dsl::language::adapter::module_path;
+use crate::code_rule_dsl::language::adapter::{module_path, package_manifests};
 use crate::code_rule_dsl::model::FileInput;
+use crate::code_rule_dsl::package_manifest::{Manifest, Manifests};
 use crate::content_store::{
     CandidateCatalogIdentity, DirectoryReuse, HashKey, StoredFile, StoredPathObjects,
 };
@@ -68,6 +70,9 @@ pub struct RepositoryIndexOptions {
     /// own rules: the walk neither lists nor reads them, and reports the ones it reached. Any
     /// other folder is walked, whether or not it holds a `.git` entry.
     pub nested_checkouts: Vec<String>,
+    /// Whether files Git ignores (nested `.gitignore`s, `.git/info/exclude`, `core.excludesFile`;
+    /// never a tracked file) are left out of the walk, as the host's own walks leave them out.
+    pub follow_gitignore: bool,
 }
 
 pub struct WorkspaceIndexTask {
@@ -101,6 +106,7 @@ impl WorkspaceIndexTask {
                 .map(|(extension, label)| (extension.to_owned(), label.to_owned()))
                 .collect(),
                 nested_checkouts: Vec::new(),
+                follow_gitignore: false,
             },
         }
     }
@@ -121,6 +127,8 @@ pub(super) struct RepositoryIndex {
     /// The host's nested checkouts the walk reached, sorted: each is a separate checkout judged by
     /// its own rules, so this index neither lists nor reads them.
     nested_checkouts: Vec<String>,
+    /// The `package.json` files read so far, by directory.
+    manifests: Manifests,
 }
 
 struct PendingFile {
@@ -129,10 +137,13 @@ struct PendingFile {
     language: String,
 }
 
-/// The clean trees under the workspace root, keyed by their workspace-relative prefix.
+/// The clean trees under the workspace root, keyed by their workspace-relative prefix. A tree's
+/// markers cover what its files' context reads outside it: the Python package markers of its
+/// ancestors, and the `package.json` its ECMA files inherit from above it.
 pub(super) fn reusable_directories(
     repository: &git_workspace::GitWorkspace,
     repository_prefix: &str,
+    manifests: &mut Manifests,
 ) -> Vec<DirectoryReuse> {
     let root = repository_prefix.trim_end_matches('/');
     repository
@@ -163,6 +174,12 @@ pub(super) fn reusable_directories(
                         .exists(),
                 ));
             }
+            // A file directly in the tree inherits the manifest at or above it.
+            let inherited = manifests.of_directory(&repository.worktree_root.join(&prefix));
+            marker_bytes.extend_from_slice(b"\0package\0");
+            if let Some(manifest) = inherited {
+                marker_bytes.extend_from_slice(manifest.digest());
+            }
             Some(DirectoryReuse {
                 prefix: logical_prefix,
                 tree,
@@ -180,6 +197,20 @@ pub(super) fn repository_module(
     language: &str,
 ) -> Option<Value> {
     module_path(language, &repository.worktree_root.join(repository_path))
+}
+
+/// The package a host would send for a repository file: the nearest `package.json` in the same
+/// worktree of a file whose family reads one (`package_manifests`), below the workspace root
+/// `manifests` reads.
+pub(super) fn repository_package(
+    manifests: &mut Manifests,
+    repository: &git_workspace::GitWorkspace,
+    repository_path: &str,
+    language: &str,
+) -> Option<Arc<Manifest>> {
+    package_manifests(language)
+        .then(|| manifests.of_file(&repository.worktree_root.join(repository_path)))
+        .flatten()
 }
 
 fn restore_prepared_file(
@@ -271,11 +302,12 @@ impl WorkspaceIndexTask {
 
     /// The workspace's scoped sources as the host's walk selects them: every regular file below
     /// the workspace root with a host source language and a code-rule scope, outside the host's
-    /// ignored directories and never through a symlink, sorted by path. Git, `.rerailignore` and
-    /// Rerail's built-in ignores play no part here; they decide only which of these files the store
-    /// may restore. Directories it cannot list become read failures. A directory the host names as
-    /// a nested checkout is not descended into, only reported. Also returns whether the files
-    /// exceed `max_files`, in which case it stops listing.
+    /// ignored directories, outside what Git ignores when the host follows `.gitignore` (a path
+    /// whose ignore files cannot be read is kept and reported), and never through a symlink,
+    /// sorted by path. `.rerailignore` and Rerail's built-in ignores play no part here; they decide
+    /// only which of these files the store may restore. Directories it cannot list become read
+    /// failures. A directory the host names as a nested checkout is not descended into, only
+    /// reported. Also returns whether the files exceed `max_files`, in which case it stops listing.
     fn walk(
         &self,
         repository: &git_workspace::GitWorkspace,
@@ -296,6 +328,11 @@ impl WorkspaceIndexTask {
             .map(String::as_str)
             .collect::<HashSet<_>>();
         let max_files = self.options.max_files as usize;
+        let mut git_ignore = if self.options.follow_gitignore {
+            crate::git_ignore::GitIgnore::open(&repository.worktree_root).map_err(invalid)?
+        } else {
+            None
+        };
         let mut files = Vec::new();
         let mut nested_checkouts = BTreeSet::new();
         let mut over_budget = false;
@@ -354,10 +391,22 @@ impl WorkspaceIndexTask {
                     ));
                     continue;
                 }
-                match language {
-                    None if pruned.contains(path.as_str()) => {
-                        nested_checkouts.insert(path);
+                if language.is_none() && pruned.contains(path.as_str()) {
+                    // A nested checkout follows its own repository's ignores, not this one's.
+                    nested_checkouts.insert(path);
+                    continue;
+                }
+                if let Some(git_ignore) = git_ignore.as_mut() {
+                    match git_ignore.ignored(&format!("{prefix}{path}"), language.is_none()) {
+                        Ok(true) => continue,
+                        Ok(false) => {}
+                        // Walked as if not ignored: an unreadable `.gitignore` never hides files.
+                        Err(message) => {
+                            failures.push(read_failure(&path, "source-incomplete", &message))
+                        }
                     }
+                }
+                match language {
                     None => directories.push((entry.path(), path)),
                     Some(_) if files.len() == max_files => {
                         over_budget = true;
@@ -397,7 +446,13 @@ impl WorkspaceIndexTask {
             },
             &mut failures,
         )?;
-        let directories = reusable_directories(repository, prefix);
+        let mut manifests = Manifests::new(repository.worktree_root.join(prefix))
+            .reading_server_graphs(
+                code_rules
+                    .iter()
+                    .any(|code_rule| code_rule.reads_server_graph()),
+            );
+        let directories = reusable_directories(repository, prefix, &mut manifests);
         let catalog = candidate_catalog(&code_rules)?;
         let reusable_prefixes = if REUSE_DIRECTORY_RESULTS {
             storage
@@ -412,7 +467,14 @@ impl WorkspaceIndexTask {
             gate();
         }
         let restored = if REUSE_LOCAL_RESULTS {
-            self.restore(storage, repository, &accepted, &reusable_prefixes, catalog)?
+            self.restore(
+                storage,
+                repository,
+                &accepted,
+                &reusable_prefixes,
+                catalog,
+                &mut manifests,
+            )?
         } else {
             HashSet::new()
         };
@@ -430,6 +492,7 @@ impl WorkspaceIndexTask {
             over_budget,
             failures,
             nested_checkouts,
+            manifests,
         })
     }
 
@@ -442,6 +505,7 @@ impl WorkspaceIndexTask {
         accepted: &[PendingFile],
         reusable_prefixes: &HashSet<String>,
         catalog: CandidateCatalogIdentity,
+        manifests: &mut Manifests,
     ) -> Result<HashSet<String>> {
         let aliases = accepted
             .iter()
@@ -465,11 +529,14 @@ impl WorkspaceIndexTask {
                 continue;
             };
             let module = repository_module(repository, &file.repository_path, &file.language);
+            let package =
+                repository_package(manifests, repository, &file.repository_path, &file.language);
             let input = FileInput::new(
                 file.path.clone(),
                 file.language.clone(),
                 Arc::new(String::new()),
                 module.as_ref(),
+                package,
                 &file.path,
             )?;
             let key = (stored.source_hash, file_context(&input));
@@ -565,11 +632,18 @@ impl WorkspaceIndexTask {
             let source = String::from_utf8(bytes)
                 .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned());
             let module = repository_module(repository, &file.repository_path, &file.language);
+            let package = repository_package(
+                &mut index.manifests,
+                repository,
+                &file.repository_path,
+                &file.language,
+            );
             batch.push(WireFile {
                 path: file.path,
                 language: file.language,
                 source,
                 module,
+                package,
             });
         }
         Ok(batch)

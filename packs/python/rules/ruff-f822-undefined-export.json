@@ -3,7 +3,7 @@
   "id": "ruff-f822-undefined-export",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F822 (undefined-export) with default settings, on the engine's name resolution (M10a `resolves.unresolved` on `__all__` entries): a string entry of a static module `__all__` definition (Ruff's extract_dunder_all_names) (an implicit concatenation is one entry) that names no module binding (a bare annotation included) and no builtin, in a module without a star import. `__init__.py` is exempt (Ruff reports it only in preview). Reported on the string.",
+  "description": "List only names the module actually defines in its __all__ (outside __init__.py); an undefined entry breaks star imports.",
   "scope": {
     "include": [
       "**/*"

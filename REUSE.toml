@@ -54,6 +54,28 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2022 Herrington Darkholme", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT"
 
+# oxc's oxlint 1.88.0 disable directives, ported.
+[[annotations]]
+path = "native/src/code_rule_dsl/suppress/oxlint.rs"
+precedence = "override"
+SPDX-FileCopyrightText = ["2024-present VoidZero Inc. & Contributors", "2023 Boshen", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT"
+
+# Biome 2.5.15's suppression comments, ported from crates/biome_suppression/src/lib.rs,
+# crates/biome_analyze/src/{lib.rs,suppressions.rs,matcher.rs}, crates/biome_js_syntax/src/lib.rs and
+# crates/biome_js_parser/src/lexer/mod.rs, with the test in crates/biome_js_analyze/src/suppressions.tests.rs; its
+# diagnostic categories, JavaScript analyzer registry and ESLint same-source mapping (crates/biome_analyze/src/rule.rs),
+# as written by scripts/generate/packs/biome-suppression.mjs.
+[[annotations]]
+path = [
+  "native/src/code_rule_dsl/suppress/biome.rs",
+  "native/src/code_rule_dsl/suppress/biome_registry.generated.rs",
+  "conformance/biome-same-sources.generated.ts",
+]
+precedence = "override"
+SPDX-FileCopyrightText = ["2023-present Biome Developers and Contributors", "2020-2023 Rome Tools, Inc. and its affiliates", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT"
+
 # typescript-estree 8.70.1 JSX entities, as written by scripts/generate/value/ecma-entities.mjs.
 [[annotations]]
 path = "native/src/code_rule_dsl/value/ecma/entities.generated.rs"
@@ -81,6 +103,51 @@ path = "native/src/code_rule_dsl/blade/forte/directives/resources/*.json"
 precedence = "override"
 SPDX-FileCopyrightText = "Johnathon Koster"
 SPDX-License-Identifier = "MIT"
+
+# tree-sitter-grammars/tree-sitter-vue 0.1.0, vendored byte-identical.
+[[annotations]]
+path = "native/grammars/tree-sitter-vue/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2024 Amaan Qureshi"
+SPDX-License-Identifier = "MIT"
+
+# Upstream's scanner and tag table, derived from tree-sitter-html.
+[[annotations]]
+path = ["native/grammars/tree-sitter-vue/src/scanner.c", "native/grammars/tree-sitter-vue/src/tag.h"]
+precedence = "override"
+SPDX-FileCopyrightText = ["2024 Amaan Qureshi", "2014 Max Brunsfeld"]
+SPDX-License-Identifier = "MIT"
+
+# DerekStride/tree-sitter-sql 0.3.11 with Rerail's patches (native/grammars/tree-sitter-sql/PATCHES.md):
+# grammar.json regenerated from the patched grammar.js, scanner.c patched, rerail.patch the diff.
+[[annotations]]
+path = "native/grammars/tree-sitter-sql/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2021 Derek Stride"
+SPDX-License-Identifier = "MIT"
+
+# The parser headers `tree-sitter generate` 0.27.0 writes.
+[[annotations]]
+path = "native/grammars/tree-sitter-sql/src/tree_sitter/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2018 Max Brunsfeld"
+SPDX-License-Identifier = "MIT"
+
+# tree-sitter/tree-sitter-javascript 0.25.0, vendored with Rerail's patches
+# (native/grammars/tree-sitter-javascript/PATCHES.md); tree_sitter/*.h as tree-sitter-cli 0.27.0 writes them.
+[[annotations]]
+path = "native/grammars/tree-sitter-javascript/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["2014 Max Brunsfeld", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT"
+
+# node-semver 7.8.5, ported to Rust (semver/mod.rs, provenance in semver/UPSTREAM.md); its subset() and new Range() answers recorded by
+# scripts/generate/semver/semver-subset-cases.mjs.
+[[annotations]]
+path = ["native/src/code_rule_dsl/semver/mod.rs", "native/src/code_rule_dsl/semver/subset_cases.json"]
+precedence = "override"
+SPDX-FileCopyrightText = ["Isaac Z. Schlueter and Contributors", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "ISC"
 
 # Conformance fixtures under fixtures/ (see fixtures/README.md).
 # Third-party material, one entry per <family>/licenses/<project>/UPSTREAM.md and copy kind. Verbatim
@@ -267,356 +334,358 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2022 Charles Marsh", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT AND Apache-2.0"
 
-# rust-clippy (Rust 1.99.0) (rust/licenses/clippy/UPSTREAM.md): verbatim
+# rust-clippy (Rust 1.99.0) (packs/rust/licenses/clippy/UPSTREAM.md): verbatim
 [[annotations]]
-path = "fixtures/rust/upstream/clippy/fixtures/**"
+path = "packs/rust/upstream/clippy/fixtures/**"
 precedence = "override"
 SPDX-FileCopyrightText = "The Rust Project Contributors"
 SPDX-License-Identifier = "MIT OR Apache-2.0"
 
-# SQLFluff 4.4.0 (sql/licenses/sqlfluff/UPSTREAM.md): verbatim
-[[annotations]]
-path = "fixtures/sql/upstream/sqlfluff/fixtures/**"
-precedence = "override"
-SPDX-FileCopyrightText = "2018-2026 Alan Cruickshank"
-SPDX-License-Identifier = "MIT"
-
-# eslint-plugin-vue 10.11.1 (vue/licenses/eslint-plugin-vue/UPSTREAM.md): verbatim
+# eslint-plugin-vue 10.11.1 (packs/vue/licenses/eslint-plugin-vue/UPSTREAM.md): verbatim
 [[annotations]]
 path = [
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/attribute-hyphenation/**",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-026.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-027.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-028.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-029.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-030.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-031.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-014.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-child-content/**",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-deprecated-v-on-native-modifier/**",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-018.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-019.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-020.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-021.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-022.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-014.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-015.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-016.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-017.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-018.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-019.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-020.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-021.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-022.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-023.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-v-else-if/**",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-duplicate-attributes/**",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-export-in-script-setup/**",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-mutating-props/**",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-001.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-002.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-009.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-010.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-011.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-012.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-013.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-014.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-015.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-016.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-017.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-018.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-019.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-001.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-002.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-014.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-015.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-016.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-017.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-018.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-019.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-020.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-021.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-022.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-023.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-024.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-025.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-026.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-027.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-000.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-001.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-002.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-003.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-004.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-005.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-006.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-007.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-008.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-009.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-010.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-011.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-012.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-013.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-014.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-015.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-016.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-017.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-018.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-019.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-020.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-021.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-022.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-023.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-024.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-000.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-001.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-002.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-003.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-004.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-005.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-006.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-007.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-008.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-009.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-010.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-011.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-013.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-014.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-015.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-016.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-017.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-018.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-006.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-007.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-008.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-009.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-010.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-011.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-012.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/valid-008.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-template-shadow/**",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-unused-refs/**",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-unused-vars/**",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-use-v-if-with-v-for/**",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-v-html/**",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-v-text-v-html-on-component/**",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/invalid-000.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/invalid-001.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/invalid-002.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/valid-000.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/valid-001.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/valid-002.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/valid-003.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/valid-004.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/valid-006.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/valid-007.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/valid-008.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/valid-009.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/valid-010.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-v-for-key/**",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-042.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-045.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-046.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-047.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-048.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-049.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-050.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-052.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-053.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-054.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-055.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-056.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-015.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-017.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-018.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-020.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-021.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-022.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-023.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-024.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-025.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-026.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/v-on-event-hyphenation/**",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/valid-v-for/**",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/attribute-hyphenation/**",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-026.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-027.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-028.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-029.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-030.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-031.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-014.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-child-content/**",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-deprecated-v-on-native-modifier/**",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-018.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-019.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-020.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-021.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-022.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-014.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-015.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-016.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-017.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-018.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-019.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-020.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-021.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-022.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-023.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-v-else-if/**",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-duplicate-attributes/**",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-export-in-script-setup/**",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-mutating-props/**",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-001.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-002.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-009.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-010.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-011.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-012.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-013.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-014.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-015.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-016.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-017.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-018.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-019.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-001.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-002.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-014.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-015.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-016.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-017.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-018.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-019.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-020.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-021.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-022.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-023.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-024.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-025.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-026.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-027.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-000.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-001.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-002.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-003.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-004.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-005.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-006.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-007.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-008.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-009.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-010.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-011.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-012.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-013.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-014.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-015.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-016.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-017.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-018.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-019.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-020.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-021.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-022.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-023.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/invalid-024.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-000.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-001.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-002.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-003.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-004.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-005.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-006.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-007.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-008.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-009.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-010.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-011.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-013.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-014.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-015.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-016.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-017.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-018.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-006.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-007.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-008.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-009.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-010.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-011.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-012.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/valid-008.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-template-shadow/**",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-unused-refs/**",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-unused-vars/**",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-use-v-if-with-v-for/**",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-v-html/**",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-v-text-v-html-on-component/**",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/invalid-000.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/invalid-001.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/invalid-002.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/valid-000.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/valid-001.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/valid-002.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/valid-003.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/valid-004.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/valid-006.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/valid-007.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/valid-008.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/valid-009.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/valid-010.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-v-for-key/**",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-042.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-045.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-046.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-047.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-048.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-049.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-050.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-052.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-053.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-054.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-055.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-056.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-015.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-017.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-018.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-020.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-021.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-022.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-023.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-024.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-025.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-026.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/v-on-event-hyphenation/**",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/valid-v-for/**",
 ]
 precedence = "override"
 SPDX-FileCopyrightText = "2017 Toru Nagashima"
 SPDX-License-Identifier = "MIT"
 
-# eslint-plugin-vue 10.11.1 (vue/licenses/eslint-plugin-vue/UPSTREAM.md): derived or excerpted
+# eslint-plugin-vue 10.11.1 (packs/vue/licenses/eslint-plugin-vue/UPSTREAM.md): derived or excerpted
 [[annotations]]
 path = [
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-000.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-001.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-002.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-003.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-004.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-005.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-006.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-007.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-008.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-009.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-010.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-011.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-012.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-013.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-014.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-015.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-016.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-017.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-018.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-019.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-020.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-021.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-022.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-023.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-024.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-025.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-032.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-033.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-036.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-037.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-038.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-039.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-000.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-001.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-002.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-003.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-004.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-005.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-006.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-007.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-008.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-009.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-010.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-011.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-012.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-013.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-000.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-001.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-002.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-003.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-005.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-006.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-007.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-008.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-009.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-010.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-013.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-014.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-015.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-016.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-017.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-000.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-001.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-002.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-003.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-004.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-005.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-006.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-007.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-008.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-009.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-010.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-011.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-012.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-013.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-000.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-003.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-004.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-005.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-006.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-007.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-008.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-000.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-003.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-004.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-005.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-006.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-007.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-008.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-009.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-010.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-011.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-012.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-013.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-012.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-000.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-001.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-002.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-003.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-004.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-005.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/valid-000.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/valid-001.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/valid-002.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/valid-003.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/valid-004.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/valid-005.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/valid-006.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/valid-007.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/valid-005.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-000.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-001.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-002.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-003.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-004.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-005.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-006.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-007.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-008.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-009.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-010.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-011.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-012.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-013.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-014.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-015.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-016.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-017.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-018.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-019.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-020.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-021.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-022.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-023.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-024.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-025.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-026.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-027.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-028.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-029.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-030.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-031.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-032.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-033.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-034.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-035.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-036.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-037.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-038.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-039.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-040.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-041.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-000.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-001.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-002.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-003.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-004.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-005.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-006.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-007.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-008.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-009.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-010.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-011.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-012.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-013.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-014.vue",
-  "fixtures/vue/upstream/eslint-plugin-vue/fixtures/return-in-computed-property/**",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-000.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-001.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-002.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-003.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-004.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-005.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-006.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-007.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-008.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-009.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-010.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-011.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-012.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-013.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-014.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-015.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-016.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-017.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-018.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-019.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-020.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-021.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-022.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-023.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-024.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-025.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-032.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-033.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-036.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-037.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-038.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/invalid-039.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-000.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-001.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-002.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-003.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-004.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-005.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-006.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-007.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-008.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-009.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-010.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-011.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-012.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/valid-013.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-000.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-001.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-002.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-003.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-005.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-006.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-007.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-008.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-009.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-010.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-013.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-014.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-015.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-016.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/invalid-017.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-000.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-001.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-002.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-003.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-004.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-005.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-006.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-007.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-008.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-009.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-010.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-011.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-012.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-dupe-keys/valid-013.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-000.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-003.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-004.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-005.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-006.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-007.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/invalid-008.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-000.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-003.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-004.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-005.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-006.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-007.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-008.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-009.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-010.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-011.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-012.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-ref-as-operand/valid-013.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-setup-props-reactivity-loss/valid-012.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-000.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-001.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-002.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-003.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-004.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/invalid-005.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/valid-000.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/valid-001.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/valid-002.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/valid-003.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/valid-004.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/valid-005.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/valid-006.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-side-effects-in-computed-properties/valid-007.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/no-watch-after-await/valid-005.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-000.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-001.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-002.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-003.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-004.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-005.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-006.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-007.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-008.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-009.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-010.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-011.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-012.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-013.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-014.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-015.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-016.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-017.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-018.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-019.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-020.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-021.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-022.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-023.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-024.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-025.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-026.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-027.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-028.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-029.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-030.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-031.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-032.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-033.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-034.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-035.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-036.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-037.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-038.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-039.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-040.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/invalid-041.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-000.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-001.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-002.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-003.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-004.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-005.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-006.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-007.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-008.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-009.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-010.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-011.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-012.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-013.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/require-valid-default-prop/valid-014.vue",
+  "packs/vue/upstream/eslint-plugin-vue/fixtures/return-in-computed-property/**",
 ]
 precedence = "override"
 SPDX-FileCopyrightText = ["2017 Toru Nagashima", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT AND Apache-2.0"
+
+# Rule documents: Rerail's re-implementations of eslint-plugin-vue's rules, annotated with the licence the pack publishes
+# them under (its package.json); whether adapted rule documents need the upstream licence is an open legal question
+# (docs/pack-format.md#licensing).
+[[annotations]]
+path = ["packs/vue/rules/**", "packs/vue/candidates/rules/**"]
+precedence = "override"
+SPDX-FileCopyrightText = ["2017 Toru Nagashima", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
 
 # shadcn/ui components adapted for the rule playground (a development tool, never published).
 [[annotations]]
@@ -645,6 +714,15 @@ path = ["packs/python/rules/**", "packs/python/candidates/rules/**"]
 precedence = "override"
 SPDX-FileCopyrightText = ["2014 Hewlett-Packard Development Company, L.P.", "2022 Charles Marsh", "2005-2011 Divmod, Inc.", "2013-2014 Florent Xicluna", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
+
+# packs/rust
+# Rule documents are Rerail's ports, published under the pack's Apache-2.0 AND MIT licence expression.
+[[annotations]]
+path = ["packs/rust/rules/**", "packs/rust/candidates/rules/**"]
+precedence = "override"
+SPDX-FileCopyrightText = ["The Rust Project Contributors", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
+
 
 # Bandit 1.9.4 (packs/python/licenses/bandit/UPSTREAM.md): verbatim
 [[annotations]]
@@ -700,6 +778,7 @@ path = [
   "packs/python/upstream/ruff/fixtures/flake8_unused_arguments/**",
   "packs/python/upstream/ruff/fixtures/flake8_use_pathlib/**",
   "packs/python/upstream/ruff/fixtures/flynt/**",
+  "packs/python/upstream/ruff/fixtures/isort/**",
   "packs/python/upstream/ruff/fixtures/mccabe/**",
   "packs/python/upstream/ruff/fixtures/numpy/**",
   "packs/python/upstream/ruff/fixtures/pandas_vet/**",
@@ -710,6 +789,7 @@ path = [
   "packs/python/upstream/ruff/fixtures/pygrep_hooks/**",
   "packs/python/upstream/ruff/fixtures/pyupgrade/**",
   "packs/python/upstream/ruff/fixtures/ruff/**",
+  "packs/python/upstream/ruff/fixtures/ruff_notebook/**",
   "packs/python/upstream/ruff/fixtures/syntax_errors/**",
   "packs/python/upstream/ruff/fixtures/tryceratops/**",
 ]
@@ -717,9 +797,10 @@ precedence = "override"
 SPDX-FileCopyrightText = "2022 Charles Marsh"
 SPDX-License-Identifier = "MIT"
 
-# The fixtures Rerail wrote among them (packs/python/upstream/{ruff,bandit}/UPSTREAM.md).
+# The fixtures Rerail wrote among them (packs/python/upstream/{ruff,bandit}/UPSTREAM.md,
+# packs/rust/upstream/clippy/UPSTREAM.md).
 [[annotations]]
-path = ["packs/python/upstream/ruff/fixtures/rerail/**", "packs/python/upstream/bandit/fixtures/rerail/**"]
+path = ["packs/python/upstream/ruff/fixtures/rerail/**", "packs/python/upstream/bandit/fixtures/rerail/**", "packs/rust/upstream/clippy/fixtures/rerail/**"]
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Nera Software Inc."
 SPDX-License-Identifier = "Apache-2.0"
@@ -730,7 +811,7 @@ SPDX-License-Identifier = "Apache-2.0"
 # licence the pack publishes them under (its package.json); whether adapted rule documents need the upstream licence
 # is an open legal question (docs/pack-format.md#licensing).
 [[annotations]]
-path = "packs/php/rules/**"
+path = ["packs/php/rules/**", "packs/php/candidates/rules/**"]
 precedence = "override"
 SPDX-FileCopyrightText = ["2012 Squiz Pty Ltd (ABN 77 084 670 600)", "2023 PHPCSStandards and contributors", "2016 Ondřej Mirtes", "2025 PHPStan s.r.o.", "2016 Vimeo", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND BSD-3-Clause AND MIT"
@@ -756,12 +837,30 @@ precedence = "override"
 SPDX-FileCopyrightText = "2016 Vimeo"
 SPDX-License-Identifier = "MIT"
 
+# packs/sql
+
+# Rule documents: Rerail's re-implementations of SQLFluff's rules, annotated with the licence the pack publishes them
+# under (its package.json); whether adapted rule documents need the upstream licence is an open legal question
+# (docs/pack-format.md#licensing).
+[[annotations]]
+path = ["packs/sql/rules/**", "packs/sql/candidates/rules/**"]
+precedence = "override"
+SPDX-FileCopyrightText = ["2018-2026 Alan Cruickshank", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
+
+# SQLFluff 4.4.0 (packs/sql/licenses/sqlfluff/UPSTREAM.md): verbatim
+[[annotations]]
+path = "packs/sql/upstream/sqlfluff/fixtures/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2018-2026 Alan Cruickshank"
+SPDX-License-Identifier = "MIT"
+
 # packs/blade
 # Rule documents: Rerail's re-implementations of stillat/blade-parser's validators and Bladestan's and tlint's rules,
 # annotated with the licence the pack publishes them under (its package.json); whether adapted rule documents need the
 # upstream licence is an open legal question (docs/pack-format.md#licensing).
 [[annotations]]
-path = "packs/blade/rules/**"
+path = ["packs/blade/rules/**", "packs/blade/candidates/rules/**"]
 precedence = "override"
 SPDX-FileCopyrightText = ["Johnathon Koster", "2023-present Tomas Votruba", "Tighten Co. <hello@tighten.co>", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
@@ -812,6 +911,13 @@ path = "packs/typescript/upstream/eslint-plugin-vitest/fixtures/**"
 precedence = "override"
 SPDX-FileCopyrightText = ["2022 - PRESENT Verité Mugabo Makuza", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT AND Apache-2.0"
+
+# The fixtures Rerail wrote among them (packs/typescript/upstream/eslint-plugin-vitest/UPSTREAM.md).
+[[annotations]]
+path = "packs/typescript/upstream/eslint-plugin-vitest/fixtures/*/rerail-*"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Nera Software Inc."
+SPDX-License-Identifier = "Apache-2.0"
 
 # typescript-eslint 8.70.1 (packs/typescript/licenses/typescript-eslint/UPSTREAM.md): derived or excerpted
 [[annotations]]
@@ -884,6 +990,19 @@ precedence = "override"
 SPDX-FileCopyrightText = "Meta Platforms, Inc. and affiliates."
 SPDX-License-Identifier = "MIT"
 
+# The fixtures Rerail wrote among them, files and directories alike (packs/react/upstream/eslint-plugin-react/UPSTREAM.md,
+# packs/react/upstream/eslint-plugin-react-hooks/UPSTREAM.md).
+[[annotations]]
+path = [
+  "packs/react/upstream/eslint-plugin-react/fixtures/*/rerail-*",
+  "packs/react/upstream/eslint-plugin-react/fixtures/*/rerail-*/**",
+  "packs/react/upstream/eslint-plugin-react-hooks/fixtures/*/rerail-*",
+  "packs/react/upstream/eslint-plugin-react-hooks/fixtures/*/rerail-*/**",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Nera Software Inc."
+SPDX-License-Identifier = "Apache-2.0"
+
 # packs/node
 
 # Rule documents and candidate rule documents: Rerail's re-implementations of eslint-plugin-n's rules, annotated with
@@ -949,3 +1068,20 @@ path = "packs/next/upstream/eslint-plugin-next/fixtures/*/rerail-*"
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Nera Software Inc."
 SPDX-License-Identifier = "Apache-2.0"
+
+# The port readiness gates' recordings hold upstream test text inline (fixtureTexts.inline): excerpts of the upstream's tests
+# beside Rerail's recorded answers. They are no longer in this repository — each tool-pack commits a recording.lock
+# and the bytes are a GitHub release asset (conformance/port-readiness/recording/store.ts) — so REUSE cannot annotate them, and
+# there is nothing here to annotate. The attribution travels with the asset: each recording.json carries upstream's
+# LICENSE text (licenseText, its copyright and permission notice; recordings made before it was added carry only its
+# digest, licenseSha256, until they are recorded again). In this repository each upstream's
+# packs/<pack>/licenses/<project>/UPSTREAM.md lists the recording as excerpts under upstream's licence and Apache-2.0,
+# and the kept LICENSE sits beside it. Nothing under an upstream path an UPSTREAM.md lists as "Not copied" (Ruff's
+# fixtures for its ports of copyleft plugins) is ever in a recording. Every upstream whose text a recording holds is
+# MIT; Bandit (Apache-2.0) contributes none, its recording naming upstream's files by path and digest only.
+#
+# Upstream by upstream, as the removed annotations read: Ruff 0.16.9 (2022 Charles Marsh), typescript-eslint 8.70.1
+# (2019 typescript-eslint and other contributors), @vitest/eslint-plugin 1.6.27 (2022 - PRESENT Verite Mugabo
+# Makuza), eslint-plugin-react 7.37.5 (2014 Yannick Croissant), eslint-plugin-react-hooks 7.1.1 (Meta Platforms, Inc.
+# and affiliates.), @next/eslint-plugin-next 16.3.8 (2025 Vercel, Inc.), ESLint 10.11.0 (OpenJS Foundation and other
+# contributors), eslint-plugin-unicorn 76.0.0 (Sindre Sorhus) — each MIT, combined with Rerail's Apache-2.0.

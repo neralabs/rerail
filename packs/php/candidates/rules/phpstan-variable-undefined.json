@@ -1,0 +1,43 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "phpstan-variable-undefined",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Define PHP variables before reading them; a variable no code path assigns reads as null with a warning.",
+  "scope": {
+    "include": [
+      "**/*.php"
+    ],
+    "exclude": [
+      "**/*.blade.php"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "kind": "variable_name",
+            "resolves": {
+              "unresolved": true
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "variable.undefined",
+        "message": "Assign this variable on every path before reading it, or fix the name if it is a typo.",
+        "suppress": {
+          "phpstan": {
+            "identifiers": [
+              "variable.undefined"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

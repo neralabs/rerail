@@ -1,0 +1,1 @@
+new print([5] as Foo);

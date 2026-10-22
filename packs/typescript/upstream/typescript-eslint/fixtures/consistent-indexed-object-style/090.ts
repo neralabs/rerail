@@ -1,0 +1,1 @@
+type Foo = { [key: string]: /* preserve me */ number };

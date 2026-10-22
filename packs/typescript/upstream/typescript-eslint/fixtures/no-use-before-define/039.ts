@@ -1,0 +1,4 @@
+
+a();
+var a = function () {};
+      

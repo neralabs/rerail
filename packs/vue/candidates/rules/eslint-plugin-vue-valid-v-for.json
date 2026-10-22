@@ -1,0 +1,1751 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-plugin-vue-valid-v-for",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Write v-for directives with a value, valid aliases and no argument or modifiers, and key components in a loop with the loop variables.",
+  "scope": {
+    "include": [
+      "**/*.vue"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unexpected-argument",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "utils": {
+            "tag-node": {
+              "any": [
+                {
+                  "kind": "start_tag"
+                },
+                {
+                  "kind": "self_closing_tag"
+                }
+              ]
+            },
+            "el": {
+              "any": [
+                {
+                  "kind": "element"
+                },
+                {
+                  "kind": "template_element"
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "directive_value"
+                  },
+                  {
+                    "kind": "dynamic_directive_value"
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "directive_attribute",
+                  "regex": "^v-for(?:[.:=\\s]|$)",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "tag-node",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "el",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "matches": "el"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "template_element"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "vue/valid-v-for",
+        "message": "'v-for' directives require no argument.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/valid-v-for"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "unexpected-modifier",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "utils": {
+            "tag-node": {
+              "any": [
+                {
+                  "kind": "start_tag"
+                },
+                {
+                  "kind": "self_closing_tag"
+                }
+              ]
+            },
+            "el": {
+              "any": [
+                {
+                  "kind": "element"
+                },
+                {
+                  "kind": "template_element"
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "kind": "directive_modifier"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "directive_modifiers",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "directive_attribute",
+                    "regex": "^v-for(?:[.:=\\s]|$)",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "tag-node",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "matches": "el",
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "matches": "el"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "follows": {
+                    "stopBy": "end",
+                    "kind": "directive_modifier"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "template_element"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "vue/valid-v-for",
+        "message": "'v-for' directives require no modifier.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/valid-v-for"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "expected-value",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "utils": {
+            "tag-node": {
+              "any": [
+                {
+                  "kind": "start_tag"
+                },
+                {
+                  "kind": "self_closing_tag"
+                }
+              ]
+            },
+            "el": {
+              "any": [
+                {
+                  "kind": "element"
+                },
+                {
+                  "kind": "template_element"
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "kind": "directive_attribute",
+                "regex": "^v-for(?:[.:=\\s]|$)"
+              },
+              {
+                "any": [
+                  {
+                    "regex": "^[^=]*$"
+                  },
+                  {
+                    "regex": "=\\s*(?:\"\"|'')$"
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "tag-node",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "el",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "el"
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "template_element"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "vue/valid-v-for",
+        "message": "'v-for' directives require that attribute value.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/valid-v-for"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-empty-alias-value",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "utils": {
+            "tag-node": {
+              "any": [
+                {
+                  "kind": "start_tag"
+                },
+                {
+                  "kind": "self_closing_tag"
+                }
+              ]
+            },
+            "el": {
+              "any": [
+                {
+                  "kind": "element"
+                },
+                {
+                  "kind": "template_element"
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "kind": "directive_attribute",
+                "regex": "^v-for(?:[.:][^=\\s]*)*\\s*=\\s*[\"']?\\s*(?P<EXPR>\\(\\s*,)"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "tag-node",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "el",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "el"
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "template_element"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.EXPR",
+        "code": "vue/valid-v-for",
+        "message": "Name the empty value alias in this v-for, such as `(item, index) in items`.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/valid-v-for"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-empty-alias-key",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "utils": {
+            "tag-node": {
+              "any": [
+                {
+                  "kind": "start_tag"
+                },
+                {
+                  "kind": "self_closing_tag"
+                }
+              ]
+            },
+            "el": {
+              "any": [
+                {
+                  "kind": "element"
+                },
+                {
+                  "kind": "template_element"
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "kind": "directive_attribute",
+                "regex": "^v-for(?:[.:][^=\\s]*)*\\s*=\\s*[\"']?\\s*(?P<EXPR>\\()\\s*(?:[^,(){}\\[\\]]|\\((?:[^\\(\\)]|\\((?:[^\\(\\)]|\\([^\\(\\)]*\\))*\\))*\\)|\\{(?:[^\\{\\}]|\\{(?:[^\\{\\}]|\\{(?:[^\\{\\}]|\\{[^\\{\\}]*\\})*\\})*\\})*\\}|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[[^\\[\\]]*\\])*\\])*\\])*\\])*,\\s*,"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "tag-node",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "el",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "el"
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "template_element"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.EXPR",
+        "code": "vue/valid-v-for",
+        "message": "Name the empty key alias in this v-for, such as `(value, key) in object`.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/valid-v-for"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-empty-alias-index",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "utils": {
+            "tag-node": {
+              "any": [
+                {
+                  "kind": "start_tag"
+                },
+                {
+                  "kind": "self_closing_tag"
+                }
+              ]
+            },
+            "el": {
+              "any": [
+                {
+                  "kind": "element"
+                },
+                {
+                  "kind": "template_element"
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "kind": "directive_attribute",
+                "regex": "^v-for(?:[.:][^=\\s]*)*\\s*=\\s*[\"']?\\s*(?P<EXPR>\\()\\s*(?:[^,(){}\\[\\]]|\\((?:[^\\(\\)]|\\((?:[^\\(\\)]|\\([^\\(\\)]*\\))*\\))*\\)|\\{(?:[^\\{\\}]|\\{(?:[^\\{\\}]|\\{(?:[^\\{\\}]|\\{[^\\{\\}]*\\})*\\})*\\})*\\}|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[[^\\[\\]]*\\])*\\])*\\])*\\])*,\\s*(?:[^,(){}\\[\\]]|\\((?:[^\\(\\)]|\\((?:[^\\(\\)]|\\([^\\(\\)]*\\))*\\))*\\)|\\{(?:[^\\{\\}]|\\{(?:[^\\{\\}]|\\{(?:[^\\{\\}]|\\{[^\\{\\}]*\\})*\\})*\\})*\\}|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[[^\\[\\]]*\\])*\\])*\\])*\\])*,\\s*,"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "tag-node",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "el",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "el"
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "template_element"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.EXPR",
+        "code": "vue/valid-v-for",
+        "message": "Name the empty index alias in this v-for, such as `(value, key, index) in object`.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/valid-v-for"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-alias-key",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "utils": {
+            "tag-node": {
+              "any": [
+                {
+                  "kind": "start_tag"
+                },
+                {
+                  "kind": "self_closing_tag"
+                }
+              ]
+            },
+            "el": {
+              "any": [
+                {
+                  "kind": "element"
+                },
+                {
+                  "kind": "template_element"
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "kind": "directive_attribute",
+                "regex": "^v-for(?:[.:][^=\\s]*)*\\s*=\\s*[\"']?\\s*\\(\\s*(?:[^,(){}\\[\\]]|\\((?:[^\\(\\)]|\\((?:[^\\(\\)]|\\([^\\(\\)]*\\))*\\))*\\)|\\{(?:[^\\{\\}]|\\{(?:[^\\{\\}]|\\{(?:[^\\{\\}]|\\{[^\\{\\}]*\\})*\\})*\\})*\\}|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[[^\\[\\]]*\\])*\\])*\\])*\\])*,\\s*(?P<KEY>(?:(?:\\{(?:[^\\{\\}]|\\{(?:[^\\{\\}]|\\{(?:[^\\{\\}]|\\{[^\\{\\}]*\\})*\\})*\\})*\\}|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[[^\\[\\]]*\\])*\\])*\\])*\\])(?:\\s*=\\s*[^,)\\s]+)?|\\.\\.\\.\\s*[A-Za-z_$\\x{80}-\\x{10FFFF}][A-Za-z0-9_$\\x{80}-\\x{10FFFF}]*|[A-Za-z_$\\x{80}-\\x{10FFFF}][A-Za-z0-9_$\\x{80}-\\x{10FFFF}]*\\s*=\\s*[^,)\\s]+))\\s*[,)]"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "tag-node",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "el",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "el"
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "template_element"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.KEY",
+        "code": "vue/valid-v-for",
+        "message": "Invalid alias '$KEY'.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/valid-v-for"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-alias-index",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "utils": {
+            "tag-node": {
+              "any": [
+                {
+                  "kind": "start_tag"
+                },
+                {
+                  "kind": "self_closing_tag"
+                }
+              ]
+            },
+            "el": {
+              "any": [
+                {
+                  "kind": "element"
+                },
+                {
+                  "kind": "template_element"
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "kind": "directive_attribute",
+                "regex": "^v-for(?:[.:][^=\\s]*)*\\s*=\\s*[\"']?\\s*\\(\\s*(?:[^,(){}\\[\\]]|\\((?:[^\\(\\)]|\\((?:[^\\(\\)]|\\([^\\(\\)]*\\))*\\))*\\)|\\{(?:[^\\{\\}]|\\{(?:[^\\{\\}]|\\{(?:[^\\{\\}]|\\{[^\\{\\}]*\\})*\\})*\\})*\\}|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[[^\\[\\]]*\\])*\\])*\\])*\\])*,\\s*(?:[^,(){}\\[\\]]|\\((?:[^\\(\\)]|\\((?:[^\\(\\)]|\\([^\\(\\)]*\\))*\\))*\\)|\\{(?:[^\\{\\}]|\\{(?:[^\\{\\}]|\\{(?:[^\\{\\}]|\\{[^\\{\\}]*\\})*\\})*\\})*\\}|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[[^\\[\\]]*\\])*\\])*\\])*\\])*,\\s*(?P<INDEX>(?:(?:\\{(?:[^\\{\\}]|\\{(?:[^\\{\\}]|\\{(?:[^\\{\\}]|\\{[^\\{\\}]*\\})*\\})*\\})*\\}|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[[^\\[\\]]*\\])*\\])*\\])*\\])(?:\\s*=\\s*[^,)\\s]+)?|\\.\\.\\.\\s*[A-Za-z_$\\x{80}-\\x{10FFFF}][A-Za-z0-9_$\\x{80}-\\x{10FFFF}]*|[A-Za-z_$\\x{80}-\\x{10FFFF}][A-Za-z0-9_$\\x{80}-\\x{10FFFF}]*\\s*=\\s*[^,)\\s]+))\\s*[,)]"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "tag-node",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "el",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "el"
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "template_element"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.INDEX",
+        "code": "vue/valid-v-for",
+        "message": "Invalid alias '$INDEX'.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/valid-v-for"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "custom-element-key",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "utils": {
+            "tag-node": {
+              "any": [
+                {
+                  "kind": "start_tag"
+                },
+                {
+                  "kind": "self_closing_tag"
+                }
+              ]
+            },
+            "el": {
+              "any": [
+                {
+                  "kind": "element"
+                },
+                {
+                  "kind": "template_element"
+                }
+              ]
+            },
+            "vfor": {
+              "kind": "directive_attribute",
+              "regex": "^v-for(?:[.:=\\s]|$)"
+            },
+            "vkey": {
+              "kind": "directive_attribute",
+              "regex": "^(?:v-bind:|[:.])key(?:[.=\\s]|$)"
+            },
+            "has-vfor": {
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "tag-node",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "vfor"
+                }
+              }
+            },
+            "owned": {
+              "all": [
+                {
+                  "matches": "has-vfor"
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "el"
+                  }
+                }
+              ]
+            },
+            "tmpl-keyless": {
+              "all": [
+                {
+                  "matches": "el"
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "tag-node",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "tag_name",
+                      "regex": "^(?i:template)$"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "tag-node",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "vkey"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "binder": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "shorthand_property_identifier_pattern"
+                }
+              ]
+            },
+            "ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "shorthand_property_identifier"
+                }
+              ]
+            },
+            "skip-below": {
+              "has": {
+                "stopBy": "end",
+                "matches": "el",
+                "pattern": "$N",
+                "all": [
+                  {
+                    "matches": "has-vfor"
+                  },
+                  {
+                    "any": [
+                      {
+                        "compare": {
+                          "left": "N",
+                          "op": "eq",
+                          "right": "X",
+                          "text": "source"
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "end",
+                          "matches": "el",
+                          "pattern": "$M",
+                          "compare": {
+                            "left": "M",
+                            "op": "eq",
+                            "right": "X",
+                            "text": "source"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "tag-node",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "vfor",
+                        "embedded": {
+                          "all": [
+                            {
+                              "matches": "ref"
+                            },
+                            {
+                              "pattern": "$SR"
+                            },
+                            {
+                              "inside": {
+                                "stopBy": "end",
+                                "kind": "parenthesized_expression",
+                                "inside": {
+                                  "stopBy": "neighbor",
+                                  "kind": "sequence_expression"
+                                }
+                              }
+                            },
+                            {
+                              "inside": {
+                                "stopBy": "end",
+                                "kind": "arrow_function",
+                                "all": [
+                                  {
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "kind": "formal_parameters",
+                                      "has": {
+                                        "stopBy": "end",
+                                        "all": [
+                                          {
+                                            "matches": "binder"
+                                          },
+                                          {
+                                            "pattern": "$AL"
+                                          },
+                                          {
+                                            "compare": {
+                                              "left": "SR",
+                                              "op": "eq",
+                                              "right": "AL",
+                                              "text": "source"
+                                            }
+                                          },
+                                          {
+                                            "host": {
+                                              "inside": {
+                                                "stopBy": "end",
+                                                "matches": "vfor",
+                                                "inside": {
+                                                  "stopBy": "neighbor",
+                                                  "matches": "tag-node",
+                                                  "inside": {
+                                                    "stopBy": "neighbor",
+                                                    "matches": "el",
+                                                    "pattern": "$EV",
+                                                    "compare": {
+                                                      "left": "E",
+                                                      "op": "eq",
+                                                      "right": "EV",
+                                                      "text": "node"
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "owner": {
+              "all": [
+                {
+                  "matches": "owned"
+                },
+                {
+                  "pattern": "$E"
+                }
+              ]
+            },
+            "reach": {
+              "all": [
+                {
+                  "pattern": "$X"
+                },
+                {
+                  "any": [
+                    {
+                      "matches": "owner"
+                    },
+                    {
+                      "inside": {
+                        "stopBy": {
+                          "not": {
+                            "matches": "tmpl-keyless"
+                          }
+                        },
+                        "all": [
+                          {
+                            "matches": "tmpl-keyless"
+                          },
+                          {
+                            "matches": "owner"
+                          },
+                          {
+                            "not": {
+                              "matches": "skip-below"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "tag-svg-ctx": {
+              "matches": "tag-node",
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "element"
+                  },
+                  {
+                    "kind": "template_element"
+                  }
+                ],
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "element"
+                    },
+                    {
+                      "kind": "template_element"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "start_tag",
+                    "matches": "svg-children"
+                  }
+                }
+              }
+            },
+            "tag-math-ctx": {
+              "matches": "tag-node",
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "element"
+                  },
+                  {
+                    "kind": "template_element"
+                  }
+                ],
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "element"
+                    },
+                    {
+                      "kind": "template_element"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "start_tag",
+                    "matches": "math-children"
+                  }
+                }
+              }
+            },
+            "parent-annotation-xml": {
+              "matches": "tag-node",
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "element"
+                  },
+                  {
+                    "kind": "template_element"
+                  }
+                ],
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "element"
+                    },
+                    {
+                      "kind": "template_element"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "start_tag",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "tag_name",
+                      "regex": "^annotation-xml$"
+                    }
+                  }
+                }
+              }
+            },
+            "parent-text-integration": {
+              "matches": "tag-node",
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "element"
+                  },
+                  {
+                    "kind": "template_element"
+                  }
+                ],
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "element"
+                    },
+                    {
+                      "kind": "template_element"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "start_tag",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "tag_name",
+                      "regex": "^(?:mi|mo|mn|ms|mtext)$"
+                    }
+                  }
+                }
+              }
+            },
+            "parent-math-ns": {
+              "matches": "tag-node",
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "element"
+                  },
+                  {
+                    "kind": "template_element"
+                  }
+                ],
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "element"
+                    },
+                    {
+                      "kind": "template_element"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "start_tag",
+                    "matches": "ns-math"
+                  }
+                }
+              }
+            },
+            "svg-children": {
+              "all": [
+                {
+                  "matches": "ns-svg"
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "tag_name",
+                      "regex": "^(?:foreignObject|desc|title)$"
+                    }
+                  }
+                }
+              ]
+            },
+            "math-children": {
+              "all": [
+                {
+                  "matches": "ns-math"
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "tag_name",
+                      "regex": "^(?:mi|mo|mn|ms|mtext)$"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "matches": "annotation-html"
+                  }
+                }
+              ]
+            },
+            "annotation-html": {
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "tag_name",
+                    "regex": "^annotation-xml$"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "attribute",
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "attribute_name",
+                          "regex": "(?i)^encoding$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "attribute_value",
+                          "regex": "^(?:text/html|application/xhtml\\+xml)$"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "ns-svg": {
+              "any": [
+                {
+                  "matches": "tag-svg-ctx"
+                },
+                {
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "tag_name",
+                        "regex": "^svg$"
+                      }
+                    },
+                    {
+                      "any": [
+                        {
+                          "not": {
+                            "matches": "tag-math-ctx"
+                          }
+                        },
+                        {
+                          "matches": "parent-annotation-xml"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "ns-math": {
+              "any": [
+                {
+                  "matches": "tag-math-ctx"
+                },
+                {
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "tag_name",
+                        "regex": "^math$"
+                      }
+                    },
+                    {
+                      "not": {
+                        "matches": "tag-svg-ctx"
+                      }
+                    },
+                    {
+                      "not": {
+                        "matches": "tag-math-ctx"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "tag_name",
+                        "regex": "^(?:mglyph|malignmark)$"
+                      }
+                    },
+                    {
+                      "matches": "parent-text-integration"
+                    },
+                    {
+                      "matches": "parent-math-ns"
+                    }
+                  ]
+                }
+              ]
+            },
+            "custom-tag": {
+              "any": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "attribute",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "attribute_name",
+                          "regex": "(?i)^is$"
+                        }
+                      },
+                      {
+                        "kind": "directive_attribute",
+                        "regex": "(?i)^(?:(?:v-bind:|[:.])is(?:[.=\\s]|$)|v-is(?:[:.=\\s]|$))"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "all": [
+                    {
+                      "not": {
+                        "matches": "ns-svg"
+                      }
+                    },
+                    {
+                      "not": {
+                        "matches": "ns-math"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "tag_name",
+                        "not": {
+                          "regex": "^(?:a|abbr|address|area|article|aside|audio|b|base|bdi|bdo|blockquote|body|br|button|camera|canvas|caption|cite|code|col|colgroup|data|datalist|dd|del|details|dfn|dialog|div|dl|dt|em|embed|fieldset|figcaption|figure|footer|form|geolocation|h1|h2|h3|h4|h5|h6|head|header|hgroup|hr|html|i|iframe|img|input|ins|install|kbd|label|legend|li|link|main|map|mark|menu|meta|meter|microphone|model|nav|noscript|object|ol|optgroup|option|output|p|picture|pre|progress|q|rp|rt|ruby|s|samp|script|search|section|select|selectedcontent|slot|small|source|span|strong|style|sub|summary|sup|table|tbody|td|template|textarea|tfoot|th|thead|time|title|tr|track|u|ul|usermedia|var|video|wbr)$"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "matches": "ns-svg"
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "tag_name",
+                        "not": {
+                          "regex": "^(?:a|animate|animateMotion|animateTransform|circle|clipPath|defs|desc|ellipse|feBlend|feColorMatrix|feComponentTransfer|feComposite|feConvolveMatrix|feDiffuseLighting|feDisplacementMap|feDistantLight|feDropShadow|feFlood|feFuncA|feFuncB|feFuncG|feFuncR|feGaussianBlur|feImage|feMerge|feMergeNode|feMorphology|feOffset|fePointLight|feSpecularLighting|feSpotLight|feTile|feTurbulence|filter|foreignObject|g|image|line|linearGradient|marker|mask|metadata|mpath|path|pattern|polygon|polyline|radialGradient|rect|script|set|stop|style|svg|switch|symbol|text|textPath|title|tspan|use|view)$"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "matches": "ns-math"
+                    },
+                    {
+                      "not": {
+                        "matches": "ns-svg"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "tag_name",
+                        "not": {
+                          "regex": "^(?:math|maction|annotation|annotation-xml|menclose|merror|mfenced|mfrac|mi|mmultiscripts|mn|mo|mover|mpadded|mphantom|mprescripts|mroot|mrow|ms|semantics|mspace|msqrt|mstyle|msub|msup|msubsup|mtable|mtd|mtext|mtr|munder|munderover)$"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "matches": "tag-node"
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "vkey"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "tag_name",
+                    "regex": "^(?i:template)$"
+                  }
+                }
+              },
+              {
+                "matches": "custom-tag"
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "template_element"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "matches": "el"
+                    },
+                    {
+                      "matches": "reach"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "vue/valid-v-for",
+        "message": "Custom elements in iteration require 'v-bind:key' directives.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/valid-v-for"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "key-iteration-variable",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "utils": {
+            "tag-node": {
+              "any": [
+                {
+                  "kind": "start_tag"
+                },
+                {
+                  "kind": "self_closing_tag"
+                }
+              ]
+            },
+            "el": {
+              "any": [
+                {
+                  "kind": "element"
+                },
+                {
+                  "kind": "template_element"
+                }
+              ]
+            },
+            "vfor": {
+              "kind": "directive_attribute",
+              "regex": "^v-for(?:[.:=\\s]|$)"
+            },
+            "vkey": {
+              "kind": "directive_attribute",
+              "regex": "^(?:v-bind:|[:.])key(?:[.=\\s]|$)"
+            },
+            "has-vfor": {
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "tag-node",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "vfor"
+                }
+              }
+            },
+            "owned": {
+              "all": [
+                {
+                  "matches": "has-vfor"
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "el"
+                  }
+                }
+              ]
+            },
+            "tmpl-keyless": {
+              "all": [
+                {
+                  "matches": "el"
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "tag-node",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "tag_name",
+                      "regex": "^(?i:template)$"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "tag-node",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "vkey"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "binder": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "shorthand_property_identifier_pattern"
+                }
+              ]
+            },
+            "ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "shorthand_property_identifier"
+                }
+              ]
+            },
+            "skip-below": {
+              "has": {
+                "stopBy": "end",
+                "matches": "el",
+                "pattern": "$N",
+                "all": [
+                  {
+                    "matches": "has-vfor"
+                  },
+                  {
+                    "any": [
+                      {
+                        "compare": {
+                          "left": "N",
+                          "op": "eq",
+                          "right": "X",
+                          "text": "source"
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "end",
+                          "matches": "el",
+                          "pattern": "$M",
+                          "compare": {
+                            "left": "M",
+                            "op": "eq",
+                            "right": "X",
+                            "text": "source"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "tag-node",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "vfor",
+                        "embedded": {
+                          "all": [
+                            {
+                              "matches": "ref"
+                            },
+                            {
+                              "pattern": "$SR"
+                            },
+                            {
+                              "inside": {
+                                "stopBy": "end",
+                                "kind": "parenthesized_expression",
+                                "inside": {
+                                  "stopBy": "neighbor",
+                                  "kind": "sequence_expression"
+                                }
+                              }
+                            },
+                            {
+                              "inside": {
+                                "stopBy": "end",
+                                "kind": "arrow_function",
+                                "all": [
+                                  {
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "kind": "formal_parameters",
+                                      "has": {
+                                        "stopBy": "end",
+                                        "all": [
+                                          {
+                                            "matches": "binder"
+                                          },
+                                          {
+                                            "pattern": "$AL"
+                                          },
+                                          {
+                                            "compare": {
+                                              "left": "SR",
+                                              "op": "eq",
+                                              "right": "AL",
+                                              "text": "source"
+                                            }
+                                          },
+                                          {
+                                            "host": {
+                                              "inside": {
+                                                "stopBy": "end",
+                                                "matches": "vfor",
+                                                "inside": {
+                                                  "stopBy": "neighbor",
+                                                  "matches": "tag-node",
+                                                  "inside": {
+                                                    "stopBy": "neighbor",
+                                                    "matches": "el",
+                                                    "pattern": "$EV",
+                                                    "compare": {
+                                                      "left": "E",
+                                                      "op": "eq",
+                                                      "right": "EV",
+                                                      "text": "node"
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "used-by": {
+              "has": {
+                "stopBy": "end",
+                "matches": "vkey",
+                "pattern": "$KV",
+                "compare": {
+                  "left": "K",
+                  "op": "eq",
+                  "right": "KV",
+                  "text": "node"
+                },
+                "embedded": {
+                  "all": [
+                    {
+                      "matches": "ref"
+                    },
+                    {
+                      "pattern": "$R"
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "arrow_function",
+                        "all": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "formal_parameters",
+                              "has": {
+                                "stopBy": "end",
+                                "all": [
+                                  {
+                                    "matches": "binder"
+                                  },
+                                  {
+                                    "pattern": "$AL"
+                                  },
+                                  {
+                                    "compare": {
+                                      "left": "R",
+                                      "op": "eq",
+                                      "right": "AL",
+                                      "text": "source"
+                                    }
+                                  },
+                                  {
+                                    "host": {
+                                      "inside": {
+                                        "stopBy": "end",
+                                        "matches": "vfor",
+                                        "inside": {
+                                          "stopBy": "neighbor",
+                                          "matches": "tag-node",
+                                          "inside": {
+                                            "stopBy": "neighbor",
+                                            "matches": "el",
+                                            "pattern": "$EV",
+                                            "compare": {
+                                              "left": "E",
+                                              "op": "eq",
+                                              "right": "EV",
+                                              "text": "node"
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "owner": {
+              "all": [
+                {
+                  "matches": "owned"
+                },
+                {
+                  "pattern": "$E"
+                },
+                {
+                  "not": {
+                    "matches": "used-by"
+                  }
+                }
+              ]
+            },
+            "reach": {
+              "all": [
+                {
+                  "pattern": "$X"
+                },
+                {
+                  "any": [
+                    {
+                      "matches": "owner"
+                    },
+                    {
+                      "inside": {
+                        "stopBy": {
+                          "not": {
+                            "matches": "tmpl-keyless"
+                          }
+                        },
+                        "all": [
+                          {
+                            "matches": "tmpl-keyless"
+                          },
+                          {
+                            "matches": "owner"
+                          },
+                          {
+                            "not": {
+                              "matches": "skip-below"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "matches": "tag-node"
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "vkey",
+                  "pattern": "$K",
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "matches": "vkey"
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "template_element"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "matches": "el"
+                    },
+                    {
+                      "matches": "reach"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.K",
+        "code": "vue/valid-v-for",
+        "message": "Expected 'v-bind:key' directive to use the variables which are defined by the 'v-for' directive.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/valid-v-for"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

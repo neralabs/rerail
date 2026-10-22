@@ -1,18 +1,20 @@
 //! Git tree and snapshot storage.
 
-use super::objects::{put_source_tx, put_tape_tx, validate_tape_payload};
-use super::rows::{hash_params, intern_hash, intern_path, intern_string, validate_relative_path};
+use super::objects::{compress_documents, put_source_tx, put_tape_tx, validate_tape_payload};
+#[cfg(test)]
+use super::rows::intern_string;
+use super::rows::{
+    hash_params, intern_hash, intern_hashed_string, intern_path, validate_relative_path,
+};
 use super::{
-    ContentStore, GitTree, HashKey, MAX_PUBLICATION_BATCH, STRING_PATH_COMPONENT,
-    SnapshotFilePublication, SnapshotId, SourceId, StoreError, StoreResult, StoredFile, TapeId,
-    WorkspaceId, WorkspaceRegistration, compress,
+    ContentStore, GitTree, HASH_SHA256, HashKey, MAX_PUBLICATION_BATCH, OperationDeadline,
+    STRING_PATH_COMPONENT, SnapshotFilePublication, SnapshotId, SourceId, StoreError, StoreResult,
+    StoredFile, TapeId, WorkspaceId, WorkspaceRegistration, compress,
 };
 use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 #[cfg(test)]
 use std::sync::atomic::Ordering;
-#[cfg(test)]
-use std::time::Duration;
 
 /// Entry budget of one git-tree publication transaction: cold publication of a large checkout
 /// commits a few hundred entries at a time instead of one transaction per tree.
@@ -77,6 +79,9 @@ impl ContentStore {
         workspace: &WorkspaceRegistration<'_>,
     ) -> StoreResult<(SnapshotId, WorkspaceId)> {
         workspace.validate()?;
+        // The Git-tree batches and the snapshot's own transaction wait on other writers for one
+        // deadline in all.
+        let _deadline = OperationDeadline::enter();
         let root = trees
             .iter()
             .rev()
@@ -204,16 +209,16 @@ impl ContentStore {
     /// Encodes `trees` once, outside any transaction. The writer stores every one of them, row,
     /// entry count and entries, inside the caller's transaction. Entries are keyed by name, so a
     /// tree with duplicate names (`git fsck` duplicateEntries) stores one row per name, and its
-    /// count is of distinct names.
+    /// count is of distinct names. Each entry carries its name's hash, so the writer resolves the
+    /// name through `strings_by_hash` instead of comparing it with every stored path component.
     fn git_tree_batch_writer(
         &self,
         trees: &[&GitTree],
     ) -> StoreResult<impl Fn(&Transaction<'_>) -> StoreResult<()> + '_> {
         #[cfg(test)]
         self.git_tree_lookup_count.fetch_add(1, Ordering::Relaxed);
-
         let mut hashes = std::collections::BTreeSet::new();
-        let mut names = BTreeSet::new();
+        let mut names = BTreeMap::new();
         let mut entries = Vec::new();
         let mut tree_keys = Vec::with_capacity(trees.len());
         let mut tree_names = HashSet::new();
@@ -232,7 +237,9 @@ impl ContentStore {
                 }
                 hashes.insert(entry.target);
                 tree_names.insert(entry.name.as_str());
-                names.insert(entry.name.clone());
+                let name_hash = *names
+                    .entry(entry.name.clone())
+                    .or_insert_with(|| HashKey::sha256(entry.name.as_bytes()));
                 let kind = match entry.mode {
                     0o040000 => 1,
                     0o160000 => 3,
@@ -245,7 +252,8 @@ impl ContentStore {
                     entry.mode,
                     kind,
                     entry.target.algorithm,
-                    entry.target.lanes
+                    entry.target.lanes,
+                    name_hash.lanes
                 ]));
             }
             tree_keys.push((tree.id.algorithm, tree.id.lanes, tree_names.len()));
@@ -268,11 +276,11 @@ impl ContentStore {
             self.git_tree_write_count
                 .fetch_add(tree_count, Ordering::Relaxed);
             tx.prepare_cached("WITH input AS (SELECT json_extract(value,'$[0]') a,json_extract(value,'$[1][0]') l0,json_extract(value,'$[1][1]') l1,json_extract(value,'$[1][2]') l2,json_extract(value,'$[1][3]') l3 FROM json_each(?1)) INSERT INTO hashes(algorithm_id,lane0,lane1,lane2,lane3) SELECT a,l0,l1,l2,l3 FROM input i WHERE NOT EXISTS (SELECT 1 FROM hashes h WHERE h.algorithm_id=i.a AND h.lane0=i.l0 AND h.lane1=i.l1 AND h.lane2=i.l2 AND h.lane3=i.l3)")?.execute([&hashes])?;
-            for name in &names {
-                intern_string(tx, STRING_PATH_COMPONENT, name)?;
+            for (name, hash) in &names {
+                intern_hashed_string(tx, STRING_PATH_COMPONENT, name, *hash)?;
             }
             tx.prepare_cached("INSERT INTO git_trees(tree_hash_id,complete,entry_count) SELECT h.hash_id,1,json_extract(i.value,'$[2]') FROM json_each(?1) i CROSS JOIN hashes h INDEXED BY hashes_by_prefix ON h.algorithm_id=json_extract(i.value,'$[0]') AND h.lane0=json_extract(i.value,'$[1][0]') AND h.lane1=json_extract(i.value,'$[1][1]') AND h.lane2=json_extract(i.value,'$[1][2]') AND h.lane3=json_extract(i.value,'$[1][3]') WHERE 1 ON CONFLICT(tree_hash_id) DO UPDATE SET complete=1,entry_count=excluded.entry_count")?.execute([&tree_keys])?;
-            tx.prepare_cached("INSERT INTO git_tree_entries(tree_id,name_string_id,mode_id,object_kind_id,target_hash_id) SELECT t.tree_id,s.string_id,json_extract(i.value,'$[3]'),json_extract(i.value,'$[4]'),d.hash_id FROM json_each(?1) i CROSS JOIN hashes h INDEXED BY hashes_by_prefix ON h.algorithm_id=json_extract(i.value,'$[0]') AND h.lane0=json_extract(i.value,'$[1][0]') AND h.lane1=json_extract(i.value,'$[1][1]') AND h.lane2=json_extract(i.value,'$[1][2]') AND h.lane3=json_extract(i.value,'$[1][3]') JOIN git_trees t ON t.tree_hash_id=h.hash_id JOIN strings s ON s.domain_id=?2 AND s.value=json_extract(i.value,'$[2]') CROSS JOIN hashes d INDEXED BY hashes_by_prefix ON d.algorithm_id=json_extract(i.value,'$[5]') AND d.lane0=json_extract(i.value,'$[6][0]') AND d.lane1=json_extract(i.value,'$[6][1]') AND d.lane2=json_extract(i.value,'$[6][2]') AND d.lane3=json_extract(i.value,'$[6][3]') WHERE 1 ON CONFLICT(tree_id,name_string_id) DO UPDATE SET mode_id=excluded.mode_id,object_kind_id=excluded.object_kind_id,target_hash_id=excluded.target_hash_id")?.execute(params![entries,STRING_PATH_COMPONENT])?;
+            tx.prepare_cached("INSERT INTO git_tree_entries(tree_id,name_string_id,mode_id,object_kind_id,target_hash_id) SELECT t.tree_id,s.string_id,json_extract(i.value,'$[3]'),json_extract(i.value,'$[4]'),d.hash_id FROM json_each(?1) i CROSS JOIN hashes h INDEXED BY hashes_by_prefix ON h.algorithm_id=json_extract(i.value,'$[0]') AND h.lane0=json_extract(i.value,'$[1][0]') AND h.lane1=json_extract(i.value,'$[1][1]') AND h.lane2=json_extract(i.value,'$[1][2]') AND h.lane3=json_extract(i.value,'$[1][3]') JOIN git_trees t ON t.tree_hash_id=h.hash_id CROSS JOIN hashes nh INDEXED BY hashes_by_prefix ON nh.algorithm_id=?3 AND nh.lane0=json_extract(i.value,'$[7][0]') AND nh.lane1=json_extract(i.value,'$[7][1]') AND nh.lane2=json_extract(i.value,'$[7][2]') AND nh.lane3=json_extract(i.value,'$[7][3]') CROSS JOIN strings s INDEXED BY strings_by_hash ON s.domain_id=?2 AND s.content_hash_id=nh.hash_id AND s.value=json_extract(i.value,'$[2]') CROSS JOIN hashes d INDEXED BY hashes_by_prefix ON d.algorithm_id=json_extract(i.value,'$[5]') AND d.lane0=json_extract(i.value,'$[6][0]') AND d.lane1=json_extract(i.value,'$[6][1]') AND d.lane2=json_extract(i.value,'$[6][2]') AND d.lane3=json_extract(i.value,'$[6][3]') WHERE 1 ON CONFLICT(tree_id,name_string_id) DO UPDATE SET mode_id=excluded.mode_id,object_kind_id=excluded.object_kind_id,target_hash_id=excluded.target_hash_id")?.execute(params![entries,STRING_PATH_COMPONENT,HASH_SHA256])?;
             Ok(())
         })
     }
@@ -291,42 +299,26 @@ impl ContentStore {
                 "Git tree entry name is invalid".to_owned(),
             ));
         }
-        for retry in 0..=8 {
-            let result = (|| {
-                let mut connection = self
-                    .connection
-                    .lock()
-                    .expect("content store mutex poisoned");
-                let transaction =
-                    connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-                let tree_hash_id = intern_hash(&transaction, tree)?;
-                transaction.execute(
-                    "INSERT INTO git_trees(tree_hash_id) VALUES (?1) ON CONFLICT(tree_hash_id) DO NOTHING",
-                    [tree_hash_id],
-                )?;
-                let tree_id: i64 = transaction.query_row(
-                    "SELECT tree_id FROM git_trees WHERE tree_hash_id=?1",
-                    [tree_hash_id],
-                    |row| row.get(0),
-                )?;
-                let name_string_id = intern_string(&transaction, STRING_PATH_COMPONENT, name)?;
-                let target_hash_id = intern_hash(&transaction, target)?;
-                transaction.execute(
-                    "INSERT INTO git_tree_entries(tree_id,name_string_id,mode_id,object_kind_id,target_hash_id) VALUES (?1,?2,?3,?4,?5)\
-                     ON CONFLICT(tree_id,name_string_id) DO UPDATE SET mode_id=excluded.mode_id,object_kind_id=excluded.object_kind_id,target_hash_id=excluded.target_hash_id",
-                    params![tree_id, name_string_id, mode_id, object_kind_id, target_hash_id],
-                )?;
-                transaction.commit()?;
-                Ok(())
-            })();
-            match result {
-                Err(StoreError::Busy) if retry < 8 => {
-                    std::thread::sleep(Duration::from_millis(1_u64 << (retry + 1).min(6)));
-                }
-                result => return result,
-            }
-        }
-        unreachable!("bounded Git tree publication loop returns")
+        self.immediate_transaction(|transaction| {
+            let tree_hash_id = intern_hash(transaction, tree)?;
+            transaction.execute(
+                "INSERT INTO git_trees(tree_hash_id) VALUES (?1) ON CONFLICT(tree_hash_id) DO NOTHING",
+                [tree_hash_id],
+            )?;
+            let tree_id: i64 = transaction.query_row(
+                "SELECT tree_id FROM git_trees WHERE tree_hash_id=?1",
+                [tree_hash_id],
+                |row| row.get(0),
+            )?;
+            let name_string_id = intern_string(transaction, STRING_PATH_COMPONENT, name)?;
+            let target_hash_id = intern_hash(transaction, target)?;
+            transaction.execute(
+                "INSERT INTO git_tree_entries(tree_id,name_string_id,mode_id,object_kind_id,target_hash_id) VALUES (?1,?2,?3,?4,?5)\
+                 ON CONFLICT(tree_id,name_string_id) DO UPDATE SET mode_id=excluded.mode_id,object_kind_id=excluded.object_kind_id,target_hash_id=excluded.target_hash_id",
+                params![tree_id, name_string_id, mode_id, object_kind_id, target_hash_id],
+            )?;
+            Ok(())
+        })
     }
 
     /// Records a snapshot over an already-published root tree; a missing or partial root is
@@ -407,7 +399,12 @@ impl ContentStore {
                 .tape
                 .map(|payload| compress(payload.bytes, self.compression_level))
                 .transpose()?;
-            prepared.push((publication, source_frame, tape_frame));
+            let document_frames = publication
+                .tape
+                .map(|payload| compress_documents(payload.documents, self.compression_level))
+                .transpose()?
+                .unwrap_or_default();
+            prepared.push((publication, source_frame, tape_frame, document_frames));
         }
         let mut connection = self
             .connection
@@ -415,7 +412,7 @@ impl ContentStore {
             .expect("content store mutex poisoned");
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut stored = Vec::with_capacity(prepared.len());
-        for (publication, source_frame, tape_frame) in prepared {
+        for (publication, source_frame, tape_frame, document_frames) in prepared {
             let source_id = put_source_tx(
                 &transaction,
                 publication.source,
@@ -423,9 +420,13 @@ impl ContentStore {
                 publication.aliases,
             )?;
             let tape_id = match (publication.tape, tape_frame.as_deref()) {
-                (Some(payload), Some(frame)) => {
-                    Some(put_tape_tx(&transaction, source_id, payload, frame)?)
-                }
+                (Some(payload), Some(frame)) => Some(put_tape_tx(
+                    &transaction,
+                    source_id,
+                    payload,
+                    frame,
+                    &document_frames,
+                )?),
                 (None, None) => None,
                 _ => unreachable!("tape frame follows tape payload"),
             };

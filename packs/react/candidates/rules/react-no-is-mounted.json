@@ -3,7 +3,7 @@
   "id": "react-no-is-mounted",
   "revision": 1,
   "mode": "steer",
-  "description": "eslint-plugin-react 7.37.5 react/no-is-mounted: `this.isMounted()` inside an object property or a method (ESTree Property / MethodDefinition ancestor).",
+  "description": "Avoid this.isMounted() in components; it is deprecated, so cancel pending work when the component unmounts instead.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -57,17 +57,28 @@
                 }
               ]
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
       "violation": {
         "anchor": "witness.start",
         "code": "react/no-is-mounted",
-        "message": "Do not use isMounted",
+        "message": "Remove this isMounted() check, and cancel the pending work when the component unmounts instead.",
         "suppress": {
           "eslint": {
             "rules": [
               "react/no-is-mounted"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-is-mounted"
             ]
           }
         }

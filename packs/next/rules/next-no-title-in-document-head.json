@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "next-no-title-in-document-head",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-title-in-document-head: the first <title> element child of a <Head> element, in a file with an import from next/document that binds the local name Head.",
+  "description": "Set page titles with Head from next/head on each page, not with a title inside the custom Document's Head from next/document.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -172,11 +172,16 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@next/next/no-title-in-document-head",
-        "message": "Do not use `<title>` element with `<Head />` component from `next/document`. Titles should defined at the page-level using `<Head />` from `next/head` instead. See: https://nextjs.org/docs/messages/no-title-in-document-head",
+        "message": "Move this title out of the Document's Head into each page's Head from next/head.",
         "suppress": {
           "eslint": {
             "rules": [
               "@next/next/no-title-in-document-head"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-title-in-document-head"
             ]
           }
         }

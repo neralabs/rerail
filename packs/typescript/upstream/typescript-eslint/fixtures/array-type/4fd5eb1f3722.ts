@@ -1,0 +1,1 @@
+const foo: Array<new (...args: any[]) => void> = [];

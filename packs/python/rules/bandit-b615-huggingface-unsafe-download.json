@@ -3,7 +3,7 @@
   "id": "bandit-b615-huggingface-unsafe-download",
   "revision": 5,
   "mode": "steer",
-  "description": "Require a transformers, datasets, or huggingface_hub-like import; resolve the supported download/load APIs; allow nonliteral revisions, hexadecimal revisions of at least seven characters, or local-path first arguments, and flag all other unpinned downloads.",
+  "description": "Pin Hugging Face model and dataset downloads to a specific commit revision; an unpinned download can silently pull changed or tampered files.",
   "scope": {
     "include": [
       "**/*.py"
@@ -1138,7 +1138,7 @@
       "violation": {
         "code": "B615",
         "anchor": "witness.span",
-        "message": "Unsafe Hugging Face Hub download without revision pinning in ${API}()",
+        "message": "Pin ${API}() to a specific commit hash with revision=; an unpinned download can silently pull changed or tampered files.",
         "suppress": {
           "nosec": {
             "codes": [

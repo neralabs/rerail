@@ -3,7 +3,7 @@
   "id": "bandit-b112-try-except-continue",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect exception handlers whose only action is continue, silently discarding errors while retrying a loop. Handle or log the exception, or catch a specific expected exception before continuing.",
+  "description": "Don't write a bare or catch-all Exception handler in a loop whose only statement is continue; log or handle the error, or catch the specific exception you expect.",
   "scope": {
     "include": [
       "**/*.py"

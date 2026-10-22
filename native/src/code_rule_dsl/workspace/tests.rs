@@ -13,10 +13,13 @@ use super::*;
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use crate::content_store::{ContentStore, GitTree, HashKey};
 use napi::Task;
+use parking_lot::Mutex;
 use serde_json::{Value, json};
-use std::sync::{Arc as StdArc, Mutex};
+use std::sync::Arc as StdArc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Serializes the tests that share process-wide state. A parking_lot mutex never poisons, so a
+/// failing test cannot fail every test that takes the slot after it.
 pub(super) static WORKSPACE_TEST_SLOT: Mutex<()> = Mutex::new(());
 
 #[cfg(test)]
@@ -75,6 +78,21 @@ fn local_result_round_trips_negative_results_and_failures() {
         assert_eq!(restored_failure, Some(failure));
         assert!(syntax.is_none());
     }
+
+    // A file the parser did not read keeps its static failure and the detail it reports.
+    let detail = "file did not parse: error regions cover 95% of it, first at line 2, column 1";
+    let encoded = encode_local_result(
+        &[],
+        Some(("source-incomplete", "file did not parse")),
+        Some(detail),
+    )
+    .unwrap();
+    let (_, restored_failure, syntax) = decode_local_result(&encoded, "src/a.js").unwrap();
+    assert_eq!(
+        restored_failure,
+        Some(("source-incomplete", "file did not parse"))
+    );
+    assert_eq!(syntax.as_deref(), Some(detail));
 }
 
 #[test]
@@ -149,6 +167,7 @@ fn close_releases_idle_workspace_files() {
             language: "python".into(),
             source: Arc::new("print('secret')\n".into()),
             module: None,
+            package: None,
         };
         let file = make_file(input, 1, &[], &mut state.candidate_sets);
         state.files.insert(file.input.path.clone(), file);
@@ -202,7 +221,7 @@ fn close_clears_poisoned_scope_metadata() {
 
 #[test]
 fn poisoned_state_rejections_and_close_release_resident_sources() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let compiled = CodeRuleDslRuntime::compile(
         json!({
             "format": "rerail.policy/v1", "id": "poisoned-workspace", "revision": 1,
@@ -239,6 +258,7 @@ fn poisoned_state_rejections_and_close_release_resident_sources() {
                     language: "python".into(),
                     source: Arc::clone(&source),
                     module: None,
+                    package: None,
                 },
                 1,
                 &[],
@@ -300,7 +320,7 @@ fn poisoned_state_rejections_and_close_release_resident_sources() {
 
 #[test]
 fn tape_workspace_matches_native_after_edit_noop_and_invalid_revision() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let capabilities = json!({
         "ast": { "engine": "ast-grep-core", "engineVersion": "0.45",
             "languages": { "python": "tree-sitter-python@0.23" } },
@@ -437,6 +457,7 @@ fn close_cancels_busy_owner_without_waiting_for_its_lock() {
             language: "python".into(),
             source: Arc::new("print('x')\n".into()),
             module: None,
+            package: None,
         };
         let file = make_file(input, 1, &[], &mut state.candidate_sets);
         state.files.insert(file.input.path.clone(), file);
@@ -477,6 +498,7 @@ fn close_and_lease_release_handoff_drops_resident_sources() {
                     language: "python".into(),
                     source: Arc::clone(&source),
                     module: None,
+                    package: None,
                 },
                 1,
                 &[],
@@ -516,7 +538,7 @@ fn close_and_lease_release_handoff_drops_resident_sources() {
 
 #[test]
 fn deferred_global_flush_uses_complete_taped_evidence() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let capabilities = json!({
         "ast": { "engine": "ast-grep-core", "engineVersion": "0.45",
             "languages": { "python": "tree-sitter-python@0.23" } },
@@ -634,7 +656,7 @@ fn tape_test_apply(workspace: &CodeRuleDslWorkspace, revision: u32, files: Vec<V
 
 #[test]
 fn binary_workspace_request_matches_json_and_rejects_malformed_lengths() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let source = "print('binary')\n";
     let metadata = json!({
         "revision": 1,
@@ -671,7 +693,7 @@ fn binary_workspace_request_matches_json_and_rejects_malformed_lengths() {
 
 #[test]
 fn stored_workspace_releases_source_and_returns_changed_file_deltas() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let database = std::env::temp_dir().join(format!(
         "rerail-policy-storage-{}.sqlite",
         std::process::id()
@@ -990,7 +1012,7 @@ fn paging_workspace() -> CodeRuleDslWorkspace {
 
 #[test]
 fn result_page_request_leaves_the_index_build_to_its_pool_task() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let workspace = paging_workspace();
     RESULT_PAGE_SORTS.set(0);
     RESULT_PAGE_WITNESSES_VISITED.set(0);
@@ -1013,7 +1035,7 @@ fn result_page_request_leaves_the_index_build_to_its_pool_task() {
 
 #[test]
 fn memory_profile_counts_an_open_result_page_index() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let workspace = paging_workspace();
     let profile =
         || -> Value { serde_json::from_str(&workspace.memory_profile().unwrap()).unwrap() };
@@ -1038,7 +1060,7 @@ fn memory_profile_counts_an_open_result_page_index() {
 
 #[test]
 fn last_result_page_releases_the_result_index() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let workspace = paging_workspace();
     let first: Value = serde_json::from_str(&result_page(&workspace, 0, 1).unwrap()).unwrap();
     assert!(!first["done"].as_bool().unwrap());
@@ -1057,7 +1079,7 @@ fn last_result_page_releases_the_result_index() {
 
 #[test]
 fn result_page_cursor_is_stale_after_an_apply() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let workspace = paging_workspace();
     let first: Value = serde_json::from_str(&result_page(&workspace, 0, 1).unwrap()).unwrap();
     assert!(!first["done"].as_bool().unwrap());
@@ -1075,7 +1097,7 @@ fn result_page_cursor_is_stale_after_an_apply() {
 
 #[test]
 fn close_during_live_native_tree_or_restored_doc_cancels_and_releases_source() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let compiled = tape_test_code_rule();
     // A tree-sitter tree, Forte's tree, and a restored document.
     let python = json!({
@@ -1190,7 +1212,7 @@ fn close_during_live_native_tree_or_restored_doc_cancels_and_releases_source() {
 
 #[test]
 fn cached_tape_rejects_revision_source_and_grammar_mismatch_without_stale_violations() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let compiled = tape_test_code_rule();
     let original = json!({ "path": "active.py", "language": "python",
         "source": "print('stale')\n" });
@@ -1246,6 +1268,7 @@ fn cached_tape_rejects_revision_source_and_grammar_mismatch_without_stale_violat
                     language: "python".into(),
                     source: Arc::new(source.into()),
                     module: None,
+                    package: None,
                 },
                 1,
                 code_rules,
@@ -1364,6 +1387,7 @@ fn apply(state: &mut WorkspaceState, files: &[(&str, &str, &str)], removed: &[&s
                     language: language.to_owned(),
                     source: source.to_owned(),
                     module: None,
+                    package: None,
                 })
                 .collect(),
             removed: removed.iter().map(|path| (*path).to_owned()).collect(),
@@ -1481,7 +1505,7 @@ fn subset_churn_reclaims_keys_payloads_and_contracted_bucket_storage() {
 
 #[test]
 fn rejected_inline_staging_does_not_retain_new_scope_or_grammar_candidates() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let workspace = workspace(&["**/a/**", "**/b/**"], false);
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
@@ -1555,9 +1579,7 @@ fn apply_revisions(clauses: Vec<Value>, revisions: Vec<Value>) -> Vec<Value> {
         .add_code_rule(&compiled, None)
         .expect("policy is added");
     // `compute` refuses to wait for the process-wide CPU slot; serialize the tests instead.
-    let _slot = WORKSPACE_TEST_SLOT
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     revisions
         .into_iter()
         .enumerate()
@@ -1624,7 +1646,7 @@ fn global_regex_leaves_never_mark_a_broken_file_partial() {
         ]
     };
     let files = json!([
-        { "language": "typescript", "path": "broken.ts", "source": "debugger;\nfunction f( {\n" },
+        { "language": "typescript", "path": "broken.ts", "source": "debugger; // clean text keeps the error region under half the file\nfunction f( {\n" },
         { "language": "typescript", "path": "danger.ts", "source": "danger();\n" },
     ]);
     let workspace = apply_clauses(clauses(), files.clone());
@@ -1637,8 +1659,101 @@ fn global_regex_leaves_never_mark_a_broken_file_partial() {
 }
 
 #[test]
+fn an_unread_file_reports_its_detail_and_path_on_every_evaluation_path() {
+    // Review findings 2 and 3 on NER-1864: the stateless path reported `query source is
+    // incomplete` for a file the parser did not read, and a global `select_when` reported a
+    // pathless `A cross-file query source is incomplete`, so `rules test` could not name the file.
+    let clauses = || {
+        vec![
+            clause("debugger", json!({ "kind": "debugger_statement" })),
+            json!({
+                "id": "gated",
+                "forbid": { "select_when": {
+                    "exists": { "regex": { "source": "file.content", "pattern": "debugger" } },
+                    "select": { "ast": { "language": "typescript", "rule": { "kind": "debugger_statement" } } },
+                } },
+                "violation": { "anchor": "witness.span", "code": "GATE", "message": "gate" },
+            }),
+        ]
+    };
+    // The grammar recovers `debugger;`, then reads the prose as one ERROR to the end.
+    let source = format!(
+        "debugger;\n{}",
+        "Install it: run the script, then open the page.\n".repeat(5)
+    );
+    let files = json!([{ "language": "typescript", "path": "notes.ts", "source": source }]);
+    let failures = |evaluation: &Value| {
+        let mut failures = evaluation["failures"]
+            .as_array()
+            .expect("failures")
+            .iter()
+            .map(|failure| {
+                [
+                    failure["clauseId"].clone(),
+                    failure["code"].clone(),
+                    failure["path"].clone(),
+                    failure["message"].clone(),
+                ]
+            })
+            .collect::<Vec<_>>();
+        failures.sort_by_key(|failure| failure[0].to_string());
+        failures
+    };
+    let unread = "file did not parse: error regions cover 95% of it, first at line 2, column 1";
+    let expected = vec![
+        [
+            json!("debugger"),
+            json!("source-incomplete"),
+            json!("notes.ts"),
+            json!(unread),
+        ],
+        [
+            json!("gated"),
+            json!("source-incomplete"),
+            json!("notes.ts"),
+            json!(unread),
+        ],
+    ];
+    let workspace = apply_clauses(clauses(), files.clone());
+    assert_eq!(failures(&workspace), expected, "{workspace}");
+    let full = stateless(clauses(), files);
+    assert_eq!(failures(&full), expected, "{full}");
+}
+
+#[test]
+fn a_global_query_names_the_file_it_could_not_read() {
+    // A file a clause is unsound in (not unread) keeps the generic message, with its path.
+    let clauses = || {
+        vec![json!({
+            "id": "gated",
+            "forbid": { "select_when": {
+                "exists": { "regex": { "source": "file.content", "pattern": "debugger" } },
+                "select": { "ast": { "language": "typescript", "rule": {
+                    "kind": "debugger_statement",
+                    "not": { "follows": { "kind": "import_statement", "stopBy": "end" } },
+                } } },
+            } },
+            "violation": { "anchor": "witness.span", "code": "GATE", "message": "gate" },
+        })]
+    };
+    let files = json!([
+        { "language": "typescript", "path": "broken.ts", "source": "debugger; // clean text keeps the error region under half the file\nfunction f( {\n" },
+        { "language": "typescript", "path": "clean.ts", "source": "debugger;\n" },
+    ]);
+    let workspace = apply_clauses(clauses(), files);
+    let failures = workspace["failures"].as_array().expect("failures");
+    assert_eq!(failures.len(), 1, "{workspace}");
+    assert_eq!(failures[0]["code"], "source-incomplete");
+    assert_eq!(failures[0]["path"], "broken.ts");
+    assert_eq!(
+        failures[0]["message"],
+        "A cross-file query source is incomplete"
+    );
+}
+
+#[test]
 fn broken_files_report_sound_witnesses_and_are_marked_partial() {
-    let source = "debugger;\nfunction f( {\n  debugger;\n";
+    let source = "debugger; // clean text keeps the error region under half the file\nfunction f( {\n  debugger;\n";
     let evaluation = apply_clauses(
         vec![
             clause("debugger", json!({ "kind": "debugger_statement" })),
@@ -1682,6 +1797,135 @@ fn broken_files_report_sound_witnesses_and_are_marked_partial() {
             .contains("first at line 2"),
         "{partial}"
     );
+}
+
+/// E2E F1 on #47: a Vue template's syntax error lies outside the program the scripts and
+/// template expressions make, so a clause whose witnesses lie in a clean program runs, even one
+/// not sound under errors, and is partial; a clause reading the template is incomplete, and so
+/// is every clause where the program has an error of its own.
+#[test]
+fn a_vue_template_error_leaves_program_clauses_complete() {
+    let vue = |id: &str, ast: Value| {
+        json!({
+            "id": id,
+            "forbid": { "ast": ast },
+            "violation": { "anchor": "witness.span", "code": "AST_MATCH", "message": "match" },
+        })
+    };
+    // Each is unsound under errors: a negated relation leaves the witness. The script clause
+    // reads the component's program (`embed`), the template clause its own tree: each document
+    // has its own syntax errors.
+    let clauses = || {
+        vec![
+            vue(
+                "script",
+                json!({ "language": "vue", "embedded": "script-block", "rule": { "kind": "binary_expression", "not": { "inside": { "kind": "function_declaration", "stopBy": "end" } } } }),
+            ),
+            vue(
+                "template",
+                json!({ "language": "vue", "rule": { "kind": "element", "not": { "follows": { "kind": "element" } } } }),
+            ),
+        ]
+    };
+    let template_error = "<script setup>\nimport { ref } from 'vue'\nconst a = ref(1)\nconst b = a + 1\n</script>\n\n<template>\n  <div v-for=\"x in xs\">{{ x </div>\n  <p v-html=\"b\"></p>\n</template>\n";
+    let files = json!([{ "language": "vue", "path": "BrokenTpl.vue", "source": template_error }]);
+    for evaluation in [
+        apply_clauses(clauses(), files.clone()),
+        stateless(clauses(), files),
+    ] {
+        let violations = evaluation["violations"].as_array().expect("findings");
+        assert_eq!(violations.len(), 1, "{evaluation}");
+        assert_eq!(violations[0]["clauseId"], "script", "{evaluation}");
+        assert_eq!(violations[0]["span"]["startLine"], 3, "{evaluation}");
+        // A file read around syntax errors in any of its documents reports them on its clauses.
+        assert_eq!(
+            failure_codes(&evaluation),
+            [
+                ("script".to_owned(), "source-partial".to_owned()),
+                ("template".to_owned(), "source-incomplete".to_owned()),
+            ],
+            "{evaluation}"
+        );
+    }
+    let script_error = template_error
+        .replace("a + 1\n", "a + 1\nfunction (\n")
+        .replace("{{ x </div>", "{{ x }}</div>");
+    let files = json!([{ "language": "vue", "path": "Broken.vue", "source": script_error }]);
+    for evaluation in [
+        apply_clauses(clauses(), files.clone()),
+        stateless(clauses(), files),
+    ] {
+        let violations = evaluation["violations"].as_array().expect("findings");
+        assert_eq!(violations.len(), 1, "{evaluation}");
+        assert_eq!(violations[0]["clauseId"], "template", "{evaluation}");
+        assert_eq!(
+            failure_codes(&evaluation),
+            [
+                ("script".to_owned(), "source-incomplete".to_owned()),
+                ("template".to_owned(), "source-partial".to_owned()),
+            ],
+            "{evaluation}"
+        );
+    }
+}
+
+/// A file's syntax errors are its documents' together: a document no clause reads still leaves the
+/// file read around its errors, and a clause crossing between the documents (`embedded`) reads
+/// around both's.
+#[test]
+fn every_document_of_a_vue_file_has_its_errors_read() {
+    let vue = |id: &str, ast: Value| {
+        json!({
+            "id": id,
+            "forbid": { "ast": ast },
+            "violation": { "anchor": "witness.span", "code": "AST_MATCH", "message": "match" },
+        })
+    };
+    // Only the program is read; the template's error still makes the file partial.
+    let script = || {
+        vec![vue(
+            "script",
+            json!({ "language": "vue", "embedded": "script-block", "rule": { "kind": "lexical_declaration" } }),
+        )]
+    };
+    let template_error =
+        "<script setup>\nconst a = 1\n</script>\n<template>\n  <div>{{ a </div>\n</template>\n";
+    let files = json!([{ "language": "vue", "path": "T.vue", "source": template_error }]);
+    for evaluation in [
+        apply_clauses(script(), files.clone()),
+        stateless(script(), files),
+    ] {
+        assert_eq!(
+            evaluation["violations"].as_array().map(Vec::len),
+            Some(1),
+            "{evaluation}"
+        );
+        assert_eq!(
+            failure_codes(&evaluation),
+            [("script".to_owned(), "source-partial".to_owned())],
+            "{evaluation}"
+        );
+    }
+    // The template is clean and the program broken: a template clause reaching the program
+    // (`embedded`, unsound under errors) is incomplete.
+    let crossing = || {
+        vec![vue(
+            "crossing",
+            json!({ "language": "vue", "rule": { "kind": "interpolation", "embedded": { "kind": "identifier" } } }),
+        )]
+    };
+    let script_error = "<script setup>\nconst a = 1\nfunction (\n</script>\n<template>\n  <div>{{ a }}</div>\n</template>\n";
+    let files = json!([{ "language": "vue", "path": "S.vue", "source": script_error }]);
+    for evaluation in [
+        apply_clauses(crossing(), files.clone()),
+        stateless(crossing(), files),
+    ] {
+        assert_eq!(
+            failure_codes(&evaluation),
+            [("crossing".to_owned(), "source-incomplete".to_owned())],
+            "{evaluation}"
+        );
+    }
 }
 
 #[test]
@@ -2030,7 +2274,7 @@ fn a_transform_reads_each_matchs_regex_group() {
 }
 #[test]
 fn regex_group_transform_limit_is_local_to_its_clause_in_native_and_workspace_evaluation() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let capabilities = json!({
         "ast": { "engine": "ast-grep-core", "engineVersion": "0.45",
             "languages": { "python": "tree-sitter-python@0.23" } },
@@ -2106,7 +2350,7 @@ fn regex_group_transform_limit_is_local_to_its_clause_in_native_and_workspace_ev
 
 #[test]
 fn matching_stops_after_decision_or_witness_budget_in_native_and_workspace() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let capabilities = json!({
         "ast": { "engine": "ast-grep-core", "engineVersion": "0.45",
             "languages": { "python": "tree-sitter-python@0.23" } },
@@ -2175,9 +2419,81 @@ fn matching_stops_after_decision_or_witness_budget_in_native_and_workspace() {
     );
 }
 
+/// A violation with `suppress` spends no allowance on suppressed witnesses, yet both evaluators
+/// stop building a regex capture's groups once the reported ones overflow the allowance: none of
+/// these 50,000 is suppressed, so the second ends the enumeration.
+#[test]
+fn suppressible_each_stops_at_the_witness_overflow_in_native_and_workspace() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let mut capabilities: Value = serde_json::from_str(CAPABILITIES).unwrap();
+    capabilities["limits"]["maxWitnesses"] = json!(1);
+    let code_rule = json!({
+        "format": "rerail.policy/v1", "id": "bounded-each", "revision": 1,
+        "mode": "steer",
+        "scope": { "include": ["**/*"], "exclude": [] },
+        "clauses": [{
+            "id": "comment-characters",
+            "violation": { "anchor": "capture.X", "code": "E", "message": "$X", "each": "X",
+                "suppress": { "eslint": { "rules": ["no-warning-comments"] } } },
+            "forbid": { "ast": { "language": "typescript",
+                "rule": { "kind": "comment", "regex": "(?<X>a)" } } }
+        }]
+    });
+    let compiled = CodeRuleDslRuntime::compile(
+        code_rule.to_string(),
+        "json".into(),
+        capabilities.to_string(),
+    )
+    .unwrap();
+    let file = json!({
+        "path": "a.ts", "language": "typescript",
+        "source": format!("//{}\n", "a".repeat(50_000))
+    });
+    let snapshot = json!({
+        "format": "rerail.repository-snapshot/v1", "revision": 1, "facts": [],
+        "files": [file.clone()]
+    });
+
+    crate::code_rule_dsl::violations::reset_node_group_enumerations();
+    let native: Value = serde_json::from_str(
+        &compiled
+            .evaluate(snapshot.to_string(), "report".into())
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(native["failures"][0]["code"], "witness-limit", "{native}");
+    assert_eq!(
+        crate::code_rule_dsl::violations::node_group_enumerations(),
+        2,
+        "the native evaluator must stop at the overflow"
+    );
+
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace.add_code_rule(&compiled, None).unwrap();
+    crate::code_rule_dsl::violations::reset_node_group_enumerations();
+    let mut task = WorkspaceApplyTask {
+        state: Arc::clone(&workspace.state),
+        closed: Arc::clone(&workspace.closed),
+        request_json: json!({ "revision": 1, "files": [file], "removed": [] }).to_string(),
+        request_buffer: None,
+        request_direct: None,
+    };
+    let result: Value = serde_json::from_str(&task.compute().unwrap()).unwrap();
+    assert_eq!(
+        result["evaluation"]["failures"][0]["code"], "witness-limit",
+        "{result}"
+    );
+    assert_eq!(
+        crate::code_rule_dsl::violations::node_group_enumerations(),
+        2,
+        "the workspace evaluator must stop at the overflow"
+    );
+    workspace.close();
+}
+
 #[test]
 fn roots_past_max_visited_nodes_are_not_matched_in_native_and_workspace() {
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let capabilities = json!({
         "ast": { "engine": "ast-grep-core", "engineVersion": "0.45",
             "languages": { "python": "tree-sitter-python@0.23" } },
@@ -2264,10 +2580,63 @@ fn roots_past_max_visited_nodes_are_not_matched_in_native_and_workspace() {
 }
 
 #[test]
+fn workspace_visits_grow_with_the_file_by_max_visits_per_node() {
+    // The file of `roots_past_max_visited_nodes_are_not_matched_in_native_and_workspace`, whose
+    // ~14,000 nodes are past `maxVisitedNodes`: with `maxVisitsPerNode` the workspace allows a
+    // file that many visits per node, so the clause reads it to the end instead of failing.
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let capabilities = json!({
+        "ast": { "engine": "ast-grep-core", "engineVersion": "0.45",
+            "languages": { "python": "tree-sitter-python@0.23" } },
+        "limits": { "maxAstPatternBytes": 16384, "maxRegexPatternBytes": 16384,
+            "maxFiles": 100, "maxGraphDepth": 16, "maxSourceBytes": 1000000,
+            "maxVisitedNodes": 1000, "maxVisitsPerNode": 16, "maxWitnesses": 10000 }
+    });
+    let code_rule = json!({
+        "format": "rerail.policy/v1", "id": "node-scaled", "revision": 1, "mode": "steer",
+        "scope": { "include": ["**/*"], "exclude": [] },
+        "clauses": [{
+            "id": "print", "violation": { "anchor": "witness.span", "code": "PRINT",
+                "message": "found print" },
+            "forbid": { "ast": { "language": "python",
+                "rule": { "pattern": "print($ARG)" } } }
+        }]
+    });
+    let compiled = CodeRuleDslRuntime::compile(
+        code_rule.to_string(),
+        "json".into(),
+        capabilities.to_string(),
+    )
+    .unwrap();
+    let file = json!({
+        "path": "sample.py", "language": "python",
+        "source": format!("print(0)\n{}print(1)\n", "f(0)\n".repeat(2_000))
+    });
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace.add_code_rule(&compiled, None).unwrap();
+    let mut task = WorkspaceApplyTask {
+        state: Arc::clone(&workspace.state),
+        closed: Arc::clone(&workspace.closed),
+        request_json: json!({ "revision": 1, "files": [file], "removed": [] }).to_string(),
+        request_buffer: None,
+        request_direct: None,
+    };
+    let result: Value = serde_json::from_str(&task.compute().unwrap()).unwrap();
+    let evaluation = &result["evaluation"];
+    assert_eq!(evaluation["failures"], json!([]), "{evaluation}");
+    // Both prints, the one past the old bound included.
+    assert_eq!(
+        evaluation["violations"].as_array().unwrap().len(),
+        2,
+        "{evaluation}"
+    );
+}
+
+#[test]
 fn select_when_exists_leaf_decides_at_first_witness_in_native_and_workspace() {
     // An `exists` side only asks whether a witness exists: more matches than the witness budget
     // in a file, or a later root over a limit, must not make the condition unknown.
-    let _slot = WORKSPACE_TEST_SLOT.lock().unwrap();
+    let _slot = WORKSPACE_TEST_SLOT.lock();
     let capabilities = json!({
         "ast": { "engine": "ast-grep-core", "engineVersion": "0.45",
             "languages": { "python": "tree-sitter-python@0.23" } },
@@ -3114,4 +3483,54 @@ fn index_labels_a_basename_by_its_longest_listed_suffix_shorter_than_the_basenam
     // Suffix-only basenames have no extension, as the host's `languageOfPath` reads them.
     assert_eq!(label("views/.blade.php").as_deref(), Some("php"));
     assert_eq!(label("app/.php"), None);
+}
+
+#[test]
+fn reads_package_manifests_only_with_an_ast_clause_in_a_manifest_family() {
+    let ast = |language: &str, grammar: &str, kind: &str| {
+        let capabilities = json!({
+            "ast": { "engine": "ast-grep-core", "engineVersion": "0.45",
+                "languages": { language: grammar } },
+            "limits": { "maxAstPatternBytes": 16384, "maxRegexPatternBytes": 16384,
+                "maxFiles": 100, "maxGraphDepth": 16, "maxSourceBytes": 1000000,
+                "maxVisitedNodes": 100000, "maxWitnesses": 10000 }
+        });
+        let code_rule = json!({
+            "format": "rerail.policy/v1", "id": format!("{language}-call"), "revision": 1,
+            "mode": "steer",
+            "scope": { "include": ["**/*"], "exclude": [] },
+            "clauses": [{
+                "id": "call", "violation": { "anchor": "witness.span", "code": "CALL",
+                    "message": "found call" },
+                "forbid": { "ast": { "language": language, "rule": { "kind": kind } } }
+            }]
+        });
+        CodeRuleDslRuntime::compile(
+            code_rule.to_string(),
+            "json".into(),
+            capabilities.to_string(),
+        )
+        .unwrap()
+    };
+    assert!(!CodeRuleDslWorkspace::new().reads_package_manifests());
+    // A regex clause reads no file's facts, and Python files read no `package.json`.
+    assert!(!workspace(&["**/*"], false).reads_package_manifests());
+    let mut python = CodeRuleDslWorkspace::new();
+    python
+        .add_code_rule(&ast("python", "tree-sitter-python@0.23", "call"), None)
+        .unwrap();
+    assert!(!python.reads_package_manifests());
+    // An ECMA AST clause does, beside the Python one.
+    assert!(workspace(&["**/*"], true).reads_package_manifests());
+    python
+        .add_code_rule(
+            &ast(
+                "javascript",
+                "tree-sitter-javascript@0.23",
+                "call_expression",
+            ),
+            None,
+        )
+        .unwrap();
+    assert!(python.reads_package_manifests());
 }

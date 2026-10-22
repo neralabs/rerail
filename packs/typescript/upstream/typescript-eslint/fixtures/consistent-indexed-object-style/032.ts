@@ -1,0 +1,5 @@
+
+type Foo = {
+  bar: string;
+};
+    

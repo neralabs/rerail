@@ -1,0 +1,94 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bladestan-if-always-false",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove if conditions in Blade templates that are always false from values the template itself sets; the branch never runs.",
+  "scope": {
+    "include": [
+      "**/*.blade.php"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "blade",
+          "embedded": "compiled-view",
+          "rule": {
+            "all": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "if_statement",
+                    "field": "condition",
+                    "not": {
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "kind": "comment",
+                        "parse": {
+                          "grammar": "phpDoc",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "var_tag_value"
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "value": {
+                  "truthy": false,
+                  "follow": true
+                },
+                "not": {
+                  "any": [
+                    {
+                      "kind": "binary_expression",
+                      "has": {
+                        "field": "operator",
+                        "regex": "^(==|!=|<>|===|!==|\\&\\&|\\|\\||<|>|<=|>=|instanceof)$"
+                      }
+                    },
+                    {
+                      "kind": "unary_op_expression",
+                      "regex": "^!"
+                    },
+                    {
+                      "kind": "conditional_expression"
+                    },
+                    {
+                      "kind": "function_call_expression",
+                      "has": {
+                        "field": "function",
+                        "regex": "^(?i:isset|empty)$"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "trait_declaration"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "if.alwaysFalse",
+        "message": "Remove this if branch or fix its condition; given the values the template sets, it is always false."
+      }
+    }
+  ]
+}

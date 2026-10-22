@@ -61,8 +61,8 @@ pub(super) fn region_bytes(source: &str, regions: &Json) -> (BTreeSet<usize>, BT
                     .map(range)
             }),
     );
-    let tree = super::forte::tree::parse_tree(source.as_bytes());
-    let rerail = View::build(&tree, source, &|| false)
+    let tree = super::forte::tree::parse_tree(source.as_bytes()).expect("Forte parses it");
+    let rerail = View::read(&tree, source, &|| false)
         .expect("an unbounded budget")
         .view
         .map(|view| code_bytes(source, view.copied()))
@@ -118,14 +118,15 @@ fn blade_view_reads_the_regions_blade_compiles() {
     assert!(regions > 150, "only {regions} regions");
 }
 
-/// A Blade tape of `source`: the template and its embedded program.
-fn tape(source: &str) -> AstGrep<TapeDoc> {
+/// The PHP program a Blade template of `source` embeds (`blade::view`), a document of its own
+/// whose nodes stand for template bytes (`origin::InFile`); `None` where it embeds none.
+fn view(source: &str) -> Option<AstGrep<TapeDoc>> {
     let grammar = Grammar::new(GrammarDialect::Blade).expect("grammar");
     let image = TapeImage::encode_template(&grammar, source, &|| false).expect("encodes");
-    AstGrep::doc(
-        TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)
-            .expect("restores"),
-    )
+    let host = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)
+        .expect("restores");
+    let guests = host.guests().expect("owned");
+    guests.first().map(|guest| AstGrep::doc(guest.doc.clone()))
 }
 
 fn descendants<'r, D: Doc>(node: &Node<'r, D>) -> Vec<Node<'r, D>> {
@@ -200,19 +201,19 @@ fn compare_definedness(
     foreign: &[Range<usize>],
     tally: &mut Definedness,
 ) {
-    let doc = tape(source);
+    let Some(doc) = view(source) else {
+        assert!(reported.is_empty(), "{name}: PHPStan reports; no program");
+        return;
+    };
     let table = ScopeTable::build_with(
         doc.root(),
-        GrammarDialect::Blade,
+        GrammarDialect::Php,
         usize::MAX,
         &|| false,
         Reading::default(),
     )
     .expect("table builds");
-    let Some(program) = super::program(&doc.root()) else {
-        assert!(reported.is_empty(), "{name}: PHPStan reports; no program");
-        return;
-    };
+    let program = doc.root();
     let flow = table.php.as_deref().expect("a PHP flow");
     let inside = |at: usize| foreign.iter().any(|span| span.contains(&at));
     // Each read's claim: `Some(true)` undefined on every path, `Some(false)` defined or
@@ -222,10 +223,13 @@ fn compare_definedness(
         if node.kind() != "variable_name" {
             continue;
         }
-        let start = node.range().start;
-        let Some(read) = flow.read(start) else {
+        let Some(read) = flow.read(node.range().start) else {
             continue;
         };
+        // Reports place reads at template offsets: the bytes the read stands for.
+        let start = crate::code_rule_dsl::origin::InFile::tape(doc.root().get_doc())
+            .node(&node)
+            .start;
         if read.superglobal {
             continue;
         }
@@ -336,18 +340,17 @@ fn blade_definedness_agrees_with_phpstan() {
 #[test]
 fn a_template_variable_some_paths_define_is_unknown() {
     let source = "@if ($c)\n@php\n    $x = 1;\n@endphp\n@endif\n{{ $x }}\n";
-    let doc = tape(source);
+    let doc = view(source).expect("an embedded program");
     let table = ScopeTable::build_with(
         doc.root(),
-        GrammarDialect::Blade,
+        GrammarDialect::Php,
         usize::MAX,
         &|| false,
         Reading::default(),
     )
     .expect("table builds");
     let flow = table.php.as_deref().expect("a PHP flow");
-    let program = super::program(&doc.root()).expect("an embedded program");
-    let read = descendants(&program)
+    let read = descendants(&doc.root())
         .into_iter()
         .filter(|node| node.kind() == "variable_name" && node.text() == "$x")
         .filter_map(|node| flow.read(node.range().start))
@@ -367,8 +370,8 @@ fn blade_constant_expressions_agree_with_php() {
     let (mut cases, mut known) = (0, 0);
     for (name, record) in expected["fixtures"].as_object().expect("fixtures") {
         let source = fixture(name);
-        let doc = tape(&source);
-        let program = super::program(&doc.root()).expect("an embedded program");
+        let doc = view(&source).expect("an embedded program");
+        let program = doc.root();
         for case in record["values"].as_array().expect("values") {
             cases += 1;
             let span = range(&case["span"]);
@@ -378,7 +381,8 @@ fn blade_constant_expressions_agree_with_php() {
             // The expression a `value` predicate reads there: the innermost, inside what Blade
             // wraps around it (`@unless(c)` is `if (!(c))`).
             let Some(node) = descendants(&program).into_iter().rev().find(|node| {
-                node.range() == trimmed
+                crate::code_rule_dsl::origin::InFile::tape(doc.root().get_doc()).node(node)
+                    == trimmed
                     && crate::code_rule_dsl::value::php::EXPRESSION_KINDS.contains(&&*node.kind())
             }) else {
                 failures.push(format!(

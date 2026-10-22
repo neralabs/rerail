@@ -1,4 +1,4 @@
-import { formatTerminalStatus, notOnHerePresentation, readPresentation } from "./session-presentation.js";
+import { fallbackPresentation, formatTerminalStatus, notOnHerePresentation, readPresentation } from "./session-presentation.js";
 
 const STATUS_KEY = "rerail";
 const REFRESH_MS = 5_000;
@@ -20,6 +20,13 @@ export interface OmpPresentation {
   /** `off`: Rerail is off in this checkout, so nothing runs and no daemon is there to ask. */
   start(ctx: PresentationContext, options?: { off?: boolean }): void;
   stop(): void;
+  /**
+   * How many session events the host is dropping right now (its daemon is not answering, or the session is
+   * failing to attach); 0 once it stops. The daemon's health cannot say so: `/healthz` may well answer.
+   */
+  dropped(count: number): void;
+  /** Whether the daemon is still indexing the repository: code rules check nothing until it is done. */
+  indexing(on: boolean): void;
 }
 
 /** Presentation follows the runtime's session lifecycle, never its enforcement path. */
@@ -28,6 +35,26 @@ export function createOmpPresentation(host: "omp" | "pi" = "omp"): OmpPresentati
   let timer: unknown;
   let generation = 0;
   let pending = false;
+  /** The daemon's status lines last shown, beneath which the dropped-events line is painted. */
+  let status: string[] = [];
+  let droppedCount = 0;
+  let indexingNow = false;
+  /** The person chose `silent`: no ambient line at all, the dropped-events one included. Its gap is still recorded. */
+  let silent = false;
+
+  function paint(ctx: PresentationContext): void {
+    const droppedLine = `Rerail: ${droppedCount} session event${droppedCount === 1 ? "" : "s"} dropped — daemon not answering`;
+    // Said on the status line itself, or alone until the daemon's first read has drawn one.
+    const statusLines = !indexingNow ? status : status.length > 0 ? [`${status[0]} · indexing`, ...status.slice(1)] : ["Rerail · indexing"];
+    const lines = silent ? [] : droppedCount > 0 ? [...statusLines, droppedLine] : statusLines;
+    ctx.ui.setWidget(STATUS_KEY, lines.length === 0 ? undefined : lines, { placement: "belowEditor" });
+  }
+
+  function show(ctx: PresentationContext, lines: string[], silenced = false): void {
+    status = lines;
+    silent = silenced;
+    paint(ctx);
+  }
 
   function stop(): void {
     generation += 1;
@@ -41,6 +68,8 @@ export function createOmpPresentation(host: "omp" | "pi" = "omp"): OmpPresentati
     timer = undefined;
     current = undefined;
     pending = false;
+    status = [];
+    silent = false;
   }
 
   async function refresh(ctx: PresentationContext): Promise<void> {
@@ -53,14 +82,13 @@ export function createOmpPresentation(host: "omp" | "pi" = "omp"): OmpPresentati
     try {
       const presentation = await readPresentation({ sessionId, host, cwd });
       if (!isCurrent()) return;
-      ctx.ui.setWidget(STATUS_KEY,
-        presentation.presence === "silent" ? undefined : [formatTerminalStatus(presentation)],
-        { placement: "belowEditor" });
-    } catch (error) {
+      const silenced = presentation.presence === "silent";
+      show(ctx, silenced ? [] : [formatTerminalStatus(presentation)], silenced);
+    } catch {
+      // The footer is one short line users stack with others, so the error's detail stays out of it; readPresentation
+      // already turns every daemon failure into a state, so reaching here is a Rerail bug, not something to explain inline.
       if (!isCurrent()) return;
-      const message = String(error instanceof Error ? error.message : error)
-        .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "");
-      ctx.ui.setWidget(STATUS_KEY, [`Rerail unavailable: ${message}`], { placement: "belowEditor" });
+      show(ctx, [formatTerminalStatus(fallbackPresentation("unavailable"))]);
     } finally {
       if (generation === startedGeneration) pending = false;
     }
@@ -72,7 +100,7 @@ export function createOmpPresentation(host: "omp" | "pi" = "omp"): OmpPresentati
     current = ctx;
     if (options.off === true) {
       // Nothing autostarts where Rerail is off, so asking a daemon would only report it missing.
-      ctx.ui.setWidget(STATUS_KEY, [formatTerminalStatus(notOnHerePresentation())], { placement: "belowEditor" });
+      show(ctx, [formatTerminalStatus(notOnHerePresentation())]);
       return;
     }
     const tick = (): void => {
@@ -83,5 +111,17 @@ export function createOmpPresentation(host: "omp" | "pi" = "omp"): OmpPresentati
     void refresh(ctx);
   }
 
-  return { start, stop };
+  function dropped(count: number): void {
+    if (count === droppedCount) return;
+    droppedCount = count;
+    if (current?.hasUI) paint(current);
+  }
+
+  function indexing(on: boolean): void {
+    if (on === indexingNow) return;
+    indexingNow = on;
+    if (current?.hasUI) paint(current);
+  }
+
+  return { start, stop, dropped, indexing };
 }

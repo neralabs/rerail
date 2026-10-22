@@ -5,7 +5,7 @@ import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { readClaudeStatusCommand, type ClaudeStatusLine } from "../../setup/claude-status-store.js";
-import { formatTerminalStatus, readPresentation } from "../../presentation/session-presentation.js";
+import { fallbackPresentation, formatTerminalStatus, readPresentation } from "../../presentation/session-presentation.js";
 import type { RepositoryStartState } from "../../engine/catalog/repository-model.js";
 
 /**
@@ -32,18 +32,19 @@ const statusPayloadSchema = z.object({
 });
 
 async function rerailStatus(chunks: Buffer[], validInput: boolean): Promise<string> {
-  if (!validInput) return "Rerail | session unavailable";
+  const sessionUnavailable = (): string => formatTerminalStatus(fallbackPresentation("session unavailable"));
+  if (!validInput) return sessionUnavailable();
   try {
     const payload = statusPayloadSchema.safeParse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-    if (!payload.success) return "Rerail | session unavailable";
+    if (!payload.success) return sessionUnavailable();
     const { session_id: sessionId, cwd, workspace } = payload.data;
     const root = [workspace?.project_dir, cwd].find(path => path !== undefined && isAbsolute(path));
-    if (root === undefined) return "Rerail | session unavailable";
+    if (root === undefined) return sessionUnavailable();
     // Nothing autostarts where Rerail is off, so with no daemon answering the checkout's own state decides.
     const result = await readPresentation({ sessionId, host: "claude-code", cwd: root, startState: () => localStartState(root) });
     return result.presence === "silent" ? "" : formatTerminalStatus(result);
   } catch {
-    return "Rerail | unavailable";
+    return formatTerminalStatus(fallbackPresentation("unavailable"));
   }
 }
 

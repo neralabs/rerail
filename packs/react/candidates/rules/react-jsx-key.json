@@ -3,7 +3,7 @@
   "id": "react-jsx-key",
   "revision": 1,
   "mode": "steer",
-  "description": "eslint-plugin-react 7.37.5 react/jsx-key (default options): an element (not a fragment) without a `key` attribute that is an array literal's element, or that a `.map(fn)` / `.from(x, fn)` callback returns: the arrow's body, a branch of its conditional body, the right side of its logical body, or a return statement directly in the callback's body or in nested if/else branches; never inside a `React.Children.toArray(...)` / `Children.toArray(...)` call.",
+  "description": "Add a key prop to JSX elements in array literals and to those returned from map or Array.from callbacks; React needs keys to track list items between renders.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -395,6 +395,12 @@
                 }
               }
             ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -406,6 +412,16 @@
           "eslint": {
             "rules": [
               "react/jsx-key"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "jsx-key"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useJsxKeyInIterable"
             ]
           }
         }
@@ -433,6 +449,12 @@
                 }
               }
             ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -444,6 +466,16 @@
           "eslint": {
             "rules": [
               "react/jsx-key"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "jsx-key"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useJsxKeyInIterable"
             ]
           }
         }

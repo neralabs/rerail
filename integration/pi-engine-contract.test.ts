@@ -96,7 +96,7 @@ describe("Pi native code rule engine", () => {
         details: undefined,
         isError: false,
       });
-      const steer = await steerText(CONTRACT_CURSOR_EXECUTE_RULE_ID, `${CONTRACT_CURSOR_EXECUTE_MESSAGE} (api/route.py:2:5)`, cwd);
+      const steer = steerText(CONTRACT_CURSOR_EXECUTE_RULE_ID, CONTRACT_CURSOR_EXECUTE_MESSAGE, "api/route.py:2:5");
       await expect.poll(() => sessionManager.getBranch(), { timeout: 10_000, interval: 10 }).toEqual(
         expect.arrayContaining([
           expect.objectContaining({

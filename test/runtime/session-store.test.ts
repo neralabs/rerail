@@ -13,7 +13,7 @@ import {
   defaultRerailDatabasePath,
   openRerailDatabase,
   resetRepositoryHistory,
-  loadBundledCatalog,
+  loadRuleCatalog,
   addAttachment,
   removeAttachment,
   ruleConfigurationSignature,
@@ -281,7 +281,7 @@ describe("SQLite session persistence", () => {
     await handlers.get("before_agent_start")?.({ type: "before_agent_start", prompt: "hello" }, context);
     expect(reader.hud("omp-live")).toEqual({ activeRuleCount: 1, steeringCount: 0 });
     const configuration = openRerailDatabase(databasePath);
-    upsertLibraryRule(configuration, loadBundledCatalog(), MOCK_CODE_RULES[0]!, "code");
+    upsertLibraryRule(configuration, loadRuleCatalog(), MOCK_CODE_RULES[0]!, "code");
     addAttachment(configuration, { repositoryKey, folder: "", sourceKind: "library_rule", sourceId: MOCK_CODE_RULES[0]!.id });
     configuration.$client.close();
     expect(reader.hud("omp-live").activeRuleCount).toBeNull();
@@ -476,6 +476,16 @@ describe("SQLite session persistence", () => {
     expect(reader.hud(first.sessionId).steeringCount).toBe(501);
   });
 
+  it("counts one steer per rule a receipt carried, so two rules in one edit read twice", async () => {
+    const { store, reader, session } = await hudFixture("per-rule");
+    store.openSession(session);
+    store.startHudTracking(session, true);
+    store.recordSteer(session, "two-rules", ["a:one", "a:two"]);
+    expect(reader.hud(session.sessionId).steeringCount).toBe(2);
+    store.recordSteer(session, "one-rule", ["a:one"]);
+    expect(reader.hud(session.sessionId).steeringCount).toBe(3);
+  });
+
   it("keeps untracked and reset totals unknown rather than counting only surviving receipts", async () => {
     const { path, repositoryId, store, reader, session } = await hudFixture("untracked");
     store.openSession(session);
@@ -519,7 +529,7 @@ describe("SQLite session persistence", () => {
     const database = openRerailDatabase(defaultRerailDatabasePath());
     closeAfterTest({ close: () => database.$client.close() });
     const ownerCheckoutPaths = [realpathSync(root)];
-    const signature = () => ruleConfigurationSignature(database, loadBundledCatalog(), repositoryKey, ownerCheckoutPaths);
+    const signature = () => ruleConfigurationSignature(database, loadRuleCatalog(), repositoryKey, ownerCheckoutPaths);
     store.openSession(session);
     store.startHudTracking(session, true);
     const coverage = { repositoryId: repositoryKey, ownerCheckoutPaths, activeRuleCount: 3, ruleSignature: signature() };
@@ -556,12 +566,14 @@ describe("SQLite session persistence", () => {
       runtime.recordSteer(legacy.sessionId, "new-only");
       expect(reader.hud(legacy.sessionId).steeringCount).toBeNull();
       await runtime.ingest({ kind: "session-start", session, eventId: "start" });
+      // The evaluator, whose catalog the coverage reads, opens behind the session start; a turn boundary waits for it.
+      await runtime.ingest({ kind: "turn-end", sessionId: session.sessionId, eventId: "opened", text: "" });
       expect(reader.hud(session.sessionId).steeringCount).toBe(0);
       const baseline = reader.hud(session.sessionId).activeRuleCount;
       expect(baseline).not.toBeNull();
       const database = openRerailDatabase(path);
       try {
-        upsertLibraryRule(database, loadBundledCatalog(), { ...MOCK_CONVERSATION_RULES[0]!, id: "late-source" }, "conversation");
+        upsertLibraryRule(database, loadRuleCatalog(), { ...MOCK_CONVERSATION_RULES[0]!, id: "late-source" }, "conversation");
         addAttachment(database, { repositoryKey, folder: "", sourceKind: "library_rule", sourceId: "late-source" });
       } finally {
         database.$client.close();
@@ -617,7 +629,7 @@ describe("one database for every repository", () => {
     const alphaView = closeAfterTest(new SqliteSessionReader(path, { repositoryId: "alpha" }));
     const machineView = closeAfterTest(new SqliteSessionReader(path));
     expect(alphaView.sessions().map(session => [session.sessionId, session.repositoryId])).toEqual([["alpha-session", "alpha"]]);
-    expect(alphaView.sessionsSince(0).map(session => session.sessionId)).toEqual(["alpha-session"]);
+    expect(alphaView.sessionPage({ since: 0, limit: 50 }).sessions.map(session => session.sessionId)).toEqual(["alpha-session"]);
     expect(alphaView.steersByRule(0)).toEqual(new Map([["shared-rule", 1]]));
     expect(machineView.sessions().map(session => session.sessionId)).toEqual(["alpha-session", "beta-session"]);
     expect(machineView.steersByRule(0)).toEqual(new Map([["shared-rule", 3]]));
@@ -629,8 +641,9 @@ describe("one database for every repository", () => {
 describe("resetRepositoryHistory", () => {
   it("clears or explicitly keeps every session-keyed table, so a new one cannot slip past a reset", () => {
     const reset = new Set<SQLiteTable>(schema.SESSION_HISTORY_TABLES);
-    // Handled by hand: ended sessions and their runtime ownership go, running ones stay.
-    const handled = new Set<SQLiteTable>([schema.sessions, schema.policySessionOwners]);
+    // Handled by hand: ended sessions and their runtime ownership go, running ones stay. The derived audit history
+    // goes with the audits it came from, through the triggers on `audits`.
+    const handled = new Set<SQLiteTable>([schema.sessions, schema.policySessionOwners, ...schema.DERIVED_AUDIT_HISTORY_TABLES]);
     const exported: unknown[] = Object.values(schema);
     const tables = exported.filter((value): value is SQLiteTable => is(value, SQLiteTable));
     for (const table of tables) {
@@ -667,7 +680,7 @@ describe("resetRepositoryHistory", () => {
       other.openSession({ host: "codex", sessionId: "elsewhere", cwd: join(root, "beta") }, 70);
       other.append({ sessionId: "elsewhere", eventId: "kept", kind: "user-prompt", observedAt: 75, payload: {} });
       other.closeSession("elsewhere", 80);
-      upsertLibraryRule(rules, loadBundledCatalog(), MOCK_CONVERSATION_RULES[0], "conversation");
+      upsertLibraryRule(rules, loadRuleCatalog(), MOCK_CONVERSATION_RULES[0], "conversation");
       preferences.upsert({ repository: "", host: "", presence: "silent" });
       const inode = (await stat(path)).ino;
 

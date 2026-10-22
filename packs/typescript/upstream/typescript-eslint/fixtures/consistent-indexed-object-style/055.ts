@@ -1,0 +1,1 @@
+type Foo = Generic<{ [key: string]: any }>;

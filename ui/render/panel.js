@@ -1,13 +1,14 @@
 /**
  * The side panel. A rule (W1b, W3): what it checks with a caught and a passing example, what Rerail
  * does on a violation (the rule's mode, Log / Steer / Block, read-only here), its numbers, where it came
- * from (with the folders it is added at and what decided its on and mode) and its recent activity.
+ * from (with the folders it is added at, what decided its on, mode and suppression comments, a switch for
+ * those comments, and its configured options) and its recent activity.
  * Create a rule (W2) and a rule pack's contents render here too.
  */
 import { h, setAttr, setText, setContent, icon } from "../dom.js";
 import { fmt, plural, whenLabel, clock, shortSessionId } from "../format.js";
-import { kindLabel, modeLabel, ruleMode, isLog, isByRerail, originLabel, scopeText, technical, conditionText, messageText, folderText, deciderText, MODE_LABEL, MODE_PLAIN } from "../derive.js";
-import { data, ui, rangeLabel, fires, allFires, isMeasured, activityAllOf, ruleFindings, titleOf, originChip, packRuleOf, packOfRule, attachedPackOf, repoName } from "../state.js";
+import { kindLabel, modeLabel, ruleMode, isLog, isByRerail, originLabel, scopeText, technical, conditionText, messageText, folderText, deciderText, onText, suppressionsText, nextSuppressions, optionsText, MODE_LABEL, MODE_PLAIN } from "../derive.js";
+import { data, ui, rangeLabel, fires, allFires, isMeasured, activityOf, activityAllOf, ruleFindings, ruleFindingsTotal, titleOf, originChip, packRuleOf, packOfRule, attachedPackOf, repoName } from "../state.js";
 import { renderPackPanel } from "./pack-panel.js";
 import { CREATE_COMMAND } from "./rules.js";
 
@@ -117,20 +118,21 @@ function renderCondition(stored) {
 
 const lineOf = x => (x.span ? `:${x.span.startLine + 1}` : "");
 
+/** The rule's violations in range: how many, the folder most of the newest ones are in, and how many sessions. */
 function renderViolations(id) {
-  const inRange = ruleFindings(id);
-  setAttr(p.violations, "hidden", inRange.length === 0);
-  if (inRange.length === 0) return;
+  const newest = ruleFindings(id), total = ruleFindingsTotal(id);
+  setAttr(p.violations, "hidden", total === 0);
+  if (total === 0) return;
   const dirs = new Map();
-  for (const x of inRange) {
+  for (const x of newest) {
     if (!x.path?.includes("/")) continue;
     const dir = x.path.split("/").slice(0, -1).join("/");
     dirs.set(dir, (dirs.get(dir) ?? 0) + 1);
   }
   const top = [...dirs].sort((a, b) => b[1] - a[1])[0];
-  const sessions = new Set(inRange.map(x => x.sessionId)).size;
-  setContent(p.violations.lastChild, `${inRange.length}|${top}|${sessions}|${ui.range}`, () => [
-    h("b", null, fmt(inRange.length)), ` ${rangeLabel()}`,
+  const sessions = activityOf(id).sessions;
+  setContent(p.violations.lastChild, `${total}|${top}|${sessions}|${ui.range}`, () => [
+    h("b", null, fmt(total)), ` ${rangeLabel()}`,
     top ? [" · ", h("b", null, fmt(top[1])), " in ", h("span.mono", null, top[0])] : null,
     " · ", h("b", null, fmt(sessions)), ` ${plural(sessions, "session")}`,
   ]);
@@ -147,21 +149,25 @@ function renderOrigin(stored) {
   const id = stored.rule.id, pack = packOfRule(stored), group = packRuleOf(id)?.rule.group;
   const checkoutPath = data.checkout?.checkoutPath;
   const folders = stored.folders.map(folderText).join(", ");
-  // Folders that disagree each show their own on and mode; switching the rule then sets it in every folder.
-  const on = stored.mixed
-    ? stored.folderStates.map(state => `${state.on ? "On" : "Off"} in ${folderText(state.folder)}`).join(", ")
-    : `${stored.enabled ? "On" : "Off"} · ${deciderText(stored.onSource, checkoutPath)}`;
+  // Folders that disagree each show their own on; switching the rule then sets it in every folder.
+  const on = onText(stored, checkoutPath);
   const mode = stored.mixed
     ? stored.folderStates.map(state => `${MODE_LABEL[state.mode] ?? state.mode} in ${folderText(state.folder)}`).join(", ")
     : `${modeLabel(stored)} · ${deciderText(stored.modeSource, checkoutPath)}`;
+  const suppressions = suppressionsText(stored, checkoutPath), next = nextSuppressions(stored);
+  const options = optionsText(stored, checkoutPath);
   const why = pack ? whyOn(stored, pack) : "";
-  setContent(p.from, JSON.stringify([id, pack?.id, why, folders, on, mode]), () => kv([
+  setContent(p.from, JSON.stringify([id, pack?.id, why, folders, on, mode, suppressions, next, options]), () => kv([
     ["Origin", originLabel(stored)],
     ...(pack ? [["Rule pack", group ? `${pack.name} · ${group}` : pack.name], ["Why it is on", why]] : []),
     ...(isByRerail(stored) && !pack ? [["Rule pack", "None: it is added to this repository on its own"]] : []),
     ["Added at", folders],
     ["On", on],
     ["Mode", mode],
+    // Linters' suppression comments are in code; a conversation rule has none to honour.
+    ...(stored.kind === "code" ? [["Suppression comments", [`${suppressions} `,
+      h("button.btn.sm.ghost.link", { "data-act": "suppress", "data-i": id, "data-v": next }, next === "ignore" ? "Ignore them" : "Honour them")]]] : []),
+    ...(options === null ? [] : [["Options", options]]),
     ["Rule id", id, "mono"],
   ]));
 }
@@ -173,15 +179,14 @@ function renderSent(stored, id) {
 }
 
 function renderRecent(id) {
-  const list = ruleFindings(id), top = list.slice(0, 3), all = allFires(id);
-  const host = sessionId => data.sessions.find(s => s.sessionId === sessionId)?.host;
-  setContent(p.recent, `${id}|${top.map(x => `${x.auditId}:${x.id}`).join(",")}|${list.length}|${all}|${ui.range}`, () => {
+  const list = ruleFindings(id), top = list.slice(0, 3), all = allFires(id), total = ruleFindingsTotal(id);
+  setContent(p.recent, `${id}|${top.map(x => `${x.auditId}:${x.id}`).join(",")}|${total}|${all}|${ui.range}`, () => {
     if (top.length === 0) return h("p.muted", null, all ? `None logged ${rangeLabel()}. Widen the range to see earlier ones.` : "No violations logged yet. Rerail is silent until this rule matches.");
     return [h("div.ract", null, top.map(x => h("div.rrow", null,
       h("span.when", null, `${whenLabel(x.at)} · ${clock(x.at)}`),
       h("div.what", null, x.path ? h("span.mono", null, `${x.path}${lineOf(x)}`) : h("span.muted", null, "no path recorded"),
-        h("button.open", { "data-act": "session", "data-i": x.sessionId }, shortSessionId(x.sessionId, host(x.sessionId))))))),
-    h("button.btn.sm.ghost.link", { "data-act": "actrule", "data-i": id, style: "margin-top:6px" }, list.length > 3 ? `See all ${fmt(list.length)} in Activity` : "See it in Activity")];
+        h("button.open", { "data-act": "session", "data-i": x.sessionId }, shortSessionId(x.sessionId, x.host)))))),
+    h("button.btn.sm.ghost.link", { "data-act": "actrule", "data-i": id, style: "margin-top:6px" }, total > 3 ? `See all ${fmt(total)} in Activity` : "See it in Activity")];
   });
 }
 

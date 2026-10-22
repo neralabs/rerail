@@ -9,12 +9,13 @@ import { validateCodeRule } from "../../src/engine/rules.js";
 
 type Json = Record<string, unknown>;
 
+// A Blade query's PHP semantics read the template's compiled view.
 const document = (language: string, rule: unknown, ast: Json = {}, violation: Json = {}): Json => ({
   format: "rerail.policy/v1",
   id: "test:refusal",
   revision: 1,
   mode: "steer",
-  clauses: [{ id: "check", violation: { code: "TEST", anchor: "witness.span", message: "Test", ...violation }, forbid: { ast: { language, rule, ...ast } } }],
+  clauses: [{ id: "check", violation: { code: "TEST", anchor: "witness.span", message: "Test", ...violation }, forbid: { ast: { language, ...(language === "blade" ? { embedded: "compiled-view" } : {}), rule, ...ast } } }],
 });
 const withDefine = (language: string, util: Json, rule: Json): Json => ({
   format: "rerail.policy/v1",
@@ -107,10 +108,16 @@ for (const language of PHP) {
 // Import names in the other family's shape.
 refuses("python import of a PHP name", document("python", ident({ resolves: { import: ["App\\Foo"] } })));
 refuses("python imported PHP name", document("python", { kind: "dotted_name", resolves: { imported: ["App\\Foo"] } }));
+refuses("python import of a Rust path", document("python", ident({ resolves: { import: ["std::env::var"] } })));
+refuses("python imported Rust path", document("python", { kind: "dotted_name", resolves: { imported: ["std::env"] } }));
 for (const language of PHP) {
   refuses(`${language} dotted import`, document(language, { kind: "name", resolves: { import: ["os.path"] } }));
   refuses(`${language} dotted imported`, document(language, { kind: "name", resolves: { imported: ["os.path"] } }));
+  refuses(`${language} Rust path import`, document(language, { kind: "name", resolves: { import: ["std::env"] } }));
 }
+refuses("rust dotted import", document("rust", ident({ resolves: { import: ["os.path"] } })));
+refuses("rust import of a PHP name", document("rust", ident({ resolves: { import: ["App\\Foo"] } })));
+refuses("rust resolves.imported", document("rust", ident({ resolves: { imported: ["std::env"] } })));
 
 // Where ESLint reports a variable.
 refuses("python resolves.write", document("python", ident({ resolves: { write: "last" } })));
@@ -151,17 +158,19 @@ refuses("typescript binding value type str", document("typescript", ident({ reso
 refuses("php query utility value.type str", document("php", { matches: "u" }, { utils: { u: { kind: "string", value: { type: "str" } } } }));
 
 // Grammars whose literals are another family's.
-const PARSED_KIND: Record<string, string> = { percentFormat: "placeholder", braceFormat: "field", annotation: "identifier", eslintDirective: "directive", printfFormat: "placeholder", scanfFormat: "placeholder", phpDoc: "php_doc" };
+const PARSED_KIND: Record<string, string> = { percentFormat: "placeholder", braceFormat: "field", annotation: "identifier", eslintDirective: "directive", printfFormat: "placeholder", scanfFormat: "placeholder", phpDoc: "php_doc", rustFormat: "field" };
 const FOREIGN_GRAMMARS: Record<string, readonly string[]> = {
-  python: ["eslintDirective", "printfFormat", "scanfFormat", "phpDoc"],
-  typescript: ["percentFormat", "braceFormat", "annotation", "printfFormat", "scanfFormat", "phpDoc"],
-  javascript: ["percentFormat", "braceFormat", "annotation", "printfFormat", "scanfFormat", "phpDoc"],
-  php: ["percentFormat", "braceFormat", "annotation", "eslintDirective"],
-  blade: ["percentFormat", "braceFormat", "annotation", "eslintDirective"],
+  python: ["eslintDirective", "printfFormat", "scanfFormat", "phpDoc", "rustFormat"],
+  typescript: ["percentFormat", "braceFormat", "annotation", "printfFormat", "scanfFormat", "phpDoc", "rustFormat"],
+  javascript: ["percentFormat", "braceFormat", "annotation", "printfFormat", "scanfFormat", "phpDoc", "rustFormat"],
+  php: ["percentFormat", "braceFormat", "annotation", "eslintDirective", "rustFormat"],
+  blade: ["percentFormat", "braceFormat", "annotation", "eslintDirective", "rustFormat"],
+  rust: ["percentFormat", "braceFormat", "annotation", "eslintDirective", "printfFormat", "scanfFormat", "phpDoc"],
 };
 for (const [language, grammars] of Object.entries(FOREIGN_GRAMMARS)) {
   for (const grammar of grammars) {
-    const host = grammar === "eslintDirective" || grammar === "phpDoc" ? "comment" : "string";
+    const comment = grammar === "eslintDirective" || grammar === "phpDoc";
+    const host = language === "rust" ? (comment ? "line_comment" : "string_literal") : comment ? "comment" : "string";
     refuses(`${language} parse ${grammar}`, document(language, { kind: host, parse: { grammar, kind: PARSED_KIND[grammar] } }));
   }
 }
@@ -170,10 +179,16 @@ for (const [language, grammars] of Object.entries(FOREIGN_GRAMMARS)) {
 const style = (name: string, missing: string) => ({ pattern: "f($F, $$$A)", formatArgs: { style: name, string: "F", args: "A", missing: { kind: missing } } });
 refuses("python style printf", document("python", style("printf", "placeholder")));
 refuses("python style scanf", document("python", style("scanf", "placeholder")));
+refuses("python style rust", document("python", style("rust", "field")));
 for (const language of PHP) {
   refuses(`${language} style percent`, document(language, style("percent", "placeholder")));
   refuses(`${language} style brace`, document(language, style("brace", "field")));
+  refuses(`${language} style rust`, document(language, style("rust", "field")));
 }
+refuses("rust style brace", document("rust", style("brace", "field")));
+refuses("rust style percent", document("rust", style("percent", "placeholder")));
+refuses("rust style printf", document("rust", style("printf", "placeholder")));
+refuses("rust style scanf", document("rust", style("scanf", "placeholder")));
 
 // Language options, version gates and file conditions of another family.
 for (const language of PHP) refuses(`${language} languageOptions`, document(language, { kind: "name" }, { languageOptions: { ecmaVersion: 2020 } }));
@@ -193,8 +208,8 @@ for (const language of [...ECMA, ...PHP]) {
 refuses("python file.declaration", document("python", ident({}), { file: { declaration: true } }));
 
 // Suppression comments of a linter the language has none of.
-const SUPPRESSIONS: Record<string, Json> = { eslint: { rules: ["strict"] }, noqa: { codes: ["F401"] }, nosec: { codes: ["B101"] }, phpstan: { identifiers: ["variable.undefined"] }, psalm: { issues: ["UndefinedVariable"] }, phpcs: { sniffs: ["Squiz.PHP.DiscouragedFunctions"] } };
-const OWN_SUPPRESSIONS: Record<string, readonly string[]> = { python: ["noqa", "nosec"], typescript: ["eslint"], javascript: ["eslint"], php: ["phpstan", "psalm", "phpcs"], blade: [] };
+const SUPPRESSIONS: Record<string, Json> = { eslint: { rules: ["strict"] }, noqa: { codes: ["F401"] }, nosec: { codes: ["B101"] }, phpstan: { identifiers: ["variable.undefined"] }, psalm: { issues: ["UndefinedVariable"] }, phpcs: { sniffs: ["Squiz.PHP.DiscouragedFunctions"] }, clippy: { lints: ["clippy::all"] } };
+const OWN_SUPPRESSIONS: Record<string, readonly string[]> = { python: ["noqa", "nosec"], typescript: ["eslint"], javascript: ["eslint"], php: ["phpstan", "psalm", "phpcs"], blade: [], rust: ["clippy"] };
 for (const [language, own] of Object.entries(OWN_SUPPRESSIONS)) {
   for (const [linter, suppress] of Object.entries(SUPPRESSIONS)) {
     if (!own.includes(linter)) refuses(`${language} suppress.${linter}`, document(language, { kind: nameKind(language) }, {}, { suppress: { [linter]: suppress } }));
@@ -296,6 +311,13 @@ const REFUSED_AT: Record<string, string> = {
   "python imported PHP name": "/clauses/0/forbid/ast/rule/resolves/imported/0",
   "php dotted import": "/clauses/0/forbid/ast/rule/resolves/import/0",
   "php dotted imported": "/clauses/0/forbid/ast/rule/resolves/imported/0",
+  "python import of a Rust path": "/clauses/0/forbid/ast/rule/resolves/import/0",
+  "python imported Rust path": "/clauses/0/forbid/ast/rule/resolves/imported/0",
+  "php Rust path import": "/clauses/0/forbid/ast/rule/resolves/import/0",
+  "blade Rust path import": "/clauses/0/forbid/ast/rule/resolves/import/0",
+  "rust dotted import": "/clauses/0/forbid/ast/rule/resolves/import/0",
+  "rust import of a PHP name": "/clauses/0/forbid/ast/rule/resolves/import/0",
+  "rust resolves.imported": "/clauses/0/forbid/ast/rule/resolves/imported",
   "blade dotted import": "/clauses/0/forbid/ast/rule/resolves/import/0",
   "blade dotted imported": "/clauses/0/forbid/ast/rule/resolves/imported/0",
   "python resolves.write": "/clauses/0/forbid/ast/rule/resolves/write",
@@ -358,12 +380,31 @@ const REFUSED_AT: Record<string, string> = {
   "blade parse braceFormat": "/clauses/0/forbid/ast/rule/parse/grammar",
   "blade parse annotation": "/clauses/0/forbid/ast/rule/parse/grammar",
   "blade parse eslintDirective": "/clauses/0/forbid/ast/rule/parse/grammar",
+  "python parse rustFormat": "/clauses/0/forbid/ast/rule/parse/grammar",
+  "typescript parse rustFormat": "/clauses/0/forbid/ast/rule/parse/grammar",
+  "javascript parse rustFormat": "/clauses/0/forbid/ast/rule/parse/grammar",
+  "php parse rustFormat": "/clauses/0/forbid/ast/rule/parse/grammar",
+  "blade parse rustFormat": "/clauses/0/forbid/ast/rule/parse/grammar",
+  "rust parse percentFormat": "/clauses/0/forbid/ast/rule/parse/grammar",
+  "rust parse braceFormat": "/clauses/0/forbid/ast/rule/parse/grammar",
+  "rust parse annotation": "/clauses/0/forbid/ast/rule/parse/grammar",
+  "rust parse eslintDirective": "/clauses/0/forbid/ast/rule/parse/grammar",
+  "rust parse printfFormat": "/clauses/0/forbid/ast/rule/parse/grammar",
+  "rust parse scanfFormat": "/clauses/0/forbid/ast/rule/parse/grammar",
+  "rust parse phpDoc": "/clauses/0/forbid/ast/rule/parse/grammar",
   "python style printf": "/clauses/0/forbid/ast/rule/formatArgs/style",
   "python style scanf": "/clauses/0/forbid/ast/rule/formatArgs/style",
   "php style percent": "/clauses/0/forbid/ast/rule/formatArgs/style",
   "php style brace": "/clauses/0/forbid/ast/rule/formatArgs/style",
   "blade style percent": "/clauses/0/forbid/ast/rule/formatArgs/style",
   "blade style brace": "/clauses/0/forbid/ast/rule/formatArgs/style",
+  "python style rust": "/clauses/0/forbid/ast/rule/formatArgs/style",
+  "php style rust": "/clauses/0/forbid/ast/rule/formatArgs/style",
+  "blade style rust": "/clauses/0/forbid/ast/rule/formatArgs/style",
+  "rust style brace": "/clauses/0/forbid/ast/rule/formatArgs/style",
+  "rust style percent": "/clauses/0/forbid/ast/rule/formatArgs/style",
+  "rust style printf": "/clauses/0/forbid/ast/rule/formatArgs/style",
+  "rust style scanf": "/clauses/0/forbid/ast/rule/formatArgs/style",
   "php languageOptions": "/clauses/0/forbid/ast/languageOptions",
   "blade languageOptions": "/clauses/0/forbid/ast/languageOptions",
   "python languageOptions.ecmaVersion": "/clauses/0/forbid/ast/languageOptions",
@@ -426,6 +467,17 @@ const REFUSED_AT: Record<string, string> = {
   "javascript suppress.nosec": "/clauses/0/violation/suppress/nosec",
   "php suppress.nosec": "/clauses/0/violation/suppress/nosec",
   "blade suppress.nosec": "/clauses/0/violation/suppress/nosec",
+  "python suppress.clippy": "/clauses/0/violation/suppress/clippy",
+  "typescript suppress.clippy": "/clauses/0/violation/suppress/clippy",
+  "javascript suppress.clippy": "/clauses/0/violation/suppress/clippy",
+  "php suppress.clippy": "/clauses/0/violation/suppress/clippy",
+  "blade suppress.clippy": "/clauses/0/violation/suppress/clippy",
+  "rust suppress.eslint": "/clauses/0/violation/suppress/eslint",
+  "rust suppress.noqa": "/clauses/0/violation/suppress/noqa",
+  "rust suppress.nosec": "/clauses/0/violation/suppress/nosec",
+  "rust suppress.phpstan": "/clauses/0/violation/suppress/phpstan",
+  "rust suppress.psalm": "/clauses/0/violation/suppress/psalm",
+  "rust suppress.phpcs": "/clauses/0/violation/suppress/phpcs",
   "typescript define utility formatArgs": "/clauses/0/define/utils/u/formatArgs",
   "python define utility binds.builtin": "/clauses/0/define/utils/u/binds/builtin",
   "php query utility value.type str": "/clauses/0/forbid/ast/utils/u/value/type/0",

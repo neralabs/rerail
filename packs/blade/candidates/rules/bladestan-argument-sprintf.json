@@ -1,0 +1,176 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bladestan-argument-sprintf",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Pass sprintf() calls in Blade templates exactly as many values as the format string has placeholders, and use only valid placeholders.",
+  "scope": {
+    "include": [
+      "**/*.blade.php"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "missing",
+      "forbid": {
+        "ast": {
+          "language": "blade",
+          "embedded": "compiled-view",
+          "rule": {
+            "any": [
+              {
+                "pattern": "$FN($F)",
+                "kind": "function_call_expression",
+                "has": {
+                  "field": "function",
+                  "resolves": {
+                    "import": [
+                      "sprintf"
+                    ]
+                  }
+                }
+              },
+              {
+                "pattern": "$FN($F, $$$A)",
+                "kind": "function_call_expression",
+                "has": {
+                  "field": "function",
+                  "resolves": {
+                    "import": [
+                      "sprintf"
+                    ]
+                  }
+                }
+              }
+            ],
+            "formatArgs": {
+              "style": "printf",
+              "string": "F",
+              "args": "A",
+              "missing": {
+                "any": [
+                  {
+                    "kind": "placeholder"
+                  },
+                  {
+                    "kind": "star"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "argument.sprintf",
+        "anchor": "witness.start",
+        "message": "Pass this sprintf() call a value for every placeholder, or remove the extra placeholders from its format string."
+      }
+    },
+    {
+      "id": "unused",
+      "forbid": {
+        "ast": {
+          "language": "blade",
+          "embedded": "compiled-view",
+          "rule": {
+            "any": [
+              {
+                "pattern": "$FN($F)",
+                "kind": "function_call_expression",
+                "has": {
+                  "field": "function",
+                  "resolves": {
+                    "import": [
+                      "sprintf"
+                    ]
+                  }
+                }
+              },
+              {
+                "pattern": "$FN($F, $$$A)",
+                "kind": "function_call_expression",
+                "has": {
+                  "field": "function",
+                  "resolves": {
+                    "import": [
+                      "sprintf"
+                    ]
+                  }
+                }
+              }
+            ],
+            "formatArgs": {
+              "style": "printf",
+              "string": "F",
+              "args": "A",
+              "unused": {
+                "kind": "argument"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "argument.sprintf",
+        "anchor": "witness.start",
+        "message": "Remove the extra arguments from this sprintf() call, or add placeholders for them to its format string."
+      }
+    },
+    {
+      "id": "invalid",
+      "forbid": {
+        "ast": {
+          "language": "blade",
+          "embedded": "compiled-view",
+          "rule": {
+            "any": [
+              {
+                "pattern": "$FN($F)",
+                "kind": "function_call_expression",
+                "has": {
+                  "field": "function",
+                  "resolves": {
+                    "import": [
+                      "sprintf"
+                    ]
+                  }
+                }
+              },
+              {
+                "pattern": "$FN($F, $$$A)",
+                "kind": "function_call_expression",
+                "has": {
+                  "field": "function",
+                  "resolves": {
+                    "import": [
+                      "sprintf"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "F": {
+              "has": {
+                "parse": {
+                  "grammar": "printfFormat",
+                  "has": {
+                    "kind": "error"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "argument.sprintf",
+        "anchor": "witness.start",
+        "message": "Fix the invalid placeholder in this sprintf() format string, or write a literal percent sign as %%."
+      }
+    }
+  ]
+}

@@ -3,7 +3,7 @@
   "id": "react-no-children-prop",
   "revision": 1,
   "mode": "steer",
-  "description": "eslint-plugin-react 7.37.5 react/no-children-prop (allowFunctions: false): a `children` JSX attribute, and a createElement call (isCreateElement, default pragma) whose second argument is an object literal with a `children` key.",
+  "description": "Nest children between JSX tags, or pass them as extra createElement arguments, instead of passing a children prop.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -29,6 +29,12 @@
               "kind": "property_identifier",
               "regex": "^(?:children)$"
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -40,6 +46,16 @@
           "eslint": {
             "rules": [
               "react/no-children-prop"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-children-prop"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noChildrenProp"
             ]
           }
         }
@@ -204,6 +220,12 @@
                 ]
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -215,6 +237,16 @@
           "eslint": {
             "rules": [
               "react/no-children-prop"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-children-prop"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noChildrenProp"
             ]
           }
         }

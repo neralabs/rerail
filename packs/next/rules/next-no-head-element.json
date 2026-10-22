@@ -1,0 +1,78 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "next-no-head-element",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use the Head component from next/head instead of a raw head element outside the app directory; Next.js manages the page head itself.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "file": {
+            "path": {
+              "notRegex": "app/"
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "jsx_opening_element"
+                  },
+                  {
+                    "kind": "jsx_self_closing_element"
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^head$"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@next/next/no-head-element",
+        "message": "Do not use `<head>` element. Use `<Head />` from `next/head` instead. See: https://nextjs.org/docs/messages/no-head-element",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@next/next/no-head-element"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-head-element"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/noHeadElement"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

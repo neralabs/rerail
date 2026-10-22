@@ -1,0 +1,81 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "blade-parser-duplicate-condition-expressions",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Avoid repeating an earlier condition of the same chain in a Blade @elseif; that branch can never run.",
+  "scope": {
+    "include": [
+      "**/*.blade.php"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "blade",
+          "embedded": "compiled-view",
+          "rule": {
+            "kind": "if_statement",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "else_if_clause",
+              "pattern": "$D",
+              "all": [
+                {
+                  "has": {
+                    "field": "condition",
+                    "pattern": "($C)"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "if_statement",
+                        "has": {
+                          "field": "condition",
+                          "pattern": "($P)"
+                        },
+                        "compare": {
+                          "left": "P",
+                          "op": "eq",
+                          "right": "C",
+                          "text": "source"
+                        }
+                      }
+                    },
+                    {
+                      "follows": {
+                        "stopBy": "end",
+                        "kind": "else_if_clause",
+                        "has": {
+                          "field": "condition",
+                          "pattern": "($P)"
+                        },
+                        "compare": {
+                          "left": "P",
+                          "op": "eq",
+                          "right": "C",
+                          "text": "source"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.D",
+        "code": "DuplicateConditionExpressionsValidator",
+        "message": "Change or remove this @elseif; its condition ($C) already appears earlier in the chain, so the branch never runs."
+      }
+    }
+  ]
+}

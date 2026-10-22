@@ -1,0 +1,36 @@
+{
+  "format": "rerail.port-readiness-recording-lock/v1",
+  "tool": "eslint-plugin-react-hooks",
+  "release": "port-readiness-recordings",
+  "pins": {
+    "repository": "https://github.com/facebook/react",
+    "commit": "d1727fbf987392749b374f3afe62227d2c70fc41",
+    "version": "7.1.1",
+    "runtime": "eslint-plugin-react-hooks-7.1.1"
+  },
+  "runtimes": {
+    "eslint-config-next-16.3.8": {
+      "package.json": "fa48caee62a30874dd792a0b9a48721a2c2e3fed58c128918c7c8f0f4e6542d4"
+    },
+    "eslint-plugin-react-hooks-7.1.1": {
+      "package.json": "0eebb7eb2f433e74c140fe8c23fe50027e82caf583a33f2a87d2cd37d72b88ae"
+    },
+    "parsers": {
+      "package.json": "7e2c4e80a014d18963a273819f6213adfb2da9d594e334c6696bec1f3a3a5fb3"
+    }
+  },
+  "files": {
+    "recording.json": {
+      "sha256": "d40e994aa3fd7186a874cc699fb571496749db77bc147d1a47c933bf5105a169",
+      "size": 2087006,
+      "format": "rerail.port-readiness-recording/v2",
+      "asset": "react-eslint-plugin-react-hooks-recording-d40e994aa3fd7186a874cc699fb571496749db77bc147d1a47c933bf5105a169.json.gz"
+    },
+    "corpus.json": {
+      "sha256": "6df5f873dc62d667d4bc42456aa753f9d2869119b776753b5408de196e223e57",
+      "size": 10445,
+      "format": "rerail.port-readiness-corpus/v2",
+      "asset": "react-eslint-plugin-react-hooks-corpus-6df5f873dc62d667d4bc42456aa753f9d2869119b776753b5408de196e223e57.json.gz"
+    }
+  }
+}

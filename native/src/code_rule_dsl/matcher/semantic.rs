@@ -1,5 +1,6 @@
 use super::{
-    Arguments, BindingTest, Binds, FormatArgs, HostTest, Layout, ParseTest, Resolves, ValueTest,
+    Arguments, BindingTest, Binds, EmbeddedTest, FormatArgs, HostTest, Layout, ParseTest, Resolves,
+    ValueTest,
 };
 
 /// Rerail's semantic predicates: the rule terms that read a file's scopes, bindings, values,
@@ -19,8 +20,13 @@ pub(in crate::code_rule_dsl) enum Semantic {
     Arguments(Box<Arguments>),
     /// `parse`: a rule over the tree a sub-grammar parses from the node's literal.
     Parse(Box<ParseTest>),
-    /// `host` (inside a parsed tree's rule): a host rule on the node the `parse` holds.
+    /// `host`: inside a parsed tree's rule, a host rule on the node the `parse` holds; on an
+    /// embedded program's node, a rule of the file's own tree on its node spanning the bytes the
+    /// program's node stands for (`embedded`).
     Host(Box<HostTest>),
+    /// `embedded`: a rule over the nodes of the file's embedded program that stand for bytes the
+    /// node spans.
+    Embedded(Box<EmbeddedTest>),
     /// `capture` (inside `parse`): binds the node under this name.
     Capture(String),
     /// `formatArgs`: a format call's arguments no field consumes, or its fields no argument fills.
@@ -40,6 +46,7 @@ impl Semantic {
             Self::Binds(test) => test.sub_rules().all(super::AstMatcher::binds_nothing),
             Self::Arguments(arguments) => arguments.bind.is_empty(),
             Self::Parse(test) => test.exports.is_empty(),
+            Self::Embedded(test) => test.exports.is_empty(),
             Self::Calls(test) => test.chain.is_none(),
             Self::FormatArgs(test) => {
                 test.exports.is_empty()
@@ -61,6 +68,7 @@ impl Semantic {
             | Self::Calls(_)
             | Self::Binds(_) => true,
             Self::Host(test) => super::reads_values(&test.rule, seen),
+            Self::Embedded(test) => test.rules().any(|rule| super::reads_values(rule, seen)),
             // PHP's run-time fallback of a function or constant name may be unknown.
             Self::Resolves(resolves) => flow(resolves.language),
             Self::Capture(_) | Self::Layout(_) => false,
@@ -93,6 +101,7 @@ impl Semantic {
             Self::Arguments(arguments) => arguments.match_node(node, env),
             Self::Parse(test) => test.match_node(node, env),
             Self::Host(test) => test.match_node(node, env),
+            Self::Embedded(test) => test.match_node(node, env),
             Self::FormatArgs(test) => test.match_node(node, env),
             Self::Capture(name) => {
                 env.to_mut().insert(name, node.clone())?;

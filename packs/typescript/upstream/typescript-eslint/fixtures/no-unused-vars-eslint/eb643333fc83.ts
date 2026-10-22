@@ -1,0 +1,11 @@
+
+var x = 1;
+function foo(
+  y = function (z = x) {
+    bar(z);
+  },
+) {
+  y();
+}
+foo();
+      

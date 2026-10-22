@@ -1,0 +1,1 @@
+type fooIntersection = Array<string & number>;

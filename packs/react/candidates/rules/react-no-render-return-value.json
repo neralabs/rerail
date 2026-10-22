@@ -3,7 +3,7 @@
   "id": "react-no-render-return-value",
   "revision": 1,
   "mode": "steer",
-  "description": "eslint-plugin-react 7.37.5 react/no-render-return-value (latest React): a `ReactDOM.render(...)` call whose value is used: its parent (parentheses aside) is a declarator, a property, a return, an arrow body or an assignment.",
+  "description": "Don't use the return value of ReactDOM.render(); put a callback ref on the root element to get the instance instead.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -71,17 +71,28 @@
                 }
               ]
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
       "violation": {
         "anchor": "witness.start",
         "code": "react/no-render-return-value",
-        "message": "Do not depend on the return value from ReactDOM.render",
+        "message": "Stop using the return value of ReactDOM.render(); put a callback ref on the root element to get the instance.",
         "suppress": {
           "eslint": {
             "rules": [
               "react/no-render-return-value"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-render-return-value"
             ]
           }
         }

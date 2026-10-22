@@ -5,7 +5,7 @@ use crate::code_rule_dsl::calls::closure::{Graph, Link};
 use crate::code_rule_dsl::calls::names::Name;
 use crate::code_rule_dsl::calls::summary::{Callee, SHADOWED, Summary};
 use crate::code_rule_dsl::calls::{FileTables, php};
-use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::ScopeTable;
 use crate::code_rule_dsl::scope::php_names::PhpNames;
@@ -27,15 +27,14 @@ pub(crate) trait CallRules {
     /// Whether the family's calls join the call graph: its languages' registry capability,
     /// which the adapter kit checks.
     const SUPPORTED: bool;
+    /// The namespace used by names held in this family's summaries.
+    const NAMES: Option<Family>;
     /// The node kinds of a call: the only nodes a `calls` term holds at.
     const CALL_KINDS: &'static [&'static str];
     /// The node kinds of what a call may reach: the definitions a seed query runs on.
     const FUNCTION_KINDS: &'static [&'static str];
     /// The language a seed query of the family's rule runs in, where not the rule's own.
     const SEED_LANGUAGE: Option<&'static str>;
-    /// Whether a file's calls are read from its tape rather than a parse of its source: an
-    /// embedding family's regions are its tape's.
-    const TAPED: bool;
     /// Whether the graph indexes the family's workspace classes' direct subclasses and orphans,
     /// which its late-bound names read.
     const SUBCLASSES: bool;
@@ -92,10 +91,10 @@ pub(crate) trait CallRules {
 
 impl CallRules for Python {
     const SUPPORTED: bool = true;
+    const NAMES: Option<Family> = Some(Family::Python);
     const CALL_KINDS: &'static [&'static str] = &["call"];
     const FUNCTION_KINDS: &'static [&'static str] = &["function_definition"];
     const SEED_LANGUAGE: Option<&'static str> = None;
-    const TAPED: bool = false;
     const SUBCLASSES: bool = true;
 
     fn feature(_: CallFeature) -> Result<(), Refusal> {
@@ -169,10 +168,10 @@ impl CallRules for Python {
 
 impl CallRules for Php {
     const SUPPORTED: bool = true;
+    const NAMES: Option<Family> = Some(Family::Php);
     const CALL_KINDS: &'static [&'static str] = &php::CALL_KINDS;
     const FUNCTION_KINDS: &'static [&'static str] = &php::FUNCTION_KINDS;
     const SEED_LANGUAGE: Option<&'static str> = None;
-    const TAPED: bool = false;
     const SUBCLASSES: bool = false;
 
     fn feature(_: CallFeature) -> Result<(), Refusal> {
@@ -229,7 +228,7 @@ impl CallRules for Php {
     ) {
         let text = name.text();
         key(if text.bytes().any(|byte| byte.is_ascii_uppercase()) {
-            Name::new(&text.to_ascii_lowercase())
+            Name::new(name.family(), &text.to_ascii_lowercase())
         } else {
             name.clone()
         });
@@ -244,15 +243,16 @@ impl CallRules for Php {
     }
 }
 
-/// A template's calls are those of the PHP it embeds (`blade::view`), read from its tape; its
-/// top level is no class's, so `$this`, `self` and `static` there are unknown. Its seeds are the
-/// workspace's PHP definitions, which its calls reach: its seed query is PHP's.
+/// A template's calls are those of the PHP it embeds (`blade::view`), read from its embedded
+/// program (`calls::calls_document`); its top level is no class's, so `$this`, `self` and `static`
+/// there are unknown. Its seeds are the workspace's PHP definitions, which its calls reach: its
+/// seed query is PHP's.
 impl CallRules for Blade {
     const SUPPORTED: bool = <Php as CallRules>::SUPPORTED;
+    const NAMES: Option<Family> = <Php as CallRules>::NAMES;
     const CALL_KINDS: &'static [&'static str] = <Php as CallRules>::CALL_KINDS;
     const FUNCTION_KINDS: &'static [&'static str] = <Php as CallRules>::FUNCTION_KINDS;
     const SEED_LANGUAGE: Option<&'static str> = Some("php");
-    const TAPED: bool = true;
     const SUBCLASSES: bool = <Php as CallRules>::SUBCLASSES;
 
     fn feature(feature: CallFeature) -> Result<(), Refusal> {
@@ -310,16 +310,16 @@ impl CallRules for Blade {
 /// TypeScript, TSX and JavaScript: the registry refuses `calls`.
 impl CallRules for Refused {
     const SUPPORTED: bool = false;
+    const NAMES: Option<Family> = None;
     const CALL_KINDS: &'static [&'static str] = &[];
     const FUNCTION_KINDS: &'static [&'static str] = &[];
     const SEED_LANGUAGE: Option<&'static str> = None;
-    const TAPED: bool = false;
     const SUBCLASSES: bool = false;
 
     fn feature(feature: CallFeature) -> Result<(), Refusal> {
         match feature {
             CallFeature::Calls => Err(Refusal::Refused(Cow::Borrowed(
-                "calls follows Python and PHP calls only",
+                "calls follows Python, PHP and Rust calls only",
             ))),
         }
     }
@@ -389,7 +389,6 @@ pub(super) mod kit {
         /// `CallFeature::Calls`'s refusal, if the family refuses it.
         pub(crate) refusal: Option<&'static str>,
         pub(crate) seed_language: Option<&'static str>,
-        pub(crate) taped: bool,
         pub(crate) subclasses: bool,
         /// A source in the family's dialect, and the names of the definitions its regions'
         /// summaries record.
@@ -415,7 +414,6 @@ pub(super) mod kit {
         };
         assert_eq!(refusal.as_deref(), expect.refusal);
         assert_eq!(<C<A> as CallRules>::SEED_LANGUAGE, expect.seed_language);
-        assert_eq!(<C<A> as CallRules>::TAPED, expect.taped);
         assert_eq!(<C<A> as CallRules>::SUBCLASSES, expect.subclasses);
 
         let (source, defs) = expect.summary;
@@ -423,21 +421,20 @@ pub(super) mod kit {
         let image = TapeImage::parse(&grammar, source, &|| false)
             .expect("parses")
             .expect("encodes");
-        let doc = AstGrep::doc(
-            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)
-                .expect("restores"),
-        );
-        let root = doc.root();
-        let read = A::regions(&root)
-            .flat_map(|region| {
-                let summary = <C<A> as CallRules>::summary(&region.root, "kit", None, None, false);
+        let doc = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)
+            .expect("restores");
+        // A file's calls are its own tree's, or its embedded program's (`calls_document`).
+        let read = crate::code_rule_dsl::calls::calls_document(doc, dialect)
+            .map(|(doc, _)| {
+                let doc = AstGrep::doc(doc);
+                let summary = <C<A> as CallRules>::summary(&doc.root(), "kit", None, None, false);
                 summary
                     .defs
                     .iter()
                     .map(|def| summary.name(def.name).to_owned())
                     .collect::<Vec<_>>()
             })
-            .collect::<Vec<_>>();
+            .unwrap_or_default();
         assert_eq!(read, defs, "{source:?}");
 
         let module = ModulePath::dotted("pkg.mod").expect("module");
@@ -448,14 +445,17 @@ pub(super) mod kit {
         );
 
         let (name, label) = expect.label;
-        assert_eq!(<C<A> as CallRules>::label(&Name::new(name)), label);
+        assert_eq!(
+            <C<A> as CallRules>::label(&Name::new(A::FAMILY, name)),
+            label
+        );
 
         for (name, flags, keys) in expect.keys {
             let mut read = Vec::new();
             <C<A> as CallRules>::definition_keys(
-                &Name::new(name),
+                &Name::new(A::FAMILY, name),
                 *flags,
-                |name| [name.clone(), Name::new("alt.f")].into_iter(),
+                |name| [name.clone(), Name::new(A::FAMILY, "alt.f")].into_iter(),
                 |key| read.push(key.text().to_owned()),
             );
             assert_eq!(read, *keys, "{name} {flags}");

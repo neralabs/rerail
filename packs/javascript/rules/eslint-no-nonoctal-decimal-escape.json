@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-nonoctal-decimal-escape",
-  "revision": 1,
+  "revision": 3,
   "mode": "steer",
-  "description": "Port of ESLint's `no-nonoctal-decimal-escape` rule (https://eslint.org/docs/latest/rules/no-nonoctal-decimal-escape). Reports each \\8 or \\9 escape sequence in a string literal.",
+  "description": "Avoid the \\8 and \\9 escape sequences in strings; they are not valid escapes and just produce the digit, which misleads readers.",
   "scope": {
     "include": [
       "**/*"
@@ -30,7 +30,24 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-nonoctal-decimal-escape",
-        "message": "Don't use '$ESC' escape sequence."
+        "message": "Replace '$ESC' with the plain digit, or escape the backslash if you meant a literal backslash.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-nonoctal-decimal-escape"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-nonoctal-decimal-escape"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noNonoctalDecimalEscape"
+            ]
+          }
+        }
       }
     }
   ]

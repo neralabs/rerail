@@ -1,0 +1,1 @@
+let barVar: ((c: number) => number)[];

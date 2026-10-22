@@ -1,0 +1,4 @@
+{
+  // create-next-app's import alias, from a base configuration
+  "compilerOptions": { "paths": { "@/*": ["./*"] }, /* aliases */ },
+}

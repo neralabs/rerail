@@ -14,6 +14,8 @@ pub(crate) mod options;
 pub(crate) mod php;
 pub(crate) mod php_names;
 pub(crate) mod python;
+pub(crate) mod rust;
+pub(crate) mod sql;
 pub(crate) mod usage;
 
 pub(crate) use lookup::Lookup;
@@ -61,6 +63,9 @@ pub(crate) enum ScopeKind {
     /// The scope that holds a named TypeScript function expression's own name, around its function
     /// scope (eslint-scope's `function-expression-name`).
     FunctionName,
+    /// A SQL query block: a `SELECT`, `UPDATE`, `DELETE` or `INSERT` and its clauses, or the
+    /// wrapper of a `WITH` statement that binds its CTE names (`scope/sql.rs`).
+    Query,
 }
 
 /// How a name is bound: the construct its site is.
@@ -110,6 +115,12 @@ pub(crate) enum Form {
     Method,
     /// A private getter or setter (`get #a()`, `set #a(v)`).
     Accessor,
+    /// A SQL `FROM`/`JOIN` relation: its alias, else its table name's last part.
+    Relation,
+    /// A SQL CTE name (`WITH c AS (...)`).
+    Cte,
+    /// A SQL `UPDATE`, `DELETE` or `INSERT` target table.
+    Target,
 }
 
 /// Where and how a binding binds its name.
@@ -273,7 +284,8 @@ pub(crate) struct Scope {
     pub(crate) bindings: HashMap<Box<str>, Vec<Binding>>,
     /// Python `nonlocal` declarations of this scope.
     pub(crate) nonlocals: BTreeSet<Box<str>>,
-    /// Python: where each `from m import *` of this scope takes effect, in order.
+    /// Python: where each `from m import *` of this scope takes effect, in order. Rust: where each
+    /// glob import and each macro that may define items (`scope::rust::glob_visible`) stands.
     pub(crate) stars: Vec<usize>,
 }
 
@@ -406,6 +418,9 @@ pub(crate) struct ScopeTable {
     pub(crate) usage: OnceLock<Arc<usage::Usage>>,
     /// PHP: what reaches each read of a variable.
     pub(crate) php: Option<Box<php::Flow>>,
+    /// SQL: the file's query blocks, relations and qualified references, which resolve a
+    /// reference and decide a relation's usage (`scope/sql.rs`).
+    pub(crate) sql: Option<Box<sql::SqlScopes>>,
 }
 
 /// How a table reads its file, beyond the grammar: tables of one file under different readings
@@ -530,6 +545,7 @@ impl ScopeTable {
                 module_imports: Vec::new(),
                 usage: OnceLock::new(),
                 php: None,
+                sql: None,
             },
             current: 0,
             position: None,
@@ -547,7 +563,17 @@ impl ScopeTable {
             php_names,
         };
         builder.push(ScopeKind::Module, root.range());
-        with_adapter!(family, A => <<A as Adapter>::Scope as ScopeRules>::visit(&mut builder, &root, reading))?;
+        // A program a file embeds is read as its embedder says (`embed::Embedder::scope`).
+        match crate::code_rule_dsl::tape::tape_doc(&root)
+            .and_then(crate::code_rule_dsl::tape::TapeDoc::via)
+        {
+            Some(via) => {
+                crate::code_rule_dsl::language::with_embedder!(via, E => <E as crate::code_rule_dsl::embed::Embedder>::scope(family, &mut builder, &root, reading))?
+            }
+            None => {
+                with_adapter!(family, A => <<A as Adapter>::Scope as ScopeRules>::visit(&mut builder, &root, reading))?
+            }
+        }
         let mut table = builder.table;
         table.sort_references();
         with_adapter!(family, A => <<A as Adapter>::Scope as ScopeRules>::finish(&mut table, &root));
@@ -1134,7 +1160,7 @@ fn stack_address() -> usize {
     std::hint::black_box(&marker) as *const u8 as usize
 }
 
-/// Kind tags and field ids of one grammar, looked up by the native symbol and field ids that both
+/// Kind tags and field ids of one grammar, looked up by the kind and field codes that both
 /// tree-sitter trees and tapes carry.
 pub(crate) struct Grammar<T> {
     tags: Vec<T>,
@@ -1142,14 +1168,17 @@ pub(crate) struct Grammar<T> {
 }
 
 impl<T: Copy + Default> Grammar<T> {
-    fn new(language: GrammarDialect, tag: impl Fn(&str) -> T) -> Self {
-        let ts = language.get_ts_language();
-        let tags = (0..ts.node_kind_count() as u16)
-            .map(|id| match ts.node_kind_for_id(id) {
-                Some(name) if ts.node_kind_is_named(id) => tag(name),
-                _ => T::default(),
-            })
-            .collect();
+    /// The grammar of `dialect`, each named kind tagged by `tag`.
+    fn new(dialect: GrammarDialect, tag: impl Fn(&str) -> T) -> Self {
+        let ts = dialect.get_ts_language();
+        let mut tags = vec![T::default(); ts.node_kind_count()];
+        for id in 0..ts.node_kind_count() as u16 {
+            if let Some(name) = ts.node_kind_for_id(id)
+                && ts.node_kind_is_named(id)
+            {
+                tags[usize::from(id)] = tag(name);
+            }
+        }
         Self { tags, ts }
     }
 

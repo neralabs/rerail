@@ -3,7 +3,7 @@
   "id": "react-void-dom-elements-no-children",
   "revision": 1,
   "mode": "steer",
-  "description": "eslint-plugin-react 7.37.5 react/void-dom-elements-no-children: a void DOM element (area, base, br, col, embed, hr, img, input, keygen, link, menuitem, meta, param, source, track, wbr) with children, or with a `children` or `dangerouslySetInnerHTML` attribute (one report each); the same through createElement with an object-literal props argument.",
+  "description": "Don't give void DOM elements such as img, br and input children or a dangerouslySetInnerHTML prop; React throws when they have content.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -58,6 +58,12 @@
                 }
               ]
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -69,6 +75,16 @@
           "eslint": {
             "rules": [
               "react/void-dom-elements-no-children"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "void-dom-elements-no-children"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noVoidElementsWithChildren"
             ]
           }
         }
@@ -115,17 +131,33 @@
                 }
               ]
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
       "violation": {
         "anchor": "witness.start",
         "code": "react/void-dom-elements-no-children",
-        "message": "Void DOM element cannot receive children.",
+        "message": "Remove the children or dangerouslySetInnerHTML prop from this void element; img, br, input and other void elements cannot hold content.",
         "suppress": {
           "eslint": {
             "rules": [
               "react/void-dom-elements-no-children"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "void-dom-elements-no-children"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noVoidElementsWithChildren"
             ]
           }
         }
@@ -283,17 +315,33 @@
             "PROPS": {
               "kind": "object"
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
       "violation": {
         "anchor": "witness.start",
         "code": "react/void-dom-elements-no-children",
-        "message": "Void DOM element cannot receive children.",
+        "message": "Drop the child arguments from this createElement call; img, br, input and other void elements cannot hold content.",
         "suppress": {
           "eslint": {
             "rules": [
               "react/void-dom-elements-no-children"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "void-dom-elements-no-children"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noVoidElementsWithChildren"
             ]
           }
         }
@@ -473,17 +521,33 @@
                 ]
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
       "violation": {
         "anchor": "witness.start",
         "code": "react/void-dom-elements-no-children",
-        "message": "Void DOM element cannot receive children.",
+        "message": "Remove children and dangerouslySetInnerHTML from these props; img, br, input and other void elements cannot hold content.",
         "suppress": {
           "eslint": {
             "rules": [
               "react/void-dom-elements-no-children"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "void-dom-elements-no-children"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/noVoidElementsWithChildren"
             ]
           }
         }

@@ -3,7 +3,7 @@
   "id": "tlint-no-dump-directives",
   "revision": 2,
   "mode": "steer",
-  "description": "tlint 9.7.0 NoDumpDirectives: a @dd or @dump directive.",
+  "description": "Remove @dd and @dump directives from Blade templates before shipping; they dump debug output into the page.",
   "scope": {
     "include": [
       "**/*.blade.php"

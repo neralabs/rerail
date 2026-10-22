@@ -1455,6 +1455,7 @@
    "rerail/noqa/B026.py",
    "rerail/noqa/B028.py",
    "rerail/noqa/B029.py",
+   "rerail/noqa/B030.py",
    "rerail/noqa/B032.py",
    "rerail/noqa/B033.py",
    "rerail/noqa/B034.py",
@@ -41752,6 +41753,18 @@
   },
   {
    "rule": "B030",
+   "path": "rerail/noqa/B030.py",
+   "line": 3,
+   "column": 8
+  },
+  {
+   "rule": "B030",
+   "path": "rerail/noqa/B030.py",
+   "line": 23,
+   "column": 8
+  },
+  {
+   "rule": "B030",
    "path": "rerail/probes/UP041-parenthesized-sites.py",
    "line": 23,
    "column": 19
@@ -50027,6 +50040,12 @@
   {
    "rule": "D100",
    "path": "rerail/noqa/B029.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D100",
+   "path": "rerail/noqa/B030.py",
    "line": 1,
    "column": 1
   },
@@ -131680,6 +131699,12 @@
   },
   {
    "rule": "INP001",
+   "path": "rerail/noqa/B030.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "INP001",
    "path": "rerail/noqa/B032.py",
    "line": 1,
    "column": 1
@@ -140131,6 +140156,12 @@
    "path": "rerail/noqa/B029.py",
    "line": 8,
    "column": 13
+  },
+  {
+   "rule": "PGH004",
+   "path": "rerail/noqa/B030.py",
+   "line": 8,
+   "column": 12
   },
   {
    "rule": "PGH004",

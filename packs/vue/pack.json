@@ -1,0 +1,20 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "vue",
+  "name": "Vue",
+  "category": "framework",
+  "covers": "No rules yet: its 24 eslint-plugin-vue 10.11.1 ports are candidates until they pass the V1 rule validation gates.",
+  "reason": "matches Vue single-file components",
+  "match": {
+    "any": [
+      {
+        "files": [
+          "**/*.vue"
+        ],
+        "label": "*.vue files"
+      }
+    ]
+  },
+  "honourSuppressionComments": true,
+  "rules": []
+}

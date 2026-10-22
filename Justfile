@@ -50,6 +50,10 @@ rerail-command *args:
 rerail-smoke:
     @bash scripts/dev/rerail-smoke.sh
 
+# Review every rule pack rule's steer guidance in the browser: approve it or request changes, with comments (--refresh reruns the rules on their cases; decisions are kept in .rerail/guidance-review/).
+rerail-guidance-review *args:
+    @node --import tsx scripts/review/guidance-review.ts {{ args }}
+
 # Language-pack rule conformance: --pack <name> [--rule <id>] [--fixtures] [--corpus <name>] [--write] | --check.
 rerail-language-conformance *args:
     @node --import tsx conformance/languages/cli.ts {{ args }}
@@ -57,3 +61,11 @@ rerail-language-conformance *args:
 # Compare a reference native query-engine addon with this checkout's addon (RERAIL_QUERY_PARITY_REFERENCE_ADDON=/absolute/reference.node, or pass both sides).
 rerail-query-parity *args:
     @node --import tsx benchmark/query-parity.ts {{ args }}
+
+# Dashboard history load: seed a throwaway database with N audits, then time each history read, a poll, and /healthz under polling (--audits 4000).
+rerail-dashboard-history *args:
+    @node --import tsx benchmark/dashboard-history.ts {{ args }}
+
+# Steer strategies on real harnesses: run the fixture task per host × strategy and report completion, steers, cost and compaction attribution (--hosts pi --strategies message,rewind --trials 3). Needs a fresh dist/ (npm run build:ts) and provider credentials.
+rerail-steer-strategy *args:
+    @node --import tsx benchmark/steer-strategy.ts {{ args }}

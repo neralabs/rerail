@@ -1,0 +1,1 @@
+print?.call([5] as Foo);

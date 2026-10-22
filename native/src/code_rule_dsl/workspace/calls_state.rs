@@ -154,6 +154,7 @@ impl CallsState {
                 producer.violation.each = None;
                 producer.violation.node_regexes.clear();
                 producer.violation.suppress = None;
+                producer.violation.ignored_by = None;
                 producer.violation.group_transform = None;
                 producer.violation.message_template = None;
                 producer.violation.fix = None;
@@ -518,11 +519,17 @@ fn graph_fingerprint(summary: &Summary, seeds: &FileSeeds) -> u64 {
 
 /// Takes `file`'s call summary from its stored results, if they hold one of this extractor.
 pub(super) fn restore_summary(file: &mut FileState, persisted: &[StoredLocalResult]) {
-    if !file_language(&file.input).is_some_and(calls::summarizes)
-        || file.crossfile.summary.is_some()
-    {
+    let Some(language) = file_language(&file.input) else {
+        return;
+    };
+    if !calls::summarizes(language) || file.crossfile.summary.is_some() {
         return;
     }
+    let Some(family) =
+        with_adapter!(Family::of(language), A => <<A as Adapter>::Calls as CallRules>::NAMES)
+    else {
+        return;
+    };
     let candidate = summary_candidate();
     let Some(result) = persisted
         .iter()
@@ -530,8 +537,8 @@ pub(super) fn restore_summary(file: &mut FileState, persisted: &[StoredLocalResu
     else {
         return;
     };
-    let summary =
-        shared_summary(file).or_else(|| Some(share_summary(file, Summary::decode(&result.bytes)?)));
+    let summary = shared_summary(file)
+        .or_else(|| Some(share_summary(file, Summary::decode(&result.bytes, family)?)));
     if let Some(summary) = summary {
         file.crossfile.summary = Some((file.source_revision, summary));
         file.crossfile.summary_stored = true;
@@ -694,10 +701,20 @@ pub(super) fn summarize_file(
                     &matcher_budget_exhausted,
                 ),
             };
-            match doc {
+            // A file that embeds code reads its calls from its embedded program
+            // (`calls::calls_document`); one without such a program calls nothing.
+            match doc.map(|doc| calls::calls_document(doc, language)) {
                 Err(_) => (opaque(file), false),
-                Ok(doc) => {
-                    let errors = !doc.syntax_error_ranges().is_empty();
+                Ok(None) => (
+                    Summary {
+                        bytes: u32::try_from(file.input.source.len()).unwrap_or(u32::MAX),
+                        ..Summary::default()
+                    },
+                    true,
+                ),
+                Ok(Some((doc, language))) => {
+                    let errors =
+                        !crate::code_rule_dsl::soundness::SyntaxErrors::of_doc(&doc).is_empty();
                     let root = Root::doc(doc);
                     // The table the file's evaluation built, where it reads as `calls` does.
                     let reading = calls::reading(&file.input.path);

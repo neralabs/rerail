@@ -3,7 +3,7 @@
   "id": "ruff-f631-assert-tuple",
   "revision": 2,
   "mode": "steer",
-  "description": "Port of Ruff's F631 (assert-tuple) with default settings: an `assert` whose test (not its message) is a non-empty tuple, parenthesized any number of times. Comments and line continuations are not tuple items and may sit between `assert` and the test. Reported on the whole statement.",
+  "description": "Don't use a tuple as an assert's condition; a non-empty tuple is always true, so the assert never fails.",
   "scope": {
     "include": [
       "**/*"

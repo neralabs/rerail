@@ -1,0 +1,268 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b610-django-extra-used",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Pass only literal strings to the where, tables and select arguments of Django QuerySet.extra(); dynamic values open the query to SQL injection.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "django-extra-used",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "pattern": "$R.extra($$$)"
+              }
+            ],
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "has": {
+                    "field": "object",
+                    "matches": "queryset-receiver"
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "arguments": {
+                      "signature": [
+                        "select",
+                        "where",
+                        "params",
+                        "tables",
+                        "order_by",
+                        "select_params"
+                      ],
+                      "bind": {
+                        "W": "where"
+                      }
+                    },
+                    "has": {
+                      "stopBy": "end",
+                      "pattern": "$W",
+                      "not": {
+                        "matches": "strings"
+                      }
+                    }
+                  },
+                  {
+                    "arguments": {
+                      "signature": [
+                        "select",
+                        "where",
+                        "params",
+                        "tables",
+                        "order_by",
+                        "select_params"
+                      ],
+                      "bind": {
+                        "T": "tables"
+                      }
+                    },
+                    "has": {
+                      "stopBy": "end",
+                      "pattern": "$T",
+                      "not": {
+                        "matches": "strings"
+                      }
+                    }
+                  },
+                  {
+                    "arguments": {
+                      "signature": [
+                        "select",
+                        "where",
+                        "params",
+                        "tables",
+                        "order_by",
+                        "select_params"
+                      ],
+                      "bind": {
+                        "S": "select"
+                      }
+                    },
+                    "has": {
+                      "stopBy": "end",
+                      "pattern": "$S",
+                      "not": {
+                        "matches": "string-pairs"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "utils": {
+            "queryset-receiver": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^(?:[A-Za-z0-9_]*_)?(?:qs|QS|querysets?|objects|managers?)$"
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "attribute",
+                    "regex": "^(?:[A-Za-z0-9_]*_)?(?:qs|QS|querysets?|objects|managers?)$"
+                  }
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "kind": "attribute",
+                    "has": {
+                      "field": "object",
+                      "matches": "queryset-receiver"
+                    }
+                  }
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "any": [
+                      {
+                        "kind": "identifier",
+                        "regex": "^get_queryset$"
+                      },
+                      {
+                        "kind": "attribute",
+                        "has": {
+                          "field": "attribute",
+                          "regex": "^get_queryset$"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "identifier",
+                      "regex": "^self$"
+                    },
+                    {
+                      "pattern": "super()"
+                    }
+                  ],
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "class_definition",
+                    "has": {
+                      "field": "superclasses",
+                      "regex": "(?:^|[(,\\s])(?:[A-Za-z_][A-Za-z0-9_]*\\.)*(?:[A-Za-z0-9_]*QuerySet|Manager|BaseManager|BaseUserManager)\\b"
+                    }
+                  }
+                }
+              ]
+            },
+            "string": {
+              "any": [
+                {
+                  "kind": "string",
+                  "not": {
+                    "regex": "^[A-Za-z]*[fFbBtT]"
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "kind": "string",
+                      "regex": "^[A-Za-z]*[fFbBtT]"
+                    }
+                  }
+                }
+              ]
+            },
+            "strings": {
+              "kind": "list",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "matches": "string"
+                      },
+                      {
+                        "regex": "^[\\[\\],]$"
+                      },
+                      {
+                        "kind": "comment"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "string-pairs": {
+              "kind": "dictionary",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "pair",
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "not": {
+                              "any": [
+                                {
+                                  "matches": "string"
+                                },
+                                {
+                                  "regex": "^:$"
+                                },
+                                {
+                                  "kind": "comment"
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "regex": "^[{},]$"
+                      },
+                      {
+                        "kind": "comment"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B610",
+        "message": "Pass only literal strings to where, tables and select in this .extra() call, with values in params; dynamic SQL allows injection.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B610"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

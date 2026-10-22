@@ -1,0 +1,2 @@
+[<App />];
+// features: [], parser: default

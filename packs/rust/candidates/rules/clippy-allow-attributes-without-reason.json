@@ -1,0 +1,24 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "clippy-allow-attributes-without-reason",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Give every #[allow] and #[expect] attribute in Rust a reason; it tells later readers why the lint is silenced.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "allow-without-reason",
+      "forbid": { "ast": { "language": "rust", "rule": { "all": [
+        { "any": [{ "kind": "attribute_item" }, { "kind": "inner_attribute_item" }] },
+        { "regex": "^#!?\\[\\s*(?:allow|expect)\\s*\\(" },
+        { "not": { "regex": "(?s)[(,]\\s*reason\\s*=\\s*(?:b?r#*\"|b?\").*\\)\\s*\\]$" } }
+      ] } } },
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::allow_attributes_without_reason", "clippy::restriction", "warnings"], "msrv": "1.81" } }, "anchor": "witness.span", "code": "allow_attributes_without_reason", "message": "Add a reason to this attribute, e.g. #[allow(dead_code, reason = \"why\")], saying why the lint is silenced." }
+    },
+    {
+      "id": "cfg-attr-without-reason",
+      "forbid": { "ast": {"language": "rust", "utils": {"cfg-attr-args": {"kind": "token_tree", "any": [{"inside": {"stopBy": "neighbor", "kind": "attribute", "has": {"kind": "identifier", "regex": "^cfg_attr$"}}}, {"follows": {"stopBy": "neighbor", "kind": "identifier", "regex": "^cfg_attr$"}, "inside": {"stopBy": "neighbor", "matches": "cfg-attr-args"}}]}}, "rule": {"all": [{"kind": "identifier", "regex": "^(?:allow|expect)$"}, {"follows": {"stopBy": "neighbor", "regex": "^,$"}}, {"precedes": {"stopBy": "neighbor", "kind": "token_tree", "not": {"regex": "(?s)(?:^\\(|,)\\s*reason\\s*=\\s*(?:b?\"(?:[^\"\\\\]|\\\\.)*\"|b?r#*\"[^\"]*\"#*)\\s*,?\\s*\\)$"}}}, {"inside": {"stopBy": "neighbor", "matches": "cfg-attr-args"}}, {"not": {"inside": {"stopBy": "end", "kind": "attribute", "regex": "(?s)^cfg_attr\\s*\\(\\s*(?:test|any\\s*\\(\\s*\\)|not\\s*\\(\\s*clippy\\s*\\))\\s*,"}}}]}} },
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::allow_attributes_without_reason", "clippy::restriction", "warnings"], "msrv": "1.81" } }, "anchor": "witness.span", "code": "allow_attributes_without_reason", "message": "Add a reason to this cfg_attr's allow or expect, e.g. allow(dead_code, reason = \"why\"), saying why the lint is silenced." }
+    }
+  ]
+}

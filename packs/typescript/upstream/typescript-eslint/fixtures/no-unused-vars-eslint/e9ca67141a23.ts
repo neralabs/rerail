@@ -1,0 +1,1 @@
+var [firstItemIgnored, secondItem] = items;

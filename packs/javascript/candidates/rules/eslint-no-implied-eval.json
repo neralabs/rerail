@@ -3,13 +3,9 @@
   "id": "eslint-no-implied-eval",
   "revision": 1,
   "mode": "steer",
-  "description": "ESLint 10.11.0 no-implied-eval, default options. Port of ESLint's `no-implied-eval` rule (https://eslint.org/docs/latest/rules/no-implied-eval). Flags `setTimeout`/`setInterval`/`execScript` called (directly or through `window`/`self`/`global`/`globalThis`) with a first argument whose value is a string (through an effectively constant binding: `value.follow`), a template literal, or a `+` with such an operand. Those names count only when the configured ecmaVersion and globals declare them (`ast.languageOptions`) and nothing shadows them (`resolves`).",
+  "description": "Pass a function, not a string, to setTimeout, setInterval or execScript in JavaScript; string code is evaluated like eval().",
   "scope": {
     "include": [
-      "**/*.ts",
-      "**/*.tsx",
-      "**/*.mts",
-      "**/*.cts",
       "**/*.js",
       "**/*.jsx",
       "**/*.mjs",
@@ -229,6 +225,16 @@
             "rules": [
               "no-implied-eval"
             ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-implied-eval"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/nursery/noImpliedEval"
+            ]
           }
         }
       }
@@ -442,6 +448,16 @@
           "eslint": {
             "rules": [
               "no-implied-eval"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-implied-eval"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/nursery/noImpliedEval"
             ]
           }
         }

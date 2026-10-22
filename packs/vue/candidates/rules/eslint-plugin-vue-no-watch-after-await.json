@@ -1,0 +1,483 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-plugin-vue-no-watch-after-await",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Call watch and watchEffect before any await in a Vue setup() function, or keep their stop handle; a watcher made after an await is not tied to the component and leaks.",
+  "scope": {
+    "include": [
+      "**/*.vue"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "vue",
+        "utils": {
+          "in-script-setup": {
+            "inside": {
+              "stopBy": "end",
+              "follows": {
+                "stopBy": {
+                  "kind": "empty_statement",
+                  "host": {
+                    "kind": "start_tag",
+                    "regex": "^<script\\b"
+                  }
+                },
+                "kind": "empty_statement",
+                "host": {
+                  "kind": "start_tag",
+                  "regex": "^<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$)"
+                }
+              }
+            }
+          },
+          "component-callee": {
+            "any": [
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^(?:component|mixin)$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier",
+                      "regex": "^Vue$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^extend$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "identifier",
+                "regex": "^defineNuxtComponent$"
+              },
+              {
+                "kind": "identifier",
+                "regex": "^(?:component|createApp|defineComponent)$",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "import_specifier",
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "kind": "string",
+                          "value": {
+                            "regex": "^(?:vue|@vue/composition-api|@nuxtjs/composition-api|#imports)$"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "vue-object": {
+            "kind": "object",
+            "any": [
+              {
+                "all": [
+                  {
+                    "inside": {
+                      "field": "value",
+                      "stopBy": {
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "parenthesized_expression"
+                            },
+                            {
+                              "kind": "as_expression"
+                            },
+                            {
+                              "kind": "satisfies_expression"
+                            }
+                          ]
+                        }
+                      },
+                      "kind": "export_statement"
+                    }
+                  },
+                  {
+                    "not": {
+                      "matches": "in-script-setup"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "nthChild": {
+                      "position": 1,
+                      "reverse": true
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "arguments",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "call_expression",
+                        "has": {
+                          "field": "function",
+                          "matches": "component-callee"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "nthChild": 1
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "arguments",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "new_expression",
+                        "has": {
+                          "field": "constructor",
+                          "kind": "identifier",
+                          "regex": "^Vue$"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "setup-fn": {
+            "any": [
+              {
+                "kind": "method_definition",
+                "has": {
+                  "field": "name",
+                  "regex": "^(?:setup|'setup'|\"setup\")$"
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "object",
+                  "matches": "vue-object"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "function_expression"
+                  },
+                  {
+                    "kind": "arrow_function"
+                  }
+                ],
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "kind": "pair",
+                  "has": {
+                    "field": "key",
+                    "regex": "^(?:setup|'setup'|\"setup\")$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "object",
+                    "matches": "vue-object"
+                  }
+                }
+              }
+            ]
+          },
+          "watch-callee": {
+            "any": [
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "import_specifier",
+                      "has": {
+                        "field": "name",
+                        "regex": "^(?:watch|watchEffect)$"
+                      },
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "kind": "string",
+                          "value": {
+                            "regex": "^(?:vue|@vue/composition-api|@nuxtjs/composition-api|#imports)$"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^(?:watch|watchEffect)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier",
+                      "resolves": {
+                        "binding": {
+                          "site": {
+                            "kind": "namespace_import",
+                            "inside": {
+                              "stopBy": "end",
+                              "kind": "import_statement",
+                              "has": {
+                                "field": "source",
+                                "kind": "string",
+                                "value": {
+                                  "regex": "^(?:vue|@vue/composition-api|@nuxtjs/composition-api|#imports)$"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "setup-await": {
+            "kind": "await_expression",
+            "inside": {
+              "stopBy": {
+                "any": [
+                  {
+                    "kind": "function_declaration"
+                  },
+                  {
+                    "kind": "function_expression"
+                  },
+                  {
+                    "kind": "arrow_function"
+                  },
+                  {
+                    "kind": "method_definition"
+                  },
+                  {
+                    "kind": "generator_function"
+                  },
+                  {
+                    "kind": "generator_function_declaration"
+                  }
+                ]
+              },
+              "matches": "setup-fn"
+            }
+          },
+          "has-setup-await": {
+            "any": [
+              {
+                "matches": "setup-await"
+              },
+              {
+                "has": {
+                  "stopBy": "end",
+                  "matches": "setup-await"
+                }
+              }
+            ]
+          },
+          "after-await": {
+            "any": [
+              {
+                "follows": {
+                  "stopBy": "end",
+                  "matches": "has-setup-await"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "setup-fn"
+                  },
+                  "all": [
+                    {
+                      "not": {
+                        "matches": "setup-fn"
+                      }
+                    },
+                    {
+                      "any": [
+                        {
+                          "matches": "setup-await"
+                        },
+                        {
+                          "follows": {
+                            "stopBy": "end",
+                            "matches": "has-setup-await"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "watch-after-await",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "embedded": "script-block",
+          "rule": {
+            "all": [
+              {
+                "kind": "call_expression"
+              },
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "watch-callee"
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "statement_block",
+                    "host": {
+                      "kind": "template_element"
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_declaration"
+                      },
+                      {
+                        "kind": "function_expression"
+                      },
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "method_definition"
+                      },
+                      {
+                        "kind": "generator_function"
+                      },
+                      {
+                        "kind": "generator_function_declaration"
+                      }
+                    ]
+                  },
+                  "matches": "setup-fn"
+                }
+              },
+              {
+                "matches": "after-await"
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": {
+                      "not": {
+                        "kind": "parenthesized_expression"
+                      }
+                    },
+                    "any": [
+                      {
+                        "kind": "variable_declarator"
+                      },
+                      {
+                        "kind": "assignment_expression"
+                      },
+                      {
+                        "kind": "augmented_assignment_expression"
+                      },
+                      {
+                        "kind": "pair"
+                      },
+                      {
+                        "kind": "array"
+                      },
+                      {
+                        "kind": "call_expression"
+                      },
+                      {
+                        "kind": "arguments",
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "call_expression"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "vue/no-watch-after-await",
+        "message": "Move this watch call above the first await in setup(), or keep its stop handle and call it on unmount.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-watch-after-await"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

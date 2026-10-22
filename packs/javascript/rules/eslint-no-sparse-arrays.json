@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-sparse-arrays",
-  "revision": 1,
+  "revision": 3,
   "mode": "steer",
-  "description": "Port of ESLint's `no-sparse-arrays` rule (https://eslint.org/docs/latest/rules/no-sparse-arrays). Reports, at the comma, every hole in an array literal: a comma whose previous non-comment sibling is `[` or another comma.",
+  "description": "Avoid holes in array literals from consecutive commas; they create sparse arrays and usually come from a typo.",
   "scope": {
     "include": [
       "**/*"
@@ -35,7 +35,24 @@
       "violation": {
         "anchor": "witness.span",
         "code": "no-sparse-arrays",
-        "message": "Unexpected comma in middle of array."
+        "message": "Unexpected comma in middle of array.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-sparse-arrays"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-sparse-arrays"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noSparseArray"
+            ]
+          }
+        }
       }
     }
   ]

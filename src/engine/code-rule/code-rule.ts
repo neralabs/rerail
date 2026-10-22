@@ -1,8 +1,10 @@
+import type { SteerRule } from "../adapter-contract.js";
 import type { AuditFailure, AuditMode, AuditScope } from "../audit/audit.js";
 import type { RuleMode } from "../catalog/rule-mode.js";
 import type { CodeRuleDialectLabel, CodeRuleLanguageId } from "./code-rule-languages.js";
 import type { CodeRuleDslSemanticAstRuleFields, CodeRuleDslSemanticCompareText, CodeRuleDslSuppress } from "./code-rule-semantic.js";
-import { steerBlock } from "./rerail-steer.js";
+import { steerBlock, steerRules, type SteerFinding, type SteerTrigger } from "./rerail-steer.js";
+import { steerOrigin, type SteerRuleSource } from "./steer-origin.js";
 
 export type CodeRuleDslScalar = boolean | number | string | null;
 export type CodeRuleDslValue = CodeRuleDslScalar | CodeRuleDslValue[] | { [key: string]: CodeRuleDslValue };
@@ -193,6 +195,14 @@ export interface CodeRuleDslAstQuery {
     language: CodeRuleLanguageId;
     rule: CodeRuleDslAstRule;
     /**
+     * The `via` of an embedding `language` declares (Blade's `compiled-view`, Vue's `script-block`): the query runs on
+     * the file's embedded program of that via, a document of its own in the embedded language's grammar, instead of
+     * the file's own tree. Kinds, patterns and utilities are the embedded language's; witnesses, captures and fixes
+     * map to the bytes of the file they stand for, and a fix applies only where its range lies in one copied stretch.
+     * `host` reaches the file's own tree from a node of the program.
+     */
+    embedded?: string;
+    /**
      * Named rules that `rule`, `constraints`, and other utilities reference with `matches` (ast-grep's local
      * utilities). A utility shares the caller's metavariables and may recurse through a relation. A `define` clause
      * of the query's language shares more; an id may not be both.
@@ -206,16 +216,16 @@ export interface CodeRuleDslAstQuery {
     /**
      * Modelled on ESLint's `languageOptions`: which names are globals for `resolves` (`global`) and, for TypeScript,
      * what top-level `this` is (`this`). With them a `global` name must also be a declared global (TypeScript) or a
-     * builtin of `pythonVersion` (Python). Omitted keys take ESLint's defaults (`"latest"`, `"module"`, no extra
-     * globals) and Ruff's (`"3.10"`).
+     * builtin of `pythonVersion` (Python). Omitted keys take ESLint's defaults (`"latest"`, no extra globals) and Ruff's
+     * (`"3.10"`). Without a `sourceType`, each file has its own module system (see `sourceType`).
      */
     languageOptions?: CodeRuleDslLanguageOptions;
     /**
      * The configurations the query applies to: `pythonVersion` (Python, `"3.7"` to `"3.15"`) or `ecmaVersion`
      * (TypeScript, as in `languageOptions`) ranges, both bounds inclusive, and for TypeScript `sourceType` and
-     * `ecmaFeatures`. It reads the query's own `languageOptions`, else the defaults (`"3.10"`; `"latest"`, `"module"`,
-     * no features). Every key must hold; otherwise the query matches nothing, which is sound, not unknown (Ruff's B905
-     * applies from 3.10; ESLint's strict picks its mode by sourceType and ecmaFeatures).
+     * `ecmaFeatures`. It reads the query's own `languageOptions`, else the defaults (`"3.10"`; `"latest"`, the file's
+     * own module system, no features). Every key must hold; otherwise the query matches nothing, which is sound, not
+     * unknown (Ruff's B905 applies from 3.10; ESLint's strict picks its mode by sourceType and ecmaFeatures).
      */
     when?: CodeRuleDslAstWhen;
     /**
@@ -292,10 +302,67 @@ export interface CodeRuleDslFileCondition {
   module?: CodeRuleDslTextCondition;
   /** Python only. Over the module path's last name, the file's stem (`__init__` for a package's `__init__.py`, `my.mod`). */
   moduleName?: CodeRuleDslTextCondition;
-  /** Python only. Over the first name, the top package's directory as on disk (`json.d`; Ruff's N999 for `__init__.py`). Only in a package. */
-  package?: CodeRuleDslTextCondition;
+  /**
+   * Python: over the first name, the top package's directory as on disk (`json.d`; Ruff's N999 for `__init__.py`). Only
+   * in a package. TypeScript: conditions on the file's nearest `package.json` (see `CodeRuleDslPackageCondition`).
+   */
+  package?: CodeRuleDslTextCondition | CodeRuleDslPackageCondition;
   /** Python only. Whether the file is in a package: the host sent its module path, rather than the stem fallback (Ruff's INP001). */
   inPackage?: boolean;
+  /**
+   * TypeScript only: the file's JSX runtime is one of these. A `@jsxImportSource` pragma comment naming React or a React
+   * wrapper (`react`, `@emotion/react`, `theme-ui`, `@theme-ui/core`, or a subpath) gives `react`, one naming another JSX
+   * library (`preact`, `solid-js`, `vue`, `@stencil/core`, `hono`, `@builder.io/qwik`, `inferno`, `mithril`,
+   * `hyperapp`, or a subpath) `other`; a `@jsx` pragma naming `React` or `React.…` gives `react`; any other pragma is no
+   * evidence. Then a top-level static import of
+   * `h` or `createElement` from `@stencil/core`, `preact`, `vue`, `solid-js`, `solid-js/h`, `hyperapp` or `mithril`
+   * (`other`); else the `compilerOptions.jsxImportSource` of the `tsconfig.json` (else `jsconfig.json`) beside the
+   * nearest `package.json`, through relative `extends` to `tsconfig*.json` or `jsconfig*.json` files, where it names
+   * React's or another library's as a pragma would;
+   * else that manifest's dependencies: `react` for React's packages (`react`, `react-dom`,
+   * `react-native`, `next`) without another JSX library's (`vue`, `@stencil/core`, `preact`, `solid-js`,
+   * `@builder.io/qwik`, `inferno`, `mithril`), `other` for the reverse, `unknown` for both, neither or no manifest.
+   */
+  jsxRuntime?: Array<"react" | "other" | "unknown">;
+}
+
+/**
+ * TypeScript's `file.package`: conditions on the file's nearest `package.json` at or above it, never above the workspace
+ * root (a regular file of at most 1 MiB; one that cannot be read has no fields). Every key set must hold.
+ */
+export interface CodeRuleDslPackageCondition {
+  /**
+   * Whether the file is one of the manifest's `bin` targets (the string, or each string value of the object), as
+   * eslint-plugin-n's `isBinFile` resolves them against the manifest's folder: the target is the file's path, or that
+   * path without `.js`, or without `.js` and a last `/index`. Without a manifest neither `true` nor `false` holds.
+   */
+  bin?: boolean;
+  /**
+   * The file's configured Node range is a subset of `subsetOf` (node-semver's `subset`). The configured range is
+   * eslint-plugin-n's: `engines.node`, else the `devEngines.runtime` entry named `node`'s `version`, else `>=16.0.0`
+   * (also without a manifest); one that is no valid range falls through to the next.
+   */
+  nodeVersion?: { subsetOf: string };
+  /** The manifest lists one of these in `dependencies`, `devDependencies`, `peerDependencies` or `optionalDependencies`. Needs a manifest. */
+  dependsOn?: string[];
+  /** Over the file's path relative to the manifest's folder. Needs a manifest, `notRegex` too. */
+  path?: CodeRuleDslTextCondition;
+  /**
+   * The manifest names `next` and the file is in its Next App Router server module graph: a server file convention
+   * (`page`, `layout`, `template`, `default`, `loading`, `not-found`, `forbidden`, `unauthorized`, `global-not-found`,
+   * `route`, or a metadata image or route file) under the package's `app/` (else `src/app/`, which Next ignores beside a
+   * root `app/`), outside private `_` folders, or a module such a file reaches by static imports, `export … from`, and
+   * `import()` or `require()` of a string, passing no module whose directive prologue holds `"use client"` (that module
+   * and what only it imports are client code). Specifiers resolve as Next resolves them in the package: relative paths
+   * with Next's extensions and `index` files, then the package's `tsconfig.json` (else `jsconfig.json`) `paths` and
+   * `baseUrl` through relative `extends` to `tsconfig*.json` or `jsconfig*.json` files. A module of another package (a
+   * bare specifier, a file below a nested `package.json`) or in `node_modules` or a hidden folder is no edge; a package
+   * of more than 20,000 source files has no graph, on every path, nor has one read on disk whose source or folder cannot
+   * be read. Entries take Next's default page extensions (`.tsx`, `.ts`, `.jsx`, `.js`); `paths` maps through its first
+   * 64 patterns (by pattern text) and the first 16 targets of each. `false` holds for a file of a package naming `next`
+   * outside the graph; without such a manifest neither holds.
+   */
+  serverGraph?: boolean;
 }
 
 /** An inclusive version range; at least one bound. */
@@ -307,7 +374,7 @@ export interface CodeRuleDslVersionRange<T> {
 export interface CodeRuleDslAstWhen {
   pythonVersion?: CodeRuleDslVersionRange<string>;
   ecmaVersion?: CodeRuleDslVersionRange<number | "latest">;
-  /** TypeScript only: the query's `sourceType` (default `"module"`) is this one or one of these. */
+  /** TypeScript only: the query's `sourceType` (default the file's own, see `languageOptions.sourceType`) is this one or one of these. */
   sourceType?: "script" | "module" | "commonjs" | Array<"script" | "module" | "commonjs">;
   /** TypeScript only: each flag set equals the query's `parserOptions.ecmaFeatures` flag (default false). At least one. */
   ecmaFeatures?: { globalReturn?: boolean; impliedStrict?: boolean };
@@ -326,7 +393,15 @@ export interface CodeRuleDslLanguageOptions {
   /**
    * `script`: top-level declarations join the global scope and top-level `this` is the global object. `module`: a module
    * scope; `this` is `undefined`. `commonjs`: a function-like module scope that adds `require`, `module`, `exports` and
-   * `global`.
+   * `global`. Omitted, each file has its own: `.cjs` and `.cts` files (`.d.cts` included) are `commonjs`; `.mjs`,
+   * `.mts`, `.tsx` and other declaration files `module`. A `.js`, `.jsx` or `.ts` file follows the `type` of its nearest
+   * `package.json` (`module`
+   * or `commonjs`), as Node runs `.ts` files like `.js` ones; where that sets no valid `type`, Node's syntax detection
+   * decides: a top-level `import` or `export` declaration that type stripping keeps (not `import type`, `export type`,
+   * an exported interface, type alias or `declare`, nor `import x = require(…)` or `export =`), `import.meta`, a
+   * top-level `await` (outside functions), or a top-level `const`, `let` or `class` binding `require`, `module`,
+   * `exports`, `__dirname` or `__filename` makes a module, anything else `commonjs`. Without a `package.json` it is a
+   * module (ESLint's default).
    */
   sourceType?: "script" | "module" | "commonjs";
   /** Identifiers to declare global (`readonly`, `writable`) or to remove (`off`). At most 16384. */
@@ -614,9 +689,18 @@ export interface CodeRuleDslLayout {
  * the format; `missing` is matched on the placeholders numbering a variable past the last passed, `unused` on the
  * variables no placeholder assigns (a gap `%2$s` leaves included), both a `ValueError` in PHP; with no variable the
  * call returns an array and nothing is missing or unused.
+ *
+ * Style `rust` (rust) reads a `format_args!`-family macro call (`format!`, `print!`, `println!`, `eprint!`,
+ * `eprintln!`, `write!`, `writeln!`, `panic!`, `assert!`, `assert_eq!`, `unreachable!`, `todo!`, ... by their bare or
+ * `std::`/`core::`/`alloc::` paths) as rustc 1.99.0 binds it: `string` captures the template, a string literal token
+ * of the macro's token tree (parsed by `rustFormat`); `args` captures the arguments after it (`$$$A`), split at the
+ * token tree's top-level commas. `unused` is matched on the first token of each argument no field, width or precision
+ * reads (rustc's "argument never used"); `missing` on the fields that read an index past the last argument (rustc's
+ * "invalid reference to positional argument"). A field naming no argument captures a variable, which `resolves`
+ * reads. A positional argument after a named one, and a template rustc refuses, are unknown.
  */
 export interface CodeRuleDslFormatArgs {
-  style: "brace" | "percent" | "printf" | "scanf";
+  style: "brace" | "percent" | "printf" | "scanf" | "rust";
   /** The capture holding the template: a string literal, or for PHP any format expression (A-Z, 0-9, _, without `$`). */
   string: string;
   /** The capture holding the arguments. */
@@ -626,7 +710,7 @@ export interface CodeRuleDslFormatArgs {
 }
 
 /** The sub-grammars `parse` applies (the engine's `literal::Grammar`). */
-export type CodeRuleDslParseGrammar = "percentFormat" | "braceFormat" | "annotation" | "eslintDirective" | "printfFormat" | "scanfFormat" | "phpDoc";
+export type CodeRuleDslParseGrammar = "percentFormat" | "braceFormat" | "annotation" | "eslintDirective" | "printfFormat" | "scanfFormat" | "phpDoc" | "rustFormat";
 
 /**
  * A string literal parsed by a sub-grammar, and a rule of that grammar's kinds matched on the parsed tree's root: the
@@ -689,6 +773,11 @@ export type CodeRuleDslParseGrammar = "percentFormat" | "braceFormat" | "annotat
  *   `invalid_tag_value` (a type alias's type an `invalid_type`) valued by the parser's message. Each node maps to its
  *   exact source in the comment; nesting past 256 levels is unknown. It reads the comment alone: sound in files with
  *   syntax errors.
+ * - `rustFormat` (rust): a `format_args!` template as rustc 1.99.0's `rustc_parse_format` reads it, on a
+ *   `string_literal` or `raw_string_literal` decoded as rustc decodes it (not a byte or C string): `format` holds
+ *   `literal` and `field`; a field (valued by the argument it names: an explicit index or a name; none for `{}`) holds
+ *   `auto` (zero width), `index` or `name`, then its `format_spec` (valued by its text) with the `type` of the trait it
+ *   names (`?`, `x?`, `e`, `x`, ...). Each node maps to its source (an escape to the whole escape).
  *
  * A literal a text grammar refuses is a `format` root holding one `error` node whose value is Ruff's message (PHP's
  * `ValueError` message for `printfFormat`). Inside,
@@ -922,7 +1011,9 @@ export interface CodeRuleDslResolves {
 
 /**
  * How a name is bound: the construct its binding site is. `field`, `method` and `accessor` are TypeScript's private
- * names (`#a`), bindings of their class body that `binds` matches at each declaration's name.
+ * names (`#a`), bindings of their class body that `binds` matches at each declaration's name. `relation` (a SQL
+ * `FROM`/`JOIN` relation: its alias, else its table name's last part), `cte` and `target` (an `UPDATE`, `DELETE` or
+ * `INSERT` table) are SQL's.
  */
 export type CodeRuleDslBindingForm =
   | "assignment"
@@ -944,13 +1035,17 @@ export type CodeRuleDslBindingForm =
   | "deletion"
   | "field"
   | "method"
-  | "accessor";
+  | "accessor"
+  | "relation"
+  | "cte"
+  | "target";
 /**
  * The kind of scope a binding is held in. Python: `module`, `class`, `function`, `lambda`, `comprehension`,
  * `typeParameters`. TypeScript, as eslint-scope names them: `global` (a script's top level), `module` (a module's or
  * CommonJS file's top level), `function` (arrows and static blocks too), `class` (a class expression's own name),
  * `block` (blocks, loops, `switch`, `catch`, enum bodies), `namespace`, `typeParameters` (type declarations and
- * signatures) and `functionName` (a named function expression's own name).
+ * signatures) and `functionName` (a named function expression's own name). SQL: `query` (a query block, or the block
+ * around a `WITH` statement that binds its CTE names).
  */
 export type CodeRuleDslScopeKind =
   | "module"
@@ -962,7 +1057,8 @@ export type CodeRuleDslScopeKind =
   | "global"
   | "block"
   | "namespace"
-  | "functionName";
+  | "functionName"
+  | "query";
 
 /**
  * Filters over a binding; each listed one must hold. `used`, `referenced`, `nestedUse` and `exported` are three-valued:
@@ -1187,6 +1283,11 @@ export interface CodeRuleEditBatch {
   revision: number;
   checkpoints: CodeRuleCheckpoint[];
   edits: CodeRuleEdit[];
+  /**
+   * Audits these edits in this mode rather than the session's: Rerail's own rollback of an edit (`rewind`) is audited
+   * in `log` mode, so the restored source is judged and recorded but steers nothing.
+   */
+  mode?: AuditMode;
 }
 
 export interface CodeRuleSourceSpan {
@@ -1228,15 +1329,28 @@ export interface CodeRuleResponse {
   failures: AuditFailure[];
 }
 
+/**
+ * The findings a generated-edit steer renders, kept apart from its text: a steer that arrives after the boundary that
+ * waited for its edit gave up is not delivered on its own, but folded with the others into the session's yield digest.
+ */
+export interface GeneratedEditFindings {
+  /** The violations rendered into the steer's content, their paths as the session sees them. */
+  readonly violations: readonly CodeRuleViolation[];
+  /** Where each of their rules comes from, as the content names it. */
+  readonly sourceOf: SteerSourceOf;
+}
+
 export interface SteerMetadata {
   revision: number;
   /** Source inputs whose newer revisions invalidate this result. */
   scope: string[];
   /** Rule ids rendered into the delivered content; absent for deliveries that carry no code-rule violations. */
   ruleIds?: readonly string[];
+  /** The rules behind the content, for the person's line (`buildSteer`); absent with `ruleIds`. */
+  rules?: readonly SteerRule[];
   background?: boolean;
-  /** Marks a steer produced by the generated edit settling at a native tool boundary. */
-  generatedEdit?: boolean;
+  /** Marks a steer produced by the session's generated edits settling, with the findings it renders. */
+  generatedEdit?: GeneratedEditFindings;
 }
 
 export interface RuleSteerDelivery {
@@ -1246,6 +1360,18 @@ export interface RuleSteerDelivery {
     content: string,
     metadata?: SteerMetadata,
   ): Promise<void | "queued" | "discarded">;
+  /**
+   * Sources an evaluation at `revision` read again without an edit of their own (a `package.json`, project configuration
+   * or server-graph change gave them new facts, or findings): a steer queued for one of them at an earlier revision is
+   * stale and is dropped whole. Returns the other sources the dropped steers spoke for that no later revision revised,
+   * whose findings the auditor steers again.
+   */
+  revised?(sessionId: string, revision: number, paths: readonly string[]): readonly string[];
+  /**
+   * Whether a newer revision of `path` dropped a steer for it before the agent received it since the last call; the
+   * answer is consumed. An ai-output auditor then reports that steer's lines again with the source's next edit.
+   */
+  undelivered?(sessionId: string, path: string): boolean;
 }
 export interface AuditSettings {
   scope?: AuditScope;
@@ -1254,8 +1380,11 @@ export interface AuditSettings {
 
 /** A repository audit records one per checkout: each checkout's audit is claimed first and reported when it ends. */
 export interface RepositoryAuditHooks {
-  /** False when another live session is already auditing `checkoutRoot`; that checkout is then skipped. */
-  claim(checkoutRoot: string): boolean;
+  /**
+   * False when another live session is already auditing `checkoutRoot`; that checkout is then skipped. `catalogRevision`
+   * is the compiled catalog the audit would run against.
+   */
+  claim(checkoutRoot: string, catalogRevision: string): boolean;
   finish(checkoutRoot: string, auditId: string | undefined): void;
 }
 
@@ -1267,6 +1396,11 @@ export interface CodeRuleAuditor {
   updateSettings?(settings: Required<AuditSettings>): void;
   /** `path` is relative to the session folder and may lead out of it (`../`) into another checkout. */
   acceptsPath(path: string): boolean;
+  /**
+   * Whether `path` (as for `acceptsPath`) is left out because Git ignores it and the session follows `.gitignore`:
+   * a shell-write walk neither descends into such a folder (`directory`) nor observes such a file. Absent: nothing is.
+   */
+  ignoresPath?(path: string, directory: boolean): boolean;
   /**
    * The folder whose real path must contain an accepted `path`'s real path (its owning checkout); the session folder
    * when undefined or absent.
@@ -1281,43 +1415,71 @@ export interface CodeRuleAuditor {
     paths?: string[];
     audit?: RepositoryAuditHooks;
   }): Promise<readonly string[]>;
-  /** Stop outstanding evaluation promptly when its session closes. */
-  interrupt?(): void;
+  /**
+   * Stop outstanding evaluation promptly when its session closes. Every audit the session still runs ends interrupted
+   * unless `interruptAudits` is false: an evaluator whose session id was reopened meanwhile must leave the new
+   * session's audits alone, and ends only the audits it started itself.
+   */
+  interrupt?(options?: AuditorCloseOptions): void;
   /** Wait until every accepted generated edit and audit has completed. */
   settle?(): Promise<void>;
-  close(): Promise<void>;
+  close(options?: AuditorCloseOptions): Promise<void>;
 }
 
-function violationLocation(violation: CodeRuleViolation): string {
-  if (violation.path === undefined) return "";
-  if (violation.span === undefined) return ` (${violation.path})`;
+export interface AuditorCloseOptions {
+  /** False ends only the audits this evaluator started, leaving the rest of the session's running audits as they are; true by default. */
+  readonly interruptAudits?: boolean;
+}
+
+/** `path:line:col`, or `path` alone for a finding about a whole file; undefined when the finding has no path. */
+function violationLocation(violation: CodeRuleViolation): string | undefined {
+  if (violation.path === undefined) return undefined;
+  if (violation.span === undefined) return violation.path;
   const { startColumn, startLine } = violation.span;
-  return ` (${violation.path}:${startLine + 1}:${startColumn + 1})`;
+  return `${violation.path}:${startLine + 1}:${startColumn + 1}`;
 }
 
 /** Longest fix text rendered inline in a steer; a longer fix is cut with a note. */
 export const STEER_FIX_CHARS = 240;
 
-function suggestedFix(fix: CodeRuleViolationFix): string {
-  const { startLine, startColumn, endLine, endColumn } = fix.span;
-  const range = `${startLine + 1}:${startColumn + 1}-${endLine + 1}:${endColumn + 1}`;
-  if (fix.text === "") return `  Suggested fix: delete ${range}`;
-  const text = fix.text.length > STEER_FIX_CHARS ? `${fix.text.slice(0, STEER_FIX_CHARS)}… (truncated)` : fix.text;
-  if (!text.includes("\n")) return `  Suggested fix: replace ${range} with \`${text}\``;
-  const indented = text.split("\n").map(line => `    ${line}`).join("\n");
-  return `  Suggested fix: replace ${range} with:\n${indented}`;
+/** `text` as CommonMark inline code: a backtick fence longer than any backtick run in it, padded where it starts or ends with one. */
+function inlineCode(text: string): string {
+  const longest = Math.max(0, ...[...text.matchAll(/`+/gu)].map(([run]) => run.length));
+  const fence = "`".repeat(longest + 1);
+  const padding = text.startsWith("`") || text.endsWith("`") ? " " : "";
+  return `${fence}${padding}${text}${padding}${fence}`;
 }
 
-/** One block per rule (`steerBlock`), its violations in first-seen order, each with its location and any fix. */
-export function renderSteer(violations: readonly CodeRuleViolation[]): string {
-  const byRule = new Map<string, string[]>();
-  for (const violation of violations) {
-    const line = `${violation.message}${violationLocation(violation)}`;
-    const lines = byRule.get(violation.ruleId) ?? [];
-    lines.push(violation.fix === undefined ? line : `${line}\n${suggestedFix(violation.fix)}`);
-    byRule.set(violation.ruleId, lines);
-  }
-  return [...byRule].map(([ruleId, lines]) => steerBlock(ruleId, lines.join("\n"))).join("\n\n");
+/** The fix's lines under its finding: a deletion, a one-line replacement inline, or a longer one in a `~~~` fence. */
+function suggestedFix(fix: CodeRuleViolationFix): string {
+  const { startLine, startColumn, endLine, endColumn } = fix.span;
+  const range = `${startLine + 1}:${startColumn + 1}–${endLine + 1}:${endColumn + 1}`;
+  if (fix.text === "") return `  Suggested fix: delete ${range}`;
+  const text = fix.text.length > STEER_FIX_CHARS ? `${fix.text.slice(0, STEER_FIX_CHARS)}… (truncated)` : fix.text;
+  if (!text.includes("\n")) return `  Suggested fix: replace ${range} with ${inlineCode(text)}`;
+  const longest = Math.max(0, ...[...text.matchAll(/^ *(~{3,})/gmu)].map(([, run]) => run!.length));
+  const fence = `  ${"~".repeat(Math.max(3, longest + 1))}`;
+  const lines = text.split("\n").map(line => (line === "" ? "" : `  ${line}`));
+  return [`  Suggested fix, replacing ${range}:`, fence, ...lines, fence].join("\n");
+}
+
+/** Where each rule a steer names was added from; undefined when the rule's provenance is not recorded. */
+export type SteerSourceOf = (ruleId: string) => SteerRuleSource | undefined;
+
+/** Each violation as a steer finding, in the order given: its location, message and any fix. */
+function steerFindings(violations: readonly CodeRuleViolation[]): SteerFinding[] {
+  return violations.map(violation => ({
+    ruleId: violation.ruleId,
+    mode: violation.mode,
+    message: violation.message,
+    location: violationLocation(violation),
+    fix: violation.fix === undefined ? undefined : suggestedFix(violation.fix),
+  }));
+}
+
+/** The steer block (`steerBlock`) for `violations`, in first-seen order, led as `trigger` says (an edit's by default). */
+export function renderSteer(violations: readonly CodeRuleViolation[], trigger: SteerTrigger = { kind: "edit" }): string {
+  return steerBlock(trigger, steerFindings(violations));
 }
 
 /** Rule ids credited with a steer: the distinct `ruleId`s of the rendered violations, in first-seen order. */
@@ -1325,12 +1487,19 @@ export function steerRuleIds(violations: readonly CodeRuleViolation[]): string[]
   return [...new Set(violations.map((violation) => violation.ruleId))];
 }
 
-/** The rendered steer text with its contributing rule ids; the text is byte-identical to `renderSteer`. */
+/**
+ * The rendered steer text with its contributing rule ids and rules (`steerRules`, each naming where it comes from);
+ * the text is byte-identical to `renderSteer`.
+ */
 export function buildSteer(
   violations: readonly CodeRuleViolation[],
-): { content: string; ruleIds: string[] } {
+  trigger: SteerTrigger,
+  sourceOf: SteerSourceOf = () => undefined,
+): { content: string; ruleIds: string[]; rules: SteerRule[] } {
+  const findings = steerFindings(violations);
   return {
-    content: renderSteer(violations),
+    content: steerBlock(trigger, findings),
     ruleIds: steerRuleIds(violations),
+    rules: steerRules(findings, ruleId => steerOrigin(ruleId, sourceOf(ruleId))),
   };
 }

@@ -1,0 +1,153 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "n-global-require",
+  "revision": 3,
+  "mode": "steer",
+  "description": "Keep require() calls at the top level of a module, not inside functions or blocks; nested requires hide dependencies and load synchronously mid-run.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {},
+          "rule": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "kind": "identifier",
+              "regex": "^require$",
+              "resolves": {
+                "global": [
+                  "require"
+                ],
+                "declared": false
+              }
+            },
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "assignment_expression"
+                      },
+                      {
+                        "kind": "augmented_assignment_expression"
+                      },
+                      {
+                        "kind": "variable_declarator"
+                      },
+                      {
+                        "kind": "member_expression"
+                      },
+                      {
+                        "kind": "subscript_expression"
+                      },
+                      {
+                        "kind": "expression_statement"
+                      },
+                      {
+                        "kind": "call_expression"
+                      },
+                      {
+                        "kind": "ternary_expression"
+                      },
+                      {
+                        "kind": "program"
+                      },
+                      {
+                        "kind": "lexical_declaration"
+                      },
+                      {
+                        "kind": "variable_declaration"
+                      },
+                      {
+                        "kind": "arguments"
+                      },
+                      {
+                        "kind": "parenthesized_expression"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "has": {
+                      "kind": "optional_chain"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "any": [
+                        {
+                          "kind": "call_expression"
+                        },
+                        {
+                          "kind": "member_expression"
+                        },
+                        {
+                          "kind": "subscript_expression"
+                        }
+                      ],
+                      "has": {
+                        "stopBy": {
+                          "any": [
+                            {
+                              "kind": "arguments"
+                            },
+                            {
+                              "kind": "parenthesized_expression"
+                            },
+                            {
+                              "kind": "template_string"
+                            }
+                          ]
+                        },
+                        "kind": "optional_chain"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/global-require",
+        "message": "Move this require() to the top level of the module.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/global-require"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "global-require"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

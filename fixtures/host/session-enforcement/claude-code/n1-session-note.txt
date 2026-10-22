@@ -1,0 +1,8 @@
+Rerail is on in this repo: 26 rules are on. It checks your work against this repo's rules and stays silent until one is broken.
+When one is, you get a message starting "Rerail found" that lists each problem with its location, what to do, and the rule id in brackets.
+A steer is advice. Fix it and carry on, or, if you decide not to follow it, tell the user in one line why, and carry on.
+If the user asks why Rerail flagged something, answer from that message: the rule id and what it matched. The user can open the rule from the why? link on their own line.
+Before you turn a Rerail rule off or change its mode, name the rule and ask the user: Off, Log (kept on record, you are not told), or leave it.
+Never turn a rule off or stop Rerail on your own to get past a rule. /rerail-stop is the user's own command: run it without asking.
+This session in the Rerail dashboard: http://127.0.0.1:4737/?sessionId=5f2c&host=claude-code#sessions
+The user can type /rerail to see what Rerail is doing and every Rerail command.

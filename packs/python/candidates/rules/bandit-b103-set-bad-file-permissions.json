@@ -3,7 +3,7 @@
   "id": "bandit-b103-set-bad-file-permissions",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect literal chmod modes that grant group or world write or execute permissions. World-write findings are higher severity.",
+  "description": "Avoid chmod modes that grant group-write, group-execute, world-write, or world-execute permission; overly broad permissions let other users tamper with files.",
   "scope": {
     "include": [
       "**/*.py"
@@ -44,7 +44,7 @@
       "violation": {
         "code": "B103",
         "anchor": "witness.span",
-        "message": "chmod mode grants world-write permission",
+        "message": "Remove world-write from this chmod mode; use 0o644 for files or 0o755 for directories.",
         "suppress": {
           "nosec": {
             "codes": [
@@ -98,7 +98,7 @@
       "violation": {
         "code": "B103",
         "anchor": "witness.span",
-        "message": "chmod mode grants group-write, group-execute, or world-execute permission",
+        "message": "Narrow this chmod mode to owner-only write and execute, such as 0o600 or 0o700, unless others must run it.",
         "suppress": {
           "nosec": {
             "codes": [

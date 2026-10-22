@@ -7,6 +7,7 @@
 pub(crate) mod closure;
 pub(crate) mod names;
 pub(crate) mod php;
+pub(crate) mod rust;
 pub(crate) mod summary;
 
 #[cfg(test)]
@@ -922,18 +923,28 @@ pub(crate) fn summarizes(language: GrammarDialect) -> bool {
     with_adapter!(Family::of(language), A => <<A as Adapter>::Calls as CallRules>::SUPPORTED)
 }
 
-/// Whether `summarize` reads a `language` file's tape rather than a parse of its source
-/// (`CallRules::TAPED`): a Blade file's calls are its tape's embedded program's (`blade::view`).
-pub(crate) fn taped(language: GrammarDialect) -> bool {
-    with_adapter!(Family::of(language), A => <<A as Adapter>::Calls as CallRules>::TAPED)
+/// The document a `language` file's calls are read from, and its dialect: of a file that embeds
+/// code (`embed`), the embedded program whose dialect's calls join the call graph (a Blade
+/// template's view; `None` where it has none: it calls nothing); else the file's own.
+pub(crate) fn calls_document(
+    doc: crate::code_rule_dsl::tape::TapeDoc,
+    language: GrammarDialect,
+) -> Option<(crate::code_rule_dsl::tape::TapeDoc, GrammarDialect)> {
+    if language.embeds().is_empty() {
+        return Some((doc, language));
+    }
+    doc.guests()?.iter().find_map(|guest| {
+        let dialect = *ast_grep_core::Doc::get_lang(&guest.doc);
+        summarizes(dialect).then(|| (guest.doc.clone(), dialect))
+    })
 }
 
-/// Extracts the summary of a `language` file of `bytes` bytes whose tree is `root` (a Blade
-/// file's a tape's, holding its embedded program), through `known`, the file's
-/// table as `calls` reads it where its evaluation built one, else a table built here. A table (or
-/// PHP's name resolution) that cannot be built within the file's time budget or
-/// `MAX_TABLE_NODES` leaves the summary open. Returns the table it built, for the file's
-/// evaluation to reuse.
+/// Extracts the summary of a `language` document whose root is `root` (a file's, or the embedded
+/// program a file's calls are: `workspace::calls_state`), of a file of `bytes` bytes, through
+/// `known`, the document's table as `calls` reads it where its evaluation built one, else a table
+/// built here. A table (or PHP's name resolution) that cannot be built within the file's time
+/// budget or `MAX_TABLE_NODES` leaves the summary open. Returns the table it built, for the
+/// file's evaluation to reuse.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn summarize<D: Doc>(
     root: Node<'_, D>,
@@ -956,18 +967,9 @@ pub(crate) fn summarize<D: Doc>(
         .ok()
     });
     let table = known.or(built.as_ref().and_then(Option::as_ref));
-    // A template's calls are its embedded program's; a template without one calls nothing.
-    let mut summary = with_adapter!(Family::of(language), A => A::regions(&root)
-    .next()
-    .map_or_else(Summary::default, |region| {
-        <<A as Adapter>::Calls as CallRules>::summary(
-            &region.root,
-            path,
-            module,
-            table,
-            has_errors,
-        )
-    }));
+    let mut summary = with_adapter!(Family::of(language), A => {
+        <<A as Adapter>::Calls as CallRules>::summary(&root, path, module, table, has_errors)
+    });
     summary.bytes = u32::try_from(bytes).unwrap_or(u32::MAX);
     (summary, built.flatten())
 }
@@ -1046,6 +1048,8 @@ pub(crate) enum FileTables {
     Python(Arc<ScopeTable>, Option<Arc<ModulePath>>),
     /// PHP's variable flow and name resolution (a Blade template's: its embedded program's).
     Php(Arc<ScopeTable>, Arc<PhpNames>),
+    /// Rust's scope table.
+    Rust(Arc<ScopeTable>),
 }
 
 /// The `calls` verdict at `node`; `tables` gives what `calls` reads in `node`'s file for its
@@ -1086,9 +1090,12 @@ pub(crate) fn holds<'t, D: Doc>(
             )) else {
                 return Reach::Unknown;
             };
+            // A callee's name is in the namespace of the family's summaries (Blade's are PHP's).
+            let names =
+                with_adapter!(test.family, A => <<A as Adapter>::Calls as CallRules>::NAMES);
             let callee = callee.map(|callee| match callee {
                 Callee::Open => None,
-                Callee::Name(name) => Some(Name::new(&name)),
+                Callee::Name(name) => names.map(|family| Name::new(family, &name)),
             });
             FILE_CALLS.with_borrow_mut(|slot| {
                 if let Some(slot) = slot {

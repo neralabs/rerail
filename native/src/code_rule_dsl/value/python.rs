@@ -1,6 +1,8 @@
 //! Python values (tree-sitter-python 0.25): literals as CPython reads them, and the operators and
 //! builtin constructors over them folded as CPython evaluates them.
 
+use crate::code_rule_dsl::language::Family;
+
 mod ops;
 
 use super::{BigInt, ContainerKind, Context, MAX_INT_BITS, MAX_STRING_BYTES, Value, int_to_float};
@@ -507,7 +509,7 @@ fn boolean<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
         return Value::Unknown;
     };
     let left_value = decode(&left, context);
-    let Some(truthy) = left_value.truthy(super::Lang::Python) else {
+    let Some(truthy) = left_value.truthy(Family::Python) else {
         return Value::Unknown;
     };
     match (operator.text().as_ref(), truthy) {
@@ -552,7 +554,7 @@ fn conditional<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
         return Value::Unknown;
     };
     let (chosen, test, alternative) = (chosen.clone(), test.clone(), alternative.clone());
-    match decode(&test, context).truthy(super::Lang::Python) {
+    match decode(&test, context).truthy(Family::Python) {
         Some(true) => decode(&chosen, context),
         Some(false) => decode(&alternative, context),
         None => Value::Unknown,
@@ -616,7 +618,7 @@ fn call<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
     match (name.as_ref(), &value) {
         (_, Value::Unknown) => Value::Unknown,
         ("bool", value) => value
-            .truthy(super::Lang::Python)
+            .truthy(Family::Python)
             .map_or(Value::Unknown, Value::Bool),
         ("int", Value::Int(_)) | ("float", Value::Float(_)) | ("str", Value::Str(_)) => value,
         ("int", Value::Bool(value)) => Value::int(u8::from(*value)),

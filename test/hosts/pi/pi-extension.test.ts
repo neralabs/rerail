@@ -26,10 +26,14 @@ import {
   RULE_MESSAGE_TYPE,
   defaultRerailDatabasePath,
   steerBlock,
+  steerOrigin,
+  steerRules,
   type ConversationRule,
+  type AdapterDelivery,
+  type AdapterEvent,
 } from "../../../src/engine/index.js";
 import { createPiConversationRulesExtension } from "../../../src/hosts/pi/pi-extension.js";
-import { MATCH_ENTRY_TYPE, TURN_ENTRY_TYPE, SqliteSessionStore } from "../../../src/runtime/index.js";
+import { EVENTS_DROPPED_ENTRY_TYPE, MATCH_ENTRY_TYPE, TURN_ENTRY_TYPE, RerailRuntime, SqliteSessionStore } from "../../../src/runtime/index.js";
 import type { HostCommandContext } from "../../../src/harness/index.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
@@ -162,13 +166,14 @@ describe("Pi conversation-rules extension", () => {
     await harness.handlers.get("message_end")?.(event, harness.context);
     await harness.handlers.get("message_end")?.(event, harness.context);
 
+    const findings = [{ ruleId: "checkout", mode, message: "Check checkout requirements." }];
     expect(harness.messages).toEqual([
       {
         message: {
           customType: RULE_MESSAGE_TYPE,
-          content: steerBlock("checkout", "Check checkout requirements."),
+          content: steerBlock({ kind: "tool" }, findings),
           display: true,
-          details: { requested: mode, mechanism: "native-queue", sessionId: expect.any(String) },
+          details: { requested: mode, mechanism: "native-queue", sessionId: expect.any(String), rules: steerRules(findings, steerOrigin) },
         },
         options: { deliverAs: "steer" },
       },
@@ -189,7 +194,7 @@ describe("Pi conversation-rules extension", () => {
       Object.assign(harness.context, { hasUI: true, ui: { setWidget: (_key: string, content: string[] | undefined) => { widgets.push(content); } } });
       createPiConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
       await harness.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, harness.context);
-      expect(widgets.at(-1)?.map(line => line.replace(/\u001b\[[0-9;]*m|\u001b\]8;;[^\u0007]*\u0007/gu, ""))).toEqual(["Rerail ○ not on here"]);
+      expect(widgets.at(-1)?.map(line => line.replace(/\u001b\[[0-9;]*m|\u001b\]8;;[^\u0007]*\u0007/gu, ""))).toEqual(["R E R A I L ○ not on here"]);
       expect(fetchSpy).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
@@ -266,6 +271,112 @@ describe("Pi conversation-rules extension", () => {
     }, harness.context);
     expect(harness.messages).toEqual([]);
     expect(receiptCount(harness)).toBe(0);
+  });
+
+  describe("steer strategies", () => {
+    /** Adds `extra(event)` to what the runtime returns for each event, as the engine's strategies would. */
+    const withDeliveries = (extra: (event: AdapterEvent) => AdapterDelivery[]) => {
+      const ingest = RerailRuntime.prototype.ingest;
+      return vi.spyOn(RerailRuntime.prototype, "ingest").mockImplementation(async function (this: RerailRuntime, event) {
+        return [...await ingest.call(this, event), ...extra(event)];
+      });
+    };
+    const steer = (toolCallId: string): AdapterDelivery => ({
+      sessionId: "pi-test-session",
+      requested: "steer",
+      mechanism: "native-queue",
+      content: "Rerail found 1 problem in your last edit.",
+      ruleIds: ["no-any"],
+      rules: [{ id: "no-any", state: "steered" }],
+      strategy: "message",
+      toolCallId,
+    });
+    const rewound = (toolCallId: string): AdapterDelivery => ({
+      ...steer(toolCallId),
+      content: "Your edit of a.ts was rolled back. Redo it following the rule.",
+      strategy: "rewind",
+      rewound: ["a.ts"],
+    });
+    const result = { type: "tool_result", toolCallId: "call-1", toolName: "edit", input: {}, content: [{ type: "text", text: "Edited a.ts" }], details: { diff: "+x" }, isError: false };
+
+    it("puts an edit's steer after what that call's result says, instead of a message, and counts it", async () => {
+      const harness = createHarness();
+      await install(harness);
+      const spy = withDeliveries(event => event.kind === "result" ? [steer(event.toolCallId)] : []);
+      try {
+        await expect(Promise.resolve(harness.handlers.get("tool_result")!(result, harness.context))).resolves.toEqual({
+          content: [{ type: "text", text: "Edited a.ts" }, { type: "text", text: "Rerail found 1 problem in your last edit." }],
+        });
+        expect(harness.messages).toEqual([]);
+        expect(receiptCount(harness)).toBe(1);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("replaces a call's result with its rolled-back edit's steers, marked an error, with its other steers after", async () => {
+      const harness = createHarness();
+      await install(harness);
+      const spy = withDeliveries(event => event.kind === "result"
+        ? [rewound(event.toolCallId), steer(event.toolCallId), { ...rewound(event.toolCallId), content: "Second rule." }]
+        : []);
+      try {
+        await expect(Promise.resolve(harness.handlers.get("tool_result")!(result, harness.context))).resolves.toEqual({
+          content: [
+            { type: "text", text: "Your edit of a.ts was rolled back. Redo it following the rule.\n\nSecond rule." },
+            { type: "text", text: "Rerail found 1 problem in your last edit." },
+          ],
+          isError: true,
+        });
+        expect(harness.messages).toEqual([]);
+        expect(receiptCount(harness)).toBe(3);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("sends a steer for a call whose result is not being ingested as a message", async () => {
+      const harness = createHarness();
+      await install(harness);
+      const spy = withDeliveries(event => event.kind === "result" ? [steer("call-closed")] : []);
+      try {
+        await expect(Promise.resolve(harness.handlers.get("tool_result")!(result, harness.context))).resolves.toBeUndefined();
+        expect(harness.messages).toEqual([{
+          message: {
+            customType: RULE_MESSAGE_TYPE,
+            content: "Rerail found 1 problem in your last edit.",
+            display: true,
+            details: { requested: "steer", mechanism: "native-queue", sessionId: "pi-test-session", rules: [{ id: "no-any", state: "steered" }] },
+          },
+          options: { deliverAs: "steer" },
+        }]);
+        expect(receiptCount(harness)).toBe(1);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("registers rerail_fix once, with the first subagent steer, and still sends the steer as a message", async () => {
+      const harness = createHarness();
+      const registered: string[] = [];
+      harness.pi.registerTool = ((tool: { name: string }) => { registered.push(tool.name); }) as ExtensionAPI["registerTool"];
+      await install(harness);
+      const subagent = (event: AdapterEvent): AdapterDelivery[] => event.kind === "turn-end"
+        ? [{ sessionId: "pi-test-session", requested: "steer", mechanism: "native-queue", content: "Delegate the fix with `rerail_fix`.", ruleIds: ["no-any"], rules: [{ id: "no-any", state: "steered" }], strategy: "subagent" }]
+        : [];
+      const spy = withDeliveries(subagent);
+      try {
+        expect(registered).toEqual([]);
+        for (const responseId of ["response-1", "response-2"]) {
+          await harness.handlers.get("turn_end")!({ type: "turn_end", turnIndex: 0, message: { role: "assistant", timestamp: 101, responseId, content: [] }, toolResults: [] }, harness.context);
+        }
+        expect(registered).toEqual(["rerail_fix"]);
+        const steer = { message: expect.objectContaining({ content: "Delegate the fix with `rerail_fix`." }), options: { deliverAs: "steer" } };
+        expect(harness.messages).toEqual([steer, steer]);
+      } finally {
+        spy.mockRestore();
+      }
+    });
   });
 
   it("records a turn once when Pi replays its turn_end lifecycle event", async () => {
@@ -399,6 +510,57 @@ describe("Pi conversation-rules extension", () => {
       "before session_start",
     );
   });
+  it("never fails a tool call or result when the session could not attach, since Pi would block the tool", async () => {
+    const harness = createHarness();
+    daemonRoute.main = true;
+    daemonRoute.startDaemonForPackage.mockResolvedValue({
+      started: false,
+      daemon: { state: { url: "http://127.0.0.1:4737/", nativeToken: "native-token" }, health: { workspaceRoot: harness.context.cwd } },
+    });
+    vi.stubGlobal("fetch", async () => {
+      throw new TypeError("fetch failed");
+    });
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    // The tool hooks wait for the attach in flight, which fails: without the guard they would throw it into Pi.
+    const starting = Promise.resolve(install(harness));
+    const call = { type: "tool_call", toolCallId: "call-1", toolName: "write", input: { path: "a.ts" } };
+    const result = { type: "tool_result", toolCallId: "call-1", toolName: "write", content: [], isError: false };
+    const calling = Promise.resolve(harness.handlers.get("tool_call")!(call, harness.context));
+    const resulting = Promise.resolve(harness.handlers.get("tool_result")!(result, harness.context));
+    await expect(starting).rejects.toThrow("fetch failed");
+    await expect(calling).resolves.toBeUndefined();
+    await expect(resulting).resolves.toBeUndefined();
+    expect(stderr.mock.calls.filter(([line]) => String(line).includes("hook failed"))).toHaveLength(2);
+  });
+
+  it("releases a tool call that a wedged daemon never answers before Pi's own deadline blocks it", async () => {
+    const harness = createHarness();
+    daemonRoute.main = true;
+    daemonRoute.startDaemonForPackage.mockResolvedValue({
+      started: false,
+      daemon: { state: { url: "http://127.0.0.1:4737/", nativeToken: "native-token" }, health: { workspaceRoot: harness.context.cwd } },
+    });
+    const wedged = Promise.withResolvers<void>();
+    vi.stubGlobal("fetch", async (_url: URL, init: { body: string }) => {
+      const request = JSON.parse(init.body) as { operation: string };
+      if (request.operation === "ingest") await wedged.promise;
+      return Response.json({ result: null, deliveries: [], entries: [] });
+    });
+    vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    await install(harness);
+    vi.useFakeTimers();
+
+    let released = false;
+    const call = { type: "tool_call", toolCallId: "call-1", toolName: "write", input: { path: "a.ts" } };
+    void (harness.handlers.get("tool_call")!(call, harness.context) as Promise<void>).then(() => { released = true; });
+    await vi.advanceTimersByTimeAsync(24_000);
+    expect(released).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(released).toBe(true);
+    // Shutdown goes through the same client, so the wedge has to clear for the test to end.
+    wedged.resolve();
+    vi.useRealTimers();
+  });
 
 
   it("drops a breaker-driven reattach that fired while a newer session was attaching", async () => {
@@ -449,5 +611,45 @@ describe("Pi conversation-rules extension", () => {
     await harness.handlers.get("input")!({ type: "input", text: "hello" }, next);
     expect(requests.at(-1)).toEqual({ operation: "ingest", sessionId: "pi-next-session" });
     vi.useRealTimers();
+  });
+
+  it("keeps a closing client's final gap marker out of the session Pi switched to", async () => {
+    const harness = createHarness();
+    daemonRoute.main = true;
+    daemonRoute.startDaemonForPackage.mockResolvedValue({
+      started: false,
+      daemon: { state: { url: "http://127.0.0.1:4737/", nativeToken: "native-token" }, health: { workspaceRoot: harness.context.cwd } },
+    });
+    // Where Pi's appendEntry lands: the session that is current, as the last session start delivered it.
+    const markers = new Map<string, unknown[]>();
+    let live = "pi-test-session";
+    harness.pi.appendEntry = (customType: string, data: unknown) => {
+      if (customType === EVENTS_DROPPED_ENTRY_TYPE) markers.set(live, [...markers.get(live) ?? [], data]);
+    };
+    // The daemon refuses the session's events (not its start), so the attached client's gap opens and stays open.
+    const state = { down: false };
+    const requests: Array<{ operation: string; sessionId: string }> = [];
+    vi.stubGlobal("fetch", async (_url: URL, init: { body: string }) => {
+      const request = JSON.parse(init.body) as { operation: string; sessionId: string };
+      requests.push({ operation: request.operation, sessionId: request.sessionId });
+      if (state.down && (request.operation === "ingest" || request.operation === "poll")) throw new TypeError("fetch failed");
+      return Response.json({ result: null, deliveries: [], entries: [] });
+    });
+    vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    await install(harness);
+    const next = { ...harness.context, sessionManager: { getSessionId: () => "pi-next-session", getBranch: () => [] } } as unknown as ExtensionContext;
+    state.down = true;
+    await harness.handlers.get("input")!({ type: "input", text: "first" }, harness.context);
+    await harness.handlers.get("input")!({ type: "input", text: "second" }, harness.context);
+
+    // Pi asks before it leaves the session, while appending still lands in that session.
+    await harness.handlers.get("session_before_switch")!({ type: "session_before_switch", reason: "resume" }, harness.context);
+    // It switches before the old client is retired, which writes its closing marker.
+    live = "pi-next-session";
+    await harness.handlers.get("session_start")!({ type: "session_start", reason: "resume" }, next);
+
+    expect(markers.get("pi-test-session")?.at(-1)).toEqual(expect.objectContaining({ count: 2, recovered: false }));
+    expect(markers.get("pi-next-session") ?? []).toEqual([]);
+    await vi.waitFor(() => expect(requests).toContainEqual({ operation: "record-gap", sessionId: "pi-test-session" }));
   });
 });

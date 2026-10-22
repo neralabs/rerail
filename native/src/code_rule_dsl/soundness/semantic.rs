@@ -19,7 +19,8 @@ pub(super) fn optional_outward_captures(
         | Semantic::Parse(_)
         | Semantic::Capture(_)
         | Semantic::Layout(_)
-        | Semantic::Host(_) => {}
+        | Semantic::Host(_)
+        | Semantic::Embedded(_) => {}
         Semantic::FormatArgs(test) => {
             if let Some(unused) = &test.unused {
                 walk(unused, under_any, outward);
@@ -55,6 +56,9 @@ pub(super) fn sound(
                 && test.host_sound.is_none_or(|sound| sound && !negated)
         }
         Semantic::Host(test) => !negated && super::sound_under_errors(&test.rule),
+        // The embedded program's syntax errors are its own document's, which the clause's do not
+        // tell.
+        Semantic::Embedded(_) => false,
         // Format arguments read two captures, as a comparison does, and the arguments' own nodes.
         // A PHP format followed to a binding is unknown in a file with syntax errors
         // (`binding_value` reads none there), never another binding's.
@@ -94,7 +98,7 @@ pub(super) fn leaves_witness(semantic: &Semantic, memo: &mut UtilitySummary<usiz
         | Semantic::Parse(_)
         | Semantic::Capture(_)
         | Semantic::Layout(_) => false,
-        Semantic::Host(_) => true,
+        Semantic::Host(_) | Semantic::Embedded(_) => true,
         Semantic::FormatArgs(test) => test
             .unused
             .as_ref()

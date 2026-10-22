@@ -3,10 +3,11 @@ import { isAbsolute } from "node:path";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
 import type { CodeRuleViolation, CodeRuleViolationFix, CodeRuleSourceSpan } from "../engine/code-rule/code-rule.js";
-import type { AuditFailure } from "../engine/audit/audit.js";
+import { AUDIT_BLIND_REASONS, AUDIT_FAILURE_CODES, type AuditFailure } from "../engine/audit/audit.js";
 import type { AuditQuery, RepositoryAuditEntryQuery, RepositoryAuditQuery } from "../engine/audit/audit-store.js";
 import { withinCheckout } from "../engine/catalog/checkout-control.js";
 import { RERAIL_HOSTS } from "../engine/adapter-contract.js";
+import { internalTesting } from "../engine/internal-testing.js";
 import { audits, presentationPreferences, PRESENTATION_HOSTS, events, workLinks } from "../engine/storage/schema.js";
 import {
   auditControlsSchema,
@@ -16,7 +17,6 @@ import {
   auditRequestSchema,
 } from "../engine/audit/audit-control-schema.js";
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
-import { loadRulePacks } from "../engine/catalog/rule-packs.js";
 import { rulePackListSchema } from "./rule-pack-contracts.js";
 import { SESSION_EVENT_PAGE_LIMIT } from "../runtime/session-store.js";
 import { ApiError, defineOperation, type Operation, type RerailApiStores } from "./operation.js";
@@ -68,16 +68,21 @@ const codeRuleViolationSchema: z.ZodType<CodeRuleViolation> = z.object({
 const auditFailureSchema: z.ZodType<AuditFailure> = z.object({
   ruleId: z.string().exactOptional(),
   clauseId: z.string(),
-  code: z.enum(["budget-exceeded", "missing-capability", "source-incomplete", "source-partial", "adapter-error"]),
+  code: z.enum(AUDIT_FAILURE_CODES),
   message: z.string(),
   path: z.string().optional(),
   stage: z.enum(["read", "parse", "evaluate", "scan", "scope", "persistence"]).optional(),
+  blind: z.enum(AUDIT_BLIND_REASONS).optional(),
 }).strict();
 
 export const auditRecordSchema = createSelectSchema(audits).extend({
   paths: z.array(z.string()),
   violations: z.array(codeRuleViolationSchema),
   failures: z.array(auditFailureSchema),
+  failureCount: z.number().int().nonnegative().describe("Every failure the audit had: those `failures` lists, and those it leaves out."),
+  unlistedFailureCount: z.number().int().nonnegative().describe("Failures past the listed ones (at most 20 besides blind files, scan stops and one per rule that ran out of work)."),
+  blindFiles: z.array(z.string()),
+  blindFileCount: z.number().int().nonnegative(),
   catalogRevision: z.string().nullable(),
   ruleRevisions: z.array(z.object({ ruleId: z.string(), revision: z.number().int() }).strict()),
 });
@@ -113,7 +118,8 @@ const repositoryAuditSummarySchema = z.object({
     catalogRevision: z.string().nullable(),
     ruleRevisionCount: z.number().int().nonnegative(),
     violationCount: z.number().int().nonnegative(),
-    failureCount: z.number().int().nonnegative(),
+    failureCount: z.number().int().nonnegative().describe("Every failure the audit had, listed or not."),
+    unlistedFailureCount: z.number().int().nonnegative(),
   }).strict().nullable(),
 }).strict();
 const repositoryAuditEntryQuerySchema = z.object({
@@ -196,6 +202,11 @@ function historyIds(stores: RerailApiStores, repository: string | undefined): st
 }
 
 const sinceParameter = countParameter.describe("Epoch milliseconds; only activity at or after this instant is counted. 0 means since install.");
+const PAGE_LIMIT = 50;
+const pageLimitParameter = countParameter.min(1).max(200).optional()
+  .describe(`Maximum rows to return; defaults to ${PAGE_LIMIT} and is capped at 200.`);
+const cursorParameter = z.string().min(1).optional().describe("The `nextCursor` of the previous page; omit it for the first page.");
+const nextCursorSchema = z.string().nullable().describe("Pass as `cursor` for the next page; null on the last page.");
 
 /**
  * What the catalog knows about one rule's effect over a time range. Conversation rules never write an
@@ -227,6 +238,7 @@ const violationRecordSchema = z.object({
   sessionId: z.string(),
   auditId: z.string(),
   at: z.number().int().describe("Start time of the audit that reported the violation."),
+  host: z.string().nullable().describe("The coding agent of the violation's session; null when the session is not recorded."),
 }).strict();
 
 const repositoryPathSchema = z.string().refine(value => value === "" || isAbsolute(value), "Repository must be an absolute path or empty for the database default.");
@@ -309,7 +321,14 @@ export const operations: readonly Operation[] = [
     path: "/api/rules/activity",
     summary: "Report what each rule actually caught since a given time: distinct violations, sessions, last sighting, how many audits evaluated it, and how many steering deliveries it drove. Use it to find rules worth disabling or rules that never fire.",
     query: z.object({ since: sinceParameter, ...repositoryFilter }).strict(),
-    output: z.object({ since: z.number().int().nonnegative(), rules: z.record(z.string(), ruleActivitySchema) }),
+    output: z.object({
+      since: z.number().int().nonnegative(),
+      rules: z.record(z.string(), ruleActivitySchema),
+      sessions: z.object({
+        started: z.number().int().nonnegative().describe("Sessions that started at or after `since`."),
+        withViolations: z.number().int().nonnegative().describe("Distinct sessions with a violation reported at or after `since`, in any mode."),
+      }),
+    }),
     handler: (stores, input) => {
       const ids = historyIds(stores, input.repository);
       const activity = stores.audits.ruleActivity(input.since, ids);
@@ -330,16 +349,26 @@ export const operations: readonly Operation[] = [
           ...(inactive === undefined ? {} : { inactive }),
         };
       }
-      return { since: input.since, rules };
+      return {
+        since: input.since,
+        rules,
+        sessions: { started: stores.reader.sessionCount(input.since, ids), withViolations: stores.audits.sessionsWithViolations(input.since, ids) },
+      };
     },
   }),
   defineOperation({
     id: "rule_packs_list",
     method: "GET",
     path: "/api/rule-packs",
-    summary: "List every rule pack that comes with Rerail: what it covers and its rules, each with a title, a group and the mode it starts in. Add a pack to a repository with repository_attachments_set.",
+    summary: "List every rule pack installed on this machine: what it covers, its version and its rules, each with a title, a group and the mode it starts in, and every installed pack left out with the reason. Add a pack to a repository with repository_attachments_set.",
     output: rulePackListSchema,
-    handler: () => ({ packs: loadRulePacks().map(({ match: _match, rules, ...pack }) => ({ ...pack, rules: [...rules] })) }),
+    handler: stores => {
+      const catalog = stores.ruleCatalog();
+      return {
+        packs: [...catalog.packs.values()].map(({ match: _match, rules, ...pack }) => ({ ...pack, rules: [...rules] })),
+        skipped: [...catalog.skipped],
+      };
+    },
   }),
   defineOperation({
     id: "coding_agents_list",
@@ -386,7 +415,7 @@ export const operations: readonly Operation[] = [
     id: "audit_requests_create",
     method: "POST",
     path: "/api/sessions/{sessionId}/audit-requests",
-    summary: "Queue an explicit audit for one session. Touched-file audits require paths.",
+    summary: internalTesting("Queue an explicit audit for one session. Touched-file audits require paths."),
     params: sessionId,
     body: auditRequestInputSchema,
     output: auditRequestSchema,
@@ -400,7 +429,7 @@ export const operations: readonly Operation[] = [
     id: "audit_requests_list",
     method: "GET",
     path: "/api/sessions/{sessionId}/audit-requests",
-    summary: "List explicit audit requests and the ids of the audits each one produced for one session.",
+    summary: internalTesting("List explicit audit requests and the ids of the audits each one produced for one session."),
     params: sessionId,
     output: z.object({ auditRequests: z.array(auditRequestSchema) }),
     handler: (stores, input) => {
@@ -412,7 +441,7 @@ export const operations: readonly Operation[] = [
     id: "repository_audits_list",
     method: "GET",
     path: "/api/repository-audits",
-    summary: "List one full repository audit baseline per historically scanned repository.",
+    summary: internalTesting("List one full repository audit baseline per historically scanned repository."),
     query: repositoryAuditQuerySchema.extend(repositoryFilter),
     output: z.object({
       repositories: z.array(repositoryAuditSummarySchema),
@@ -424,7 +453,7 @@ export const operations: readonly Operation[] = [
     id: "repository_audit_entries_list",
     method: "GET",
     path: "/api/repository-audits/{auditId}/entries",
-    summary: "Query paginated violations and failures from one repository audit baseline.",
+    summary: internalTesting("Query paginated violations and failures from one repository audit baseline."),
     params: z.object({ auditId: z.string().min(1) }),
     query: repositoryAuditEntryQuerySchema,
     output: z.object({
@@ -455,28 +484,31 @@ export const operations: readonly Operation[] = [
     id: "violations_list",
     method: "GET",
     path: "/api/violations",
-    summary: "List individual violations newest first, optionally for one rule, with the session and audit that reported each. Use it to read what a rule actually flagged rather than how often.",
+    summary: "List individual violations newest first, optionally for one rule or one session, with the session and audit that reported each. Use it to read what a rule actually flagged rather than how often.",
     query: z.object({
       since: sinceParameter,
-      limit: countParameter.min(1).max(200).optional().describe("Maximum violations to return; defaults to 50 and is capped at 200."),
-      offset: countParameter.optional().describe("Number of matching violations to skip; defaults to 0."),
+      limit: pageLimitParameter,
+      cursor: cursorParameter,
       ruleId: z.string().min(1).optional().describe("Restrict to one rule id."),
+      sessionId: z.string().min(1).optional().describe("Restrict to one session."),
       ...repositoryFilter,
     }).strict(),
-    output: z.object({ total: z.number().int().nonnegative(), violations: z.array(violationRecordSchema) }),
+    output: z.object({ total: z.number().int().nonnegative(), violations: z.array(violationRecordSchema), nextCursor: nextCursorSchema }),
     handler: (stores, input) => {
       const page = stores.audits.listViolationHistory({
         since: input.since,
         ...(input.limit === undefined ? {} : { limit: input.limit }),
-        ...(input.offset === undefined ? {} : { offset: input.offset }),
+        ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
         ...(input.ruleId === undefined ? {} : { ruleId: input.ruleId }),
+        ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
       }, historyIds(stores, input.repository));
       return {
         total: page.total,
-        violations: page.violations.map(({ violation, sessionId, auditId, at }) => {
+        violations: page.violations.map(({ violation, sessionId, auditId, at, host }) => {
           const { id, ruleId, clauseId, code, mode, message, path, span, fix } = violation;
-          return { id, ruleId, clauseId, code, mode, message, path: path ?? null, span: span ?? null, fix: fix ?? null, sessionId, auditId, at };
+          return { id, ruleId, clauseId, code, mode, message, path: path ?? null, span: span ?? null, fix: fix ?? null, sessionId, auditId, at, host };
         }),
+        nextCursor: page.nextCursor,
       };
     },
   }),
@@ -484,38 +516,54 @@ export const operations: readonly Operation[] = [
     id: "sessions_list",
     method: "GET",
     path: "/api/sessions",
-    summary: "List recorded harness sessions with their event counts, optionally only those started since a given time.",
+    summary: "List recorded harness sessions newest first, a page at a time, with their event and violation counts, optionally only those started since a given time.",
     query: z.object({
       since: sinceParameter.optional().describe("Epoch milliseconds; only sessions started at or after this instant."),
+      limit: pageLimitParameter,
+      cursor: cursorParameter,
       ...repositoryFilter,
     }).strict(),
-    output: z.object({ sessions: z.array(sessionSummarySchema) }),
-    handler: (stores, input) => {
-      const ids = historyIds(stores, input.repository);
-      return { sessions: [...(input.since === undefined ? stores.reader.sessions(ids) : stores.reader.sessionsSince(input.since, ids))] };
-    },
+    output: z.object({
+      sessions: z.array(sessionSummarySchema.extend({
+        violationCount: z.number().int().nonnegative().describe("Violations in the session's history, as `violations_list` with its `sessionId` counts them."),
+      })),
+      total: z.number().int().nonnegative(),
+      nextCursor: nextCursorSchema,
+    }),
+    handler: (stores, input) => stores.reader.sessionPage({
+      limit: input.limit ?? PAGE_LIMIT,
+      ...(input.since === undefined ? {} : { since: input.since }),
+      ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+    }, historyIds(stores, input.repository)),
   }),
   defineOperation({
     id: "sessions_get",
     method: "GET",
     path: "/api/sessions/{sessionId}",
-    summary: "Fetch one session with rule coverage, steering handoffs and compact audit status.",
+    summary: "Fetch one session with rule coverage, steering handoffs, compact audit status, and what its transcript says it missed.",
     params: sessionId,
-    output: sessionResponseSchema,
+    output: sessionResponseSchema.extend({
+      gaps: z.object({
+        droppedEvents: z.number().int().nonnegative().describe("Events the coding agent never delivered, from its `events-dropped` records."),
+        uncheckedBoundaries: z.number().int().nonnegative().describe("Boundaries that answered before the session's shell-write check finished."),
+        codeRulesPendingBoundaries: z.number().int().nonnegative().describe("Boundaries that answered before the session's code rules were running."),
+      }).describe("Over the whole transcript, however much of it a reader has loaded."),
+    }),
     handler: (stores, input) => {
       const response = sessionResponse(stores, input.sessionId);
       if (response === null) throw new ApiError(404, "session-not-found", `session ${input.sessionId} does not exist`);
-      return response;
+      return { ...response, gaps: stores.reader.gaps(input.sessionId) };
     },
   }),
   defineOperation({
     id: "session_events",
     method: "GET",
     path: "/api/sessions/{sessionId}/events",
-    summary: `Page through one session's transcript events in sequence order, at most ${SESSION_EVENT_PAGE_LIMIT} per page.`,
+    summary: `Page through one session's transcript events in sequence order, at most ${SESSION_EVENT_PAGE_LIMIT} per page: forward from \`after\`, or backward from \`before\` (the latest page is before a sequence past the end).`,
     params: sessionId,
     query: z.object({
       after: countParameter.optional().describe("Return events with a sequence strictly greater than this value."),
+      before: countParameter.optional().describe("Return the last page of events with a sequence strictly less than this value."),
       limit: countParameter.optional(),
     }),
     output: z.object({
@@ -526,6 +574,7 @@ export const operations: readonly Operation[] = [
     handler: (stores, input) => {
       const page = stores.reader.events(input.sessionId, {
         ...(input.after === undefined ? {} : { after: input.after }),
+        ...(input.before === undefined ? {} : { before: input.before }),
         ...(input.limit === undefined ? {} : { limit: input.limit }),
       });
       const last = page.at(-1);

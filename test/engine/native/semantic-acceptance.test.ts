@@ -48,7 +48,7 @@ async function workspace(compiled: NativeCompiledCodeRuleDsl, revision: number, 
 }
 /** Index the attached repository chunk by chunk, as the enforcer does; the workspace revision after it. */
 async function indexRepository(native: NativeCodeRuleDslWorkspace): Promise<number> {
-  const options = { maxFiles: 100_000, maxSourceBytes: 512 * 1024 * 1024, maxFileBytes: 1_000_000, ignoredDirectories: [], sourceLanguages: { ".py": "python" }, nestedCheckouts: [] };
+  const options = { maxFiles: 100_000, maxSourceBytes: 512 * 1024 * 1024, maxFileBytes: 1_000_000, ignoredDirectories: [], sourceLanguages: { ".py": "python" }, nestedCheckouts: [], followGitignore: false };
   for (;;) {
     const chunk = JSON.parse(await native.indexRepositoryAsync(options)) as { done: boolean; revision: number };
     if (chunk.done) return chunk.revision;
@@ -204,7 +204,7 @@ describe("semantic acceptance", () => {
       const limited = JSON.stringify({ ...JSON.parse(capabilities), limits: { ...JSON.parse(capabilities).limits, maxWitnesses: 1 } });
       const compiled = loadNativeBinding().CodeRuleDslRuntime!.compile(document([clause("limit", { pattern: "f($X)", capture: "X" }, "typescript", { violation: { anchor: "capture.X", code: "limit", message: "$X", each: "X" } })]), "json", limited);
       const result = evaluate(compiled, [{ path: "a.ts", language: "typescript", source: "f(a); f(b);" }]);
-      expect(result.failures.map(item => item.code)).toContain("budget-exceeded");
+      expect(result.failures.map(item => item.code)).toContain("witness-limit");
     });
   });
 

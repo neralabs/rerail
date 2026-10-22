@@ -1,0 +1,163 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-plugin-vue-no-duplicate-attributes",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid repeating an attribute on one Vue template element; only class and style may appear twice, once plain and once bound.",
+  "scope": {
+    "include": [
+      "**/*.vue"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "utils": {
+            "plain-x": {
+              "kind": "attribute",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "attribute_name",
+                "pattern": "$N"
+              }
+            },
+            "bind-x": {
+              "kind": "directive_attribute",
+              "any": [
+                {
+                  "regex": "^[:.]"
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "directive_name",
+                    "regex": "^v-bind$"
+                  }
+                }
+              ],
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "directive_value",
+                "pattern": "$N"
+              }
+            },
+            "plain-p": {
+              "kind": "attribute",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "attribute_name",
+                "pattern": "$P"
+              }
+            },
+            "bind-p": {
+              "kind": "directive_attribute",
+              "any": [
+                {
+                  "regex": "^[:.]"
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "directive_name",
+                    "regex": "^v-bind$"
+                  }
+                }
+              ],
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "directive_value",
+                "pattern": "$P"
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "plain-x",
+                "follows": {
+                  "stopBy": "end",
+                  "matches": "plain-p",
+                  "compare": {
+                    "left": "P",
+                    "op": "eq",
+                    "right": "N",
+                    "text": "source"
+                  }
+                }
+              },
+              {
+                "matches": "bind-x",
+                "follows": {
+                  "stopBy": "end",
+                  "matches": "bind-p",
+                  "compare": {
+                    "left": "P",
+                    "op": "eq",
+                    "right": "N",
+                    "text": "source"
+                  }
+                }
+              },
+              {
+                "matches": "plain-x",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "attribute_name",
+                    "regex": "^(?:class|style)$"
+                  }
+                },
+                "follows": {
+                  "stopBy": "end",
+                  "matches": "bind-p",
+                  "compare": {
+                    "left": "P",
+                    "op": "eq",
+                    "right": "N",
+                    "text": "source"
+                  }
+                }
+              },
+              {
+                "matches": "bind-x",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "directive_value",
+                    "regex": "^(?:class|style)$"
+                  }
+                },
+                "follows": {
+                  "stopBy": "end",
+                  "matches": "plain-p",
+                  "compare": {
+                    "left": "P",
+                    "op": "eq",
+                    "right": "N",
+                    "text": "source"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "vue/no-duplicate-attributes",
+        "message": "Duplicate attribute '$N'.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-duplicate-attributes"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

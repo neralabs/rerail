@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "next-google-font-preconnect",
-  "revision": 1,
+  "revision": 3,
   "mode": "steer",
-  "description": "@next/eslint-plugin-next 16.3.8 @next/next/google-font-preconnect: a <link> whose literal href starts with https://fonts.gstatic.com and whose rel is not the literal \"preconnect\".",
+  "description": "Mark links to Google's font file host (fonts.gstatic.com) as preconnect; it opens the connection early so fonts load sooner.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -124,6 +124,16 @@
           "eslint": {
             "rules": [
               "@next/next/google-font-preconnect"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "google-font-preconnect"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/performance/useGoogleFontPreconnect"
             ]
           }
         }

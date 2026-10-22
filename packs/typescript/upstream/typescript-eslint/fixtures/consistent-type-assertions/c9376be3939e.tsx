@@ -1,0 +1,1 @@
+const bar = <Foo style={[5] as Bar} />;

@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "next-no-img-element",
-  "revision": 1,
+  "revision": 4,
   "mode": "steer",
-  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-img-element: an <img> opening element with attributes, not a direct child of <picture>, unless the file is an app-dir metadata image route (the path relative to the ESLint cwd matches ^(src/)?app/ and /opengraph-image|twitter-image|icon.ext).",
+  "description": "Use the next/image Image component instead of img elements (picture children and metadata image routes aside); it optimizes images for faster loads and less bandwidth.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -217,11 +217,21 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@next/next/no-img-element",
-        "message": "Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element",
+        "message": "Replace this img with Image from next/image, giving it width and height or fill unless src is a static import.",
         "suppress": {
           "eslint": {
             "rules": [
               "@next/next/no-img-element"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-img-element"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/performance/noImgElement"
             ]
           }
         }

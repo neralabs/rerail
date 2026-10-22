@@ -1,0 +1,30 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "clippy-double-parens",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove redundant double parentheses around Rust expressions and around a call's only argument.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "nested-parentheses",
+      "forbid": { "ast": { "language": "rust", "rule": {"kind": "parenthesized_expression", "has": {"kind": "parenthesized_expression"}, "not": {"has": {"any": [{"kind": "line_comment"}, {"kind": "block_comment"}]}}} } },
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::double_parens", "clippy::all", "clippy::complexity", "warnings"] } }, "anchor": "witness.span", "code": "double_parens", "message": "Remove the redundant outer parentheses around this expression." }
+    },
+    {
+      "id": "nested-tuple",
+      "forbid": { "ast": { "language": "rust", "rule": {"kind": "parenthesized_expression", "has": {"kind": "tuple_expression"}, "not": {"has": {"any": [{"kind": "line_comment"}, {"kind": "block_comment"}]}}} } },
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::double_parens", "clippy::all", "clippy::complexity", "warnings"] } }, "anchor": "witness.span", "code": "double_parens", "message": "Remove the redundant outer parentheses around this tuple." }
+    },
+    {
+      "id": "nested-unit",
+      "forbid": { "ast": { "language": "rust", "rule": {"kind": "parenthesized_expression", "has": {"kind": "unit_expression"}, "not": {"has": {"any": [{"kind": "line_comment"}, {"kind": "block_comment"}]}}} } },
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::double_parens", "clippy::all", "clippy::complexity", "warnings"] } }, "anchor": "witness.span", "code": "double_parens", "message": "Remove the redundant outer parentheses around this ()." }
+    },
+    {
+      "id": "parenthesized-call-argument",
+      "forbid": { "ast": { "language": "rust", "rule": {"kind": "parenthesized_expression", "inside": {"stopBy": "neighbor", "kind": "arguments"}, "follows": {"stopBy": "neighbor", "regex": "^\\($"}, "precedes": {"stopBy": "neighbor", "regex": "^\\)$"}, "not": {"has": {"any": [{"kind": "parenthesized_expression"}, {"kind": "tuple_expression"}, {"kind": "unit_expression"}]}}} } },
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::double_parens", "clippy::all", "clippy::complexity", "warnings"] } }, "anchor": "witness.span", "code": "double_parens", "message": "Remove the extra parentheses around this call's argument." }
+    }
+  ]
+}

@@ -12,7 +12,7 @@ import { NativeSemanticRuntime } from "../runtime/native-semantic-runtime.js";
 import { ConversationRuleRegistry, type RuleMatch } from "../engine/catalog/registry.js";
 import { parseSampleSource, SAMPLE_BOUNDARIES } from "../engine/catalog/rule-schema.js";
 import { openCheckoutConversationRules } from "../engine/code-rule/code-rule-dsl-catalog.js";
-import { MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, replaySessionState, TURN_ENTRY_TYPE, type RuleMutation } from "../runtime/session-state.js";
+import { MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, replaySessionState, TURN_ENTRY_TYPE, type DroppedEvents, type RuleMutation } from "../runtime/session-state.js";
 import { RerailRuntime } from "../runtime/runtime.js";
 
 export type NativeSessionRequest = z.infer<typeof requestSchema>;
@@ -22,9 +22,28 @@ export interface NativeSessionResponse {
   deliveries: readonly AdapterDelivery[];
   resultRevisionEntry?: number;
   entries: Array<{ customType: string; data: unknown }>;
+  /** The operation is still running: its reply is collected with `await-reply` and this ticket; this answer carries nothing. */
+  pendingReply?: string;
 }
 const NATIVE_SESSION_LEASE_MS = 60_000;
 const NATIVE_SESSION_SWEEP_INTERVAL_MS = 5_000;
+/**
+ * How long a request that asked for a deferred reply waits for its operation, queued behind the session's earlier ones
+ * included, before the daemon answers that it is still working on it. Well inside the client's request timeout, so a
+ * busy daemon is never taken for a lost one, however long its audits run.
+ */
+const NATIVE_REPLY_WITHIN_MS = 10_000;
+/** How long a deferred reply that finished is kept for its client to collect; one never collected is then forgotten. */
+const DEFERRED_REPLY_TTL_MS = 60_000;
+
+/** What a deferred operation came to, once it has settled. */
+type Outcome = { ok: true; value: unknown } | { ok: false; error: unknown };
+
+interface DeferredReply {
+  sessionId: string;
+  outcome: Promise<Outcome>;
+  expiry?: NodeJS.Timeout;
+}
 
 
 interface NativeSession {
@@ -48,17 +67,29 @@ const requestSchema = objectSchema.extend({
   workspaceRoot: z.string(),
   sessionId: z.string().min(1),
   host: z.union([z.literal("omp"), z.literal("pi")]),
-  operation: z.enum(["initialize", "ingest", "cosine", "semantic", "poll", "close", "record-steering-delivery"]),
+  operation: z.enum(["initialize", "ingest", "cosine", "semantic", "poll", "yield", "close", "record-steering-delivery", "record-gap", "await-reply", "await-code-rules"]),
   entries: z.unknown().optional(),
   entriesEncoding: z.literal("superjson").optional(),
   event: z.unknown().optional(),
   eventEncoding: z.literal("superjson").optional(),
   input: z.unknown().optional(),
+  /** The client collects a reply the daemon is still working on with `await-reply`; an older one waits for it instead. */
+  deferReply: z.boolean().optional(),
 });
 
 const entriesSchema = z.array(z.object({ type: z.string(), id: z.string(), timestamp: z.string() }).passthrough());
 const steerReceiptSchema = z.object({ receiptId: z.string().min(1), ruleIds: z.array(z.string()) });
+const droppedEventsSchema = z.object({
+  id: z.string().min(1),
+  count: z.number().int().positive(),
+  kinds: z.record(z.string(), z.number().int().positive()),
+  firstEventId: z.string().nullable(),
+  lastEventId: z.string().nullable(),
+  firstDroppedAt: z.number().int().nonnegative(),
+  lastDroppedAt: z.number().int().nonnegative(),
+}) satisfies z.ZodType<DroppedEvents>;
 const conversationRulesInputSchema = objectSchema.extend({ action: z.string() });
+const awaitReplyInputSchema = z.object({ ticket: z.string().min(1) });
 
 
 /** Branch entries carry arbitrary host payloads, so the client encodes them; plain JSON stays accepted. */
@@ -85,6 +116,11 @@ export class NativeSessionServer {
   readonly #lanes = new SessionLanes();
   readonly #sweepTimer: NodeJS.Timeout;
   #sweepTask: Promise<void> | undefined;
+  /** Disposals of closed sessions still waiting for an evaluator that was opening; the server's own close waits for them. */
+  readonly #disposals = new Set<Promise<void>>();
+  readonly #replyWithinMs: number;
+  /** Replies of deferred operations, by ticket, until their client collects them or they expire. */
+  readonly #deferred = new Map<string, DeferredReply>();
 
   constructor(options: {
     workspaceRoot: string;
@@ -92,11 +128,14 @@ export class NativeSessionServer {
     databasePath: string;
     sessionLeaseMs?: number;
     sessionSweepIntervalMs?: number;
+    replyWithinMs?: number;
   }) {
     this.#workspaceRoot = resolve(options.workspaceRoot);
     this.#modelPath = resolve(options.modelPath);
     this.#databasePath = resolve(options.databasePath);
     this.#sessionLeaseMs = options.sessionLeaseMs ?? NATIVE_SESSION_LEASE_MS;
+    this.#replyWithinMs = options.replyWithinMs ?? NATIVE_REPLY_WITHIN_MS;
+    if (this.#replyWithinMs <= 0) throw new RangeError("native reply bound must be positive");
     const sweepIntervalMs = options.sessionSweepIntervalMs ?? NATIVE_SESSION_SWEEP_INTERVAL_MS;
     if (this.#sessionLeaseMs <= 0 || sweepIntervalMs <= 0) throw new RangeError("native session lease intervals must be positive");
     this.#sweepTimer = setInterval(() => {
@@ -111,7 +150,10 @@ export class NativeSessionServer {
   async handle(input: unknown): Promise<unknown> {
     const parsed = requestSchema.parse(input);
     if (resolve(parsed.workspaceRoot) !== this.#workspaceRoot) throw new RangeError("native workspace mismatch");
-    return this.#lanes.run(parsed.sessionId, async () => {
+    // Outside the session's lane: the lane is what the operation being awaited holds.
+    if (parsed.operation === "await-reply") return this.#awaitReply(parsed.sessionId, awaitReplyInputSchema.parse(parsed.input).ticket);
+    // Also outside it: the session's events go on while its evaluator opens, and only the host's gate waits for it.
+    const work = parsed.operation === "await-code-rules" ? this.#codeRulesOpened(parsed.sessionId) : this.#lanes.run(parsed.sessionId, async () => {
       const response = await this.#handle(parsed);
       if (parsed.operation !== "close") {
         const active = this.#sessions.get(parsed.sessionId);
@@ -119,18 +161,64 @@ export class NativeSessionServer {
       }
       return response;
     });
+    if (parsed.deferReply !== true) return work;
+    // Answered at once when it finishes within the bound; otherwise it keeps the session's lane, so what the client
+    // sends next queues behind it, in order, while the client collects this reply with the ticket.
+    const ticket = randomUUID();
+    const deferred: DeferredReply = {
+      sessionId: parsed.sessionId,
+      outcome: work.then((value): Outcome => ({ ok: true, value }), (error: unknown): Outcome => ({ ok: false, error })),
+    };
+    this.#deferred.set(ticket, deferred);
+    void deferred.outcome.then(() => {
+      if (this.#deferred.get(ticket) !== deferred) return;
+      deferred.expiry = setTimeout(() => this.#deferred.delete(ticket), DEFERRED_REPLY_TTL_MS);
+      deferred.expiry.unref();
+    });
+    return this.#awaitReply(parsed.sessionId, ticket);
+  }
+
+  /** Answers once the session's code-rule evaluator has opened (or failed to): the repository is indexed. */
+  async #codeRulesOpened(sessionId: string): Promise<NativeSessionResponse> {
+    const session = this.#sessions.get(sessionId);
+    if (session === undefined) throw new Error("native session is not initialized");
+    await session.runtime.codeRulesOpened(sessionId);
+    return { deliveries: [], entries: [] };
+  }
+
+  /** The deferred operation's reply once it is done, or its ticket again, carrying nothing, after another `#replyWithinMs`. */
+  async #awaitReply(sessionId: string, ticket: string): Promise<unknown> {
+    const deferred = this.#deferred.get(ticket);
+    if (deferred === undefined || deferred.sessionId !== sessionId) throw new Error("native deferred reply is unknown");
+    const bound = Promise.withResolvers<undefined>();
+    const timer = setTimeout(() => bound.resolve(undefined), this.#replyWithinMs);
+    timer.unref();
+    const settled = await Promise.race([deferred.outcome, bound.promise]).finally(() => clearTimeout(timer));
+    if (settled === undefined) return { pendingReply: ticket, deliveries: [], entries: [] } satisfies NativeSessionResponse;
+    clearTimeout(deferred.expiry);
+    this.#deferred.delete(ticket);
+    if (!settled.ok) throw settled.error;
+    return settled.value;
   }
 
   async close(): Promise<void> {
     clearInterval(this.#sweepTimer);
+    for (const deferred of this.#deferred.values()) clearTimeout(deferred.expiry);
+    this.#deferred.clear();
     await this.#sweepTask;
     await Promise.all([...this.#sessions.keys()].map(async sessionId =>
       this.#lanes.run(sessionId, () => this.#close(sessionId))));
+    await Promise.all(this.#disposals);
   }
 
   async #handle(input: NativeSessionRequest): Promise<NativeSessionResponse> {
     const session = this.#sessionForRequest(input);
-    if (input.operation === "initialize") return this.#initialize(input);
+    if (input.operation === "initialize") {
+      const startedAt = performance.now();
+      const reply = await this.#initialize(input);
+      process.stderr.write(`rerail: session ${input.sessionId} initialized in ${Math.round(performance.now() - startedAt)} ms\n`);
+      return reply;
+    }
     if (input.operation === "close") {
       await this.#close(input.sessionId);
       return session === undefined ? { deliveries: [], entries: [] } : this.#reply(session);
@@ -142,8 +230,17 @@ export class NativeSessionServer {
       session.runtime.recordSteer(input.sessionId, receipt.receiptId, receipt.ruleIds);
       return { deliveries: [], entries: [] };
     }
+    if (input.operation === "record-gap") {
+      session.runtime.recordDroppedEvents(input.sessionId, droppedEventsSchema.parse(input.input));
+      return { deliveries: [], entries: [] };
+    }
     if (input.operation === "poll") {
       session.pendingDeliveries.push(...await session.runtime.collectDeliveries(input.sessionId));
+      return this.#reply(session);
+    }
+    // The end of the agent's run: the session's steers, with the digest of those that missed their step.
+    if (input.operation === "yield") {
+      session.pendingDeliveries.push(...await session.runtime.yieldDeliveries(input.sessionId));
       return this.#reply(session);
     }
     session.ruleSync.refresh();
@@ -231,6 +328,8 @@ export class NativeSessionServer {
       runtime = new RerailRuntime({
         storageRoot, modelPath, databasePath, workspaceRoot: cwd,
         autostart: false, startGate: true,
+        // Resolved per line so the daemon's stderr (its log file) is whatever it is when the line is written.
+        timingLog: line => process.stderr.write(line),
         beforeSessionPublish: async () => {
           await this.#close(input.sessionId);
           if (existing !== undefined) {
@@ -239,7 +338,8 @@ export class NativeSessionServer {
           }
         },
         // No deliverBackground: a result completing during an event rides that event's reply, so the
-        // host sees it before its next model call; results with no event are drained by `poll`.
+        // host sees it before its next model call; other results are drained by `poll`, and the findings that missed
+        // their step by `yield` at the end of the run.
         nativeSession: {
           registry, ruleSync, turn,
           onMatch: (match, sample, matchedTurn) => attached.appendEntries.push({ customType: MATCH_ENTRY_TYPE, data: matchEntry(registry, match, sample, matchedTurn) }),
@@ -364,12 +464,27 @@ export class NativeSessionServer {
     try {
       await session.runtime.ingest({ kind: "session-end", eventId: `session-end:${sessionId}:${randomUUID()}`, sessionId, session: session.session });
     } finally {
-      try {
-        await session.runtime.dispose();
-      } finally {
-        session.semantic.close();
-        session.ruleSync.close();
+      const opening = session.runtime.evaluatorOpening;
+      const disposal = this.#dispose(session);
+      if (opening) {
+        // An evaluator still opening releases itself, and disposal waits for that release before the stores close
+        // under it; the host does not wait for either.
+        const detached: Promise<void> = disposal.catch((error: unknown) => {
+          process.stderr.write(`Rerail native session ${sessionId} disposal failed: ${String(error)}\n`);
+        }).finally(() => { this.#disposals.delete(detached); });
+        this.#disposals.add(detached);
+      } else {
+        await disposal;
       }
+    }
+  }
+
+  async #dispose(session: NativeSession): Promise<void> {
+    try {
+      await session.runtime.dispose();
+    } finally {
+      session.semantic.close();
+      session.ruleSync.close();
     }
   }
 }

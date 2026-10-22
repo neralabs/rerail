@@ -2,7 +2,7 @@
 
 Upstream: [stillat/blade-parser](https://github.com/stillat/blade-parser/tree/23a962f99bca451f8738ed2475a70129fb33f07c) at tag `v2.1.0` (commit `23a962f99bca451f8738ed2475a70129fb33f07c`). License: MIT (Copyright (c) Johnathon Koster); [`license.md`](license.md) is the upstream license file, copied verbatim at that tag.
 
-The files listed below are the templates the tests of the validators the Blade pack ports (the pack's `conformance.json`) hand the parser, and remain under stillat/blade-parser's license. Every other file in this pack is Rerail's. The rule documents in `rules/` are Rerail's re-implementations of the validators and lints of stillat/blade-parser, Bladestan and tlint, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The rest is under the Apache License 2.0 (the pack's `LICENSE`): the recorders `upstream/common.py`, `upstream/capture.php` and `upstream/blade-parser/` (`generate.py`, `read_tests.php`, `run.php`), and the recordings they write by running stillat/blade-parser 2.1.0.
+The files listed below are the templates the tests of the validators the Blade pack ports (the pack's `conformance.json`) hand the parser, and remain under stillat/blade-parser's license. Every other file in this pack is Rerail's. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of the validators and lints of stillat/blade-parser, Bladestan and tlint, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The rest is under the Apache License 2.0 (the pack's `LICENSE`): the recorders `upstream/common.py` and `upstream/blade-parser/` (`generate.py`, `run.php`; the test reader it runs is the port readiness recorder's, under `conformance/recorders/port-readiness/adapters/`), and the recordings they write by running stillat/blade-parser 2.1.0.
 
 Paths are relative to the pack directory, `packs/blade/`. Each fixture is written by `upstream/blade-parser/generate.py fixtures`, which runs the test with the template captured as the parser receives it; a template several dataset rows of a test file build alike is written once, under the first.
 
@@ -338,3 +338,8 @@ Paths are relative to the pack directory, `packs/blade/`. Each fixture is writte
 | `upstream/blade-parser/fixtures/RequiredArgumentsTest/124.blade.php` | `tests/Validation/RequiredArgumentsTest.php` | the template test `required arguments validator does not detect issues` passes to `Document::fromText()` (dataset `('styles')`), captured verbatim |
 | `upstream/blade-parser/fixtures/RequiredArgumentsTest/125.blade.php` | `tests/Validation/RequiredArgumentsTest.php` | the template test `required arguments validator does not detect issues` passes to `Document::fromText()` (dataset `('choice')`), captured verbatim |
 | `upstream/blade-parser/fixtures/RequiredArgumentsTest/126.blade.php` | `tests/Validation/RequiredArgumentsTest.php` | the template test `required arguments validator does not detect issues` passes to `Document::fromText()` (dataset `('use')`), captured verbatim |
+
+> `recording.json` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
+> table above: the tool-pack's `recording.lock` names it and a GitHub release holds the bytes (docs/port-readiness.md).
+> It carries excerpts of this upstream's tests (upstream's test files), redistributed under the licence above, together
+> with Rerail's Apache-2.0; `license.md` beside this file is this upstream's own, at the pinned commit.

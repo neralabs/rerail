@@ -2,11 +2,15 @@ use super::config::Options;
 use super::resolve::{MAX_RESOLVE_NAME_BYTES, is_identifier};
 use crate::code_rule_dsl::json::bounded_text;
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
-use crate::code_rule_dsl::language::{FileCondition, SourceType, TextCondition};
+use crate::code_rule_dsl::language::adapter::QueryWhen;
+use crate::code_rule_dsl::language::{
+    FileCondition, JsxRuntime, PackageCondition, SourceType, TextCondition,
+};
 use crate::code_rule_dsl::scope::options::{
     DEFAULT_PYTHON_MINOR, EsGlobals, GlobalSetting, LanguageOptions, PythonOptions, PythonTyping,
     is_ts_lib, python_builtins, ts_lib_globals,
 };
+use crate::code_rule_dsl::semver::Range;
 use napi::Result;
 use serde_json::{Map, Value};
 
@@ -74,12 +78,13 @@ fn ecma_year(value: &Value, path: &str) -> Result<u16> {
     })
 }
 
-fn source_type(value: Option<&Value>, path: &str) -> Result<SourceType> {
+/// `sourceType`; `None` where the query leaves it to each file (`SourceType::of_file`).
+fn source_type(value: Option<&Value>, path: &str) -> Result<Option<SourceType>> {
     match value.map(|value| value.as_str()) {
-        None => Ok(SourceType::Module),
-        Some(Some("script")) => Ok(SourceType::Script),
-        Some(Some("module")) => Ok(SourceType::Module),
-        Some(Some("commonjs")) => Ok(SourceType::CommonJs),
+        None => Ok(None),
+        Some(Some("script")) => Ok(Some(SourceType::Script)),
+        Some(Some("module")) => Ok(Some(SourceType::Module)),
+        Some(Some("commonjs")) => Ok(Some(SourceType::CommonJs)),
         Some(_) => Err(invalid(format!(
             "{path}/sourceType must be \"script\", \"module\" or \"commonjs\""
         ))),
@@ -157,15 +162,20 @@ fn ecma_features(value: Option<&Value>, path: &str) -> Result<(bool, bool)> {
 }
 
 /// An ast query's `languageOptions` (TypeScript and JavaScript), with ESLint's defaults for what
-/// it leaves out: the latest `ecmaVersion`, a `module`, no extra `globals`, no `ecmaFeatures`.
+/// it leaves out: the latest `ecmaVersion`, no extra `globals`, no `ecmaFeatures`. Without a
+/// `sourceType` each file has its own (`SourceType::of_file`), as ESLint's default config gives
+/// `.cjs` files `commonjs` and the rest `module`.
 pub(crate) fn compile_language_options(value: &Value, path: &str) -> Result<LanguageOptions> {
     let path = format!("{path}/languageOptions");
     let options = object(value, &path)?;
     reject_unknown(options, LANGUAGE_OPTIONS_KEYS, &path)?;
     let ecma_version = ecma_version(options.get("ecmaVersion"), &path)?;
     let source_type = source_type(options.get("sourceType"), &path)?;
-    // espree: "sourceType 'module' is not supported when ecmaVersion < 2015".
-    if source_type == SourceType::Module && ecma_version < 2015 {
+    // espree: "sourceType 'module' is not supported when ecmaVersion < 2015". Without a
+    // `sourceType`, most files are modules.
+    if source_type.is_none_or(|source_type| source_type == SourceType::Module)
+        && ecma_version < 2015
+    {
         return Err(invalid(format!(
             "{path}: sourceType \"module\" (the default) needs ecmaVersion 2015 or later; ESLint refuses it"
         )));
@@ -324,13 +334,14 @@ pub(crate) fn compile_python_when(
 /// A TypeScript ast query's `when`: the versions it applies to, `{ "ecmaVersion": { "min", "max" } }`,
 /// `sourceType` (one or a list) and `ecmaFeatures` (`globalReturn`, `impliedStrict`: each must
 /// equal the query's), read against its own `languageOptions`, else ESLint's defaults (the latest,
-/// a module, no features). Every key must hold. Whether the query applies.
+/// no features). Every key must hold. Whether the query applies, and the source types a file must
+/// have where the query leaves `sourceType` to each file (`SourceType::of_file`).
 pub(crate) fn compile_ecma_when(
     value: &Value,
     path: &str,
     options: Option<&LanguageOptions>,
     document: &Options,
-) -> Result<bool> {
+) -> Result<QueryWhen> {
     let path = format!("{path}/when");
     let when = object(value, &path)?;
     reject_unknown(
@@ -339,9 +350,13 @@ pub(crate) fn compile_ecma_when(
         &path,
     )?;
     let mut applies = document_holds(when, &path, document)?;
-    let source_type = options.map_or(SourceType::Module, |options| options.source_type);
+    let mut file_source_types = None;
     if let Some(types) = when.get("sourceType") {
-        applies &= when_source_types(types, &format!("{path}/sourceType"))?.contains(&source_type);
+        let types = when_source_types(types, &format!("{path}/sourceType"))?;
+        match options.and_then(|options| options.source_type) {
+            Some(source_type) => applies &= types.contains(&source_type),
+            None => file_source_types = Some(types),
+        }
     }
     if let Some(features) = when.get("ecmaFeatures") {
         let path = format!("{path}/ecmaFeatures");
@@ -373,7 +388,16 @@ pub(crate) fn compile_ecma_when(
     }
     let version = options.map_or(EsGlobals::get().latest, |options| options.ecma_version);
     let within = version_within(when, &path, "ecmaVersion", version, ecma_year)?;
-    Ok(applies && within)
+    Ok((applies && within, file_source_types))
+}
+
+/// The `when` of an ast query whose language has no versions or settings (SQL): the document's
+/// options alone, `{ "option": ... }`. Whether the query applies.
+pub(crate) fn compile_option_when(value: &Value, path: &str, document: &Options) -> Result<bool> {
+    let path = format!("{path}/when");
+    let when = object(value, &path)?;
+    reject_unknown(when, &["option"], &path)?;
+    document_holds(when, &path, document)
 }
 
 /// A `when`'s `option`, the document's options (a Rerail extension): whether each named option
@@ -441,20 +465,27 @@ fn when_source_types(value: &Value, path: &str) -> Result<Vec<SourceType>> {
 }
 
 /// Which of an ast query's `file` keys its language's family reads (`Adapter::PACKAGES`,
-/// `Adapter::DECLARATION_FILES`).
+/// `Adapter::DECLARATION_FILES`, `Adapter::PACKAGE_MANIFESTS`, `Adapter::JSX_RUNTIMES`).
 pub(super) struct FileKeys {
     /// The module path keys: `module`, `moduleName`, `package`, `inPackage`.
     pub(super) packages: bool,
     /// `declaration`.
     pub(super) declarations: bool,
+    /// `package` as conditions on the nearest `package.json`.
+    pub(super) manifests: bool,
+    /// `jsxRuntime`.
+    pub(super) jsx_runtimes: bool,
 }
 
 /// An ast query's `file`: conditions on the file. Every language has `path`, a `regex` that must
 /// match the path the host sends, a `notRegex` that must not, or both. A family with declaration
-/// files has `declaration`, whether the path names one. A family naming modules from package
-/// markers has its module path, the host's `module` or the stem fallback: `module`, `moduleName`
-/// and `package` hold text conditions over the dotted names, the last one and the first one (in a
-/// package), and `inPackage` whether the host sent the path.
+/// files has `declaration`, whether the path names one. A family reading package manifests has
+/// `package`, conditions on the file's nearest `package.json` (`bin`, `nodeVersion.subsetOf`,
+/// `dependsOn`, `path`); one with JSX runtimes `jsxRuntime`, the runtimes the file's JSX may be
+/// one of. A family naming modules from package markers has its module path, the host's `module`
+/// or the stem fallback: `module`, `moduleName` and `package` hold text conditions over the dotted
+/// names, the last one and the first one (in a package), and `inPackage` whether the host sent
+/// the path.
 pub(super) fn compile_file_condition(
     value: &Value,
     path: &str,
@@ -473,11 +504,13 @@ pub(super) fn compile_file_condition(
             "moduleName",
             "package",
             "inPackage",
+            "jsxRuntime",
         ],
         &path,
     )?;
+    // `package` is also a manifest family's, over the nearest `package.json`.
     for key in ["module", "moduleName", "package", "inPackage"] {
-        if !keys.packages && file.contains_key(key) {
+        if !keys.packages && (!keys.manifests || key != "package") && file.contains_key(key) {
             return Err(invalid(format!(
                 "{path}/{key}: module paths are Python's; {language} has none"
             )));
@@ -488,53 +521,188 @@ pub(super) fn compile_file_condition(
             "{path}/declaration: declaration files are TypeScript's; {language} has none"
         )));
     }
-    if file.is_empty() {
-        return Err(invalid(if keys.packages {
-            format!(
-                "{path} must set `path`, `declaration`, `module`, `moduleName`, `package` or `inPackage`"
-            )
-        } else {
-            format!("{path} must set `path` or `declaration`")
-        }));
+    if !keys.jsx_runtimes && file.contains_key("jsxRuntime") {
+        return Err(invalid(format!(
+            "{path}/jsxRuntime: JSX runtimes are TypeScript's; {language} has none"
+        )));
     }
-    let text = |key: &str| -> Result<Option<TextCondition>> {
-        let Some(value) = file.get(key) else {
-            return Ok(None);
-        };
-        let at = format!("{path}/{key}");
-        let condition = object(value, &at)?;
-        reject_unknown(condition, &["regex", "notRegex"], &at)?;
-        if condition.is_empty() {
+    if file.is_empty() {
+        let mut allowed = vec!["`path`", "`declaration`"];
+        if keys.packages {
+            allowed.extend(["`module`", "`moduleName`", "`package`", "`inPackage`"]);
+        } else if keys.manifests {
+            allowed.push("`package`");
+        }
+        if keys.jsx_runtimes {
+            allowed.push("`jsxRuntime`");
+        }
+        let last = allowed.pop().unwrap_or_default();
+        return Err(invalid(format!(
+            "{path} must set {} or {last}",
+            allowed.join(", ")
+        )));
+    }
+    let text = |key: &str| text_condition(file.get(key), &format!("{path}/{key}"), max_regex_bytes);
+    let flag = |key: &str| flag_value(file.get(key), &format!("{path}/{key}"));
+    // `package` is a text condition over a module path, or conditions on a manifest; a family
+    // reads one of the two.
+    let shaped = |names: &[&str]| {
+        file.get("package")
+            .and_then(Value::as_object)
+            .is_some_and(|package| names.iter().any(|name| package.contains_key(*name)))
+    };
+    let text_shaped = shaped(&["regex", "notRegex"]);
+    let manifest_shaped = shaped(&["bin", "nodeVersion", "dependsOn", "path", "serverGraph"]);
+    let (manifest, package) = match file.get("package") {
+        Some(_) if keys.manifests && text_shaped => {
             return Err(invalid(format!(
-                "{at} must set `regex`, `notRegex` or both"
+                "{path}/package: {language}'s package reads the nearest package.json: set bin, nodeVersion, dependsOn, path or serverGraph"
             )));
         }
-        let regex = |name: &str| -> Result<Option<regex::Regex>> {
-            let Some(value) = condition.get(name) else {
-                return Ok(None);
-            };
-            let at = format!("{at}/{name}");
-            let pattern = bounded_text(Some(value), &at, "maxRegexPatternBytes", max_regex_bytes)?;
-            regex::Regex::new(pattern)
-                .map(Some)
-                .map_err(|error| invalid(format!("{at}: {error}")))
-        };
-        Ok(Some(TextCondition {
-            regex: regex("regex")?,
-            not_regex: regex("notRegex")?,
-        }))
-    };
-    let flag = |key: &str| match file.get(key) {
-        None => Ok(None),
-        Some(Value::Bool(value)) => Ok(Some(*value)),
-        Some(_) => Err(invalid(format!("{path}/{key} must be true or false"))),
+        Some(value) if keys.manifests => (
+            Some(package_condition(
+                value,
+                &format!("{path}/package"),
+                max_regex_bytes,
+            )?),
+            None,
+        ),
+        Some(_) if keys.packages && manifest_shaped => {
+            return Err(invalid(format!(
+                "{path}/package: {language}'s package is a regex or notRegex over the top package's name"
+            )));
+        }
+        _ => (None, text("package")?),
     };
     Ok(FileCondition {
         path: text("path")?,
         declaration: flag("declaration")?,
         module: text("module")?,
         module_name: text("moduleName")?,
-        package: text("package")?,
+        package,
         in_package: flag("inPackage")?,
+        manifest,
+        jsx_runtime: file
+            .get("jsxRuntime")
+            .map(|value| jsx_runtimes(value, &format!("{path}/jsxRuntime")))
+            .transpose()?,
     })
+}
+
+/// A `regex`, `notRegex` or both.
+fn text_condition(
+    value: Option<&Value>,
+    at: &str,
+    max_regex_bytes: usize,
+) -> Result<Option<TextCondition>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let condition = object(value, at)?;
+    reject_unknown(condition, &["regex", "notRegex"], at)?;
+    if condition.is_empty() {
+        return Err(invalid(format!(
+            "{at} must set `regex`, `notRegex` or both"
+        )));
+    }
+    let regex = |name: &str| -> Result<Option<regex::Regex>> {
+        let Some(value) = condition.get(name) else {
+            return Ok(None);
+        };
+        let at = format!("{at}/{name}");
+        let pattern = bounded_text(Some(value), &at, "maxRegexPatternBytes", max_regex_bytes)?;
+        regex::Regex::new(pattern)
+            .map(Some)
+            .map_err(|error| invalid(format!("{at}: {error}")))
+    };
+    Ok(Some(TextCondition {
+        regex: regex("regex")?,
+        not_regex: regex("notRegex")?,
+    }))
+}
+
+fn flag_value(value: Option<&Value>, at: &str) -> Result<Option<bool>> {
+    match value {
+        None => Ok(None),
+        Some(Value::Bool(value)) => Ok(Some(*value)),
+        Some(_) => Err(invalid(format!("{at} must be true or false"))),
+    }
+}
+
+/// A TypeScript query's `file.package`: `bin` (true or false), `nodeVersion: { subsetOf }` (an
+/// npm semver range), `dependsOn` (a non-empty list of package names), `path` (a text
+/// condition) and `serverGraph` (true or false); at least one.
+fn package_condition(value: &Value, at: &str, max_regex_bytes: usize) -> Result<PackageCondition> {
+    let package = object(value, at)?;
+    reject_unknown(
+        package,
+        &["bin", "nodeVersion", "dependsOn", "path", "serverGraph"],
+        at,
+    )?;
+    if package.is_empty() {
+        return Err(invalid(format!(
+            "{at} must set `bin`, `nodeVersion`, `dependsOn`, `path` or `serverGraph`"
+        )));
+    }
+    let node_version = package
+        .get("nodeVersion")
+        .map(|value| {
+            let at = format!("{at}/nodeVersion");
+            let version = object(value, &at)?;
+            reject_unknown(version, &["subsetOf"], &at)?;
+            version
+                .get("subsetOf")
+                .and_then(Value::as_str)
+                .and_then(Range::parse)
+                .ok_or_else(|| invalid(format!("{at}/subsetOf must be an npm semver range")))
+        })
+        .transpose()?;
+    let depends_on = package
+        .get("dependsOn")
+        .map(|value| {
+            value
+                .as_array()
+                .filter(|names| !names.is_empty())
+                .and_then(|names| {
+                    names
+                        .iter()
+                        .map(|name| {
+                            name.as_str()
+                                .filter(|name| !name.is_empty())
+                                .map(str::to_owned)
+                        })
+                        .collect::<Option<Vec<_>>>()
+                })
+                .ok_or_else(|| {
+                    invalid(format!(
+                        "{at}/dependsOn must be a non-empty list of package names"
+                    ))
+                })
+        })
+        .transpose()?;
+    Ok(PackageCondition {
+        bin: flag_value(package.get("bin"), &format!("{at}/bin"))?,
+        node_version,
+        depends_on,
+        path: text_condition(package.get("path"), &format!("{at}/path"), max_regex_bytes)?,
+        server_graph: flag_value(package.get("serverGraph"), &format!("{at}/serverGraph"))?,
+    })
+}
+
+/// `file.jsxRuntime`: a non-empty list of `"react"`, `"other"` and `"unknown"`.
+fn jsx_runtimes(value: &Value, at: &str) -> Result<Vec<JsxRuntime>> {
+    value
+        .as_array()
+        .filter(|runtimes| !runtimes.is_empty())
+        .and_then(|runtimes| {
+            runtimes
+                .iter()
+                .map(|runtime| runtime.as_str().and_then(JsxRuntime::parse))
+                .collect()
+        })
+        .ok_or_else(|| {
+            invalid(format!(
+                "{at} must be a non-empty list of \"react\", \"other\" and \"unknown\""
+            ))
+        })
 }

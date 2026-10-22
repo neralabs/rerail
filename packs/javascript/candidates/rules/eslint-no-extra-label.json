@@ -3,7 +3,7 @@
   "id": "eslint-no-extra-label",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of ESLint's `no-extra-label` rule (https://eslint.org/docs/latest/rules/no-extra-label). Flags a labeled break/continue whose target is already the nearest enclosing loop or switch, and removes the label when the statement holds no comment.",
+  "description": "Remove labels from break and continue when they target the nearest enclosing loop or switch anyway.",
   "scope": {
     "include": [
       "**/*"
@@ -154,7 +154,24 @@
         "anchor": "capture.L",
         "code": "no-extra-label",
         "message": "This label '$L' is unnecessary.",
-        "fix": "break;"
+        "fix": "break;",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/complexity/noUselessLabel"
+            ]
+          }
+        }
       }
     },
     {
@@ -302,7 +319,24 @@
         "anchor": "capture.L",
         "code": "no-extra-label",
         "message": "This label '$L' is unnecessary.",
-        "fix": "break"
+        "fix": "break",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/complexity/noUselessLabel"
+            ]
+          }
+        }
       }
     },
     {
@@ -448,7 +482,24 @@
         "anchor": "capture.L",
         "code": "no-extra-label",
         "message": "This label '$L' is unnecessary.",
-        "fix": "continue;"
+        "fix": "continue;",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/complexity/noUselessLabel"
+            ]
+          }
+        }
       }
     },
     {
@@ -596,7 +647,24 @@
         "anchor": "capture.L",
         "code": "no-extra-label",
         "message": "This label '$L' is unnecessary.",
-        "fix": "continue"
+        "fix": "continue",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/complexity/noUselessLabel"
+            ]
+          }
+        }
       }
     },
     {
@@ -737,7 +805,24 @@
       "violation": {
         "anchor": "capture.L",
         "code": "no-extra-label",
-        "message": "This label '$L' is unnecessary."
+        "message": "This label '$L' is unnecessary.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-extra-label"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/complexity/noUselessLabel"
+            ]
+          }
+        }
       }
     }
   ]

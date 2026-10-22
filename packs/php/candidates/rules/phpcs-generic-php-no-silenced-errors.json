@@ -1,0 +1,260 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "phpcs-generic-php-no-silenced-errors",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Avoid the @ error-control operator in PHP outside race-safe directory checks and deprecation notices; it hides every warning, so handle failures explicitly.",
+  "scope": {
+    "include": [
+      "**/*.php"
+    ],
+    "exclude": [
+      "**/*.blade.php"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "kind": "error_suppression_expression",
+            "not": {
+              "any": [
+                {
+                  "matches": "deprecation-notice"
+                },
+                {
+                  "matches": "filesystem-call-with-an-argument"
+                }
+              ]
+            }
+          },
+          "utils": {
+            "deprecation-notice": {
+              "has": {
+                "kind": "function_call_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "regex": "^\\\\?(trigger_error|user_error)$"
+                    }
+                  },
+                  {
+                    "arguments": {
+                      "signature": [
+                        "message",
+                        "error_level"
+                      ],
+                      "bind": {
+                        "LEVEL": "error_level"
+                      },
+                      "mode": "syntactic"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "end",
+                      "pattern": "$LEVEL",
+                      "regex": "^\\\\?E_USER_DEPRECATED$"
+                    }
+                  }
+                ]
+              }
+            },
+            "filesystem-call-with-an-argument": {
+              "has": {
+                "kind": "function_call_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "regex": "^\\\\?(mkdir|rmdir|unlink)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "has": {
+                        "kind": "argument"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "Generic.PHP.NoSilencedErrors",
+        "message": "Remove the @ and handle the failure explicitly, by checking the return value or converting warnings with set_error_handler().",
+        "suppress": {
+          "phpcs": {
+            "sniffs": [
+              "Generic.PHP.NoSilencedErrors.Discouraged"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "filesystem-call",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "kind": "error_suppression_expression",
+            "all": [
+              {
+                "matches": "filesystem-call-of-V"
+              },
+              {
+                "not": {
+                  "matches": "rechecked-in-a-condition"
+                }
+              }
+            ]
+          },
+          "utils": {
+            "first-argument-is-V": {
+              "has": {
+                "field": "arguments",
+                "has": {
+                  "kind": "argument",
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "kind": "argument"
+                    }
+                  },
+                  "has": {
+                    "nthChild": {
+                      "position": 1,
+                      "reverse": true,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    },
+                    "pattern": "$V"
+                  }
+                }
+              }
+            },
+            "recheck-of-V": {
+              "any": [
+                {
+                  "kind": "function_call_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "function",
+                        "regex": "^\\\\?(is_dir|is_file|file_exists)$"
+                      }
+                    },
+                    {
+                      "matches": "first-argument-is-V"
+                    }
+                  ]
+                },
+                {
+                  "kind": "unary_op_expression",
+                  "has": {
+                    "kind": "function_call_expression",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "function",
+                          "regex": "^\\\\?(is_dir|is_file|file_exists)$"
+                        }
+                      },
+                      {
+                        "matches": "first-argument-is-V"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "rechecked-in-a-condition": {
+              "inside": {
+                "stopBy": {
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "parenthesized_expression"
+                      },
+                      {
+                        "kind": "unary_op_expression",
+                        "has": {
+                          "field": "operator",
+                          "regex": "^!$"
+                        }
+                      },
+                      {
+                        "kind": "binary_expression",
+                        "has": {
+                          "field": "operator",
+                          "regex": "^(&&|\\|\\||(?i:and|or))$"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "field": "left",
+                "kind": "binary_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "operator",
+                      "regex": "^(&&|\\|\\||(?i:and|or))$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "right",
+                      "matches": "recheck-of-V"
+                    }
+                  }
+                ]
+              }
+            },
+            "filesystem-call-of-V": {
+              "has": {
+                "kind": "function_call_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "regex": "^\\\\?(mkdir|rmdir|unlink)$"
+                    }
+                  },
+                  {
+                    "matches": "first-argument-is-V"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "Generic.PHP.NoSilencedErrors",
+        "message": "Recheck the outcome right after this silenced call, as in `!@mkdir($dir) && !is_dir($dir)`, or drop the @ and check the result.",
+        "suppress": {
+          "phpcs": {
+            "sniffs": [
+              "Generic.PHP.NoSilencedErrors.Discouraged"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

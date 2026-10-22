@@ -1,0 +1,567 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-plugin-vue-no-use-v-if-with-v-for",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't put v-if on the same element as v-for; filter the list in a computed property or move the condition to a wrapper element.",
+  "scope": {
+    "include": [
+      "**/*.vue"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "moved-to-wrapper",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "utils": {
+            "tag-node": {
+              "any": [
+                {
+                  "kind": "start_tag"
+                },
+                {
+                  "kind": "self_closing_tag"
+                }
+              ]
+            },
+            "el": {
+              "any": [
+                {
+                  "kind": "element"
+                },
+                {
+                  "kind": "template_element"
+                }
+              ]
+            },
+            "vfor": {
+              "kind": "directive_attribute",
+              "regex": "^v-for(?:[.:=\\s]|$)"
+            },
+            "binder": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "shorthand_property_identifier_pattern"
+                }
+              ]
+            },
+            "ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "shorthand_property_identifier"
+                }
+              ]
+            },
+            "uses": {
+              "embedded": {
+                "all": [
+                  {
+                    "matches": "ref"
+                  },
+                  {
+                    "pattern": "$REF"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "parenthesized_expression",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "field": "condition",
+                        "kind": "if_statement",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "consequence",
+                          "kind": "statement_block",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "expression_statement",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "sequence_expression",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "arrow_function",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "formal_parameters",
+                                  "has": {
+                                    "stopBy": "end",
+                                    "all": [
+                                      {
+                                        "matches": "binder"
+                                      },
+                                      {
+                                        "pattern": "$AL"
+                                      },
+                                      {
+                                        "compare": {
+                                          "left": "REF",
+                                          "op": "eq",
+                                          "right": "AL",
+                                          "text": "source"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "kind": "directive_attribute",
+                "regex": "^v-if(?:[.:=\\s]|$)"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "matches": "tag-node"
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "vfor"
+                      }
+                    }
+                  ],
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "el"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "template_element"
+                }
+              },
+              {
+                "not": {
+                  "matches": "uses"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "vue/no-use-v-if-with-v-for",
+        "message": "This 'v-if' should be moved to the wrapper element.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-use-v-if-with-v-for"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "computed-variable",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "utils": {
+            "tag-node": {
+              "any": [
+                {
+                  "kind": "start_tag"
+                },
+                {
+                  "kind": "self_closing_tag"
+                }
+              ]
+            },
+            "el": {
+              "any": [
+                {
+                  "kind": "element"
+                },
+                {
+                  "kind": "template_element"
+                }
+              ]
+            },
+            "vfor": {
+              "kind": "directive_attribute",
+              "regex": "^v-for(?:[.:=\\s]|$)"
+            },
+            "binder": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "shorthand_property_identifier_pattern"
+                }
+              ]
+            },
+            "ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "shorthand_property_identifier"
+                }
+              ]
+            },
+            "uses": {
+              "embedded": {
+                "all": [
+                  {
+                    "matches": "ref"
+                  },
+                  {
+                    "pattern": "$REF"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "parenthesized_expression",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "field": "condition",
+                        "kind": "if_statement",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "consequence",
+                          "kind": "statement_block",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "expression_statement",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "sequence_expression",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "arrow_function",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "formal_parameters",
+                                  "has": {
+                                    "stopBy": "end",
+                                    "all": [
+                                      {
+                                        "matches": "binder"
+                                      },
+                                      {
+                                        "pattern": "$AL"
+                                      },
+                                      {
+                                        "compare": {
+                                          "left": "REF",
+                                          "op": "eq",
+                                          "right": "AL",
+                                          "text": "source"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "kind": "directive_attribute",
+                "regex": "^v-if(?:[.:=\\s]|$)"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "matches": "tag-node"
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "vfor",
+                        "embedded": {
+                          "all": [
+                            {
+                              "pattern": "$SRC"
+                            },
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "not": {
+                                "kind": "comment"
+                              }
+                            },
+                            {
+                              "inside": {
+                                "stopBy": "neighbor",
+                                "kind": "parenthesized_expression",
+                                "inside": {
+                                  "stopBy": "neighbor",
+                                  "kind": "sequence_expression"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ],
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "el"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "template_element"
+                }
+              },
+              {
+                "matches": "uses"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "vue/no-use-v-if-with-v-for",
+        "message": "Replace '$SRC' in this v-for with a computed property that returns the filtered list, and drop the v-if.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-use-v-if-with-v-for"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "computed-expression",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "utils": {
+            "tag-node": {
+              "any": [
+                {
+                  "kind": "start_tag"
+                },
+                {
+                  "kind": "self_closing_tag"
+                }
+              ]
+            },
+            "el": {
+              "any": [
+                {
+                  "kind": "element"
+                },
+                {
+                  "kind": "template_element"
+                }
+              ]
+            },
+            "vfor": {
+              "kind": "directive_attribute",
+              "regex": "^v-for(?:[.:=\\s]|$)"
+            },
+            "binder": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "shorthand_property_identifier_pattern"
+                }
+              ]
+            },
+            "ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "shorthand_property_identifier"
+                }
+              ]
+            },
+            "uses": {
+              "embedded": {
+                "all": [
+                  {
+                    "matches": "ref"
+                  },
+                  {
+                    "pattern": "$REF"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "parenthesized_expression",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "field": "condition",
+                        "kind": "if_statement",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "consequence",
+                          "kind": "statement_block",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "expression_statement",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "sequence_expression",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "arrow_function",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "formal_parameters",
+                                  "has": {
+                                    "stopBy": "end",
+                                    "all": [
+                                      {
+                                        "matches": "binder"
+                                      },
+                                      {
+                                        "pattern": "$AL"
+                                      },
+                                      {
+                                        "compare": {
+                                          "left": "REF",
+                                          "op": "eq",
+                                          "right": "AL",
+                                          "text": "source"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "kind": "directive_attribute",
+                "regex": "^v-if(?:[.:=\\s]|$)"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "matches": "tag-node"
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "vfor",
+                        "embedded": {
+                          "all": [
+                            {
+                              "pattern": "$SRC"
+                            },
+                            {
+                              "not": {
+                                "kind": "identifier"
+                              }
+                            },
+                            {
+                              "not": {
+                                "kind": "comment"
+                              }
+                            },
+                            {
+                              "inside": {
+                                "stopBy": "neighbor",
+                                "kind": "parenthesized_expression",
+                                "inside": {
+                                  "stopBy": "neighbor",
+                                  "kind": "sequence_expression"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ],
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "el"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "template_element"
+                }
+              },
+              {
+                "matches": "uses"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "vue/no-use-v-if-with-v-for",
+        "message": "Replace the '$SRC' expression in this v-for with a computed property that returns the filtered list, and drop the v-if.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-use-v-if-with-v-for"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -3,12 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import { eq } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRerailApi } from "../../src/api/http.js";
 import { operations } from "../../src/api/operations.js";
 import { DatabaseApiStores } from "../../src/api/stores.js";
 import {
-  loadBundledCatalog,
+  loadRuleCatalog,
   openRerailDatabase,
   type RerailDatabase,
   type CodeRuleViolation,
@@ -23,6 +23,7 @@ import {
 import { MOCK_CODE_RULES, MOCK_CONVERSATION_RULES } from "../../src/cli/index.js";
 import { SqliteSessionStore } from "../../src/runtime/index.js";
 import { codingAgentHome, codingAgentStates, registerHarnesses, registrationRoot } from "../../src/setup/index.js";
+import { installPack, uninstallPack } from "../support/installed-packs.js";
 
 /** The host a browser addressed the page to through a container port mapping; the fixture never binds it. */
 const PAGE_HOST = "localhost:35831";
@@ -55,6 +56,8 @@ describe("Rerail API over HTTP", () => {
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-api-"));
     process.env.RERAIL_HOME = join(root, "home");
+    // Core ships no packs; these tests add, configure and copy the complexity pack's rules.
+    installPack("complexity");
     databasePath = join(root, "rerail.sqlite");
     database = openRerailDatabase(databasePath);
     auditStore = new SqliteAuditStore(databasePath);
@@ -95,9 +98,9 @@ describe("Rerail API over HTTP", () => {
   }
 
   function addLibraryRules(): void {
-    const bundle = loadBundledCatalog();
-    for (const rule of MOCK_CODE_RULES) upsertLibraryRule(database, bundle, rule, "code");
-    for (const rule of MOCK_CONVERSATION_RULES) upsertLibraryRule(database, bundle, rule, "conversation", { revision: 1 });
+    const ruleCatalog = loadRuleCatalog();
+    for (const rule of MOCK_CODE_RULES) upsertLibraryRule(database, ruleCatalog, rule, "code");
+    for (const rule of MOCK_CONVERSATION_RULES) upsertLibraryRule(database, ruleCatalog, rule, "conversation", { revision: 1 });
   }
 
   function addRepository(key: string, options: { name?: string; configuredAt?: number | null; started?: boolean | null } = {}): void {
@@ -193,21 +196,57 @@ describe("Rerail API over HTTP", () => {
     // The same violation twice in one run is one row; across runs it is history.
     const newest = seedAudit({ at: 4_000, violations: [flagged, { ...flagged, id: "violation-copy" }, other] });
 
-    const page = await getJson<{ total: number; violations: Array<Record<string, unknown>> }>("/api/violations?since=0&limit=2");
+    const page = await getJson<{ total: number; violations: Array<Record<string, unknown>>; nextCursor: string | null }>("/api/violations?since=0&limit=2");
     expect(page.total).toBe(3);
     expect(page.violations.map(violation => violation.at)).toEqual([4_000, 4_000]);
     expect(page.violations[0]).toMatchObject({
       id: flagged.id, ruleId: flagged.ruleId, clauseId: flagged.clauseId, code: flagged.code, mode: "block",
-      path: "web/src/x.ts", span: flagged.span, sessionId: SESSION.sessionId, auditId: newest, at: 4_000,
+      path: "web/src/x.ts", span: flagged.span, sessionId: SESSION.sessionId, auditId: newest, at: 4_000, host: SESSION.host,
     });
-    expect((await getJson<{ violations: Array<{ at: number }> }>("/api/violations?since=0&limit=2&offset=2")).violations)
-      .toMatchObject([{ at: 1_000 }]);
-    // A page past the end still reports how many violations exist.
-    expect(await getJson<{ total: number; violations: unknown[] }>("/api/violations?since=0&limit=2&offset=3"))
-      .toEqual({ total: 3, violations: [] });
+    // The last page says so, and still reports how many violations exist.
+    expect(await getJson(`/api/violations?since=0&limit=2&cursor=${encodeURIComponent(page.nextCursor!)}`))
+      .toMatchObject({ total: 3, violations: [{ at: 1_000 }], nextCursor: null });
+    expect((await app.request("/api/violations?since=0&cursor=not-a-cursor")).status).toBe(400);
     const filtered = await getJson<{ total: number; violations: Array<{ ruleId: string }> }>(`/api/violations?since=0&ruleId=${other.ruleId}`);
     expect(filtered).toMatchObject({ total: 1, violations: [{ ruleId: other.ruleId }] });
+    expect((await getJson<{ total: number }>(`/api/violations?since=0&sessionId=${SESSION.sessionId}`)).total).toBe(3);
+    expect((await getJson<{ total: number }>("/api/violations?since=0&sessionId=another-session")).total).toBe(0);
     expect((await getJson<{ total: number }>("/api/violations?since=2000")).total).toBe(2);
+  });
+
+  it("counts a session's gaps over its whole transcript, however many events follow them", async () => {
+    const dropped = { id: "gap-1", count: 7, kinds: { call: 7 }, firstEventId: null, lastEventId: null, firstDroppedAt: 1, lastDroppedAt: 2 };
+    sessionStore.recordDroppedEvents(SESSION, dropped);
+    sessionStore.recordDroppedEvents(SESSION, { ...dropped, id: "gap-2", count: 2 });
+    sessionStore.recordDiscoveryPending(SESSION, "turn");
+    sessionStore.recordCodeRulesPending(SESSION, "call");
+    sessionStore.recordCodeRulesPending(SESSION, "result");
+    // More than a transcript page of later events: the dashboard opens on those and never loads the gaps.
+    for (let index = 0; index < 600; index += 1) {
+      sessionStore.append({ sessionId: SESSION.sessionId, eventId: `later-${index}`, kind: "turn-end", observedAt: 10_000 + index, payload: {} });
+    }
+
+    expect((await getJson<{ gaps: unknown }>(`/api/sessions/${SESSION.sessionId}`)).gaps)
+      .toEqual({ droppedEvents: 9, uncheckedBoundaries: 1, codeRulesPendingBoundaries: 2 });
+  });
+
+  it("lists sessions newest first, a page at a time, with their violation counts", async () => {
+    sessionStore.openSession({ ...SESSION, sessionId: "session-old" }, 500);
+    sessionStore.openSession({ ...SESSION, sessionId: "session-new" }, 2_000);
+    sessionStore.openSession({ ...SESSION, sessionId: "session-tied" }, 2_000);
+    seedAudit({ sessionId: "session-new", at: 2_100, violations: [flagged, { ...flagged, id: "violation-2", path: "web/src/y.ts" }] });
+
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page: { sessions: Array<{ sessionId: string; violationCount: number }>; total: number; nextCursor: string | null } =
+        await getJson(`/api/sessions?limit=2${cursor === null ? "" : `&cursor=${encodeURIComponent(cursor)}`}`);
+      expect(page.total).toBe(4);
+      seen.push(...page.sessions.map(session => `${session.sessionId}:${session.violationCount}`));
+      cursor = page.nextCursor;
+    } while (cursor !== null);
+    // The fixture's own session opened at the current clock; sessions started together keep id order.
+    expect(seen).toEqual([`${SESSION.sessionId}:0`, "session-new:2", "session-tied:0", "session-old:0"]);
   });
 
   it("lists only the sessions started in range", async () => {
@@ -216,8 +255,9 @@ describe("Rerail API over HTTP", () => {
 
     // The fixture's own session opened at the current clock, so only `session-old` falls outside.
     expect((await getJson<{ sessions: Array<{ sessionId: string }> }>("/api/sessions?since=1000")).sessions
-      .map(session => session.sessionId)).toEqual(["session-new", SESSION.sessionId]);
+      .map(session => session.sessionId)).toEqual([SESSION.sessionId, "session-new"]);
     expect((await getJson<{ sessions: unknown[] }>("/api/sessions")).sessions).toHaveLength(3);
+    expect((await getJson<{ sessions: { started: number } }>("/api/rules/activity?since=1000")).sessions.started).toBe(2);
   });
 
   it("narrows history to one repository: its key, its aliases, and its checkouts' clone ids", async () => {
@@ -232,7 +272,7 @@ describe("Rerail API over HTTP", () => {
 
     const query = `repository=${encodeURIComponent(WEB)}`;
     expect((await getJson<{ sessions: Array<{ sessionId: string }> }>(`/api/sessions?${query}`)).sessions.map(session => session.sessionId))
-      .toEqual(["by-key", "by-clone-id", "by-alias"]);
+      .toEqual(["by-alias", "by-clone-id", "by-key"]);
     expect((await getJson<{ violations: Array<{ sessionId: string }> }>(`/api/violations?since=0&${query}`)).violations)
       .toMatchObject([{ sessionId: "by-clone-id" }]);
     expect((await getJson<{ audits: Array<{ sessionId: string }> }>(`/api/audits?${query}`)).audits).toMatchObject([{ sessionId: "by-clone-id" }]);
@@ -294,6 +334,40 @@ describe("Rerail API over HTTP", () => {
       sessionStore.openSession({ ...SESSION, sessionId: `session-${path}` });
       expect((await app.request(path, { headers: { "if-none-match": tag } })).status).toBe(200);
     }
+  });
+
+  it("computes a history read once per change to the database, however often the dashboard polls it", async () => {
+    addLibraryRules();
+    addRepository(WEB, { configuredAt: 5, started: true });
+    const activity = vi.spyOn(stores.audits, "ruleActivity");
+    const first = await getJson("/api/rules/activity?since=0");
+    expect(await getJson("/api/rules/activity?since=0")).toEqual(first);
+    expect(activity).toHaveBeenCalledTimes(1);
+    // Another connection commits: the next read computes again and sees it.
+    seedAudit({ at: 5_000, violations: [flagged] });
+    expect(await getJson("/api/rules/activity?since=0")).not.toEqual(first);
+    expect(activity).toHaveBeenCalledTimes(2);
+    // A write through the API's own connection counts too, which `PRAGMA data_version` does not see (only the stores'
+    // local revision does), and another range is its own read.
+    expect((await putJson("/api/repository/settings", { repository: WEB, owner: "repository", targets: [{ kind: "pack", id: "complexity" }], on: false })).status).toBe(200);
+    await getJson("/api/rules/activity?since=0");
+    await getJson("/api/rules/activity?since=1");
+    expect(activity).toHaveBeenCalledTimes(4);
+  });
+
+  it("answers a history read afresh once a pack is removed, with no database write between", async () => {
+    addLibraryRules();
+    addRepository(WEB, { configuredAt: 5, started: true });
+    const first = await app.request("/api/rules/activity?since=0");
+    const tag = first.headers.get("etag")!;
+    const rules = Object.keys((await first.json() as { rules: Record<string, unknown> }).rules);
+    expect(rules.some(id => id.startsWith("complexity-"))).toBe(true);
+
+    uninstallPack("complexity");
+
+    const after = await app.request("/api/rules/activity?since=0", { headers: { "if-none-match": tag } });
+    expect(after.status).toBe(200);
+    expect(Object.keys((await after.json() as { rules: Record<string, unknown> }).rules).some(id => id.startsWith("complexity-"))).toBe(false);
   });
 
   it("admits a write whose Origin is an allowlisted host on the requested port and rejects every other", async () => {
@@ -364,8 +438,8 @@ describe("Rerail API over HTTP", () => {
     addCheckout("/code/acme-web-feature", WEB, "a", false);
 
     expect((await getJson<{ repositories: unknown[] }>("/api/repositories")).repositories).toEqual([
-      { repositoryKey: WEB, name: "acme-web", aliases: [], setUp: true, configuredAt: 5, started: true, state: "started", checkoutCount: 2 },
-      { repositoryKey: "clone:landing", name: "landing-page", aliases: [], setUp: false, configuredAt: null, started: true, state: "not-set-up", checkoutCount: 0 },
+      { repositoryKey: WEB, name: "acme-web", aliases: [], setUp: true, configuredAt: 5, started: true, state: "started", followGitignore: true, checkoutCount: 2 },
+      { repositoryKey: "clone:landing", name: "landing-page", aliases: [], setUp: false, configuredAt: null, started: true, state: "not-set-up", followGitignore: true, checkoutCount: 0 },
     ]);
 
     // Stopping and starting act on the repository as a whole: a checkout's own value follows it again.
@@ -390,7 +464,7 @@ describe("Rerail API over HTTP", () => {
     // "I'll pick rule packs myself": set up, nothing added.
     const configured = await putJson("/api/repository/attachments", { repository: WEB, configure: true });
     expect(await configured.json()).toMatchObject({ repository: { setUp: true }, attachments: [] });
-    const pack = [...loadBundledCatalog().packs.keys()][0]!;
+    const pack = [...loadRuleCatalog().packs.keys()][0]!;
     const added = await putJson("/api/repository/attachments", { repository: WEB, add: [{ sourceKind: "pack", sourceId: pack, folder: "web/" }] });
     expect(await added.json()).toMatchObject({ attachments: [{ folder: "web", sourceKind: "pack", sourceId: pack }] });
     expect((await putJson("/api/repository/attachments", { repository: WEB, add: [{ sourceKind: "pack", sourceId: pack, folder: "../x" }] })).status).toBe(400);

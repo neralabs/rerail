@@ -1,11 +1,17 @@
-import { existsSync } from "node:fs";
-import { mkdir, realpath, rename } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { createInterface, type Interface } from "node:readline";
 import { setTimeout as sleep } from "node:timers/promises";
 import { rulesDashboardUrl, type RulesDashboardScope } from "../api/session-contracts.js";
-import { codingAgentHome, connectedCodingAgents, registrationRoot as packageRegistrationRoot } from "../setup/coding-agents.js";
+import {
+  CODING_AGENT_NAMES,
+  codingAgentHome,
+  connectedCodingAgents,
+  refreshCodingAgents,
+  registrationRoot as packageRegistrationRoot,
+} from "../setup/coding-agents.js";
 import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import { daemonUsesPackageRoot, lookupDaemon, openDashboard, startDaemon, stopDaemon, type DaemonState } from "../runtime/daemon-control.js";
 import { DEFAULT_DAEMON_PORT, parseArguments, parsePort } from "../daemon/daemon.js";
@@ -18,9 +24,12 @@ import {
   type RegistrationReport,
 } from "../setup/harness-registration.js";
 import { checkNodeVersion } from "../setup/node-version.js";
-import { checkSetupAnswer, parseCodingAgents, runSetup, runSetupStep, setupAgents, startRerailStep, type DashboardPage, type SetupEnvironment, type SetupRequest } from "./repository-setup.js";
+import { addLauncherToPath, describeLauncherPath, removeLauncherFromPath } from "../setup/shell-path.js";
+import { checkSetupAnswer, parseCodingAgents, runSetup, runSetupStep, setupAgents, setupPacks, startRerailStep, type DashboardPage, type SetupEnvironment, type SetupRequest } from "./repository-setup.js";
+import { npmPackStore, type PackStore, type PackVersion } from "../setup/rule-pack-store.js";
 import { workspaceStartState, type RepositorySetupIo } from "../runtime/repository-start.js";
-import { renderInstalled, SETUP_FLAGS, shellQuote, type DashboardLink, type SetupLane } from "../harness/setup-screens.js";
+import { renderBanner, renderInstalled, renderOnPath, SETUP_FLAGS, shellQuote, type DashboardLink, type SetupLane } from "../harness/setup-screens.js";
+import { colourDepth } from "../presentation/rerail-mark.js";
 import type { SetupStep } from "../harness/setup-step.js";
 import type { ManagedUpdater } from "../setup/updater.js";
 
@@ -30,6 +39,8 @@ export interface SetupContext {
   /** The package this launcher runs from: an npx cache, a global install, or a checkout. */
   packageRoot: string;
   updater: ManagedUpdater;
+  /** Where rule packs come from and go to; npm, into `home`, unless given. */
+  packs?: PackStore;
 }
 
 interface RegistrationArguments {
@@ -69,12 +80,17 @@ function registrationRoot(context: SetupContext): string {
   return packageRegistrationRoot(context.home, context.packageRoot);
 }
 
-/** Steps `install --root` earns, since it writes the launcher and touches coding agent config. */
-function nextSteps(home: string): string[] {
-  return [
-    `  add ${join(home, "bin")} to PATH to run \`rerail\` directly`,
-    "  restart Cursor, Claude Code, Codex, OMP, or Pi so they load the new hooks",
-  ];
+/** Put the launcher's directory on PATH (`shell-path.ts`); set-up's line for it, or undefined when nothing changed. */
+async function launcherOnPath(context: SetupContext, lane: SetupLane): Promise<string | undefined> {
+  const { launcherPath } = context.updater;
+  // A run that wrote no launcher (an install that failed) has nothing to put on PATH yet.
+  if (!existsSync(launcherPath)) return undefined;
+  const binDir = dirname(launcherPath);
+  const home = codingAgentHome();
+  const change = await addLauncherToPath({ binDir, home });
+  if (change.status === "failed") return renderOnPath({ binDir, locations: [], failure: change.reason, home }, lane).replace(/\n$/u, "");
+  if (change.status !== "changed") return undefined;
+  return renderOnPath({ binDir, locations: change.locations, home }, lane).replace(/\n$/u, "");
 }
 
 /** True when `<home>/current` already resolves to `root`, so hooks written against it name this checkout. */
@@ -159,12 +175,45 @@ async function backUpRulesAndHistory(home: string, dryRun: boolean): Promise<voi
   process.stdout.write(`Backup: ${target} holds your rules and history. Install Rerail again and restore this backup to get them back.\n`);
 }
 
+/**
+ * `rerail install --refresh`: register this version again with every coding agent already connected to the managed
+ * install, so commands it added arrive and ones it retired go; `rerail update` runs it from the version it activated.
+ * Coding agents never connected stay untouched, and one whose configuration cannot be read to tell is named and left
+ * alone. Exits 1 only when a connected coding agent could not be refreshed.
+ */
+async function runRefresh(context: SetupContext): Promise<number> {
+  const root = registrationRoot(context);
+  const result = await refreshCodingAgents(root, codingAgentHome());
+  if (result.agents.length === 0 && result.failures.length === 0 && result.unchecked.length === 0) {
+    process.stdout.write(`No coding agents are connected to ${root}; nothing to refresh.\n`);
+  }
+  if (result.agents.length > 0) {
+    const changed = result.changes.filter(change => change.action === "created" || change.action === "updated");
+    const names = result.agents.map(id => CODING_AGENT_NAMES[id]).join(", ");
+    process.stdout.write(changed.length === 0 ? `Coding agents up to date: ${names}\n` : `Refreshed Rerail in ${names}:\n`);
+    printReport({ changes: changed, notes: changed.length === 0 ? [] : result.notes }, false);
+  }
+  for (const { agent, message } of result.unchecked) {
+    process.stdout.write(`  note: left ${CODING_AGENT_NAMES[agent]} alone: its configuration could not be read to tell whether Rerail is connected (${message})\n`);
+  }
+  for (const { agent, message } of result.failures) {
+    process.stderr.write(`rerail: could not refresh ${CODING_AGENT_NAMES[agent]}: ${message}\n`);
+  }
+  if (result.failures.length === 0) return 0;
+  process.stderr.write("rerail: fix that, then run rerail install --refresh\n");
+  return 1;
+}
+
 export async function runInstallCommand(args: readonly string[], context: SetupContext): Promise<number> {
   const { flags, options } = parseArguments(
     args,
-    { flags: ["--dry-run", "--remove"], options: ["--root", "--agents"] },
+    { flags: ["--dry-run", "--remove", "--refresh"], options: ["--root", "--agents"] },
     argument => `Unknown install option: ${argument}`,
   );
+  if (flags.has("--refresh")) {
+    if (flags.size > 1 || options.size > 0) throw new Error("install --refresh takes no other options");
+    return await runRefresh(context);
+  }
   const parsed = registrationArguments(options, flags);
   const rootArgument = options.get("--root");
   const explicitRoot = rootArgument === undefined ? undefined : resolve(rootArgument);
@@ -180,9 +229,17 @@ export async function runInstallCommand(args: readonly string[], context: SetupC
   // Removing every coding agent from the managed install is the uninstall. Removing one coding agent, or a
   // checkout registered with `--root`, leaves the shared rules and history in place.
   const uninstall = remove && parsed.hosts === undefined && (explicitRoot === undefined || root === context.updater.currentLink);
-  if (uninstall) await backUpRulesAndHistory(context.home, parsed.dryRun);
+  if (uninstall) {
+    await backUpRulesAndHistory(context.home, parsed.dryRun);
+    const binDir = dirname(context.updater.launcherPath);
+    const removed = describeLauncherPath(await removeLauncherFromPath({ binDir, home: codingAgentHome(), dryRun: parsed.dryRun }), binDir, "remove", parsed.dryRun);
+    if (removed !== undefined) process.stdout.write(`${removed}\n`);
+  }
   if (explicitRoot !== undefined && !remove) {
-    process.stdout.write(["", "Next:", ...nextSteps(context.home), ""].join("\n"));
+    const binDir = dirname(context.updater.launcherPath);
+    const change = await addLauncherToPath({ binDir, home: codingAgentHome(), dryRun: parsed.dryRun });
+    const pathLine = describeLauncherPath(change, binDir, "add", parsed.dryRun);
+    process.stdout.write(["", ...(pathLine === undefined ? [] : [pathLine]), "Next:", "  restart Cursor, Claude Code, Codex, OMP, or Pi so they load the new hooks", ""].join("\n"));
   }
   return 0;
 }
@@ -256,9 +313,13 @@ function pageUrl(origin: string, scope: RulesDashboardScope, page: DashboardPage
   return url.href;
 }
 
-/** What set-up needs from this machine: the coding agents, their registration, and the dashboard. */
+/** In the Rerail home: the person's one approval that Rerail may read their coding agent sessions (T2b). */
+const CONSENT_FILE = "consent.json";
+
+/** What set-up needs from this machine: the coding agents, their registration, the dashboard, and npm for rule packs. */
 export function setupEnvironment(context: SetupContext, port?: number): SetupEnvironment {
   return {
+    packs: context.packs ?? npmPackStore(context.home),
     agentsFound: () => detectHarnesses(codingAgentHome()),
     async connect(agents, repoRoot) {
       // Claude Code's project status line lives in the repository: only one the person said yes to.
@@ -272,6 +333,24 @@ export function setupEnvironment(context: SetupContext, port?: number): SetupEnv
     async connectedAgents() {
       // A dry run plans every write; an agent with nothing to write is connected already.
       return connectedCodingAgents(registrationRoot(context), codingAgentHome());
+    },
+    sessionsApproved() {
+      try {
+        const consent = JSON.parse(readFileSync(join(context.home, CONSENT_FILE), "utf8")) as { sessions?: { approvedAt?: unknown } };
+        return typeof consent.sessions?.approvedAt === "string";
+      } catch {
+        return false;
+      }
+    },
+    async setSessionsApproved(approved) {
+      const path = join(context.home, CONSENT_FILE);
+      if (!approved) {
+        await rm(path, { force: true });
+        return;
+      }
+      await mkdir(context.home, { recursive: true, mode: 0o700 });
+      const consent = { sessions: { approvedAt: new Date().toISOString() } };
+      await writeFile(path, `${JSON.stringify(consent, null, 2)}\n`, { mode: 0o600 });
     },
     async dashboard(scope, page, open): Promise<DashboardLink> {
       let origin: string;
@@ -378,13 +457,15 @@ interface SetupArguments extends SetupCarry {
   answer?: string;
   repo?: string;
   agentsError?: string;
+  packs?: readonly PackVersion[];
+  packsError?: string;
 }
 
 /** Checked before the install, so a typo changes nothing. */
 function setupArguments(args: readonly string[]): SetupArguments {
   const { flags, options } = parseArguments(
     args,
-    { flags: [JSON_FLAG, SETUP_FLAGS.relay, "--repository"], options: ["--answer", "--repo", "--agents", "--port", "--database"] },
+    { flags: [JSON_FLAG, SETUP_FLAGS.relay, "--repository"], options: ["--answer", "--repo", "--agents", SETUP_FLAGS.packs, "--port", "--database"] },
     argument => `Unknown setup option: ${argument}`,
   );
   const port = options.get("--port");
@@ -399,6 +480,7 @@ function setupArguments(args: readonly string[]): SetupArguments {
     ...(answer === undefined ? {} : { answer }),
     ...(repo === undefined ? {} : { repo }),
     ...setupAgents(agents, answer),
+    ...setupPacks(options.get(SETUP_FLAGS.packs), answer),
   };
 }
 
@@ -450,6 +532,8 @@ function setupRequest(context: SetupContext, parsed: SetupArguments, place: Setu
     ...(parsed.answer === undefined ? {} : { answer: parsed.answer }),
     ...(parsed.agents === undefined ? {} : { agents: parsed.agents }),
     ...(parsed.agentsError === undefined ? {} : { agentsError: parsed.agentsError }),
+    ...(parsed.packs === undefined ? {} : { packs: parsed.packs }),
+    ...(parsed.packsError === undefined ? {} : { packsError: parsed.packsError }),
     ...(setupCommand === undefined ? {} : { setupCommand }),
     environment: place.environment(parsed.port),
   };
@@ -463,9 +547,13 @@ async function setupText(args: readonly string[], context: SetupContext, io: Set
     return 1;
   }
   const parsed = setupArguments(args);
+  const banner = renderBanner({ version: context.updater.packageVersionLabel, depth: colourDepth() }, io.lane);
+  if (banner !== "") io.say(banner.replace(/\n$/u, ""));
   const place = machinePlace(context);
   const installedLine = await install(context, parsed, place.cwd, io.lane, "setup");
   if (installedLine !== undefined) io.say(installedLine);
+  const pathLine = await launcherOnPath(context, io.lane);
+  if (pathLine !== undefined) io.say(pathLine);
   const outcome = await runSetup(io, setupRequest(context, parsed, place, io.lane));
   return outcome.status === "cancelled" ? 1 : 0;
 }
@@ -481,8 +569,10 @@ async function jsonSetupStep(args: readonly string[], context: SetupContext, pla
     if (!node.ok) return errorStep(node.message.replace(/\n$/u, ""));
     const parsed = setupArguments(args);
     const installedLine = await install(context, parsed, place.cwd, "json", origin);
+    const pathLine = await launcherOnPath(context, "json");
     const step = await runSetupStep({ ...setupRequest(context, parsed, place, "json"), nextArgs: jsonNextArgs(carryOf(parsed, place)) });
-    return installedLine === undefined ? step : { ...step, screen: `${installedLine}\n${step.screen}` };
+    const opening = [installedLine, pathLine].filter(line => line !== undefined);
+    return opening.length === 0 ? step : { ...step, screen: [...opening, step.screen].join("\n") };
   } catch (error) {
     return errorStep(messageOf(error));
   }
@@ -496,7 +586,7 @@ export async function startStep(args: readonly string[], context: SetupContext, 
   try {
     const { flags, options } = parseArguments(
       args,
-      { flags: [JSON_FLAG, SETUP_FLAGS.relay, "--repository"], options: ["--repo", "--agents", "--answer", "--database"] },
+      { flags: [JSON_FLAG, SETUP_FLAGS.relay, "--repository"], options: ["--repo", "--agents", SETUP_FLAGS.packs, "--answer", "--database"] },
       argument => `Unknown start option: ${argument}`,
     );
     const agents = options.get("--agents");
@@ -510,6 +600,7 @@ export async function startStep(args: readonly string[], context: SetupContext, 
       const passed = [
         ...(answer === undefined ? [] : ["--answer", answer]),
         ...(agents === undefined ? [] : ["--agents", agents]),
+        ...(options.has(SETUP_FLAGS.packs) ? [SETUP_FLAGS.packs, options.get(SETUP_FLAGS.packs)!] : []),
         ...(databasePath === undefined ? [] : ["--database", databasePath]),
         ...(repository ? ["--repository"] : []),
       ];
@@ -525,6 +616,7 @@ export async function startStep(args: readonly string[], context: SetupContext, 
     return await startRerailStep(workspace, {
       ...carry,
       ...(agentsError === undefined ? {} : { agentsError }),
+      ...setupPacks(options.get(SETUP_FLAGS.packs), answer),
       ...(answer === undefined ? {} : { answer }),
       ...(setupCommand === undefined ? {} : { setupCommand }),
       nextArgs: jsonNextArgs(carry),

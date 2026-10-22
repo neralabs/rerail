@@ -3,7 +3,7 @@
   "id": "blade-parser-component-shorthand-variable-parameter",
   "revision": 2,
   "mode": "steer",
-  "description": "stillat/blade-parser 2.1.0 ComponentShorthandVariableParameterValidator: on an `<x-...>` component, an attribute named `$:...` (a typo for `:$...`) or a shorthand `:$var` given a value.",
+  "description": "Fix malformed shorthand variable attributes on Blade components: a $: prefix that should be :$, or a :$ shorthand that is also given a value.",
   "scope": {
     "include": [
       "**/*.blade.php"
@@ -66,7 +66,7 @@
       "violation": {
         "anchor": "witness.start",
         "code": "ComponentShorthandVariableParameterValidator",
-        "message": "Shorthand parameter variable issue"
+        "message": "Write this shorthand attribute as :\\$name with no value, or bind a value with a regular :name=\"...\" attribute."
       }
     }
   ]

@@ -1,3 +1,4 @@
+/** Internal testing: activation profiles, `rerail activate`, `rerail activation request`, `rerail profile` and `--profile`. */
 import { readFile, writeFile } from "node:fs/promises";
 import {
   CustomerActivationManager,

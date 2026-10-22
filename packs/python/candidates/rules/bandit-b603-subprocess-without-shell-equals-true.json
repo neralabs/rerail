@@ -3,7 +3,7 @@
   "id": "bandit-b603-subprocess-without-shell-equals-true",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect configured subprocess invocations where shell is absent or evaluates false",
+  "description": "Validate untrusted input passed to subprocess.Popen and subprocess.call even without a shell; the program still runs with whatever arguments it gets.",
   "scope": {
     "include": [
       "**/*.py"

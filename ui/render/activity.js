@@ -56,7 +56,7 @@ function updateRow(node, item) {
   setText(node.querySelector(".path"), path ? ` · ${path}` : "");
   const open = node.querySelector(".open");
   setAttr(open, "data-i", x.sessionId);
-  setText(open, shortSessionId(x.sessionId, data.sessions.find(s => s.sessionId === x.sessionId)?.host));
+  setText(open, shortSessionId(x.sessionId, x.host));
 }
 
 function syncPackSelect(select, findings) {
@@ -76,7 +76,7 @@ export function renderActivity(root) {
   if (pane.parentNode !== root) root.replaceChildren(pane);
   const a = pane._a, label = rangeLabel();
   syncRange(a.range);
-  syncPackSelect(a.packSelect, data.findings);
+  syncPackSelect(a.packSelect, data.findings.rows);
   const ruleName = ui.actRule === null ? null : (data.rules.get(ui.actRule) ? titleOf(data.rules.get(ui.actRule)) : ui.actRule);
   setContent(a.lead, JSON.stringify([label, ruleName]), () => [`Every violation logged ${label}, newest first.`,
     ruleName === null ? null : h("button.chip", { "data-act": "actclear", "aria-pressed": "true", title: "Show every rule again" }, `${ruleName} ✕`)]);

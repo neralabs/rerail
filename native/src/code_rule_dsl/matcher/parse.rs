@@ -4,7 +4,6 @@
 
 use super::AstMatcher;
 use super::each;
-use super::each::HostMap;
 use super::each::HostRanges;
 use super::exported::export;
 use super::exported::{exported_span, exported_text, is_span_variable};
@@ -18,6 +17,7 @@ use crate::code_rule_dsl::budget;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::literal::SubDoc;
 use crate::code_rule_dsl::literal::{self, Grammar, LiteralHost, Parsed};
+use crate::code_rule_dsl::origin::Origin;
 use crate::code_rule_dsl::scope::Reading;
 use crate::code_rule_dsl::value::Value;
 use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
@@ -50,6 +50,8 @@ pub(crate) struct ParseTest {
 /// `parse` holds, in the host's environment as the `parse` began, with the tree's captures bound
 /// so far exported into it as `parse` exports them (text and host range). It binds nothing the
 /// tree's rule sees: a relation over the tree's nodes that holds it tests the host per candidate.
+/// On an embedded program's node (outside `parse`), the file's own tree is the host
+/// (`embedded::document_host`).
 #[derive(Clone)]
 pub(crate) struct HostTest {
     pub(crate) rule: AstMatcher,
@@ -109,7 +111,12 @@ impl HostTest {
         node: Node<'t, D>,
         env: &mut Cow<MetaVarEnv<'t, D>>,
     ) -> Option<Node<'t, D>> {
-        let tree = literal::sub_tree(&node)?;
+        // A program node's `host` is the file's own tree's node (`embedded`).
+        let Some(tree) = literal::sub_tree(&node) else {
+            return super::embedded::document_host(&self.rule, &node, env.as_ref())
+                .filter(|held| *held)
+                .map(|_| node);
+        };
         let run = HOOKS.with_borrow(|hooks| {
             hooks
                 .iter()
@@ -139,14 +146,14 @@ pub(super) fn host_exports<D: Doc>(
             continue;
         }
         if let Some(found) = env.get_match(&name) {
-            if let Some(range) = tree.host_range(found.node_id()) {
-                exports.push((name.clone(), found.text().into_owned(), range));
+            if let Some(range) = tree.of_node(found.node_id(), found.range()) {
+                exports.push((name.clone(), found.text().into_owned(), range.primary()));
             }
         } else if let (Some(text), Some(span)) =
             (exported_text(env, &name), exported_span(env, &name))
-            && let Some(range) = tree.host_span(span)
+            && let Some(range) = tree.of_range(span)
         {
-            exports.push((name.clone(), text, range));
+            exports.push((name.clone(), text, range.primary()));
         }
     }
     exports
@@ -189,7 +196,7 @@ impl ParseTest {
         let root = AstGrep::doc(SubDoc { tree: tree.clone() });
         let mut inner = Cow::Owned(MetaVarEnv::new());
         // `violation.each` reads the tree's bindings by their host ranges.
-        let _hosts = each::active().then(|| HostRanges::enter(host_map(&tree)));
+        let _hosts = each::active().then(|| HostRanges::enter(tree.clone()));
         // A `host` rule runs on this node in the host's environment as it stands now, with the
         // tree's captures; it binds nothing and excludes nothing `each` enumerates.
         let before = self.host_sound.is_some().then(|| env.as_ref().clone());
@@ -210,28 +217,19 @@ impl ParseTest {
         self.rule.match_node_with_env(root.root(), &mut inner)?;
         for name in &self.exports {
             if let Some(found) = inner.get_match(name)
-                && let Some(range) = tree.host_range(found.node_id())
+                && let Some(range) = tree.of_node(found.node_id(), found.range())
             {
-                export(env, name, &found.text(), range);
+                export(env, name, &found.text(), range.primary());
             } else if let (Some(text), Some(span)) =
                 (exported_text(&inner, name), exported_span(&inner, name))
             {
                 // A capture a nested parse exported: its span is in this tree's range space.
-                if let Some(range) = tree.host_span(span) {
-                    export(env, name, &text, range);
+                if let Some(range) = tree.of_range(span) {
+                    export(env, name, &text, range.primary());
                 }
             }
         }
         Some(node)
-    }
-}
-
-/// A parsed tree's coordinates in the document it was parsed from.
-pub(super) fn host_map(tree: &Arc<literal::SubTree>) -> HostMap {
-    let (nodes, spans) = (Arc::clone(tree), Arc::clone(tree));
-    HostMap {
-        node: Arc::new(move |id| nodes.host_range(id)),
-        span: Arc::new(move |range| spans.host_span(range)),
     }
 }
 
@@ -250,6 +248,7 @@ pub(super) fn parsed_tree<D: Doc>(node: &Node<'_, D>, grammar: Grammar) -> Optio
         LiteralHost::PythonString => literal::parse_string(node, grammar, &mut spend_steps),
         LiteralHost::PhpString => literal::parse_php_string(node, grammar, &mut spend_steps),
         LiteralHost::PhpComment => literal::parse_php_comment(node, &mut spend_steps),
+        LiteralHost::RustString => literal::parse_rust_string(node, grammar, &mut spend_steps),
     };
     let Some(parsed) = parsed else {
         // The budget fails the clause; a deadline leaves the parse unknown.

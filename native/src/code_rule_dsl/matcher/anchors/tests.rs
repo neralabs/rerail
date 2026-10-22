@@ -27,6 +27,8 @@ fn compile_rule(
         conflicts: None,
         captures: Default::default(),
         calls: None,
+        documents: None,
+        side: crate::code_rule_dsl::compile::documents::Side::Host,
     };
     crate::code_rule_dsl::compile::compile_ast_rule(rule, language, path, gaps, &utils)
 }
@@ -146,7 +148,7 @@ fn compare_matchers(
     let tape = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
     let native = AstGrep::doc(native);
     let tape = AstGrep::doc(tape);
-    assert_eq!(native.root().dfs().count(), image.node_count());
+    assert_eq!(native.root().dfs().count(), image.primary.node_count());
     for &(rule, matcher) in matchers {
         let plan = AnchorPlan::compile(matcher);
         let expected = actual(&native, matcher);
@@ -157,7 +159,7 @@ fn compare_matchers(
         assert!(native_complete && tape_complete, "{language:?} {rule}");
         assert_eq!(
             native_visited,
-            image.node_count(),
+            image.primary.node_count(),
             "charge anonymous nodes too"
         );
         assert_eq!(tape_visited, native_visited);
@@ -514,7 +516,7 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             }
         }
     }
-    assert_eq!(queries.len(), 354, "pinned catalog query inventory");
+    assert_eq!(queries.len(), 369, "pinned catalog query inventory");
     // Every catalog grammar needs a fixture here; an unknown language fails rather than being skipped.
     let fixtures = [
         (
@@ -602,7 +604,7 @@ fn incomplete_index_is_not_a_clean_absence() {
     )
     .unwrap();
     let plan = AnchorPlan::compile(&matcher);
-    assert!(image.node_count() > 2);
+    assert!(image.primary.node_count() > 2);
     let native = AstGrep::doc(native);
     let tape = AstGrep::doc(tape);
     for budget in [0, 1, 2] {
@@ -687,13 +689,13 @@ fn deep_assignment_chain_has_exact_bounded_visits_and_incomplete_fallback() {
     let plan = AnchorPlan::compile(&matcher);
     let native = AstGrep::doc(native);
     let tape = AstGrep::doc(tape);
-    assert!(image.node_count() > 1024);
+    assert!(image.primary.node_count() > 1024);
     println!(
         "DEEP_CHAIN nodes={} max_visits=[0,1,7,513,{}]",
-        image.node_count(),
-        image.node_count() - 1
+        image.primary.node_count(),
+        image.primary.node_count() - 1
     );
-    for max_nodes in [0, 1, 7, 513, image.node_count() - 1] {
+    for max_nodes in [0, 1, 7, 513, image.primary.node_count() - 1] {
         let (found, roots, visited, complete, all) =
             selected(&native, &matcher, &plan, max_nodes, || false);
         assert!(found.is_empty() && !complete && all);
@@ -708,10 +710,10 @@ fn deep_assignment_chain_has_exact_bounded_visits_and_incomplete_fallback() {
     let (found, _, visited, complete, all) =
         selected(&native, &matcher, &plan, usize::MAX, || false);
     assert!(found.is_empty() && complete && !all);
-    assert_eq!(visited, image.node_count());
+    assert_eq!(visited, image.primary.node_count());
     let (found, _, visited, complete, all) = selected(&tape, &matcher, &plan, usize::MAX, || false);
     assert!(found.is_empty() && complete && !all);
-    assert_eq!(visited, image.node_count());
+    assert_eq!(visited, image.primary.node_count());
 }
 
 fn sibling_matcher(rule: Value, language: GrammarDialect) -> AstMatcher {
@@ -795,17 +797,15 @@ fn sibling_projections_are_exact_around_zero_width_nodes_and_the_root() {
     }
 }
 
-// A Blade tape's embedded program is the root's last child, spanning the template bytes it
-// stands for, so it overlaps the template's nodes: for `{{ $x }}` the program and the template's
-// `echo` both span the echo. ast-grep's walks are byte-positioned there too (`next` skips the
-// program, `prev_all` from the program starts at the echo), and an exact plan, and its negation,
-// must select what the matcher matches.
+// A Blade file is two documents (`embed`): the template's tree, whose lexer errors are zero-width
+// ERROR leaves, and its compiled view, whose markers stand among its statements. In each, an exact
+// plan, and its negation, must select what the matcher matches.
 #[test]
-fn sibling_projections_are_exact_among_blade_overlapping_siblings() {
+fn sibling_projections_are_exact_in_both_blade_documents() {
     let mut rules = Vec::new();
     for relation in ["precedes", "follows"] {
         for stop in ["neighbor", "end"] {
-            for target in ["", "^\\{\\{", "^\\$", "^[a-z]"] {
+            for target in ["", "^\\{\\{", "^\\$", "^[a-z]", "^;"] {
                 rules.push(json!({ "regex": "", relation: { "stopBy": stop, "regex": target } }));
             }
         }
@@ -814,27 +814,18 @@ fn sibling_projections_are_exact_among_blade_overlapping_siblings() {
         "{{ $x }}",
         "<p>{{ $x }}</p>\n{!! $y !!}\n",
         "@if($a)\n{{ $b }}\n@endif\n",
+        "@foreach($xs as $x)\n{{ $loop->index }}\n@endforeach\n{{-- open\n",
     ];
     for source in sources {
         let grammar = Grammar::new(GrammarDialect::Blade).unwrap();
         let image = TapeImage::encode_template(&grammar, source, &|| false).unwrap();
-        let tape = AstGrep::doc(
-            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap(),
-        );
-        let root = tape.root();
-        let program = root.children().last().expect("the embedded program");
-        assert_eq!(program.kind(), "program", "{source:?}");
-        let start = program.range().start;
-        assert!(
-            root.children()
-                .any(|child| child.node_id() != program.node_id() && child.range().end > start),
-            "{source:?}: the program overlaps a template node"
-        );
-        if source == "{{ $x }}" {
-            // No zero-width node: only the overlap puts the walk off the preorder ordinals.
-            assert!(root.dfs().all(|node| !node.range().is_empty()));
-        }
-        exact_sibling_projection(&tape, source, &rules);
+        let host =
+            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+        let guests = host.guests().unwrap();
+        let view = guests.first().expect("the compiled view").doc.clone();
+        let text = view.get_source().clone();
+        exact_sibling_projection(&AstGrep::doc(host), source, &rules);
+        exact_sibling_projection(&AstGrep::doc(view), &text, &rules);
     }
 }
 
@@ -1262,4 +1253,46 @@ fn relation_selections_spend_units_on_the_related_nodes_only() {
             "{rule}: {small} units with {small_nodes} nodes, {large} with {large_nodes}"
         );
     }
+}
+
+/// A pattern's literal leaves select the roots whose subtree holds every one of them, a posting
+/// search per root. Those searches spend budget by the step, counted across roots: a file of many
+/// candidate roots spends a unit per 256 roots, not one per root (pandas' `frame.py` under the
+/// Python pack spent 39,541 of its 50,000 units here before any clause ran).
+#[test]
+fn a_pattern_selection_spends_a_unit_per_256_roots_not_per_root() {
+    use crate::code_rule_dsl::budget::MatchBudget;
+    use std::sync::atomic::AtomicBool;
+    let rule = json!({ "pattern": "send($A, 1)" });
+    let matcher = compile_rule(
+        &rule,
+        GrammarDialect::TypeScript,
+        "test/rule",
+        &mut Vec::new(),
+    )
+    .unwrap();
+    let plan = AnchorPlan::compile(&matcher);
+    let roots = 8_000;
+    let source = (0..roots)
+        .map(|n| format!("send(a{n}, {});\n", n % 3))
+        .collect::<String>();
+    let native = AstGrep::doc(StrDoc::new(&source, GrammarDialect::TypeScript));
+    let index = FileAnchorIndex::build(&native, &[&plan], usize::MAX, || false);
+    let budget = MatchBudget::work(&Arc::new(AtomicBool::new(false)), u64::MAX);
+    let selection = index.select(&plan);
+    let spent = budget.spent();
+    drop(budget);
+    let Selection::Roots(selected) = &selection else {
+        panic!("a complete index selects roots");
+    };
+    let found = selected
+        .iter()
+        .filter_map(|&ordinal| matched(index.node(ordinal), &matcher))
+        .collect::<Vec<_>>();
+    assert_eq!(found, actual(&native, &matcher), "sound selection");
+    assert_eq!(found.len(), roots / 3 + 1);
+    assert!(
+        spent < (roots / 16) as u64,
+        "{spent} units for {roots} candidate roots"
+    );
 }

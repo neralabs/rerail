@@ -1,0 +1,196 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "phpstan-argument-sprintf",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Pass sprintf() exactly as many values as its format string's placeholders, and keep the format valid; too few values throw and extra ones are silently ignored.",
+  "scope": {
+    "include": [
+      "**/*.php"
+    ],
+    "exclude": [
+      "**/*.blade.php"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "missing",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "any": [
+              {
+                "pattern": "$FN($F)",
+                "kind": "function_call_expression",
+                "has": {
+                  "field": "function",
+                  "resolves": {
+                    "import": [
+                      "sprintf"
+                    ]
+                  }
+                }
+              },
+              {
+                "pattern": "$FN($F, $$$A)",
+                "kind": "function_call_expression",
+                "has": {
+                  "field": "function",
+                  "resolves": {
+                    "import": [
+                      "sprintf"
+                    ]
+                  }
+                }
+              }
+            ],
+            "formatArgs": {
+              "style": "printf",
+              "string": "F",
+              "args": "A",
+              "missing": {
+                "any": [
+                  {
+                    "kind": "placeholder"
+                  },
+                  {
+                    "kind": "star"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "argument.sprintf",
+        "anchor": "witness.start",
+        "suppress": {
+          "phpstan": {
+            "identifiers": [
+              "argument.sprintf"
+            ]
+          }
+        },
+        "message": "Call to sprintf contains more placeholders than values given."
+      }
+    },
+    {
+      "id": "unused",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "any": [
+              {
+                "pattern": "$FN($F)",
+                "kind": "function_call_expression",
+                "has": {
+                  "field": "function",
+                  "resolves": {
+                    "import": [
+                      "sprintf"
+                    ]
+                  }
+                }
+              },
+              {
+                "pattern": "$FN($F, $$$A)",
+                "kind": "function_call_expression",
+                "has": {
+                  "field": "function",
+                  "resolves": {
+                    "import": [
+                      "sprintf"
+                    ]
+                  }
+                }
+              }
+            ],
+            "formatArgs": {
+              "style": "printf",
+              "string": "F",
+              "args": "A",
+              "unused": {
+                "kind": "argument"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "argument.sprintf",
+        "anchor": "witness.start",
+        "suppress": {
+          "phpstan": {
+            "identifiers": [
+              "argument.sprintf"
+            ]
+          }
+        },
+        "message": "Call to sprintf contains fewer placeholders than values given."
+      }
+    },
+    {
+      "id": "invalid",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "any": [
+              {
+                "pattern": "$FN($F)",
+                "kind": "function_call_expression",
+                "has": {
+                  "field": "function",
+                  "resolves": {
+                    "import": [
+                      "sprintf"
+                    ]
+                  }
+                }
+              },
+              {
+                "pattern": "$FN($F, $$$A)",
+                "kind": "function_call_expression",
+                "has": {
+                  "field": "function",
+                  "resolves": {
+                    "import": [
+                      "sprintf"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "F": {
+              "has": {
+                "parse": {
+                  "grammar": "printfFormat",
+                  "has": {
+                    "kind": "error"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "argument.sprintf",
+        "anchor": "witness.start",
+        "suppress": {
+          "phpstan": {
+            "identifiers": [
+              "argument.sprintf"
+            ]
+          }
+        },
+        "message": "Fix the invalid placeholder in this sprintf() format, or write a literal percent sign as %%."
+      }
+    }
+  ]
+}

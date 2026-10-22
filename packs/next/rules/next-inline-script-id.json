@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "next-inline-script-id",
-  "revision": 1,
+  "revision": 3,
   "mode": "steer",
-  "description": "@next/eslint-plugin-next 16.3.8 @next/next/inline-script-id: an element named by the first local an import from next/script binds, with children or dangerouslySetInnerHTML and no id (attributes and keys of object-literal spreads; any other spread makes it uncheckable).",
+  "description": "Give every next/script component with inline content an id; Next.js needs it to track and optimize the script.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -388,6 +388,16 @@
           "eslint": {
             "rules": [
               "@next/next/inline-script-id"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "inline-script-id"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useInlineScriptId"
             ]
           }
         }

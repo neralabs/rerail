@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "next-no-sync-scripts",
-  "revision": 1,
+  "revision": 3,
   "mode": "steer",
-  "description": "@next/eslint-plugin-next 16.3.8 @next/next/no-sync-scripts: a <script> opening element with a src attribute and neither async nor defer.",
+  "description": "Add async or defer to script tags that load an external src; synchronous scripts block page rendering.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -92,11 +92,21 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@next/next/no-sync-scripts",
-        "message": "Synchronous scripts should not be used. See: https://nextjs.org/docs/messages/no-sync-scripts",
+        "message": "Add async or defer to this external script tag so it stops blocking page rendering.",
         "suppress": {
           "eslint": {
             "rules": [
               "@next/next/no-sync-scripts"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-sync-scripts"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/performance/noSyncScripts"
             ]
           }
         }

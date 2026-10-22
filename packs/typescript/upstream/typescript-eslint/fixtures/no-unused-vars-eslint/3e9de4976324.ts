@@ -1,0 +1,6 @@
+
+function g(bar, baz) {
+  return bar;
+}
+g();
+      

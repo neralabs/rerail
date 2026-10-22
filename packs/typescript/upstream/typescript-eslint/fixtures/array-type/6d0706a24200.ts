@@ -1,0 +1,1 @@
+const x: Readonly<string[]> = ['a', 'b'];

@@ -7,7 +7,7 @@
 //   - under `packs/<id>/candidates/` (scored, never shipped): the resolved licence names only terms the
 //     pack declares; Rerail's own probe rules legitimately resolve to Apache-2.0 alone.
 // And for every file a `packs/<id>/licenses/<project>/UPSTREAM.md` table lists (copied from that upstream), the
-// resolved licence includes the one that UPSTREAM.md records (`License: <SPDX id>`), and the resolved copyright
+// resolved licence names the one that UPSTREAM.md records (`License: <SPDX id>`; `MIT OR Apache-2.0` names MIT), and the resolved copyright
 // names a holder besides Rerail: a copied file left to the catch-all annotation reads as Rerail's own work.
 // Resolution follows REUSE 3.x for REUSE.toml: of the `[[annotations]]` whose `path` glob
 // matches, the last one in the file applies; with `precedence = "override"` it wins outright, otherwise an
@@ -98,6 +98,14 @@ export function licenceTerms(expression) {
         .filter(Boolean),
     ),
   ].sort();
+}
+
+/** The SPDX ids an expression names, whatever joins them (`AND`, `OR`, `WITH`): `MIT OR Apache-2.0` names MIT. */
+function licenceIds(expression) {
+  return String(expression)
+    .split(/\s+(?:AND|OR|WITH)\s+|[()]/)
+    .map((part) => part.trim())
+    .filter(Boolean);
 }
 
 // Assembled so that REUSE does not read this source's own patterns as licence and copyright tags.
@@ -204,7 +212,7 @@ export function check(repo) {
     }
     const resolved = effectiveLicence(repo, annotations, path);
     const holders = effectiveCopyright(repo, annotations, path);
-    if (resolved === null || !licenceTerms(resolved).includes(licence)) {
+    if (resolved === null || !licenceIds(resolved).includes(licence)) {
       findings.push(finding(path, `REUSE resolves ${resolved ?? "no licence"}; ${record} lists it as copied under ${licence}`));
     } else if (!holders.some((holder) => !holder.includes(RERAIL_HOLDER))) {
       const named = holders.length === 0 ? "no copyright holder" : `only ${RERAIL_HOLDER} as its copyright holder`;

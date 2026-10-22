@@ -3,7 +3,7 @@
   "id": "ruff-f404-late-future-import",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F404 (late-future-import): a `from __future__ import` (also relative, by the module's text with `resolves.imported` and `relative: \"text\"`, as Ruff ignores the level) after the futures boundary, reported on the statement. The boundary is closed by any statement other than a `__future__` import or a string-literal module docstring in first position (ruff_python_parser semantic_errors.rs `visit_stmt`); a compound statement closes it before its body is visited, so a nested `__future__` import is always late.",
+  "description": "Put from __future__ imports at the very top of the file, after only the module docstring; anywhere else they are a syntax error.",
   "scope": {
     "include": [
       "**/*"

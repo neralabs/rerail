@@ -13,7 +13,15 @@ export const sessionResponseSchema = z.object({
   }),
   audit: createSelectSchema(audits)
     .pick({ workspaceRoot: true, scope: true, mode: true, status: true })
-    .extend({ violationCount: z.number().int().nonnegative(), failureCount: z.number().int().nonnegative() }).nullable(),
+    .extend({
+      violationCount: z.number().int().nonnegative(),
+      failureCount: z.number().int().nonnegative(),
+      unlistedFailureCount: z.number().int().nonnegative(),
+      blindFileCount: z.number().int().nonnegative(),
+      gapCount: z.number().int().nonnegative(),
+      outOfWorkRuleCount: z.number().int().nonnegative(),
+      fileWorkStoppedRuleCount: z.number().int().nonnegative(),
+    }).nullable(),
 });
 export const presentationDaemonSchema = z.object({
   pid: z.number().int().positive(),

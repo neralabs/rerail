@@ -10,6 +10,7 @@ use crate::code_rule_dsl::model::{
     ClauseKind, CompiledClause, CompiledCodeRule, Evaluation, FactQuery, Query, Snapshot,
 };
 use crate::code_rule_dsl::query;
+use crate::code_rule_dsl::soundness::UNREAD;
 use crate::code_rule_dsl::violations::Witness;
 use napi::Result;
 use std::cell::RefCell;
@@ -39,6 +40,7 @@ pub(super) fn compile_query_plan(
             clause.violation.each = None;
             clause.violation.node_regexes.clear();
             clause.violation.suppress = None;
+            clause.violation.ignored_by = None;
             clause.violation.group_transform = None;
             clause.violation.message_template = None;
             clause.violation.fix = None;
@@ -52,15 +54,23 @@ pub(super) fn compile_query_plan(
 #[derive(Clone)]
 pub(super) struct Partition {
     pub(super) witnesses: Vec<Witness>,
-    /// The clause failed in the file: its witnesses there are unknown.
-    failed: bool,
-    /// The file was read around syntax errors.
+    /// The static message of the clause's failure in the file: its witnesses there are unknown.
+    failure: Option<&'static str>,
+    /// The file was read around syntax errors, or (failed `UNREAD`) not read at all: the detail.
     syntax: Option<String>,
 }
 
-/// The synthetic clause producing an `evidence` relation's rows in each file.
+impl Partition {
+    fn failed(&self) -> bool {
+        self.failure.is_some()
+    }
+}
+
+/// The synthetic clause producing an `evidence` relation's rows in each file, answering to the
+/// comments its `side` does.
 pub(super) fn compile_relation_producer(
     relation: &FactQuery,
+    side: evidence::Side,
     template: &CompiledClause,
     index: usize,
     code_rule: &mut CompiledCodeRule,
@@ -68,7 +78,7 @@ pub(super) fn compile_relation_producer(
     let ast = relation.ast.as_ref();
     let id = (index, code_rule.clauses.len());
     let mut clause = template.clone();
-    clause.violation = evidence::producer_violation(template, relation);
+    clause.violation = evidence::producer_violation(template, relation, side);
     clause.kind = ClauseKind::Forbid(ast.query.clone());
     clause.synthetic = true;
     code_rule.clauses.push(clause);
@@ -95,14 +105,14 @@ pub(super) fn record_evidence(state: &mut WorkspaceState, path: &str, file: &Fil
         .collect::<BTreeSet<_>>();
     for id in ids {
         let witnesses = file.witnesses.get(&id).cloned().unwrap_or_default();
-        let failed = file.failures.contains_key(&id);
+        let failure = file.failures.get(&id).map(|&(_, message)| message);
         let partitions = state.evidence.entry(id).or_default();
-        if failed || file.syntax.is_some() || !witnesses.is_empty() {
+        if failure.is_some() || file.syntax.is_some() || !witnesses.is_empty() {
             partitions.insert(
                 path.to_owned(),
                 Partition {
                     witnesses,
-                    failed,
+                    failure,
                     syntax: file.syntax.clone(),
                 },
             );
@@ -132,7 +142,7 @@ fn relation_rows(state: &WorkspaceState, id: ClauseId, relation: &FactQuery) -> 
         if domain.is_some_and(|domain| !domain.matches(path)) {
             continue;
         }
-        if partition.failed || partition.syntax.is_some() {
+        if partition.failed() || partition.syntax.is_some() {
             rows.incomplete.insert(path.clone());
         } else {
             rows.witnesses.extend(partition.witnesses.iter().cloned());
@@ -177,10 +187,13 @@ struct EvidenceLeaf<'a> {
     read: RefCell<EvidenceRead<'a>>,
 }
 
+/// A file's partition of a leaf, by path.
+type EvidenceRow<'a> = (&'a str, &'a Partition);
+
 struct EvidenceRead<'a> {
     partitions: Option<std::collections::btree_map::Iter<'a, String, Partition>>,
     /// The rows read so far; `None` where the time budget ran out.
-    rows: Vec<Option<(&'a str, &'a Partition)>>,
+    rows: Vec<Option<EvidenceRow<'a>>>,
 }
 
 impl<'a> EvidenceLeaves<'a> {
@@ -203,8 +216,13 @@ impl<'a> EvidenceLeaves<'a> {
         Self { leaves }
     }
 
-    fn partition(&self, leaf: usize, position: usize) -> (&'a str, &'a Partition) {
-        self.leaves[leaf].read.borrow().rows[position].expect("the answer read this row")
+    fn partition(&self, leaf: usize, position: usize) -> EvidenceRow<'a> {
+        self.row(leaf, position).expect("the answer read this row")
+    }
+
+    /// Row `position` of leaf `leaf`, already read: `None` where the time budget ran out.
+    fn row(&self, leaf: usize, position: usize) -> Option<EvidenceRow<'a>> {
+        self.leaves[leaf].read.borrow().rows[position]
     }
 }
 
@@ -229,7 +247,7 @@ impl query::select_when::Leaves for EvidenceLeaves<'_> {
                 }
                 Some((path, partition)) => {
                     read.rows.push(Some((path.as_str(), partition)));
-                    leaf.decision && !partition.failed && !partition.witnesses.is_empty()
+                    leaf.decision && !partition.failed() && !partition.witnesses.is_empty()
                 }
             };
             if ends {
@@ -243,9 +261,9 @@ impl query::select_when::Leaves for EvidenceLeaves<'_> {
                 witnesses: 0,
             },
             Some((_, partition)) => query::select_when::LeafRow {
-                failed: partition.failed,
-                partial: !partition.failed && leaf.ast && partition.syntax.is_some(),
-                witnesses: if partition.failed {
+                failed: partition.failed(),
+                partial: !partition.failed() && leaf.ast && partition.syntax.is_some(),
+                witnesses: if partition.failed() {
                     0
                 } else {
                     partition.witnesses.len()
@@ -255,22 +273,24 @@ impl query::select_when::Leaves for EvidenceLeaves<'_> {
     }
 }
 
-/// A global `forbid` query answered over the evidence index: its witnesses, or `None` where
-/// unknown. `partial` receives the files read around syntax errors the answer relied on.
-fn evaluate_plan(
+/// A global `forbid` query answered over the evidence index: its witnesses, or where unknown the
+/// failed row it could not do without (`None` where the time budget ran out). `partial` receives
+/// the files read around syntax errors the answer relied on.
+fn evaluate_plan<'s>(
     plan: &QueryPlan,
-    state: &WorkspaceState,
+    state: &'s WorkspaceState,
     code_rule: &CompiledCodeRule,
     partial: &mut BTreeMap<String, String>,
-) -> Result<Option<Vec<Witness>>> {
+) -> Result<std::result::Result<Vec<Witness>, Option<EvidenceRow<'s>>>> {
     let leaves = EvidenceLeaves::new(plan, state, code_rule);
     let cap = code_rule
         .capabilities
         .limits
         .max_witnesses
         .saturating_add(1);
-    let Some(answer) = query::select_when::answer(plan, cap, &leaves).map_err(invalid)? else {
-        return Ok(None);
+    let answer = match query::select_when::answer(plan, cap, &leaves).map_err(invalid)? {
+        Ok(answer) => answer,
+        Err((leaf, position)) => return Ok(Err(leaves.row(leaf, position))),
     };
     for (leaf, position) in answer.partial {
         let (path, partition) = leaves.partition(leaf, position);
@@ -278,17 +298,15 @@ fn evaluate_plan(
             partial.insert(path.to_owned(), syntax.clone());
         }
     }
-    Ok(Some(
-        answer
-            .witnesses
-            .into_iter()
-            .flat_map(|(leaf, position, take)| {
-                leaves.partition(leaf, position).1.witnesses[..take]
-                    .iter()
-                    .cloned()
-            })
-            .collect(),
-    ))
+    Ok(Ok(answer
+        .witnesses
+        .into_iter()
+        .flat_map(|(leaf, position, take)| {
+            leaves.partition(leaf, position).1.witnesses[..take]
+                .iter()
+                .cloned()
+        })
+        .collect()))
 }
 
 pub(super) fn evaluate_global(
@@ -302,7 +320,7 @@ pub(super) fn evaluate_global(
         if let Some(plan) = state.query_plans.get(&(index, clause.id.clone())) {
             let mut partial = BTreeMap::new();
             let result = evaluate_plan(plan, state, code_rule, &mut partial)?;
-            if result.is_some() {
+            if result.is_ok() {
                 for (path, message) in &partial {
                     evaluation.failures.push(failure(
                         &clause.id,
@@ -313,23 +331,29 @@ pub(super) fn evaluate_global(
                 }
             }
             match result {
-                None => evaluation.failures.push(failure(
+                // The file the answer could not do without; one the parser did not read reports how
+                // much of it the errors cover, as its local clauses do (`results::failure_message`).
+                Err(row) => evaluation.failures.push(failure(
                     &clause.id,
                     "source-incomplete",
-                    "A cross-file query source is incomplete",
-                    None,
+                    row.and_then(|(_, partition)| {
+                        partition
+                            .syntax
+                            .as_deref()
+                            .filter(|_| partition.failure == Some(UNREAD))
+                    })
+                    .unwrap_or("A cross-file query source is incomplete"),
+                    row.map(|(path, _)| path),
                 )),
-                Some(witnesses)
-                    if witnesses.len() > code_rule.capabilities.limits.max_witnesses =>
-                {
+                Ok(witnesses) if witnesses.len() > code_rule.capabilities.limits.max_witnesses => {
                     evaluation.failures.push(failure(
                         &clause.id,
-                        "budget-exceeded",
+                        crate::code_rule_dsl::model::WITNESS_LIMIT,
                         "global witness budget exceeded",
                         None,
                     ));
                 }
-                Some(witnesses) => {
+                Ok(witnesses) => {
                     evaluation.metrics.witnesses += witnesses.len();
                     evaluation.violations.extend(
                         witnesses

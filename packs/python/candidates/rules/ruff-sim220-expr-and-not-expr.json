@@ -3,7 +3,7 @@
   "id": "ruff-sim220-expr-and-not-expr",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's SIM220 (expr-and-not-expr): an `and` expression (one run of the operator; parentheses start a new one) with a value `not A` and a value `A`, the same plain name (through parentheses), and no side effect anywhere in it (Ruff's `contains_effect`). Reported on the whole `and` expression, once per such pair.",
+  "description": "Replace an and expression that combines a name with its own negation by False; it can never be true.",
   "scope": {
     "include": [
       "**/*"

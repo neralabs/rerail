@@ -42,8 +42,8 @@ import {
   semanticRuleShape,
 } from "./code-rule-schema-semantic.js";
 import { isCodeRuleOptionName, CodeRuleOptionError, codeRuleOptionConditionHolds, codeRuleOptionValues, resolveCodeRuleOptions } from "./code-rule-options.js";
-import { CODE_RULE_AST_LANGUAGES, CODE_RULE_LANGUAGE_IDS, isCodeRuleAstLanguage } from "./code-rule-languages.js";
-import type { CodeRuleAstLanguage } from "./code-rule-languages.js";
+import { CODE_RULE_AST_LANGUAGES, CODE_RULE_EMBEDDING_LANGUAGES, CODE_RULE_LANGUAGE_IDS, codeRuleLanguageEmbedVias, isCodeRuleAstLanguage } from "./code-rule-languages.js";
+import type { CodeRuleAstLanguage, CodeRuleLanguageId } from "./code-rule-languages.js";
 
 export { CODE_RULE_AST_LANGUAGES };
 export type { CodeRuleAstLanguage };
@@ -146,9 +146,9 @@ export const codeRuleViolationSpecSchema = z
 export type CodeRuleAstRule = CodeRuleDslAstRule;
 export type CodeRuleAstRelation = CodeRuleDslAstRelation;
 
-const AST_RULE_KEYS = ["pattern", "kind", "regex", "nthChild", "all", "any", "not", "matches", "inside", "has", "precedes", "follows", "compare", "count", "resolves", "value", "arguments", "binds", "parse", "capture", "formatArgs", "layout", "host", "calls"] as const;
+const AST_RULE_KEYS = ["pattern", "kind", "regex", "nthChild", "all", "any", "not", "matches", "inside", "has", "precedes", "follows", "compare", "count", "resolves", "value", "arguments", "binds", "parse", "capture", "formatArgs", "layout", "host", "embedded", "calls"] as const;
 /** The grammars `parse` applies and their kinds (the engine's `literal::Grammar`). */
-export const CODE_RULE_PARSE_GRAMMARS = ["percentFormat", "braceFormat", "annotation", "eslintDirective", "printfFormat", "scanfFormat", "phpDoc"] as const;
+export const CODE_RULE_PARSE_GRAMMARS = ["percentFormat", "braceFormat", "annotation", "eslintDirective", "printfFormat", "scanfFormat", "phpDoc", "rustFormat"] as const;
 export const CODE_RULE_PARSE_KINDS: Record<(typeof CODE_RULE_PARSE_GRAMMARS)[number], readonly string[]> = {
   percentFormat: ["format", "literal", "placeholder", "mapping_key", "flags", "width", "precision", "star", "length", "conversion", "error"],
   braceFormat: [
@@ -253,6 +253,7 @@ export const CODE_RULE_PARSE_KINDS: Record<(typeof CODE_RULE_PARSE_GRAMMARS)[num
     "variable",
     "description",
   ],
+  rustFormat: ["format", "literal", "field", "auto", "index", "name", "format_spec", "type", "error"],
 };
 /** The keys a rule over a parsed tree may use; one over an annotation, whose nodes are Python's, also these. */
 const PARSE_RULE_KEYS: readonly string[] = ["kind", "regex", "all", "any", "not", "inside", "has", "precedes", "follows", "count", "compare", "value", "capture", "host"];
@@ -482,23 +483,25 @@ const CODE_RULE_GLOBAL_SETTINGS = ["readonly", "writable", "off", "readable", "w
 /** An identifier: ASCII letters, digits, `_` and `$`, not starting with a digit (the engine's check). */
 const resolveIdentifier = z.string().max(256).regex(/^[A-Za-z_$][A-Za-z0-9_$]*$/, "Must be an identifier (A-Z, a-z, 0-9, _, $).");
 /**
- * A Python dotted name, or a PHP name: labels (a letter, `_` or any non-ASCII character, then those or digits:
- * the engine's `php_names::is_label`) joined by single `\`, optionally fully qualified. The engine refuses each
- * family the other's shape. It reads Unicode scalar values (no lone surrogate) and bounds a name's UTF-8 bytes.
+ * A Python dotted name, a Rust path (identifiers joined by `::`), or a PHP name: labels (a letter, `_` or any
+ * non-ASCII character, then those or digits: the engine's `php_names::is_label`) joined by single `\`, optionally
+ * fully qualified. The engine refuses each family the others' shapes. It reads Unicode scalar values (no lone
+ * surrogate) and bounds a name's UTF-8 bytes.
  */
 const RESOLVE_DOTTED_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)*$/;
+const RESOLVE_RUST_PATH = /^[A-Za-z_$][A-Za-z0-9_$]*(::[A-Za-z_$][A-Za-z0-9_$]*)*$/;
 const PHP_LABEL = String.raw`[A-Za-z_\u0080-\ud7ff\ue000-\u{10ffff}][A-Za-z0-9_\u0080-\ud7ff\ue000-\u{10ffff}]*`;
 const RESOLVE_PHP_NAME = new RegExp(String.raw`^\\?${PHP_LABEL}(?:\\${PHP_LABEL})*$`, "u");
 const UTF8 = new TextEncoder();
 const resolveDottedName = z
   .string()
   .max(256)
-  .refine(name => (RESOLVE_DOTTED_NAME.test(name) || RESOLVE_PHP_NAME.test(name)) && UTF8.encode(name).length <= 256, {
-    message: String.raw`Must be a dotted name (identifiers joined by .) or a PHP name (labels joined by \) of at most 256 bytes.`,
+  .refine(name => (RESOLVE_DOTTED_NAME.test(name) || RESOLVE_RUST_PATH.test(name) || RESOLVE_PHP_NAME.test(name)) && UTF8.encode(name).length <= 256, {
+    message: String.raw`Must be a dotted name (identifiers joined by .), a Rust path (identifiers joined by ::) or a PHP name (labels joined by \) of at most 256 bytes.`,
   });
 /** A Python dotted name: ASCII identifiers without `$` joined by `.` (the engine's check). */
 const pythonDottedName = z.string().max(256).regex(/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/, "Must be a dotted name (identifiers joined by .).");
-/** Every binding form a binding filter names: the engine's `FORMS`, and PHP's `static`. */
+/** Every binding form a binding filter names: the engine's `FORMS`, PHP's `static` and SQL's `relation`, `cte` and `target`. */
 export const CODE_RULE_BINDING_FORMS = [
   "assignment",
   "annotated",
@@ -521,9 +524,12 @@ export const CODE_RULE_BINDING_FORMS = [
   "method",
   "accessor",
   "static",
+  "relation",
+  "cte",
+  "target",
 ] as const;
-/** Every scope kind a binding filter names: Python's, then TypeScript's and PHP's others (the engine's order). */
-export const CODE_RULE_SCOPE_KINDS = ["module", "class", "function", "lambda", "comprehension", "typeParameters", "global", "block", "namespace", "functionName", "closure"] as const;
+/** Every scope kind a binding filter names: Python's, then TypeScript's, PHP's and SQL's others (the engine's order). */
+export const CODE_RULE_SCOPE_KINDS = ["module", "class", "function", "lambda", "comprehension", "typeParameters", "global", "block", "namespace", "functionName", "closure", "query"] as const;
 const bindingFilterShape = {
   form: z.union([z.enum(CODE_RULE_BINDING_FORMS), z.array(z.enum(CODE_RULE_BINDING_FORMS)).min(1)]).optional(),
   scope: z.union([z.enum(CODE_RULE_SCOPE_KINDS), z.array(z.enum(CODE_RULE_SCOPE_KINDS)).min(1)]).optional(),
@@ -681,17 +687,31 @@ const moduleRegex = z
   .object({ regex: nonEmptyString.optional(), notRegex: nonEmptyString.optional() })
   .strict()
   .refine(condition => condition.regex !== undefined || condition.notRegex !== undefined, "Set regex, notRegex or both.");
+const packageConditionSchema = z
+  .object({
+    bin: z.boolean().optional(),
+    nodeVersion: z.object({ subsetOf: nonEmptyString }).strict().optional(),
+    dependsOn: z.array(nonEmptyString).min(1).optional(),
+    path: moduleRegex.optional(),
+    serverGraph: z.boolean().optional(),
+  })
+  .strict()
+  .refine(condition => Object.values(condition).some(value => value !== undefined), "Set bin, nodeVersion, dependsOn, path or serverGraph.");
 export const codeRuleFileConditionSchema = z
   .object({
     path: moduleRegex.optional(),
     declaration: z.boolean().optional(),
     module: moduleRegex.optional(),
     moduleName: moduleRegex.optional(),
-    package: moduleRegex.optional(),
+    package: z.union([moduleRegex, packageConditionSchema]).optional(),
     inPackage: z.boolean().optional(),
+    jsxRuntime: z.array(z.enum(["react", "other", "unknown"])).min(1).optional(),
   })
   .strict()
-  .refine(file => Object.values(file).some(value => value !== undefined), "Set path, declaration, module, moduleName, package or inPackage.") as unknown as z.ZodType<CodeRuleDslFileCondition>;
+  .refine(
+    file => Object.values(file).some(value => value !== undefined),
+    "Set path, declaration, module, moduleName, package, inPackage or jsxRuntime.",
+  ) as unknown as z.ZodType<CodeRuleDslFileCondition>;
 export const codeRuleLanguageOptionsSchema = z
   .object({
     ecmaVersion: z
@@ -778,6 +798,7 @@ export const codeRuleAstRuleSchema: z.ZodType<CodeRuleDslAstRule> = z.lazy(() =>
         formatArgs: codeRuleFormatArgsSchema,
         layout: codeRuleLayoutSchema,
         host: codeRuleAstRuleSchema,
+        embedded: codeRuleAstRuleSchema,
         calls: codeRuleCallsSchema,
       }),
     })
@@ -813,6 +834,7 @@ export const codeRuleAstRelationSchema: z.ZodType<CodeRuleDslAstRelation> = z.la
         formatArgs: codeRuleFormatArgsSchema,
         layout: codeRuleLayoutSchema,
         host: codeRuleAstRuleSchema,
+        embedded: codeRuleAstRuleSchema,
         calls: codeRuleCallsSchema,
       }),
     })
@@ -836,7 +858,7 @@ export const codeRuleCallsSchema: z.ZodType<CodeRuleDslCalls> = z.lazy(
 export const codeRuleFormatArgsSchema: z.ZodType<CodeRuleDslFormatArgs> = z.lazy(() =>
   z
     .object({
-      style: z.enum(["brace", "percent", "printf", "scanf"]),
+      style: z.enum(["brace", "percent", "printf", "scanf", "rust"]),
       string: metavariableName,
       args: metavariableName,
       unused: codeRuleAstRuleSchema.optional(),
@@ -873,6 +895,7 @@ export const codeRuleParseSchema: z.ZodType<CodeRuleDslParse> = z.lazy(() =>
         formatArgs: codeRuleFormatArgsSchema,
         layout: codeRuleLayoutSchema,
         host: codeRuleAstRuleSchema,
+        embedded: codeRuleAstRuleSchema,
         calls: codeRuleCallsSchema,
       }),
     })
@@ -953,12 +976,49 @@ type RuleIssue = (path: RulePath, message: string) => void;
 /** A rule's structural checks, as the engine reads them. */
 type AstRuleVisit = (rule: CodeRuleDslAstRule, path: RulePath, parsed?: ParseGrammar, fields?: boolean) => void;
 
-/** `host` reads the literal a parse holds: only inside parse, not on formatArgs' fields, and not over an annotation. */
-function checkHost(rule: CodeRuleDslAstRule, path: RulePath, parsed: ParseGrammar | undefined, fields: boolean, issue: RuleIssue, visit: AstRuleVisit): void {
+/**
+ * The document a rule's nodes lie in: the file's own tree (`host`), the program its language embeds (`guest`), or,
+ * for utilities and constraints, which rules over both may reach, `either`.
+ */
+type RuleDocument = "host" | "guest" | "either";
+
+/** Where a rule's nodes lie, and how its rules reach the file's other document. */
+interface DocumentSite {
+  readonly language: CodeRuleLanguageId;
+  readonly document: RuleDocument;
+  /** How the query's language embeds programs (`codeRuleLanguageEmbedVias`). */
+  readonly vias: readonly string[];
+  /** The visitor of rules over the host document or the embedded program. */
+  readonly visitIn: (document: "host" | "guest") => AstRuleVisit;
+}
+
+const EMBEDDING_LANGUAGES = CODE_RULE_EMBEDDING_LANGUAGES.map(([language, vias]) => `${language}: ${vias.join(", ")}`).join("; ");
+
+/**
+ * `host` reads the literal a parse holds: only inside parse, not on formatArgs' fields, and not over an annotation.
+ * Outside a parse, from a node of an embedded program, it reads the host node covering it.
+ */
+function checkHost(rule: CodeRuleDslAstRule, path: RulePath, parsed: ParseGrammar | undefined, fields: boolean, issue: RuleIssue, visit: AstRuleVisit, site: DocumentSite): void {
   if (rule.host === undefined) return;
-  if (parsed === undefined) issue([...path, "host"], "host tests the literal a parse holds; use it inside parse.");
-  else if (!fields && parsed !== "annotation") issue([...path, "host"], "host tests the literal a parse holds; formatArgs' fields have none.");
+  if (parsed === undefined) {
+    if (site.document !== "host") site.visitIn("host")(rule.host, [...path, "host"]);
+    else if (site.vias.length === 0) issue([...path, "host"], "host tests the literal a parse holds; use it inside parse.");
+    else issue([...path, "host"], "host tests the literal a parse holds, or the host node of an embedded program's node; use it inside parse, or in a rule over the embedded program (ast.embedded or embedded).");
+  } else if (!fields && parsed !== "annotation") issue([...path, "host"], "host tests the literal a parse holds; formatArgs' fields have none.");
   else if (parsed !== "annotation") visit(rule.host, [...path, "host"]);
+}
+
+/** `embedded` reaches the file's embedded program from a host node: outside parse (which refuses it), over the host document, of a language embedding one program. */
+function checkEmbedded(rule: CodeRuleDslAstRule, path: RulePath, parsed: ParseGrammar | undefined, issue: RuleIssue, site: DocumentSite): void {
+  if (rule.embedded === undefined || parsed !== undefined) return;
+  const at = [...path, "embedded"];
+  if (site.document === "guest") {
+    issue(at, "embedded reaches the program embedded in a host node; this rule already runs on the embedded program. Reach the host node with host first.");
+  } else if (site.vias.length === 0) {
+    issue(at, `embedded reaches the program a language embeds; ${site.language} embeds none (${EMBEDDING_LANGUAGES}).`);
+  } else if (site.vias.length > 1) {
+    issue(at, `embedded is ambiguous: ${site.language} embeds programs via ${site.vias.join(", ")}; name one with ast.embedded.`);
+  } else site.visitIn("guest")(rule.embedded, at);
 }
 
 /** Keys a rule over a tree of `parsed`'s grammar may not use. */
@@ -1003,7 +1063,13 @@ function visitParse(rule: CodeRuleDslAstRule, path: RulePath, visit: AstRuleVisi
   if (CODE_RULE_PARSE_GRAMMARS.includes(grammar)) visit(rule.parse, [...path, "parse"], grammar);
 }
 
-const STYLE_GRAMMARS: Record<CodeRuleDslFormatArgs["style"], ParseGrammar> = { brace: "braceFormat", percent: "percentFormat", printf: "printfFormat", scanf: "scanfFormat" };
+const STYLE_GRAMMARS: Record<CodeRuleDslFormatArgs["style"], ParseGrammar> = {
+  brace: "braceFormat",
+  percent: "percentFormat",
+  printf: "printfFormat",
+  scanf: "scanfFormat",
+  rust: "rustFormat",
+};
 
 /** `formatArgs`: its unused arguments are the host's nodes, its missing fields nodes of the format's tree. */
 function visitFormatArgs(rule: CodeRuleDslAstRule, path: RulePath, parsed: ParseGrammar | undefined, visit: AstRuleVisit): void {
@@ -1080,25 +1146,47 @@ function visitSubRules(rule: CodeRuleDslAstRule, path: RulePath, parsed: ParseGr
 
 /**
  * The structural checks of a rule and its sub-rules: keys a parsed tree's grammar lacks, its kinds, and where `host`,
- * `capture`, `field` and `calls` may appear. What a rule's language lacks is the engine's to refuse. Issues are
- * reported in the order the engine reads the rule.
+ * `embedded`, `capture`, `field` and `calls` may appear. `document` is where the rule's nodes lie: a query's rule over
+ * its file's own tree or (`ast.embedded`) its embedded program; utilities and constraints, which rules over both
+ * reach, `either`. What a rule's language lacks is the engine's to refuse. Issues are reported in the order the engine
+ * reads the rule.
  */
-function astRuleVisitor(context: z.RefinementCtx): AstRuleVisit {
+function astRuleVisitor(context: z.RefinementCtx, language: CodeRuleLanguageId, document: RuleDocument): AstRuleVisit {
   const issue: RuleIssue = (path, message) => context.addIssue({ code: "custom", path, message });
-  const visit: AstRuleVisit = (rule, path, parsed, fields = true) => {
-    if (parsed === undefined && rule.capture !== undefined) issue([...path, "capture"], "capture binds a node of a parsed tree; use it inside parse.");
-    checkHost(rule, path, parsed, fields, issue, visit);
-    if (parsed !== undefined) {
-      checkParsedKeys(rule, path, parsed, issue);
-      checkParsedNode(rule, path, parsed, issue);
-    }
-    visitParse(rule, path, visit);
-    visitFormatArgs(rule, path, parsed, visit);
-    visitCalls(rule, path, parsed, issue, visit);
-    visitOccurrences(rule, path, visit);
-    visitSubRules(rule, path, parsed, fields, issue, visit);
+  const vias = codeRuleLanguageEmbedVias(language);
+  const visitors: Partial<Record<RuleDocument, AstRuleVisit>> = {};
+  const visitIn = (document: RuleDocument): AstRuleVisit => (visitors[document] ??= visitorIn(document));
+  const visitorIn = (document: RuleDocument): AstRuleVisit => {
+    const site: DocumentSite = { language, document, vias, visitIn };
+    const visit: AstRuleVisit = (rule, path, parsed, fields = true) => {
+      if (parsed === undefined && rule.capture !== undefined) issue([...path, "capture"], "capture binds a node of a parsed tree; use it inside parse.");
+      checkHost(rule, path, parsed, fields, issue, visit, site);
+      checkEmbedded(rule, path, parsed, issue, site);
+      if (parsed !== undefined) {
+        checkParsedKeys(rule, path, parsed, issue);
+        checkParsedNode(rule, path, parsed, issue);
+      }
+      visitParse(rule, path, visit);
+      visitFormatArgs(rule, path, parsed, visit);
+      visitCalls(rule, path, parsed, issue, visit);
+      visitOccurrences(rule, path, visit);
+      visitSubRules(rule, path, parsed, fields, issue, visit);
+    };
+    return visit;
   };
-  return visit;
+  // A language that embeds nothing has one document.
+  return visitIn(vias.length === 0 ? "host" : document);
+}
+
+/** `ast.embedded` names a via the query's language embeds a program through. */
+function checkEmbeddedVia(language: CodeRuleLanguageId, via: string, context: z.RefinementCtx): void {
+  const vias = codeRuleLanguageEmbedVias(language);
+  if (vias.includes(via)) return;
+  const message =
+    vias.length === 0
+      ? `${language} embeds no other language; ast.embedded names how a language embeds one (${EMBEDDING_LANGUAGES}).`
+      : `${language} embeds no program via ${via}; expected ${vias.join(" or ")}.`;
+  context.addIssue({ code: "custom", path: ["embedded"], message });
 }
 
 /** Transforms that read a node but name a transform variable, and transforms whose sources cycle. */
@@ -1133,6 +1221,7 @@ function checkTransformValue(name: string, transform: Record<string, CodeRuleDsl
   }
 }
 
+
 export const codeRuleQuerySchema: z.ZodType<CodeRuleDslQuery> = z.lazy(() =>
   z
     .object({
@@ -1146,6 +1235,7 @@ export const codeRuleQuerySchema: z.ZodType<CodeRuleDslQuery> = z.lazy(() =>
       ast: z
         .object({
           language: z.enum(CODE_RULE_LANGUAGE_IDS),
+          embedded: nonEmptyString.optional(),
           rule: codeRuleAstRuleSchema,
           utils: z.record(utilityId, codeRuleUtilitySchema).optional(),
           constraints: z.record(nonEmptyString, codeRuleAstRuleSchema).optional(),
@@ -1159,12 +1249,15 @@ export const codeRuleQuerySchema: z.ZodType<CodeRuleDslQuery> = z.lazy(() =>
           // The engine is the authority; these are the cross-references a schema can see.
           const utils = ast.utils ?? {};
           checkTransforms(ast.transform ?? {}, context);
+          if (ast.embedded !== undefined) checkEmbeddedVia(ast.language, ast.embedded, context);
           // A planned language's rule is not read yet: compiling refuses it as language-not-supported.
           if (!isCodeRuleAstLanguage(ast.language)) return;
-          const visit = astRuleVisitor(context);
+          const visit = astRuleVisitor(context, ast.language, ast.embedded === undefined ? "host" : "guest");
           visit(ast.rule, ["rule"]);
-          for (const [id, util] of Object.entries(utils)) visit(utilityParts(util).rule, ["utils", id, ...utilityParts(util).path]);
-          for (const [name, constraint] of Object.entries(ast.constraints ?? {})) visit(constraint, ["constraints", name]);
+          // Utilities and constraints test nodes of either document: a rule over each may reach them.
+          const shared = astRuleVisitor(context, ast.language, "either");
+          for (const [id, util] of Object.entries(utils)) shared(utilityParts(util).rule, ["utils", id, ...utilityParts(util).path]);
+          for (const [name, constraint] of Object.entries(ast.constraints ?? {})) shared(constraint, ["constraints", name]);
         })
         .optional(),
       select_when: z.object({ select: codeRuleQuerySchema, exists: codeRuleQuerySchema }).strict().optional(),
@@ -1305,7 +1398,7 @@ export const codeRuleDefineSchema = z
   })
   .superRefine((define, context) => {
     if (define.language === undefined || !isCodeRuleAstLanguage(define.language)) return;
-    const visit = astRuleVisitor(context);
+    const visit = astRuleVisitor(context, define.language, "either");
     for (const [id, util] of Object.entries(define.utils ?? {})) visit(utilityParts(util).rule, ["utils", id, ...utilityParts(util).path]);
   }) as unknown as z.ZodType<CodeRuleDslDefine>;
 

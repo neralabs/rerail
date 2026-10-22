@@ -1,10 +1,10 @@
 {
   "format": "rerail.policy/v1",
   "id": "typescript-eslint-default-param-last",
-  "revision": 1,
+  "revision": 4,
   "mode": "steer",
-  "description": "Port of typescript-eslint's `default-param-last` rule (https://typescript-eslint.io/rules/default-param-last), identical to the ESLint base port. Reports a defaulted or optional parameter of a function with a body that is followed by a required, non-rest parameter.",
-  "scope": { "include": ["**/*"], "exclude": [] },
+  "description": "Put defaulted and optional parameters after required ones in TypeScript functions; callers otherwise can't omit them.",
+  "scope": { "include": ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"], "exclude": [] },
   "clauses": [
     {
       "id": "default-param-not-last",
@@ -49,7 +49,7 @@
           }
         }
       },
-      "violation": { "anchor": "witness.span", "code": "@typescript-eslint/default-param-last", "message": "Default parameters should be last." }
+      "violation": { "anchor": "witness.span", "code": "@typescript-eslint/default-param-last", "message": "Default parameters should be last.", "suppress": { "eslint": { "rules": ["@typescript-eslint/default-param-last"] }, "oxlint": { "rules": ["default-param-last"] }, "biome": { "rules": ["lint/style/useDefaultParameterLast"] } } }
     }
   ]
 }

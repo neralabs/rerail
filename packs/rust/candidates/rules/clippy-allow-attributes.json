@@ -1,0 +1,20 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "clippy-allow-attributes",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use #[expect] instead of outer #[allow] attributes in Rust; an expect warns once the lint it silences stops firing.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "allow-attribute",
+      "forbid": { "ast": { "language": "rust", "rule": { "kind": "attribute_item", "regex": "^#\\[\\s*(?P<A>allow)\\s*\\(" } } },
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::allow_attributes", "clippy::restriction", "warnings"], "msrv": "1.81" } }, "anchor": "capture.A", "code": "allow_attributes", "message": "Replace this #[allow] with #[expect] so it warns once the silenced lint stops firing." }
+    },
+    {
+      "id": "cfg-attr-allow",
+      "forbid": { "ast": {"language": "rust", "utils": {"cfg-attr-args": {"kind": "token_tree", "any": [{"inside": {"stopBy": "neighbor", "kind": "attribute", "has": {"kind": "identifier", "regex": "^cfg_attr$"}}}, {"follows": {"stopBy": "neighbor", "kind": "identifier", "regex": "^cfg_attr$"}, "inside": {"stopBy": "neighbor", "matches": "cfg-attr-args"}}]}}, "rule": {"all": [{"kind": "identifier", "regex": "^allow$"}, {"follows": {"stopBy": "neighbor", "regex": "^,$"}}, {"precedes": {"stopBy": "neighbor", "kind": "token_tree"}}, {"inside": {"stopBy": "neighbor", "matches": "cfg-attr-args"}}, {"inside": {"stopBy": "end", "kind": "attribute_item"}}, {"not": {"inside": {"stopBy": "end", "kind": "attribute", "regex": "(?s)^cfg_attr\\s*\\(\\s*(?:test|any\\s*\\(\\s*\\)|not\\s*\\(\\s*clippy\\s*\\))\\s*,"}}}]}} },
+      "violation": { "suppress": { "clippy": { "lints": ["clippy::allow_attributes", "clippy::restriction", "warnings"], "msrv": "1.81" } }, "anchor": "witness.span", "code": "allow_attributes", "message": "Replace allow with expect in this cfg_attr so it warns once the silenced lint stops firing." }
+    }
+  ]
+}

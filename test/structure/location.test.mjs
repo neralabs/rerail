@@ -20,10 +20,10 @@ describe("#1 pack.json location", () => {
         "packs/php/pack.json": "{}",
         "fixtures/packs/valid/pack.json": "{}",
         "packs/next/candidates/pack.json": "{}",
-        "test/fixtures/packs/vue/pack.json": "{}",
+        "test/fixtures/packs/exemplar/pack.json": "{}",
       }),
     );
-    expect(paths(result)).toEqual(["packs/next/candidates/pack.json", "test/fixtures/packs/vue/pack.json"]);
+    expect(paths(result)).toEqual(["packs/next/candidates/pack.json", "test/fixtures/packs/exemplar/pack.json"]);
   });
 });
 
@@ -333,6 +333,17 @@ SPDX-License-Identifier = "Apache-2.0 AND MIT"
       const result = packLicences(memoryRepo(copied(annotation)));
       expect(result.findings).toEqual([]);
       expect(result.actual).toBe("100% (1/1)");
+    });
+
+    it("accepts a dual-licensed upstream whose expression names the recorded licence", () => {
+      const annotation = `
+[[annotations]]
+path = "packs/py/upstream/tool/fixtures/**"
+precedence = "override"
+SPDX-FileCopyrightText = "The Tool Contributors"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+`;
+      expect(packLicences(memoryRepo(copied(annotation))).findings).toEqual([]);
     });
   });
 });

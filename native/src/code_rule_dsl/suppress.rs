@@ -1,72 +1,151 @@
 //! `suppress` (a Rerail extension, opt-in per violation): another linter's suppression comments,
-//! honoured as that linter honours them. The engine never reads them otherwise.
+//! honoured as that linter honours them. The engine never reads them otherwise. Rerail's own
+//! `rerail-ignore` comments (`rerail`) are read for every code rule.
 
 use super::json::{invalid, object, reject_unknown};
-use super::lines::LineTable;
-use super::literal::eslint_directive::Directive;
 use ast_grep_core::{Doc, Node};
+pub(crate) use biome::BiomeSuppressions;
+use clippy::Clippy;
+pub(crate) use clippy::ClippyIndex;
+pub(crate) use eslint::EslintDirectives;
 use napi::Result;
+use noqa::Noqa;
 pub(crate) use noqa::{NoqaIndex, parent_statement};
 pub(crate) use nosec::NosecIndex;
-pub(crate) use phpcs::{PhpcsIndex, PhpcsVersion};
+pub(crate) use oxlint::OxlintDirectives;
+use phpcs::Phpcs;
+pub(crate) use phpcs::PhpcsIndex;
 pub(crate) use phpstan::PhpstanIndex;
+use psalm::Psalm;
 pub(crate) use psalm::PsalmIndex;
+pub(crate) use rerail::RerailIgnores;
 use serde_json::Value;
+pub(crate) use sqlfluff::SqlfluffIndex;
+pub(crate) use vue::{VueDirectives, script_directives as vue_script_directives};
 
 /// Names a `rules` or `codes` list may hold.
 const MAX_NAMES: usize = 256;
 
-/// `suppress` on a violation spec.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct Suppress {
-    /// `eslint.rules`: the rule names an `eslint-disable` comment must name (or name none) to
-    /// suppress the violation.
-    pub(super) eslint: Option<Vec<String>>,
-    pub(super) noqa: Option<Noqa>,
-    /// `nosec.codes`: the Bandit test ids a `# nosec` list must name (or name none) to suppress
-    /// the violation.
-    pub(super) nosec: Option<Vec<String>>,
-    /// `phpstan.identifiers`: PHPStan diagnostic identifiers a local ignore must name.
-    pub(super) phpstan: Option<Vec<String>>,
-    pub(super) psalm: Option<Psalm>,
-    pub(super) phpcs: Option<Phpcs>,
+/// Declares the suppression kinds from the rows below: the `Suppression` enum, the `Suppress` a
+/// violation's `suppress` parses to, and `parse`.
+macro_rules! suppression_kinds {
+    ($($(#[doc = $doc:literal])* $variant:ident $key:ident: $spec:ty = $parse:path, $detail:literal;)+) => {
+        /// A linter's suppressions a family may honour (the registry's `suppressions`, each the
+        /// PascalCase of its name).
+        #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+        pub(crate) enum Suppression {
+            $($(#[doc = $doc])* $variant,)+
+        }
+
+        impl Suppression {
+            /// Every kind, in the table's order: the order `suppress` is parsed and checked in.
+            pub(crate) const ALL: &'static [Self] = &[$(Self::$variant,)+];
+
+            /// Its `suppress` key, which is also its name in the registry's `suppressions`.
+            pub(crate) const fn key(self) -> &'static str {
+                match self {
+                    $(Self::$variant => stringify!($key),)+
+                }
+            }
+
+            /// Why only a family that honours it may ask for it: `key: detail`.
+            pub(crate) const fn detail(self) -> &'static str {
+                match self {
+                    $(Self::$variant => concat!(stringify!($key), ": ", $detail),)+
+                }
+            }
+        }
+
+        /// `suppress` on a violation spec: per kind, what the violation asks for.
+        #[derive(Clone, Debug, Default, PartialEq, Eq)]
+        pub(super) struct Suppress {
+            $($(#[doc = $doc])* pub(super) $key: Option<$spec>,)+
+        }
+
+        impl Suppress {
+            /// The kinds the violation asks for, in the table's order.
+            pub(super) fn requested(&self) -> impl Iterator<Item = Suppression> {
+                [$((self.$key.is_some(), Suppression::$variant),)+]
+                    .into_iter()
+                    .filter_map(|(set, kind)| set.then_some(kind))
+            }
+        }
+
+        pub(super) fn parse(value: &Value, path: &str) -> Result<Suppress> {
+            let suppress = object(value, path)?;
+            reject_unknown(suppress, &[$(stringify!($key),)+], path)?;
+            // A struct expression evaluates its fields in order: kinds are parsed in table order.
+            let parsed = Suppress {
+                $($key: suppress
+                    .get(stringify!($key))
+                    .map(|spec| $parse(spec, &format!("{path}/{}", stringify!($key))))
+                    .transpose()?,)+
+            };
+            if parsed.requested().next().is_none() {
+                return Err(invalid(format!("{path} must hold {}", one_of(Suppression::ALL))));
+            }
+            Ok(parsed)
+        }
+    };
 }
 
-/// `psalm`: Psalm's `@psalm-suppress` tags.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Psalm {
-    /// The issues the violation is, and their `Config::getParentIssueType` parents: a tag naming
-    /// any of them suppresses it.
-    pub(super) names: Vec<String>,
-    /// `suppressAll: true`: `@psalm-suppress all` counts, as with `disableSuppressAll="false"`.
-    pub(super) suppress_all: bool,
+// The suppression kinds, one row each, in the order `suppress` is parsed and checked. A row is
+// `Variant key: Spec = linter::spec, "detail";` under the kind's doc comment:
+// - `Variant` is the `Suppression` variant, the PascalCase of the registry name, which the
+//   generated `Family::honours` names;
+// - `key` is the `suppress` key and the registry name (`languages/*.json` `suppressions`);
+// - `Spec` is what `suppress.<key>` parses to: the `Suppress` field the family adapter's
+//   `Adapter::suppresses` reads;
+// - `linter::spec`, `fn(&Value, at: &str) -> napi::Result<Spec>`, parses it, in
+//   `suppress/<linter>.rs` beside the reader of the linter's suppressions;
+// - `"detail"` says whose they are, for a query of a family that does not honour them.
+// Nothing here assumes comments: Clippy's are attributes.
+// The host's twin is `suppressionKinds` in `src/engine/code-rule/code-rule-schema-semantic.ts`.
+suppression_kinds! {
+    /// ESLint's `eslint-disable` comments: the rule names a comment must name (or name none).
+    Eslint eslint: Vec<String> = eslint::spec, "eslint-disable comments are ESLint's";
+    /// Ruff's `# noqa` comments.
+    Noqa noqa: Noqa = noqa::spec, "noqa comments are Ruff's";
+    /// Bandit's `# nosec` comments: the test ids a list must name (or name none).
+    Nosec nosec: Vec<String> = nosec::spec, "nosec comments are Bandit's";
+    /// Oxlint's `oxlint-disable` comments: oxlint's names of the rule (without a plugin), which a
+    /// directive must name (after its last `/`, or name none).
+    Oxlint oxlint: Vec<String> = oxlint::spec, "oxlint-disable comments are Oxlint's";
+    /// Biome's `biome-ignore` comments: the lint rules (`lint/<group>/<rule>`) a comment must
+    /// name, or their group, or `lint`.
+    Biome biome: Vec<String> = biome::spec, "biome-ignore comments are Biome's";
+    /// PHPStan's `@phpstan-ignore` comments: the identifiers a local ignore must name.
+    Phpstan phpstan: Vec<String> = phpstan::spec, "@phpstan-ignore comments are PHPStan's";
+    /// Psalm's `@psalm-suppress` tags.
+    Psalm psalm: Psalm = psalm::spec, "@psalm-suppress tags are Psalm's";
+    /// PHP_CodeSniffer's `phpcs:` annotations.
+    Phpcs phpcs: Phpcs = phpcs::spec, "phpcs: annotations are PHP_CodeSniffer's";
+    /// rustc's and Clippy's lint-level attributes (`#[allow]`, `#[expect]`): the lint and group
+    /// names that silence the violation.
+    Clippy clippy: Clippy = clippy::spec, "#[allow] and #[expect] attributes are Clippy's";
+    /// SQLFluff's `-- noqa` comments, a linter other than Ruff: the references a directive may
+    /// name the violation's rule by.
+    Sqlfluff sqlfluff: Vec<String> = sqlfluff::spec, "-- noqa comments are SQLFluff's";
 }
 
-/// `phpcs`: PHP_CodeSniffer's `phpcs:` annotations.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Phpcs {
-    /// The sniff or message codes the violation reports as.
-    pub(super) codes: Vec<String>,
-    /// `version`: the PHP_CodeSniffer major whose reading applies (4 unless 3).
-    pub(super) version: PhpcsVersion,
+/// `a, b, or c`: the keys a `suppress` may hold.
+fn one_of(kinds: &[Suppression]) -> String {
+    let keys = kinds.iter().map(|kind| kind.key()).collect::<Vec<_>>();
+    match keys.split_last() {
+        Some((last, [])) => (*last).to_owned(),
+        Some((last, rest)) => format!("{}, or {last}", rest.join(", ")),
+        None => String::new(),
+    }
 }
 
-/// `noqa`: Ruff's `# noqa` and file-level `# ruff: noqa` comments.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Noqa {
-    /// The codes a directive must name (or name none) to suppress the violation.
-    pub(super) codes: Vec<String>,
-    /// `parent: "statement"`: a directive where the enclosing statement starts also suppresses
-    /// it (Ruff's `set_parent`).
-    pub(super) parent: bool,
-}
-
-/// A non-empty list of at most `MAX_NAMES` strings, each passing `valid`.
+/// A non-empty list of at most `MAX_NAMES` strings, each passing `valid`: `what` names the list's
+/// items, `each` one item.
 fn names(
     value: Option<&Value>,
     path: &str,
     valid: fn(&str) -> bool,
     what: &str,
+    each: &str,
 ) -> Result<Vec<String>> {
     let items = value
         .and_then(Value::as_array)
@@ -79,203 +158,9 @@ fn names(
             item.as_str()
                 .filter(|name| valid(name))
                 .map(str::to_owned)
-                .ok_or_else(|| invalid(format!("{path}/{index} must be {}", singular(what))))
+                .ok_or_else(|| invalid(format!("{path}/{index} must be {each}")))
         })
         .collect()
-}
-
-fn singular(what: &str) -> &str {
-    match what {
-        "rule names" => "a rule name (non-empty, without commas or surrounding white space)",
-        "PHPStan identifiers" => "a PHPStan identifier (letters or digits, with internal dots)",
-        "Psalm issue names" => {
-            "a Psalm issue name (letters, digits, `_` or `-`; `all` is suppressAll)"
-        }
-        "Bandit test ids" => "a Bandit test id (B, then digits: B101)",
-        "PHP_CodeSniffer codes" => {
-            "a PHP_CodeSniffer sniff or message code (Standard.Category.Sniff or Standard.Category.Sniff.Code)"
-        }
-        _ => "a rule code (uppercase letters, then digits: F401)",
-    }
-}
-
-/// A rule name an `eslint-disable` list can name: ESLint splits the list on commas and trims.
-fn rule_name(name: &str) -> bool {
-    !name.is_empty() && !name.contains(',') && name.trim() == name
-}
-
-/// A Bandit test id a `# nosec` list can name: `B`, then digits.
-fn bandit_test(id: &str) -> bool {
-    id.len() > 1 && id.starts_with('B') && id[1..].bytes().all(|byte| byte.is_ascii_digit())
-}
-
-/// A code a `# noqa` list can name: Ruff's lexer reads uppercase letters, then digits.
-fn rule_code(code: &str) -> bool {
-    let letters = code.trim_start_matches(|c: char| c.is_ascii_uppercase());
-    letters.len() < code.len() && !letters.is_empty() && letters.chars().all(|c| c.is_ascii_digit())
-}
-
-/// A PHPStan diagnostic identifier (`variable.undefined`, for example).
-fn phpstan_identifier(identifier: &str) -> bool {
-    phpstan::phpstan_identifier(identifier)
-}
-
-/// An issue name a `@psalm-suppress` list can hold (`all` aside, which `suppressAll` names).
-fn psalm_issue(issue: &str) -> bool {
-    psalm::psalm_issue(issue) && issue != "all"
-}
-
-/// A sniff (`Standard.Category.Sniff`) or message (`Standard.Category.Sniff.Code`) code: parts of
-/// letters, digits and `_`, as PHP_CodeSniffer names standards, sniffs and codes.
-fn phpcs_code(code: &str) -> bool {
-    let parts = code.split('.');
-    (3..=4).contains(&parts.clone().count())
-        && parts.into_iter().all(|part| {
-            !part.is_empty()
-                && part
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-        })
-}
-
-pub(super) fn parse(value: &Value, path: &str) -> Result<Suppress> {
-    let suppress = object(value, path)?;
-    reject_unknown(
-        suppress,
-        &["eslint", "noqa", "nosec", "phpstan", "psalm", "phpcs"],
-        path,
-    )?;
-    let eslint = suppress
-        .get("eslint")
-        .map(|eslint| {
-            let at = format!("{path}/eslint");
-            reject_unknown(object(eslint, &at)?, &["rules"], &at)?;
-            names(
-                eslint.get("rules"),
-                &format!("{at}/rules"),
-                rule_name,
-                "rule names",
-            )
-        })
-        .transpose()?;
-    let noqa = suppress
-        .get("noqa")
-        .map(|noqa| {
-            let at = format!("{path}/noqa");
-            reject_unknown(object(noqa, &at)?, &["codes", "parent"], &at)?;
-            let codes = names(
-                noqa.get("codes"),
-                &format!("{at}/codes"),
-                rule_code,
-                "rule codes",
-            )?;
-            let parent = match noqa.get("parent") {
-                None => false,
-                Some(Value::String(parent)) if parent == "statement" => true,
-                Some(_) => {
-                    return Err(invalid(format!("{at}/parent must be \"statement\"")));
-                }
-            };
-            Ok(Noqa { codes, parent })
-        })
-        .transpose()?;
-    let nosec = suppress
-        .get("nosec")
-        .map(|nosec| {
-            let at = format!("{path}/nosec");
-            reject_unknown(object(nosec, &at)?, &["codes"], &at)?;
-            names(
-                nosec.get("codes"),
-                &format!("{at}/codes"),
-                bandit_test,
-                "Bandit test ids",
-            )
-        })
-        .transpose()?;
-    let phpstan = suppress
-        .get("phpstan")
-        .map(|phpstan| {
-            let at = format!("{path}/phpstan");
-            reject_unknown(object(phpstan, &at)?, &["identifiers"], &at)?;
-            names(
-                phpstan.get("identifiers"),
-                &format!("{at}/identifiers"),
-                phpstan_identifier,
-                "PHPStan identifiers",
-            )
-        })
-        .transpose()?;
-    let psalm = suppress
-        .get("psalm")
-        .map(|psalm| {
-            let at = format!("{path}/psalm");
-            reject_unknown(object(psalm, &at)?, &["issues", "suppressAll"], &at)?;
-            let issues = names(
-                psalm.get("issues"),
-                &format!("{at}/issues"),
-                psalm_issue,
-                "Psalm issue names",
-            )?;
-            let suppress_all = match psalm.get("suppressAll") {
-                None => false,
-                Some(Value::Bool(all)) => *all,
-                Some(_) => {
-                    return Err(invalid(format!("{at}/suppressAll must be a boolean")));
-                }
-            };
-            let mut names = issues.clone();
-            for parent in issues
-                .iter()
-                .filter_map(|issue| psalm::parent_issue_type(issue))
-            {
-                if !names.contains(&parent) {
-                    names.push(parent);
-                }
-            }
-            Ok(Psalm {
-                names,
-                suppress_all,
-            })
-        })
-        .transpose()?;
-    let phpcs = suppress
-        .get("phpcs")
-        .map(|phpcs| {
-            let at = format!("{path}/phpcs");
-            reject_unknown(object(phpcs, &at)?, &["sniffs", "version"], &at)?;
-            let codes = names(
-                phpcs.get("sniffs"),
-                &format!("{at}/sniffs"),
-                phpcs_code,
-                "PHP_CodeSniffer codes",
-            )?;
-            let version = match phpcs.get("version").map(Value::as_u64) {
-                None | Some(Some(4)) => PhpcsVersion::Four,
-                Some(Some(3)) => PhpcsVersion::Three,
-                Some(_) => return Err(invalid(format!("{at}/version must be 3 or 4"))),
-            };
-            Ok(Phpcs { codes, version })
-        })
-        .transpose()?;
-    if eslint.is_none()
-        && noqa.is_none()
-        && nosec.is_none()
-        && phpstan.is_none()
-        && psalm.is_none()
-        && phpcs.is_none()
-    {
-        return Err(invalid(format!(
-            "{path} must hold eslint, noqa, nosec, phpstan, psalm, or phpcs"
-        )));
-    }
-    Ok(Suppress {
-        eslint,
-        noqa,
-        nosec,
-        phpstan,
-        psalm,
-        phpcs,
-    })
 }
 
 /// The root of the tree a node belongs to.
@@ -300,88 +185,24 @@ fn php_comment_end(source: &str, range: &std::ops::Range<usize>) -> usize {
     range.start + text.len()
 }
 
-/// A block directive: `eslint-disable` or `eslint-enable` where its comment starts.
-#[derive(Debug)]
-struct Block {
-    start: usize,
-    disable: bool,
-    /// The rule ids it names; none names every rule.
-    rules: Vec<String>,
-}
-
-/// A file's ESLint directives that disable or enable rules, as ESLint 10.11.0's
-/// `getDisableDirectives` and `applyDisableDirectives` read them.
-#[derive(Debug, Default)]
-pub(crate) struct EslintDirectives {
-    /// Block directives, in source order.
-    blocks: Vec<Block>,
-    /// Line directives: the line each applies to, and the rule ids it names.
-    lines: Vec<(usize, Vec<String>)>,
-}
-
-impl EslintDirectives {
-    /// Reads every comment of the file `node` belongs to.
-    pub(crate) fn read<D: Doc>(node: &Node<'_, D>, source: &str, lines: &LineTable) -> Self {
-        let mut directives = Self::default();
-        for comment in root(node).dfs().filter(|node| node.kind() == "comment") {
-            let range = comment.range();
-            let text = &source[range.clone()];
-            let Some(directive) = Directive::parse(text).filter(Directive::disables) else {
-                continue;
-            };
-            let rules = directive
-                .items(text)
-                .into_iter()
-                .map(|item| item.name)
-                .collect::<Vec<_>>();
-            let (first, last) = (lines.line(range.start), lines.line(range.end));
-            match directive.label.as_str() {
-                "eslint-disable" | "eslint-enable" => directives.blocks.push(Block {
-                    start: range.start,
-                    disable: directive.label == "eslint-disable",
-                    rules,
-                }),
-                // A `-line` directive over several lines is a problem, not a directive.
-                "eslint-disable-line" if first == last => directives.lines.push((first, rules)),
-                "eslint-disable-next-line" => directives.lines.push((last + 1, rules)),
-                _ => {}
-            }
-        }
-        directives
-    }
-
-    /// Whether a problem of a rule named `rules` (any of its names) starting at byte `at` is
-    /// suppressed: the last block directive at or before it that names the rule (or none) is a
-    /// disable, or a line directive naming it applies to its line.
-    pub(crate) fn suppresses(&self, rules: &[String], at: usize, lines: &LineTable) -> bool {
-        let names = |ids: &[String]| ids.is_empty() || ids.iter().any(|id| rules.contains(id));
-        if self
-            .blocks
-            .iter()
-            .rev()
-            .find(|block| block.start <= at && names(&block.rules))
-            .is_some_and(|block| block.disable)
-        {
-            return true;
-        }
-        let line = lines.line(at);
-        self.lines
-            .iter()
-            .any(|(target, ids)| *target == line && names(ids))
-    }
-}
-
-#[cfg(test)]
+mod biome;
+mod clippy;
 mod eslint;
+#[cfg(test)]
+mod eslint_tests;
 mod noqa;
 mod nosec;
+mod oxlint;
 #[cfg(test)]
 mod php_corpus_tests;
 mod phpcs;
 mod phpstan;
 mod psalm;
+mod rerail;
 #[cfg(test)]
 mod ruff;
+mod sqlfluff;
+mod vue;
 
 #[cfg(test)]
 mod tests {
@@ -407,6 +228,30 @@ mod tests {
         )
     }
 
+    /// The table's kinds, in order, each named as the registry names it: its key, the PascalCase
+    /// of which is its variant (the generated `Family::honours` relies on it).
+    #[test]
+    fn every_kind_is_one_row_named_as_the_registry_names_it() {
+        use super::Suppression;
+        let keys = Suppression::ALL
+            .iter()
+            .map(|kind| kind.key())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            keys,
+            [
+                "eslint", "noqa", "nosec", "oxlint", "biome", "phpstan", "psalm", "phpcs",
+                "clippy", "sqlfluff"
+            ]
+        );
+        for kind in Suppression::ALL {
+            let key = kind.key();
+            let pascal = key[..1].to_ascii_uppercase() + &key[1..];
+            assert_eq!(format!("{kind:?}"), pascal);
+            assert!(kind.detail().starts_with(&format!("{key}: ")), "{key}");
+        }
+    }
+
     #[test]
     fn suppress_is_checked_and_opt_in_per_linter() {
         let at = "/clauses/0/violation/suppress";
@@ -414,7 +259,9 @@ mod tests {
             (
                 "typescript",
                 json!({}),
-                format!("{at} must hold eslint, noqa, nosec, phpstan, psalm, or phpcs"),
+                format!(
+                    "{at} must hold eslint, noqa, nosec, oxlint, biome, phpstan, psalm, phpcs, clippy, or sqlfluff"
+                ),
             ),
             (
                 "typescript",
@@ -481,6 +328,83 @@ mod tests {
                 "php",
                 json!({ "nosec": { "codes": ["B101"] } }),
                 format!("{at}/nosec: nosec comments are Bandit's; a php query has none"),
+            ),
+            (
+                "typescript",
+                json!({ "oxlint": { "rules": [] } }),
+                format!("{at}/oxlint/rules must be a list of 1 to 256 oxlint rule names"),
+            ),
+            (
+                "typescript",
+                json!({ "oxlint": { "rules": ["react-hooks/rules-of-hooks"] } }),
+                format!(
+                    "{at}/oxlint/rules/0 must be an oxlint rule name (non-empty, without a plugin prefix, commas or white space: rules-of-hooks)"
+                ),
+            ),
+            (
+                "typescript",
+                json!({ "oxlint": { "rules": ["no console"] } }),
+                format!(
+                    "{at}/oxlint/rules/0 must be an oxlint rule name (non-empty, without a plugin prefix, commas or white space: rules-of-hooks)"
+                ),
+            ),
+            (
+                "typescript",
+                json!({ "oxlint": { "rules": ["no-console"], "plugins": ["eslint"] } }),
+                format!("unknown field `plugins` at {at}/oxlint"),
+            ),
+            (
+                "typescript",
+                json!({ "biome": { "rules": [] } }),
+                format!("{at}/biome/rules must be a list of 1 to 256 Biome lint rule names"),
+            ),
+            (
+                "typescript",
+                json!({ "biome": { "rules": ["correctness/useHookAtTopLevel"] } }),
+                format!(
+                    "{at}/biome/rules/0 must be a lint rule of Biome 2.5.15's JavaScript analyzer (lint/<group>/<rule>: lint/correctness/useHookAtTopLevel)"
+                ),
+            ),
+            (
+                "typescript",
+                json!({ "biome": { "rules": ["lint/correctness"] } }),
+                format!(
+                    "{at}/biome/rules/0 must be a lint rule of Biome 2.5.15's JavaScript analyzer (lint/<group>/<rule>: lint/correctness/useHookAtTopLevel)"
+                ),
+            ),
+            (
+                "typescript",
+                json!({ "biome": { "rules": ["lint/a11y/useGenericFontNames"] } }),
+                format!(
+                    "{at}/biome/rules/0 must be a lint rule of Biome 2.5.15's JavaScript analyzer (lint/<group>/<rule>: lint/correctness/useHookAtTopLevel)"
+                ),
+            ),
+            (
+                "typescript",
+                json!({ "biome": { "rules": ["lint/correctness/useHookAtTopLevel"], "instance": "x" } }),
+                format!("unknown field `instance` at {at}/biome"),
+            ),
+            (
+                "python",
+                json!({ "biome": { "rules": ["lint/suspicious/noConsole"] } }),
+                format!("{at}/biome: biome-ignore comments are Biome's; a python query has none"),
+            ),
+            (
+                "php",
+                json!({ "biome": { "rules": ["lint/suspicious/noConsole"] } }),
+                format!("{at}/biome: biome-ignore comments are Biome's; a php query has none"),
+            ),
+            (
+                "python",
+                json!({ "oxlint": { "rules": ["no-console"] } }),
+                format!(
+                    "{at}/oxlint: oxlint-disable comments are Oxlint's; a python query has none"
+                ),
+            ),
+            (
+                "php",
+                json!({ "oxlint": { "rules": ["no-console"] } }),
+                format!("{at}/oxlint: oxlint-disable comments are Oxlint's; a php query has none"),
             ),
             (
                 "python",
@@ -550,6 +474,13 @@ mod tests {
                 format!("{at}/phpcs/version must be 3 or 4"),
             ),
             (
+                "rust",
+                json!({ "clippy": { "lints": ["clippy::all"], "msrv": "1" } }),
+                format!(
+                    "{at}/clippy/msrv must be a Rust version, `major.minor` or `major.minor.patch`"
+                ),
+            ),
+            (
                 "python",
                 json!({ "psalm": { "issues": ["UndefinedVariable"] } }),
                 format!("{at}/psalm: @psalm-suppress tags are Psalm's; a python query has none"),
@@ -579,6 +510,18 @@ mod tests {
             (
                 "typescript",
                 json!({ "eslint": { "rules": ["strict", "rule-to-test/strict"] } }),
+            ),
+            (
+                "typescript",
+                json!({ "oxlint": { "rules": ["rules-of-hooks"] } }),
+            ),
+            (
+                "javascript",
+                json!({
+                    "eslint": { "rules": ["react-hooks/rules-of-hooks"] },
+                    "oxlint": { "rules": ["rules-of-hooks"] },
+                    "biome": { "rules": ["lint/correctness/useHookAtTopLevel"] }
+                }),
             ),
             (
                 "python",

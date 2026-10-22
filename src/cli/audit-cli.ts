@@ -1,11 +1,14 @@
 import { findRunningDaemon } from "../runtime/daemon-control.js";
 
-import { auditSettingsSchema, type AuditControls, type AuditSettings, type AuditRequest } from "../engine/audit/audit-control-schema.js";
+import {
+  auditSettingsPatchSchema, auditSettingsSchema, type AuditControls, type AuditSettings, type AuditSettingsPatch, type AuditRequest,
+} from "../engine/audit/audit-control-schema.js";
 
 const WAIT_TIMEOUT_MS = 10_000;
 const WAIT_INTERVAL_MS = 250;
 type Scope = AuditSettings["scope"];
 type Mode = AuditSettings["mode"];
+type SteerStrategy = AuditSettings["steerStrategy"];
 
 export interface AuditCliOptions {
   home: string;
@@ -50,6 +53,13 @@ function mode(value: string | undefined, option: string): Mode | undefined {
   return parsed.data;
 }
 
+function steerStrategy(value: string | undefined, option: string): SteerStrategy | undefined {
+  if (value === undefined) return undefined;
+  const parsed = auditSettingsPatchSchema.shape.steerStrategy.safeParse(value);
+  if (!parsed.success || parsed.data === undefined) throw new Error(`${option} must be message, rewind, or subagent`);
+  return parsed.data;
+}
+
 function parseCommon(args: readonly string[]): ParsedCommon {
   const values = new Map<string, string>();
   const flags = new Set<string>();
@@ -69,7 +79,7 @@ function parseCommon(args: readonly string[]): ParsedCommon {
       index += 1;
       continue;
     }
-    if (["--session", "--scope", "--mode"].includes(argument)) {
+    if (["--session", "--scope", "--mode", "--steer-strategy"].includes(argument)) {
       values.set(argument, requireValue(args, index, argument));
       index += 2;
       continue;
@@ -129,27 +139,36 @@ async function waitForAuditRequest(base: URL, sessionId: string, id: string): Pr
   }
 }
 
-async function runSettingsCommand(
-  base: URL,
-  session: string,
-  parsed: ParsedCommon,
-  options: AuditCliOptions,
-): Promise<number> {
+/** The settings `rerail settings` changes; checked before Rerail is reached, so a wrong value fails on its own. */
+function settingsPatch(parsed: ParsedCommon): AuditSettingsPatch {
   if (parsed.flags.has("--wait") || parsed.paths.length !== 0) throw new Error("--wait and --paths apply only to rerail scan");
   const selectedScope = settingsScope(parsed.values.get("--scope"), "--scope");
   const selectedMode = mode(parsed.values.get("--mode"), "--mode");
-  const patch = {
+  const selectedStrategy = steerStrategy(parsed.values.get("--steer-strategy"), "--steer-strategy");
+  return {
     ...(selectedScope === undefined ? {} : { scope: selectedScope }),
     ...(selectedMode === undefined ? {} : { mode: selectedMode }),
+    ...(selectedStrategy === undefined ? {} : { steerStrategy: selectedStrategy }),
   };
+}
+
+async function runSettingsCommand(
+  base: URL,
+  session: string,
+  patch: AuditSettingsPatch,
+  json: boolean,
+  options: AuditCliOptions,
+): Promise<number> {
   const controls = Object.keys(patch).length === 0
     ? await api<AuditControls>(base, `/api/sessions/${session}/audit-settings`, "GET")
     : await api<AuditControls>(base, `/api/sessions/${session}/audit-settings`, "PATCH", patch);
   const status = controls.active ? controls.delivery : "inactive";
-  print(options, parsed.common.json, controls, `Ongoing settings for ${controls.workspaceRoot}: ${controls.settings.scope}/${controls.settings.mode} (${status})`);
+  const { scope, mode: runMode, steerStrategy: strategy } = controls.settings;
+  print(options, json, controls, `Ongoing settings for ${controls.workspaceRoot}: ${scope}/${runMode}, steer strategy ${strategy} (${status})`);
   return 0;
 }
 
+/** Internal testing: `rerail scan`, an explicit full-repository or git-diff audit of one session's checkout. */
 async function runAuditRequestCommand(
   base: URL,
   session: string,
@@ -157,6 +176,7 @@ async function runAuditRequestCommand(
   options: AuditCliOptions,
 ): Promise<number> {
   if (parsed.values.has("--mode")) throw new Error("--mode applies only to rerail settings; one-shot scans are log-only");
+  if (parsed.values.has("--steer-strategy")) throw new Error("--steer-strategy applies only to rerail settings");
   if (parsed.paths.length > 0) throw new Error("--paths is not supported; use --scope repository or --scope git-diff");
   const selectedScope = auditRequestScope(parsed.values.get("--scope"));
   const input = selectedScope === undefined ? {} : { scope: selectedScope };
@@ -169,9 +189,10 @@ async function runAuditRequestCommand(
 
 export async function runAuditCommand(command: "scan" | "settings", args: readonly string[], options: AuditCliOptions): Promise<number> {
   const parsed = parseCommon(args);
+  const patch = command === "settings" ? settingsPatch(parsed) : undefined;
   const base = await targetDaemon(options);
   const session = encodeURIComponent(parsed.common.sessionId);
-  return command === "settings"
-    ? runSettingsCommand(base, session, parsed, options)
+  return patch !== undefined
+    ? runSettingsCommand(base, session, patch, parsed.common.json, options)
     : runAuditRequestCommand(base, session, parsed, options);
 }

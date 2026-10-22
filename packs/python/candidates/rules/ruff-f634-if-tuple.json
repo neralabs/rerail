@@ -3,7 +3,7 @@
   "id": "ruff-f634-if-tuple",
   "revision": 2,
   "mode": "steer",
-  "description": "Port of Ruff's F634 (if-tuple) with default settings: the test (the `condition` field) of an `if` or `elif` branch (not a conditional expression, not `while`) that is a non-empty tuple, reported on the tuple (inside any extra parentheses). Comments and line continuations are not tuple items.",
+  "description": "Don't use a tuple as an if or elif condition; a non-empty tuple is always true, so the branch always runs.",
   "scope": {
     "include": [
       "**/*"
@@ -96,7 +96,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F634",
-        "message": "If test is a tuple, which is always `True`",
+        "message": "Replace this tuple condition with the intended boolean expression; a non-empty tuple is always true.",
         "suppress": {
           "noqa": {
             "codes": [

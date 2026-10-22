@@ -2,11 +2,12 @@
 //! program `illuminate/view` 13.34.0's `BladeCompiler` compiles the template to, without the
 //! bookkeeping Blade's runtime adds (`$__env`, `e()`, output buffering).
 //!
-//! The program is written out as PHP text and parsed with tree-sitter-php's PHP-only grammar; each
-//! of its nodes maps back to the template bytes it came from. The PHP a template spells (an echo's
-//! expression, a directive's arguments, a `@php` block, a component's bound attribute) is copied
-//! byte for byte, so its nodes map exactly onto the template. The PHP Blade wraps it in is
-//! written around it, each token anchored to the Blade token it stands for:
+//! The program is written out as PHP text and parsed with tree-sitter-php's PHP-only grammar: a
+//! document of its own (`embed`), whose text maps back to the template bytes it came from. The PHP
+//! a template spells (an echo's expression, a directive's arguments, a `@php` block, a
+//! component's bound attribute) is copied byte for byte, so its nodes stand for exactly those
+//! template bytes. The PHP Blade wraps it in is written around it, each token anchored to the
+//! Blade token it stands for:
 //!
 //! | Template | Program |
 //! |---|---|
@@ -52,39 +53,27 @@
 //! Forte leaves unpaired (in an attribute's value) is not read: the view reads no half of a
 //! structure.
 
+use crate::code_rule_dsl::blade::forte::ParseError;
 use crate::code_rule_dsl::blade::forte::tree::{BladeNode, BladeTree, parse_tree};
+use crate::code_rule_dsl::embed::{Program, segments::SegmentMap};
 use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::php_literal::literal_end;
 use ast_grep_core::source::SgNode;
 use ast_grep_language::LanguageExt;
 use std::ops::Range;
-use tree_sitter::{Node as TsNode, Parser, Tree};
-
-/// One stretch of the program's text and the template bytes it stands for.
-#[derive(Clone, Debug)]
-struct Segment {
-    /// Where it starts in the program.
-    at: usize,
-    end: usize,
-    anchor: Range<usize>,
-    /// Copied from the template: each byte maps to the byte at the same offset of `anchor`.
-    copied: bool,
-    /// A placeholder the grammar needs and the view does not keep (`Emitter::placeholder`).
-    omit: bool,
-}
+#[cfg(test)]
+use tree_sitter::Node as TsNode;
+use tree_sitter::{Parser, Tree};
 
 /// The embedded PHP program and its map back to the template.
 pub(crate) struct View {
-    segments: Vec<Segment>,
+    text: String,
+    segments: SegmentMap,
     tree: Tree,
-}
-
-/// A template as Blade reads it (`View::build`).
-pub(crate) struct Reading {
-    /// The PHP it embeds, `None` where it embeds none.
-    pub(crate) view: Option<View>,
-    /// Its syntax errors, sorted: Forte's, but where Forte read a directive's arguments Blade
-    /// does not (`Emitter::stray_arguments`), those of the template Blade reads there instead.
-    pub(crate) syntax_errors: Vec<Range<usize>>,
+    /// The template's syntax errors, sorted: Forte's, but where Forte read a directive's arguments
+    /// Blade does not (`Emitter::stray_arguments`), those of the template Blade reads there
+    /// instead.
+    syntax_errors: Vec<Range<usize>>,
 }
 
 /// Directives Blade compiles to control flow (a condition, a loop, a `@php` block, a guard):
@@ -285,18 +274,35 @@ pub(crate) fn compiles(name: &str) -> bool {
         .any(|directive| directive.eq_ignore_ascii_case(name))
 }
 
+/// A template as Blade reads it (`View::read`).
+pub(crate) struct Read {
+    /// Its syntax errors: Forte's, except in the arguments Forte read after a line break, which
+    /// Blade reads as text: there, that text's (`syntax_errors`).
+    pub(crate) syntax_errors: Vec<Range<usize>>,
+    /// The program it embeds; `None` where it embeds none.
+    pub(crate) view: Option<View>,
+}
+
+/// Why a template could not be read (`View::read`).
+#[derive(Debug)]
+pub(crate) enum ReadError {
+    /// The budget interrupted it (polled before each sub-template is parsed, `Emitter::template`).
+    Interrupted,
+    /// Forte stopped at a limit on a template the template holds: nothing about its syntax.
+    Parser(ParseError),
+}
+
 impl View {
-    /// The template `tree` reads as Blade reads it. `Err` where `budget` interrupted it (polled
-    /// before each sub-template is parsed, `Emitter::template`).
-    pub(crate) fn build(
+    /// The template `tree` as Blade reads it: its syntax errors, and the program it embeds.
+    pub(crate) fn read(
         tree: &BladeTree,
         template: &str,
         budget: &dyn Fn() -> bool,
-    ) -> Result<Reading, String> {
+    ) -> Result<Read, ReadError> {
         let mut emitter = Emitter {
             template,
             out: String::new(),
-            segments: Vec::new(),
+            segments: SegmentMap::new(),
             loosened: 0,
             consumed: 0,
             loops: 0,
@@ -305,100 +311,91 @@ impl View {
             depth: 0,
             budget,
             interrupted: false,
+            failed: None,
             strays: Vec::new(),
             reporting: true,
         };
         emitter.body(tree.root());
+        if let Some(error) = emitter.failed {
+            return Err(ReadError::Parser(error));
+        }
         if emitter.interrupted {
-            return Err("tape operation interrupted".into());
+            return Err(ReadError::Interrupted);
         }
         let syntax_errors = syntax_errors(tree.error_ranges(), &emitter.strays);
-        let view = (!emitter.segments.is_empty())
-            .then(|| {
-                let mut parser = Parser::new();
-                parser
-                    .set_language(&GrammarDialect::Php.get_ts_language())
-                    .ok()?;
-                parser.parse(&emitter.out, None)
-            })
-            .flatten()
-            .map(|tree| Self {
-                segments: emitter.segments,
-                tree,
+        if emitter.segments.is_empty() {
+            return Ok(Read {
+                syntax_errors,
+                view: None,
             });
-        Ok(Reading {
-            view,
+        }
+        let mut parser = Parser::new();
+        let program = parser
+            .set_language(&GrammarDialect::Php.get_ts_language())
+            .ok()
+            .and_then(|()| parser.parse(&emitter.out, None));
+        let view = program.map(|program| {
+            let mut segments = emitter.segments;
+            segments.index();
+            Self {
+                text: emitter.out,
+                segments,
+                tree: program,
+                syntax_errors: syntax_errors.clone(),
+            }
+        });
+        Ok(Read {
             syntax_errors,
+            view,
         })
     }
 
+    /// The view as the template's embedded program (`compiled-view`): PHP, read through the
+    /// template's syntax errors.
+    pub(crate) fn into_program(self) -> Program {
+        Program {
+            dialect: GrammarDialect::Php,
+            tree: self.tree,
+            text: self.text,
+            segments: self.segments,
+            host_errors: self.syntax_errors,
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn root(&self) -> TsNode<'_> {
         self.tree.root_node()
     }
 
-    /// The segment holding program byte `at` (the last one at the end of the program).
-    fn segment(&self, at: usize) -> &Segment {
-        let index = self
-            .segments
-            .partition_point(|segment| segment.end <= at)
-            .min(self.segments.len() - 1);
-        &self.segments[index]
+    /// The program's text.
+    #[cfg(test)]
+    pub(crate) fn text(&self) -> &str {
+        &self.text
     }
 
-    /// The template position a node starting at program byte `at` starts at.
-    fn start(&self, at: usize) -> usize {
-        let segment = self.segment(at);
-        if segment.copied {
-            segment.anchor.start + (at.clamp(segment.at, segment.end) - segment.at)
-        } else {
-            segment.anchor.start
-        }
+    /// Where the program's text stands in the template.
+    #[cfg(test)]
+    pub(crate) fn segments(&self) -> &SegmentMap {
+        &self.segments
     }
 
-    /// The template position a node ending at program byte `at` ends at.
-    fn end(&self, at: usize) -> usize {
-        let segment = self.segment(at.saturating_sub(1));
-        if segment.copied {
-            segment.anchor.start + (at.clamp(segment.at, segment.end) - segment.at)
-        } else {
-            segment.anchor.end
-        }
-    }
-
-    /// The template bytes a node of the program stands for.
-    pub(crate) fn span(&self, node: TsNode<'_>) -> Range<usize> {
-        let range = node.byte_range();
-        if range.is_empty() {
-            let at = self.start(range.start);
-            return at..at;
-        }
-        let start = self.start(range.start);
-        start..self.end(range.end).max(start)
-    }
-
-    /// Whether a node is part of a placeholder the view does not keep.
-    pub(crate) fn omitted(&self, node: TsNode<'_>) -> bool {
-        let range = node.byte_range();
-        !range.is_empty() && {
-            let segment = self.segment(range.start);
-            segment.omit && range.end <= segment.end
-        }
+    /// The template's syntax errors as Blade reads them.
+    #[cfg(test)]
+    pub(crate) fn syntax_errors(&self) -> &[Range<usize>] {
+        &self.syntax_errors
     }
 
     /// The template ranges the program copies byte for byte, in program order.
     #[cfg(test)]
     pub(crate) fn copied(&self) -> impl Iterator<Item = Range<usize>> + '_ {
-        self.segments
-            .iter()
-            .filter(|segment| segment.copied)
-            .map(|segment| segment.anchor.clone())
+        self.segments.copied()
     }
 }
 
 struct Emitter<'t> {
     template: &'t str,
     out: String,
-    segments: Vec<Segment>,
+    segments: SegmentMap,
     /// Where the text `loose` has read ends: text is read once.
     loosened: usize,
     /// Where the last directive's arguments, as Blade reads them, end: a node Forte placed before
@@ -415,6 +412,8 @@ struct Emitter<'t> {
     /// more is read.
     budget: &'t dyn Fn() -> bool,
     interrupted: bool,
+    /// Forte stopped at a limit on a sub-template; once set, nothing more is read.
+    failed: Option<ParseError>,
     /// The `stray_arguments` read as the template, each with that template's syntax errors.
     strays: Vec<(Range<usize>, Vec<Range<usize>>)>,
     /// Whether the tree being read reports its syntax errors: the template's, and a stray
@@ -671,13 +670,7 @@ impl<'t> Emitter<'t> {
     fn push(&mut self, text: &str, anchor: Range<usize>, copied: bool, omit: bool) {
         let at = self.out.len();
         self.out.push_str(text);
-        self.segments.push(Segment {
-            at,
-            end: self.out.len(),
-            anchor,
-            copied,
-            omit,
-        });
+        self.segments.push(at, self.out.len(), anchor, copied, omit);
     }
 
     /// Writes PHP Blade wraps the template's PHP in, standing for the template bytes `anchor`.
@@ -813,7 +806,7 @@ impl<'t> Emitter<'t> {
     /// `None` where it was not parsed. Past `TEMPLATE_DEPTH` nested sub-templates, the range is
     /// read as text.
     fn sub_template(&mut self, range: Range<usize>) -> Option<Vec<Range<usize>>> {
-        if range.is_empty() || self.interrupted {
+        if range.is_empty() || self.interrupted || self.failed.is_some() {
             return None;
         }
         if (self.budget)() {
@@ -824,7 +817,13 @@ impl<'t> Emitter<'t> {
             self.loose(range);
             return None;
         }
-        let tree = parse_tree(&self.template.as_bytes()[range.clone()]);
+        let tree = match parse_tree(&self.template.as_bytes()[range.clone()]) {
+            Ok(tree) => tree,
+            Err(error) => {
+                self.failed = Some(error);
+                return None;
+            }
+        };
         let origin = std::mem::replace(&mut self.origin, range.start);
         self.depth += 1;
         self.body(tree.root());
@@ -1774,10 +1773,6 @@ fn ends_statement(text: &str) -> bool {
         .is_some_and(|(_, byte)| byte == b';')
 }
 
-/// How deeply string interpolations may nest (`"{$a["{$b}"]}"`) before the scan takes the rest of
-/// the text as the innermost literal: a bound on the recursion template text drives.
-const NESTING: usize = 32;
-
 /// Each byte of PHP code in `text`, with its offset, as PHP's tokenizer reads it: outside its
 /// comments and string literals (quoted, heredoc, nowdoc), each skipped whole.
 fn code(text: &str) -> impl Iterator<Item = (usize, u8)> + '_ {
@@ -1794,158 +1789,4 @@ fn code(text: &str) -> impl Iterator<Item = (usize, u8)> + '_ {
         }
         None
     })
-}
-
-/// Where the comment or string literal at `bytes[at]` ends, `None` where none starts there. One
-/// PHP would find unterminated runs to the end of `bytes`.
-fn literal_end(bytes: &[u8], at: usize, nesting: usize) -> Option<usize> {
-    let end = match &bytes[at..] {
-        [quote @ (b'\'' | b'"' | b'`'), ..] => quoted_end(bytes, at + 1, *quote, nesting),
-        [b'/', b'*', ..] => bytes[at + 2..]
-            .windows(2)
-            .position(|pair| pair == b"*/")
-            .map_or(bytes.len(), |end| at + 2 + end + 2),
-        [b'/', b'/', ..] => line_end(bytes, at + 2),
-        // `#[` opens an attribute.
-        [b'#', b'[', ..] => return None,
-        [b'#', ..] => line_end(bytes, at + 1),
-        [b'<', b'<', b'<', ..] => return doc_end(bytes, at, nesting),
-        _ => return None,
-    };
-    Some(end)
-}
-
-/// Where a `//` or `#` comment whose text starts at `from` ends: at its line's end.
-fn line_end(bytes: &[u8], from: usize) -> usize {
-    bytes[from..]
-        .iter()
-        .position(|byte| matches!(byte, b'\n' | b'\r'))
-        .map_or(bytes.len(), |end| from + end)
-}
-
-/// Where a `close`-quoted string whose text starts at `from` ends: past `\` escapes and, in one
-/// that interpolates (`"`, `` ` ``), past the code of each `{$...}` and `${...}`.
-fn quoted_end(bytes: &[u8], from: usize, close: u8, nesting: usize) -> usize {
-    let mut at = from;
-    while at < bytes.len() {
-        if bytes[at] == b'\\' {
-            at += 2;
-        } else if bytes[at] == close {
-            return at + 1;
-        } else if close != b'\''
-            && let Some(end) = interpolation_end(bytes, at, nesting)
-        {
-            at = end;
-        } else {
-            at += 1;
-        }
-    }
-    bytes.len()
-}
-
-/// Where the interpolation (`{$...}`, `${...}`) at `bytes[at]` ends, `None` where none starts
-/// there: its code runs to the `}` balancing its `{`.
-fn interpolation_end(bytes: &[u8], at: usize, nesting: usize) -> Option<usize> {
-    let from = match bytes.get(at..at + 2)? {
-        b"{$" => at + 1,
-        b"${" => at + 2,
-        _ => return None,
-    };
-    if nesting == NESTING {
-        return Some(bytes.len());
-    }
-    let mut depth = 1usize;
-    let mut index = from;
-    while index < bytes.len() {
-        if let Some(end) = literal_end(bytes, index, nesting + 1) {
-            index = end;
-            continue;
-        }
-        match bytes[index] {
-            b'{' => depth += 1,
-            b'}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(index + 1);
-                }
-            }
-            _ => {}
-        }
-        index += 1;
-    }
-    Some(bytes.len())
-}
-
-/// Whether `byte` may be in a heredoc's label.
-fn label_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_' || byte >= 0x80
-}
-
-/// Where the heredoc or nowdoc whose `<<<` is at `bytes[at]` ends, `None` where `<<<` opens none:
-/// after its label, closing the first line whose text, past spaces and tabs, is the label and no
-/// further label byte (PHP 7.3's closing marker, which code may follow). A heredoc's body
-/// interpolates; a nowdoc's (`<<<'LABEL'`) does not.
-fn doc_end(bytes: &[u8], at: usize, nesting: usize) -> Option<usize> {
-    let blank = |from: usize| {
-        from + bytes[from..]
-            .iter()
-            .take_while(|byte| matches!(byte, b' ' | b'\t'))
-            .count()
-    };
-    let mut index = blank(at + 3);
-    let quote = match bytes.get(index) {
-        Some(&quote @ (b'\'' | b'"')) => {
-            index += 1;
-            Some(quote)
-        }
-        _ => None,
-    };
-    let start = index;
-    index += bytes[index..]
-        .iter()
-        .take_while(|byte| label_byte(**byte))
-        .count();
-    let label = &bytes[start..index];
-    if label.first().is_none_or(u8::is_ascii_digit) {
-        return None;
-    }
-    if let Some(quote) = quote {
-        if bytes.get(index) != Some(&quote) {
-            return None;
-        }
-        index += 1;
-    }
-    index += match bytes.get(index..) {
-        Some([b'\r', b'\n', ..]) => 2,
-        Some([b'\n' | b'\r', ..]) => 1,
-        _ => return None,
-    };
-    let interpolates = quote != Some(b'\'');
-    let mut line = true;
-    while index < bytes.len() {
-        if line {
-            line = false;
-            let indent = blank(index);
-            let after = indent + label.len();
-            if bytes.get(indent..after) == Some(label)
-                && !bytes.get(after).copied().is_some_and(label_byte)
-            {
-                return Some(after);
-            }
-        }
-        if bytes[index] == b'\n' {
-            line = true;
-            index += 1;
-        } else if !interpolates {
-            index += 1;
-        } else if bytes[index] == b'\\' && bytes.get(index + 1) != Some(&b'\n') {
-            // `\` escapes in a heredoc, but not the line end.
-            index += 2;
-        } else if let Some(end) = interpolation_end(bytes, index, nesting) {
-            index = end;
-        } else {
-            index += 1;
-        }
-    }
-    Some(bytes.len())
 }

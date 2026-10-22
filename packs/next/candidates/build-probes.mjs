@@ -1,8 +1,9 @@
 // Builds packs/next/candidates/probes, a runnable pack of the Next fact model's probes: probes/conformance.json,
-// probes/rules/next-probe-<probe>.json, probes/labels/fixtures/** and probes/labels/fixtures.expected.json. The fixtures are a
-// small Next.js project (both routers) at the workspace root; every label below is chosen by hand from Next.js 16's
-// documented semantics, located by a unique substring of its fixture. Run offline by a maintainer, never in CI; the
-// output is deterministic.
+// probes/rules/next-probe-<probe>.json, probes/labels/fixtures/** and probes/labels/fixtures.expected.json. The fixtures
+// are one checkout: a small Next.js project (both routers) at the workspace root, two nested Next apps and a Vite app
+// whose app/ folder is no Next router, with modules a server page reaches directly, through a tsconfig alias, or only
+// through a "use client" module; every label below is chosen by hand from Next.js 16's documented semantics, located
+// by a unique substring of its fixture. Run offline by a maintainer, never in CI; the output is deterministic.
 //
 // Usage (from the repository root): node packs/next/candidates/build-probes.mjs
 // Then: node --import tsx conformance/languages/cli.ts --pack-dir packs/next/candidates/probes --fixtures
@@ -13,8 +14,59 @@ import { fileURLToPath } from "node:url";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "probes");
 const SCOPE = { include: ["**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"], exclude: [] };
 
-// ---- fixtures: a Next.js project ------------------------------------------------------------------------------------
+// ---- fixtures: a checkout with Next.js projects ---------------------------------------------------------------------
 const FILES = {
+  "package.json": `{ "name": "probe", "private": true, "dependencies": { "next": "16.0.0", "react": "19.2.0", "react-dom": "19.2.0" } }
+`,
+  "tsconfig.json": `{ "extends": "./tsconfig-base.json" }
+`,
+  "tsconfig-base.json": `{
+  // create-next-app's import alias, from a base configuration
+  "compilerOptions": { "paths": { "@/*": ["./*"] }, /* aliases */ },
+}
+`,
+  // zechub: a hook module that only a "use client" module imports runs on the client, as Next bundles it.
+  "app/zechub/page.tsx": `import Widget from "./widget";
+
+export default function Page() {
+  return <Widget />;
+}
+`,
+  "app/zechub/widget.tsx": `"use client";
+import { useCounter } from "../adapters/react";
+
+export default function Widget() {
+  return <p>{useCounter()}</p>;
+}
+`,
+  "app/adapters/react.ts": `import { useState } from "react";
+
+export function useCounter() {
+  const [count] = useState(0);
+  return count;
+}
+`,
+  // A hook module a server page imports through the tsconfig alias is in the server graph.
+  "app/aliased/page.tsx": `import { useToggle } from "@/app/shared/use-toggle";
+
+export default function Page() {
+  return <p>{String(useToggle())}</p>;
+}
+`,
+  "app/shared/use-toggle.ts": `import { useReducer } from "react";
+
+export function useToggle() {
+  const [on] = useReducer((value: boolean) => !value, false);
+  return on;
+}
+`,
+  // No module imports this one: Next never bundles it.
+  "app/unused/use-later.ts": `import { useRef } from "react";
+
+export function useLater() {
+  return useRef(null);
+}
+`,
   "app/layout.tsx": `import type { Metadata, Viewport } from "next";
 
 export const metadata: Metadata = { title: "Probe" };
@@ -134,6 +186,35 @@ export default function handler(_request: NextApiRequest, response: NextApiRespo
   return <h1>Home</h1>;
 }
 `,
+  // A Next app in a subfolder: its router paths are relative to its own package.json.
+  "apps/web/package.json": `{ "name": "web", "private": true, "dependencies": { "next": "16.0.0", "react": "19.2.0", "react-dom": "19.2.0" } }
+`,
+  "apps/web/app/page.tsx": `import { useState } from "react";
+
+export default function WebPage() {
+  const [open] = useState(false);
+  return <p>{String(open)}</p>;
+}
+`,
+  "apps/docs/package.json": `{ "name": "docs", "private": true, "dependencies": { "next": "16.0.0", "react": "19.2.0", "react-dom": "19.2.0" } }
+`,
+  "apps/docs/src/app/page.tsx": `import { useState } from "react";
+
+export default function DocsPage() {
+  const [query] = useState("");
+  return <input defaultValue={query} />;
+}
+`,
+  // A Vite app beside the Next ones: its app/ folder is no app router, whatever the root package.json lists.
+  "tools/vite-app/package.json": `{ "name": "vite-app", "private": true, "dependencies": { "react": "19.2.0", "react-dom": "19.2.0" }, "devDependencies": { "vite": "7.1.0" } }
+`,
+  "tools/vite-app/app/App.tsx": `import { useState } from "react";
+
+export function App() {
+  const [count, setCount] = useState(0);
+  return <button type="button" onClick={() => setCount(count + 1)}>{count}</button>;
+}
+`,
 };
 
 // ---- probes ---------------------------------------------------------------------------------------------------------
@@ -141,6 +222,8 @@ const USE_CLIENT_STATEMENT = { kind: "expression_statement", has: { kind: "strin
 /** A directive-prologue statement: every earlier sibling is a string expression statement or a comment. */
 const IN_PROLOGUE = { inside: { kind: "program" }, not: { follows: { stopBy: "end", not: { any: [{ kind: "expression_statement", has: { kind: "string" } }, { kind: "comment" }] } } } };
 const directiveFile = text => ({ inside: { kind: "program", stopBy: "end", has: { kind: "expression_statement", has: { kind: "string", value: { eq: text } }, ...IN_PROLOGUE } } });
+/** A file of a package that depends on next, whose path relative to that package's folder matches `regex`. */
+const inNextPackage = regex => ({ package: { dependsOn: ["next"], path: { regex } } });
 const APP_ROUTE_FILE = "^(?:src/)?app/(?:.*/)?(?:page|layout|template|loading|error|global-error|not-found|default|route)\\.(?:js|jsx|ts|tsx)$";
 const exportedName = (name, rules = {}) => ({
   kind: "export_statement",
@@ -158,22 +241,22 @@ const exportedName = (name, rules = {}) => ({
 const PROBES = [
   {
     name: "app-route-file",
-    description: "File role: an app-router special file (page, layout, template, loading, error, global-error, not-found, default, route) under app/ or src/app/ at the workspace root.",
-    ast: { file: { path: { regex: APP_ROUTE_FILE } }, rule: { kind: "program" } },
+    description: "File role: an app-router special file (page, layout, template, loading, error, global-error, not-found, default, route) under app/ or src/app/ of a package that depends on next.",
+    ast: { file: inNextPackage(APP_ROUTE_FILE), rule: { kind: "program" } },
     anchor: "file.start",
-    labels: [["app/layout.tsx"], ["app/page.tsx"], ["app/dashboard/page.tsx"], ["app/api/users/route.ts"], ["app/(shop)/[id]/loading.js"]],
+    labels: [["app/layout.tsx"], ["app/page.tsx"], ["app/dashboard/page.tsx"], ["app/api/users/route.ts"], ["app/(shop)/[id]/loading.js"], ["app/zechub/page.tsx"], ["app/aliased/page.tsx"], ["apps/web/app/page.tsx"], ["apps/docs/src/app/page.tsx"]],
   },
   {
     name: "pages-special-file",
-    description: "File role: a pages-router special file (_app, _document, _error, 404, 500) or an API route under pages/api/.",
-    ast: { file: { path: { regex: "^(?:src/)?pages/(?:(?:_app|_document|_error|404|500)\\.(?:js|jsx|ts|tsx)$|api/)" } }, rule: { kind: "program" } },
+    description: "File role: a pages-router special file (_app, _document, _error, 404, 500) or an API route under pages/api/, in a package that depends on next.",
+    ast: { file: inNextPackage("^(?:src/)?pages/(?:(?:_app|_document|_error|404|500)\\.(?:js|jsx|ts|tsx)$|api/)"), rule: { kind: "program" } },
     anchor: "file.start",
     labels: [["pages/_app.tsx"], ["pages/_document.tsx"], ["pages/api/hello.ts"]],
   },
   {
     name: "middleware-file",
-    description: "File role: the root middleware (Next 16 also reads proxy.ts) beside app/ or pages/.",
-    ast: { file: { path: { regex: "^(?:src/)?(?:middleware|proxy)\\.(?:js|ts)$" } }, rule: { kind: "program" } },
+    description: "File role: the middleware (Next 16 also reads proxy.ts) beside app/ or pages/ of a package that depends on next.",
+    ast: { file: inNextPackage("^(?:src/)?(?:middleware|proxy)\\.(?:js|ts)$"), rule: { kind: "program" } },
     anchor: "file.start",
     labels: [["middleware.ts"]],
   },
@@ -181,7 +264,7 @@ const PROBES = [
     name: "use-client-directive",
     description: "Directive: a \"use client\" statement in the file's directive prologue (a later one is no directive).",
     ast: { rule: { all: [USE_CLIENT_STATEMENT, IN_PROLOGUE] } },
-    labels: [["app/dashboard/page.tsx", '"use client"'], ["components/client-button.tsx", '"use client"']],
+    labels: [["app/dashboard/page.tsx", '"use client"'], ["app/zechub/widget.tsx", '"use client"'], ["components/client-button.tsx", '"use client"']],
   },
   {
     name: "inline-server-action",
@@ -203,7 +286,7 @@ const PROBES = [
     name: "route-handler",
     description: "Route handler: an exported HTTP-method function or const in an app-router route file.",
     ast: {
-      file: { path: { regex: "^(?:src/)?app/(?:.*/)?route\\.(?:js|ts)$" } },
+      file: inNextPackage("^(?:src/)?app/(?:.*/)?route\\.(?:js|ts)$"),
       rule: {
         kind: "identifier",
         regex: "^(?:GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$",
@@ -225,7 +308,7 @@ const PROBES = [
     name: "invalid-segment-config",
     description: "Route segment config: dynamic not one of auto|force-dynamic|error|force-static, runtime not nodejs|edge, or revalidate not a number or false, in an app-router route file.",
     ast: {
-      file: { path: { regex: APP_ROUTE_FILE } },
+      file: inNextPackage(APP_ROUTE_FILE),
       rule: {
         inside: { kind: "variable_declarator", inside: { kind: "lexical_declaration", inside: { kind: "export_statement", inside: { kind: "program" } } } },
         any: [
@@ -245,9 +328,9 @@ const PROBES = [
   },
   {
     name: "client-hook-in-server-component",
-    description: "React (inherited) + file role + directive: a call of a client-only hook imported from react, in an app/ file without a \"use client\" directive.",
+    description: "React (inherited) + file role + module graph + directive: a call of a client-only hook imported from react, in a file under app/ or src/app/ of a package that depends on next which is in the app's server module graph (reached from a server page, layout or route by imports that pass no \"use client\" module), without a \"use client\" directive.",
     ast: {
-      file: { path: { regex: "^(?:src/)?app/" } },
+      file: { package: { dependsOn: ["next"], path: { regex: "^(?:src/)?app/" }, serverGraph: true } },
       rule: {
         kind: "call_expression",
         all: [
@@ -270,7 +353,7 @@ const PROBES = [
         ],
       },
     },
-    labels: [["app/page.tsx", "useState(0)"]],
+    labels: [["app/page.tsx", "useState(0)"], ["app/shared/use-toggle.ts", "useReducer((value"], ["apps/web/app/page.tsx", "useState(false)"], ["apps/docs/src/app/page.tsx", "useState(\"\")"]],
   },
   {
     name: "use-server-sync-export",
@@ -334,7 +417,7 @@ for (const probe of PROBES) {
 findings.sort((a, b) => (a.rule < b.rule ? -1 : a.rule > b.rule ? 1 : 0) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0) || a.line - b.line || a.column - b.column);
 writeFileSync(
   join(ROOT, "labels", "fixtures.expected.json"),
-  `${JSON.stringify({ tool: "labels", version: "1", source: { kind: "fixtures", origin: "hand-labelled", rules: PROBES.map(probe => `next/${probe.name}`), files: Object.keys(FILES).sort() }, findings }, null, 1)}\n`,
+  `${JSON.stringify({ tool: "labels", version: "1", source: { kind: "fixtures", origin: "hand-labelled", rules: PROBES.map(probe => `next/${probe.name}`), files: [Object.keys(FILES).sort()] }, findings }, null, 1)}\n`,
 );
 const capabilities = probe => ["syntax", ...(JSON.stringify(probe.ast).includes('"resolves"') ? ["scope"] : []), ...(JSON.stringify(probe.ast).includes('"value"') ? ["value"] : [])];
 writeFileSync(

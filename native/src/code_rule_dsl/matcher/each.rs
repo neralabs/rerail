@@ -10,6 +10,7 @@
 //! exclusion reads the sub-tree's nodes by their host ranges.
 
 use super::exported::exported_span;
+use crate::code_rule_dsl::origin::Origin;
 use ast_grep_core::Doc;
 use ast_grep_core::meta_var::MetaVarEnv;
 use std::cell::{Cell, RefCell};
@@ -17,22 +18,15 @@ use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::Arc;
 
-/// A parsed sub-tree's coordinates: `node` maps one of its node ids to its range in the document
-/// the sub-tree was parsed from; `span` maps a range of the sub-tree there.
-#[derive(Clone)]
-pub(crate) struct HostMap {
-    pub(crate) node: Arc<dyn Fn(usize) -> Option<Range<usize>>>,
-    pub(crate) span: Arc<dyn Fn(Range<usize>) -> Option<Range<usize>>>,
-}
-
 thread_local! {
     /// Whether an enumeration is excluding bindings here (false inside a negation or count).
     static ACTIVE: Cell<bool> = const { Cell::new(false) };
     /// The enumerated capture and the ranges it was bound to so far, as `(start, end)`.
     static EXCLUDED: RefCell<(String, HashSet<(usize, usize)>)> =
         RefCell::new((String::new(), HashSet::new()));
-    /// The sub-trees being matched, innermost last.
-    static HOSTS: RefCell<Vec<HostMap>> = const { RefCell::new(Vec::new()) };
+    /// The sub-trees being matched, innermost last: each's bytes in the document it was parsed
+    /// from.
+    static HOSTS: RefCell<Vec<Arc<dyn Origin>>> = const { RefCell::new(Vec::new()) };
     /// Bumped whenever the excluded ranges change: what a memoized verdict read of them.
     static GENERATION: Cell<u64> = const { Cell::new(0) };
 }
@@ -66,8 +60,8 @@ thread_local! {
 pub(crate) struct HostRanges;
 
 impl HostRanges {
-    pub(crate) fn enter(map: HostMap) -> Self {
-        HOSTS.with_borrow_mut(|hosts| hosts.push(map));
+    pub(crate) fn enter(tree: Arc<dyn Origin>) -> Self {
+        HOSTS.with_borrow_mut(|hosts| hosts.push(tree));
         Self
     }
 }
@@ -91,11 +85,12 @@ pub(crate) fn binding_range<D: Doc>(env: &MetaVarEnv<'_, D>, name: &str) -> Opti
             let Some((innermost, outer)) = hosts.split_last() else {
                 return Some(node.range());
             };
-            let range = (innermost.node)(node.node_id())?;
+            // A binding is one range: where it starts in the file (`FileRanges::primary`).
+            let range = innermost.of_node(node.node_id(), node.range())?.primary();
             outer
                 .iter()
                 .rev()
-                .try_fold(range, |range, host| (host.span)(range))
+                .try_fold(range, |range, host| Some(host.of_range(range)?.primary()))
         }),
         None => {
             let range = exported_span(env, name)?;
@@ -103,7 +98,7 @@ pub(crate) fn binding_range<D: Doc>(env: &MetaVarEnv<'_, D>, name: &str) -> Opti
                 hosts
                     .iter()
                     .rev()
-                    .try_fold(range, |range, host| (host.span)(range))
+                    .try_fold(range, |range, host| Some(host.of_range(range)?.primary()))
             })
         }
     }
@@ -194,14 +189,17 @@ impl Drop for Enumeration {
 
 #[cfg(test)]
 mod tests {
-    use super::{HostMap, HostRanges, binding_range};
+    use super::{HostRanges, binding_range};
     use crate::code_rule_dsl::CompiledCodeRuleDsl;
+    use crate::code_rule_dsl::embed::segments::FileRanges;
     use crate::code_rule_dsl::language::GrammarDialect;
+    use crate::code_rule_dsl::origin::Origin;
     use crate::code_rule_dsl::test_support::*;
     use crate::code_rule_dsl::violations;
     use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
     use ast_grep_language::LanguageExt;
     use serde_json::{Value, json};
+    use std::ops::Range;
     use std::sync::Arc;
 
     fn compile(rule: Value, each: Option<&str>, capabilities: &Value) -> CompiledCodeRuleDsl {
@@ -363,12 +361,22 @@ mod tests {
         env.insert("C", node.clone());
         assert_eq!(binding_range(&env, "C"), Some(2..5));
         // Inside a sub-tree, a node reads through the sub-tree's coordinates, innermost first.
-        let shift = |by: usize| HostMap {
-            node: Arc::new(move |_| Some(10 + by..11 + by)),
-            span: Arc::new(move |range: std::ops::Range<usize>| {
-                Some(range.start + by..range.end + by)
-            }),
-        };
+        struct Shift(usize);
+        impl Origin for Shift {
+            fn of_node(&self, _: usize, _: Range<usize>) -> Option<FileRanges> {
+                Some(FileRanges::one(10 + self.0..11 + self.0))
+            }
+            fn of_range(&self, range: Range<usize>) -> Option<FileRanges> {
+                Some(FileRanges::one(range.start + self.0..range.end + self.0))
+            }
+            fn bounds(&self, _: usize, _: Range<usize>) -> Option<Range<usize>> {
+                Some(10 + self.0..11 + self.0)
+            }
+            fn copied(&self, range: Range<usize>) -> Option<Range<usize>> {
+                Some(range.start + self.0..range.end + self.0)
+            }
+        }
+        let shift = |by: usize| -> Arc<dyn Origin> { Arc::new(Shift(by)) };
         {
             let _outer = HostRanges::enter(shift(100));
             let _inner = HostRanges::enter(shift(0));
@@ -505,7 +513,7 @@ mod tests {
             "f(a, b, c);\n",
         );
         assert_eq!(result["violations"], json!([]), "{result}");
-        assert_eq!(result["failures"][0]["code"], "budget-exceeded", "{result}");
+        assert_eq!(result["failures"][0]["code"], "witness-limit", "{result}");
     }
 
     #[test]
@@ -584,6 +592,57 @@ mod tests {
         );
     }
 
+    /// A violation with `suppress` reads past bindings a comment suppresses, yet the enumeration
+    /// still stops once the unsuppressed witnesses overflow the allowance: here none is
+    /// suppressed, so it reads three of the 500 bindings, as it does without `suppress`.
+    #[test]
+    fn each_with_suppress_stops_enumerating_at_the_witness_overflow() {
+        const BINDINGS: usize = 500;
+        let source = format!(
+            "f({});\n",
+            (0..BINDINGS)
+                .map(|index| format!("x{index}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let rule = json!({
+            "kind": "call_expression",
+            "has": {
+                "kind": "arguments",
+                "has": { "kind": "identifier", "pattern": "$X" }
+            }
+        });
+        let capabilities = capabilities_with(|capabilities| {
+            capabilities["limits"]["maxWitnesses"] = json!(2);
+        });
+        for suppress in [None, Some(json!({ "eslint": { "rules": ["no-undef"] } }))] {
+            let mut violation = violation();
+            violation["each"] = json!("X");
+            if let Some(suppress) = &suppress {
+                violation["suppress"] = suppress.clone();
+            }
+            let compiled = compile_document_with(
+                clause_document(json!({ "id": "c", "forbid": { "ast": {
+                    "language": "typescript", "rule": rule } }, "violation": violation })),
+                &capabilities,
+            )
+            .unwrap_or_else(|error| panic!("{}", error.reason));
+            super::EXCLUSION_PROBES.set(0);
+            let result = evaluate_file(&compiled, "typescript", "a.ts", &source);
+            assert_eq!(result["violations"], json!([]), "{suppress:?}: {result}");
+            assert_eq!(
+                result["failures"][0]["code"], "witness-limit",
+                "{suppress:?}: {result}"
+            );
+            // Three rounds (the allowance and its overflow), each probing the bindings before it.
+            let probes = super::EXCLUSION_PROBES.get();
+            assert!(
+                probes <= 3 * 4 / 2 + 2 * 4,
+                "{suppress:?}: the enumeration read past the overflow: {probes} probes"
+            );
+        }
+    }
+
     #[test]
     fn each_reuses_capture_text_shared_by_every_regex_group_result() {
         const ITEMS: usize = 500;
@@ -610,12 +669,16 @@ mod tests {
             .find(|node| node.kind() == "comment")
             .expect("comment");
         let matched = ast_grep_core::NodeMatch::new(comment, MetaVarEnv::new());
-        let sets = violations::node_group_sets(
+        let mut sets = Vec::new();
+        violations::each_node_group_set(
             &compiled.inner.clauses[0].violation,
             GrammarDialect::TypeScript,
             &matched,
-            ITEMS + 1,
             || false,
+            |groups| {
+                sets.push(groups);
+                true
+            },
         );
         assert_eq!(sets.len(), ITEMS);
         let whole = |set: &[violations::NodeGroup]| {
@@ -805,12 +868,16 @@ mod tests {
             polls.set(polls.get() + 1);
             false
         };
-        let sets = violations::node_group_sets(
+        let mut sets = Vec::new();
+        violations::each_node_group_set(
             violation,
             GrammarDialect::TypeScript,
             &matched,
-            ITEMS + 1,
             poll,
+            |groups| {
+                sets.push(groups);
+                true
+            },
         );
         assert_eq!(sets.len(), ITEMS);
         // The budget is spent just after every result is enumerated: the results' transforms are
@@ -820,6 +887,7 @@ mod tests {
             "a.ts".to_owned(),
             "typescript".to_owned(),
             std::sync::Arc::new(source.clone()),
+            None,
             None,
             "file",
         )
@@ -834,11 +902,7 @@ mod tests {
                 polls.set(polls.get() + 1);
                 polls.get() > enumeration_polls
             },
-            |start, end| crate::code_rule_dsl::violations::Span {
-                start_byte: start,
-                end_byte: end,
-                ..Default::default()
-            },
+            |_| true,
         );
         let Ok(witnesses) = witnesses else {
             panic!("a spent budget cuts the results short; it is no witness error");

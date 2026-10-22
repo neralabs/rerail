@@ -3,7 +3,7 @@
   "id": "react-jsx-no-duplicate-props",
   "revision": 1,
   "mode": "steer",
-  "description": "eslint-plugin-react 7.37.5 react/jsx-no-duplicate-props (case-sensitive): an attribute whose plain name an earlier attribute of the same element already has; namespaced names and spreads are skipped.",
+  "description": "Don't give a JSX element the same prop twice; only the last value takes effect.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -42,17 +42,33 @@
                 "right": "NAME"
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
       "violation": {
         "anchor": "witness.start",
         "code": "react/jsx-no-duplicate-props",
-        "message": "No duplicate props allowed",
+        "message": "Remove one of the two `$NAME` props on this element; only the last one takes effect.",
         "suppress": {
           "eslint": {
             "rules": [
               "react/jsx-no-duplicate-props"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "jsx-no-duplicate-props"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noDuplicateJsxProps"
             ]
           }
         }

@@ -1,0 +1,4 @@
+
+var arguments;
+function bar() {}
+    

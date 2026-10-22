@@ -1,12 +1,15 @@
 {
  "format": "rerail.policy/v1",
  "id": "typescript-eslint-no-array-constructor",
- "revision": 1,
+ "revision": 4,
  "mode": "steer",
- "description": "Port of typescript-eslint's `no-array-constructor` rule (https://typescript-eslint.io/rules/no-array-constructor). Flags `Array(...)` / `new Array(...)` unless called with exactly one argument or type arguments (no scope check: typescript-eslint's version does not resolve `Array`), and fixes to an array literal. Comments inside the argument list are not carried by the `$$$A` capture, so those calls get no fix.",
+ "description": "Use an array literal instead of Array() or new Array() in TypeScript; the constructor treats a single number argument as a length.",
  "scope": {
   "include": [
-   "**/*"
+   "**/*.ts",
+   "**/*.tsx",
+   "**/*.mts",
+   "**/*.cts"
   ],
   "exclude": []
  },
@@ -131,7 +134,24 @@
     "anchor": "witness.span",
     "code": "@typescript-eslint/no-array-constructor",
     "message": "The array literal notation [] is preferable.",
-    "fix": "[$$$A]"
+    "fix": "[$$$A]",
+    "suppress": {
+     "eslint": {
+      "rules": [
+       "@typescript-eslint/no-array-constructor"
+      ]
+     },
+     "oxlint": {
+      "rules": [
+       "no-array-constructor"
+      ]
+     },
+     "biome": {
+      "rules": [
+       "lint/style/useArrayLiterals"
+      ]
+     }
+    }
    }
   },
   {
@@ -231,7 +251,24 @@
    "violation": {
     "anchor": "witness.span",
     "code": "@typescript-eslint/no-array-constructor",
-    "message": "The array literal notation [] is preferable."
+    "message": "The array literal notation [] is preferable.",
+    "suppress": {
+     "eslint": {
+      "rules": [
+       "@typescript-eslint/no-array-constructor"
+      ]
+     },
+     "oxlint": {
+      "rules": [
+       "no-array-constructor"
+      ]
+     },
+     "biome": {
+      "rules": [
+       "lint/style/useArrayLiterals"
+      ]
+     }
+    }
    }
   }
  ]

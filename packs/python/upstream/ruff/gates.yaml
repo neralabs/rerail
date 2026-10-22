@@ -1,0 +1,62 @@
+adapter: ruff
+# Ruff's documents in rerail's python pack (NER-1739).
+rerail:
+  pack: python
+  project: ruff
+upstream:
+  name: astral-sh/ruff
+  repository: https://github.com/astral-sh/ruff
+  # The release rerail's python pack records (packs/python/licenses/ruff/UPSTREAM.md: Ruff 0.16.9); tag 0.16.9.
+  commit: 0be08a206f9c3180afd3e93bcc792ed5cb1f4db1
+  version: 0.16.9
+  license: MIT
+  # The PyPI wheel, run on CPython 3.13.12 (uv-managed, the interpreter bandit-1.9.4 pins). The wheel is a Rust binary,
+  # so the interpreter does not change its output; uv's runtime needs an exact pin all the same.
+  runtime: ruff-0.16.9
+  # Ruff has no named configuration; `default` is Ruff's default rule selection at the pin (413 rules since 0.16.0),
+  # read from `ruff check --isolated --show-settings`, with every option at its default and the default target
+  # version (Python 3.10 under --isolated, recorded in the report's identity). Documents that port rules outside it
+  # (E402, E711-E714, E721, E731, E741-E743, F403, F405, F406, F722, the RET50x rules, most SIM rules, B904, B905, ...)
+  # are not `recommended`, so they start off once shipped.
+  #
+  # How the adapter applies it (decisions for the team; they hold for every Ruff pack):
+  # - A rule's upstream tests are every file that the test functions of crates/ruff_linter/src/rules/*/mod.rs and
+  #   src/linter.rs lint with settings that enable it (test_path, the settings-diff helpers, assert_notebook_path, and
+  #   test_contents or linter.rs's test_contents_syntax_errors of a file read from disk, through the module's own
+  #   one-expression path helpers such as notebook_path); inline test_snippet/test_contents sources have no file and
+  #   are not cases. linter.rs adds syntax_errors/late_future_import.py (F404), yield_scope.py and await_scope.ipynb
+  #   (F704), return_outside_function.py (F706), and crates/ruff_notebook's notebooks for F401, F821 and F841. A test
+  #   whose file the adapter cannot evaluate or find stops the run. Checked against every *.snap under
+  #   crates/ruff_linter at the pin (2,252 snapshots, 14,056 recorded findings): the only (code, file) pairs without a
+  #   case are inline sources, RUF200 on a pyproject.toml, and PLW0101, which `ruff rule --all` does not list.
+  # - Gate 5 lints each fixture with the rule alone (`--select <CODE>`) and Ruff's default options and target version,
+  #   whatever options, preview mode or target version the test itself sets. The variant column names the tests that
+  #   lint the file.
+  # - Gate 6 lints each task's files once with every pack rule selected. On this corpus that gives exactly the per-rule
+  #   output (checked 2026-10-07 on every code here).
+  # - A fixture Ruff's parser rejects is still scored with Ruff's own output: Ruff lints it and runs no syntax-tree rule
+  #   on it (crates/ruff_linter/src/linter.rs), so its answer is what it reports, often nothing.
+  # - Notebook (.ipynb) fixtures are linted as Ruff lints them, with rows relative to the cell as its JSON reports them.
+  #   TEMPO has no notebook dialect, so Ruff's findings there are differences under Gate 5's rule for files a document
+  #   cannot apply to.
+  # - Ruff runs as it does by default, honouring `# noqa`, `# ruff: noqa` and `# ruff: disable[...]`. These documents
+  #   carry no suppression by design, so they differ wherever a test file suppresses a finding.
+  # - Gate 2's in-scope check asks for both file types Ruff lints, .py and .pyi. Ports that leave stubs out of scope
+  #   (A005, B024, B027, E741, INP001) fail it, though Ruff reports E741 in no stub either.
+  # - Gate 3 reads Ruff's string-prefix regexes (`^[rRuU]{0,2}['"]`), its dunder groups (`^__(eq|ne|lt|le|gt|ge)__$`),
+  #   placeholder argument slots (NewType's `tp` at 1, warnings.warn's `stacklevel` at 2) and percentFormat's `error`
+  #   message, which is Ruff's own CFormatError text, as ADR 0006's generality method says; each reading has a unit test
+  #   in test/validation-generality-size.test.ts.
+  # - Flagged, for the team to decide: E402's `^(?:___?|__.*__)$` spells `___`, which Ruff never spells and only
+  #   another rule's test uses (fixtures/ruff/RUF052_0.py). It writes out the short names that Ruff's E402 exemption
+  #   accepts (is_assignment_to_a_dunder calls is_dunder, ruff_python_ast/src/helpers.rs: starts_with("__") &&
+  #   ends_with("__"), which `__` and `___` satisfy), so it is faithful rather than fitted; no small gate change tells
+  #   that apart from a spelled test name. It is the only Gate 3 failure here and stops ruff:E402 at Gate 3.
+  recommended_configs:
+    - default
+popularity:
+  observed_on: 2026-10-06
+  evidence:
+    - "PyPI: 80,763,559 downloads of ruff in the last week (pypistats.org/api/packages/ruff/recent)"
+    - "GitHub: astral-sh/ruff has 49,929 stars and 2,478 forks, and is not archived"
+known_gaps: []

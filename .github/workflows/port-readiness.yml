@@ -1,0 +1,490 @@
+name: Port readiness
+
+# The port readiness gates (docs/port-readiness.md): every rule a pack ships must pass them; candidates run through them and are
+# only reported. Called by ci.yml after its build job (the gates read the `built` artifact's engine) when a pull request
+# or a push to main touches a gate input, and by port-readiness-nightly.yml, which judges every rule again and refreshes
+# the result cache. The gates read each tool-pack's recordings (recording.json and corpus.json, which
+# packs/<id>/upstream/<tool>/recording.lock names): the fetch step downloads them from the release, and a tool-pack whose
+# recording the release does not hold is recorded in its own leg from this commit's recorder, which must write the lock
+# the commit has. No rule runs over the real-code corpus (that is NRV's real-code gate): only the pinned corpus files
+# the goldens name and upstream's pinned test files are fetched, and they are cached by their pins.
+#
+# The plan job builds the legs (conformance/port-readiness/plan.mjs, which also holds the shard counts). A pull request
+# (`select`) judges only the tool-packs of the packs it touches, and every one when it touches the engine, the gate
+# code, the package files or the workflows; a tool-pack it leaves out keeps main's verdict. Pushes to main and the
+# nightly judge every tool-pack.
+#
+# Every run saves its results, pull requests included, except a leg that recorded its tool-pack itself: the recorder
+# ran upstream's code and unlocked Composer packages, so that leg saves no cache. GitHub scopes a pull request's cache
+# to that pull request, so main never reads one: a push to main reads only what main's own pushes and the nightly
+# saved, and the nightly judges every rule uncached. A pull request can therefore hand itself verdicts its own code
+# computed, but it can edit the gate code that decides them just as easily, so this opens no route it did not already have.
+
+on:
+  workflow_call:
+    inputs:
+      base:
+        description: The commit the change is judged against (the pull request's base, or the push's previous head); the not-gated list may only shrink against it.
+        type: string
+        default: ""
+      no-cache:
+        description: Judge every rule again instead of reusing the results of unchanged rules; the fresh results are saved.
+        type: boolean
+        default: false
+      select:
+        description: Judge only the tool-packs of the packs the change touches (pull requests). False judges every tool-pack (pushes to main, the nightly).
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  # The gates' legs, as JSON for their matrix. A pull request's checkout is its merge commit, whose first parent is the
+  # base tip, so depth 2 holds both sides of the diff; anything else plans every leg.
+  plan:
+    name: Plan the port readiness legs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      legs: ${{ steps.plan.outputs.legs }}
+      tool-packs: ${{ steps.plan.outputs.tool-packs }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      # plan.mjs imports only node: builtins, so no npm ci.
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - id: plan
+        name: Plan the legs
+        env:
+          SELECT: ${{ inputs.select }}
+        run: |
+          if [ "$SELECT" = "true" ] && git rev-parse -q --verify 'HEAD^2' > /dev/null; then
+            node conformance/port-readiness/plan.mjs --diff 'HEAD^1' HEAD
+          else
+            node conformance/port-readiness/plan.mjs
+          fi
+
+  gates:
+    name: Port readiness (${{ matrix.pack }} · ${{ matrix.tool }}${{ matrix.shards && format(' · {0}/{1}', matrix.shard, matrix.shards) || '' }})
+    needs: plan
+    if: needs.plan.outputs.legs != '[]'
+    runs-on: ubuntu-24.04
+    # An uncached leg judges every rule again: javascript/eslint (121 rules, 11,368 upstream cases) takes 35 min on a
+    # laptop, as nera-rule-validation does, and Ruff took 4.5 times longer on a cold CI runner than on a laptop.
+    timeout-minutes: 180
+    # Reading the recordings' attestations, which the fetch below checks (recording/fetch.ts). The callers grant the same.
+    permissions:
+      contents: read
+      attestations: read
+    strategy:
+      fail-fast: false
+      # One leg per gated tool-pack the plan selects, or one per shard of a tool-pack in plan.mjs's SHARDS: `shard`
+      # (1 to `shards`) judges the rules whose sha256(id) mod shards is shard - 1, and the report job merges them
+      # (docs/port-readiness.md, "Sharding"). A rule keys on the shared engine and its own language family's alone
+      # (conformance/port-readiness/engine.ts), so a change to one language's support judges only its legs cold, plus
+      # any leg holding a rule of no language family.
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.legs) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      - uses: ./.github/actions/node-deps
+        with:
+          built: "true"
+
+      # Each recording is cached by its own sha256, which is what its tool-pack's recording.lock names, so a commit
+      # that did not re-record hits the cache and downloads nothing. The fetch takes a cached recording without checking
+      # its attestation again, so only what it fetched and verified is saved, by the step after it: a recording this leg
+      # makes itself (below) is never saved, or a later push with the same lock would judge against it unattested.
+      - id: recordings
+        name: Restore the recordings this commit names
+        uses: actions/cache/restore@v6
+        with:
+          path: .rerail/port-readiness/recordings
+          key: port-readiness-fetched-recordings-${{ matrix.pack }}-${{ matrix.tool }}-${{ hashFiles(format('packs/{0}/upstream/{1}/recording.lock', matrix.pack, matrix.tool)) }}
+
+      # The recordings are not in the tree (docs/port-readiness.md): this downloads the two a shard's own tool-pack needs
+      # from the release, and nothing else, and fails when the sha256 is not the one the lock names, or when
+      # port-readiness-record.yml, run from main, did not attest it. A lock naming a recording the release does not hold
+      # exits 3, and the leg records the tool-pack itself, below; any other failure fails the leg.
+      - id: fetch
+        name: Fetch this tool-pack's recording
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          npm run port-readiness -- fetch --pack "$PACK" --tool "$TOOL"
+          status=$?
+          if [ "$status" = 3 ]; then
+            echo "missing=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          exit "$status"
+
+      # Only after a fetch that found both recordings: each is then in the cache because the release held it and
+      # port-readiness-record.yml's attestation verified, or because an earlier save put it there the same way.
+      - name: Save the fetched recordings
+        if: steps.fetch.outputs.missing != 'true' && steps.recordings.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: .rerail/port-readiness/recordings
+          key: ${{ steps.recordings.outputs.cache-primary-key }}
+
+      # What a recording made here is compared with: a pull request's base (its merge commit's first parent), or a push's
+      # previous head; a nightly, and a push that created the branch, have none. The checkout keeps no credentials, so it
+      # is fetched with the token, as the report job fetches. A fork's pull request needs it, below; anyone else's
+      # recording summary goes without the comparison when it cannot be fetched.
+      - id: base
+        name: Fetch the commit to record against
+        if: steps.fetch.outputs.missing == 'true'
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ inputs.base }}
+          FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "pull_request" ]; then
+            base="$(git cat-file -p HEAD | awk '$1 == "parent" { print $2; exit }')"
+          else
+            base="$BASE"
+          fi
+          if [ -n "$base" ] && [ "$base" != "0000000000000000000000000000000000000000" ]; then
+            auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
+            if ! git -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic ${auth}" fetch --no-tags --depth=1 origin "$base"; then
+              if [ "$FORK" = "true" ]; then
+                echo "::error::could not fetch $base, the base this fork's pull request is recorded against"
+                exit 1
+              fi
+              echo "::warning::could not fetch $base: the recording summary is not compared with its recording"
+              base=""
+            fi
+          else
+            base=""
+          fi
+          echo "sha=$base" >> "$GITHUB_OUTPUT"
+
+      # A fork records against the upstream its base's gates.yaml pins, as port-readiness-record.yml does. Its
+      # repository, commit, runtime and test paths decide which code the recorder runs and whose tests it records, so a
+      # fork that changed them would have this leg record answers of the fork's choosing and match the lock it
+      # committed. Only `popularity`, `known_gaps`, `real_code_gaps` and comments may differ. The code the recorder runs
+      # decides the answers just as much, so a fork may not change that either: the recorder, the gate code and the
+      # engine modules it imports (src/engine, for PACKAGE_ROOT; cache.test.ts holds the list to the recorder's import
+      # graph), package.json, whose script starts it and whose dependencies it imports, package-lock.json, which locks
+      # them, and the PHP action. A maintainer records such a pull request with port-readiness-record.yml, which runs the
+      # base branch's recorder. A fork that touches only packs/ still records itself. This guard is no defence against a
+      # pull request that edits this workflow: a pull_request run takes the workflow from the pull request, fork or not,
+      # so the change to .github/ is what review has to catch.
+      - name: Refuse a fork's change to the upstream or the recorder it is recorded with
+        if: >-
+          steps.fetch.outputs.missing == 'true' && github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name != github.repository
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+          BASE_SHA: ${{ steps.base.outputs.sha }}
+        run: |
+          set -euo pipefail
+          [ -n "$BASE_SHA" ] || { echo "::error::this fork's pull request has no base commit to record against"; exit 1; }
+          manifest="packs/$PACK/upstream/$TOOL/gates.yaml"
+          git show "$BASE_SHA:$manifest" > "$RUNNER_TEMP/base-gates.yaml" 2> /dev/null || : > "$RUNNER_TEMP/base-gates.yaml"
+          if ! node -e '
+            const { parse } = require("yaml");
+            const { readFileSync } = require("node:fs");
+            const pinned = (file) => {
+              const { popularity, known_gaps, real_code_gaps, ...rest } = parse(readFileSync(file, "utf8")) ?? {};
+              return JSON.stringify(rest);
+            };
+            process.exit(pinned(process.argv[1]) === pinned(process.argv[2]) ? 0 : 1);
+          ' "$RUNNER_TEMP/base-gates.yaml" "$manifest"; then
+            echo "::error::this pull request comes from a fork and changes $manifest beyond popularity, known_gaps and real_code_gaps, and the release holds no recording for it: land that change on the base branch first, then record"
+            exit 1
+          fi
+          recorder=(conformance/recorders/port-readiness conformance/port-readiness src/engine package.json package-lock.json .github/actions/php)
+          if ! git diff --quiet "$BASE_SHA" HEAD -- "${recorder[@]}"; then
+            echo "::error::this pull request comes from a fork, changes the recorder (${recorder[*]}), and the release holds no recording for $PACK/$TOOL: a maintainer must record it with port-readiness-record.yml"
+            exit 1
+          fi
+
+      # Without an attested recording the leg runs the pinned upstream itself, with the recorder and runtimes of this
+      # commit, so what records a pull request's rules is in its diff like the gate code that judges them. uv installs the
+      # Python runtimes, the php action the PHP and Composer the php and blade runtimes need. The runtimes are installed
+      # afresh, not restored from a cache: a Bladestan runtime restored from the previous run's cache recorded other
+      # answers than the same runtime installed fresh, which is what the lock was recorded with.
+      - name: Set up uv to record this tool-pack
+        if: steps.fetch.outputs.missing == 'true'
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+
+      - name: Set up the pinned PHP and Composer to record this tool-pack
+        if: steps.fetch.outputs.missing == 'true' && (matrix.pack == 'php' || matrix.pack == 'blade')
+        uses: ./.github/actions/php
+
+      # The recorder writes both recordings into the cache the gates read, and the lock and case sources into the tree:
+      # those must be what the commit already has, or the commit's lock names a recording its own recorder does not make.
+      # It records into the release the committed lock names, so the lock it writes is the committed one when upstream
+      # answers the same. No maintainer's recording run posts a per-rule summary for this commit, so the leg writes one
+      # into its job summary and its report artifact: against the recording the base's lock names, put in the commit's
+      # lock's place while the recorder runs, or as a first recording when the base has no lock. The recorder runs
+      # upstream's code and the Composer packages it resolves, so it gets no token: only the base lock's fetch is given
+      # one, and the script keeps it in an unexported variable.
+      - name: Record this tool-pack
+        if: steps.fetch.outputs.missing == 'true'
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+          BASE_SHA: ${{ steps.base.outputs.sha }}
+          TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          token="$TOKEN"
+          unset TOKEN
+          echo "::notice::the release holds no recording for $PACK/$TOOL's recording.lock: recording it from this commit"
+          lock="packs/$PACK/upstream/$TOOL/recording.lock"
+          release="$(jq -r .release "$lock")"
+          if [ -n "$BASE_SHA" ]; then
+            if ! git show "$BASE_SHA:$lock" > "$RUNNER_TEMP/base-recording.lock" 2> /dev/null; then
+              rm "$lock"
+            elif ! cmp -s "$RUNNER_TEMP/base-recording.lock" "$lock"; then
+              cp "$RUNNER_TEMP/base-recording.lock" "$lock"
+              GITHUB_TOKEN="$token" npm run port-readiness -- fetch --pack "$PACK" --tool "$TOOL" ||
+                echo "::warning::could not fetch the recording $BASE_SHA's lock names: the summary does not compare with it"
+            fi
+          fi
+          unset token
+          changes="$RUNNER_TEMP/gates/recording-$PACK--$TOOL.md"
+          npm run port-readiness:record -- --pack "$PACK" --tool "$TOOL" --release "$release" --changes "$changes"
+          cat "$changes" >> "$GITHUB_STEP_SUMMARY"
+          written=("packs/$PACK/upstream/$TOOL" "packs/$PACK/licenses")
+          changed="$(git status --porcelain --untracked-files=all -- "${written[@]}")"
+          if [ -n "$changed" ]; then
+            git --no-pager diff -- "${written[@]}" | sed -n '1,200p'
+            # What the recorder made, beside the report, so the difference from the committed lock can be read.
+            mkdir -p "$RUNNER_TEMP/gates/recorded-$PACK--$TOOL"
+            jq -r '.files[].asset' "$lock" | while read -r asset; do
+              cp ".rerail/port-readiness/recordings/upload/$asset" "$RUNNER_TEMP/gates/recorded-$PACK--$TOOL/"
+            done
+            echo "::error::the recorder wrote files this commit does not have; record $PACK/$TOOL again and commit them (the report artifact holds what it recorded):"
+            echo "$changed"
+            exit 1
+          fi
+
+      # The corpus files the goldens name and upstream's pinned test files are keyed by their pins; a partial
+      # match is reused, since every checkout in them is keyed by commit.
+      - name: Restore the goldens' corpus files and upstream's test files
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            .rerail/port-readiness/corpus
+            .rerail/port-readiness/upstream
+          key: port-readiness-corpus-${{ matrix.pack }}-${{ hashFiles('conformance/port-readiness/corpus-tasks.json', format('packs/{0}/conformance.json', matrix.pack), format('packs/{0}/upstream/*/gates.yaml', matrix.pack)) }}
+          restore-keys: |
+            port-readiness-corpus-${{ matrix.pack }}-
+
+      # Each result is keyed by everything the rule's verdict depends on, so a stale entry is never read. The `-run-`
+      # after the tool and shard keeps eslint-plugin-react's prefix from matching eslint-plugin-react-hooks' entries.
+      - name: Restore earlier rule results
+        if: ${{ !inputs.no-cache }}
+        uses: actions/cache/restore@v6
+        with:
+          path: .rerail/port-readiness/results
+          key: port-readiness-results-${{ matrix.pack }}-${{ matrix.tool }}${{ matrix.shards && format('-shard-{0}of{1}', matrix.shard, matrix.shards) || '' }}-run-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            port-readiness-results-${{ matrix.pack }}-${{ matrix.tool }}${{ matrix.shards && format('-shard-{0}of{1}', matrix.shard, matrix.shards) || '' }}-run-
+
+      - id: gates
+        name: Run the gates
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+          SHARD: ${{ matrix.shards && format('{0}/{1}', matrix.shard, matrix.shards) || '' }}
+          REFRESH: ${{ inputs.no-cache && '--refresh-cache' || '' }}
+        run: |
+          set +e
+          npm run port-readiness -- --pack "$PACK" --tool "$TOOL" ${SHARD:+--shard "$SHARD"} --out "$RUNNER_TEMP/gates" $REFRESH
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+
+      # Pull requests restore main's corpus (by exact key, or by prefix when the pull request changes a pin) and never
+      # save their own: it would duplicate main's unchanged corpora (hundreds of MB) into the pull request's own cache
+      # scope, where only its own later runs could use it. A leg that recorded its tool-pack saves no cache at all,
+      # whatever the event: the recorder ran upstream's code and the Composer packages it resolved, unlocked, which could
+      # have rewritten anything under .rerail/, and on main the save would land where every pull request restores from.
+      - name: Save the corpus and upstream's test files
+        if: ${{ always() && github.event_name != 'pull_request' && steps.fetch.outputs.missing != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            .rerail/port-readiness/corpus
+            .rerail/port-readiness/upstream
+          key: port-readiness-corpus-${{ matrix.pack }}-${{ hashFiles('conformance/port-readiness/corpus-tasks.json', format('packs/{0}/conformance.json', matrix.pack), format('packs/{0}/upstream/*/gates.yaml', matrix.pack)) }}
+        continue-on-error: true
+
+      # Pull request runs save theirs too: GitHub keeps them in the pull request's own cache scope, which main and
+      # every other branch cannot read, so a second push reuses only the rules this pull request has not touched. Not
+      # after the leg recorded its tool-pack, as above.
+      - name: Save the rule results
+        if: ${{ always() && steps.fetch.outputs.missing != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: .rerail/port-readiness/results
+          key: port-readiness-results-${{ matrix.pack }}-${{ matrix.tool }}${{ matrix.shards && format('-shard-{0}of{1}', matrix.shard, matrix.shards) || '' }}-run-${{ github.run_id }}-${{ github.run_attempt }}
+        continue-on-error: true
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: port-readiness-${{ matrix.pack }}-${{ matrix.tool }}${{ matrix.shards && format('-shard-{0}of{1}', matrix.shard, matrix.shards) || '' }}
+          path: ${{ runner.temp }}/gates/
+          if-no-files-found: warn
+          retention-days: 14
+
+      # 1: a shipped rule failed a gate (the report job says which and why). 2: the run itself failed.
+      - name: Fail when a shipped rule failed
+        if: steps.gates.outputs.status != '0'
+        env:
+          STATUS: ${{ steps.gates.outputs.status }}
+        run: exit "$STATUS"
+
+  report:
+    name: Port readiness report
+    needs: [plan, gates]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Writing pull request comments: the results comment below. The callers grant the same.
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/node-deps
+
+      # No leg ran when the plan selected none (or failed), so there is nothing to download.
+      - name: Download the reports
+        if: needs.gates.result != 'skipped'
+        uses: actions/download-artifact@v8
+        with:
+          pattern: port-readiness-*
+          path: ${{ runner.temp }}/gates
+          merge-multiple: true
+
+      # The not-gated list may only shrink against the base. The checkout keeps no credentials, so the base commit is
+      # fetched here with the token, as the lfs action fetches; if it is still missing the summary fails closed.
+      - name: Fetch the base commit
+        if: inputs.base != '' && inputs.base != '0000000000000000000000000000000000000000'
+        env:
+          BASE: ${{ inputs.base }}
+          TOKEN: ${{ github.token }}
+        run: |
+          auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
+          git -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic ${auth}" fetch --no-tags --depth=1 origin "$BASE" || true
+
+      - id: summary
+        name: Summarize, and check the packs without an upstream adapter
+        env:
+          BASE: ${{ inputs.base }}
+          # The tool-packs the plan judged; the rest are listed as not judged. Without a plan the summary expects every
+          # gated tool-pack's report, so a failed plan fails closed.
+          PLANNED: ${{ needs.plan.result == 'success' && needs.plan.outputs.tool-packs || '' }}
+          PORT_READINESS_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          PORT_READINESS_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set +e
+          # A push that creates a branch has no previous head.
+          if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then BASE=""; fi
+          # No report was downloaded when no leg ran.
+          mkdir -p "$RUNNER_TEMP/gates"
+          # A sharded tool-pack's legs each wrote shard-<i>of<n>/<pack>--<tool>.json: merge them into its report first.
+          # Shards that are missing or disagree leave the tool-pack without a report, which the summary fails.
+          npm run port-readiness -- merge "$RUNNER_TEMP/gates"
+          if [ "$?" = 2 ]; then echo "::error::A sharded tool-pack's shards are missing or disagree (gates merge says which); it has no report."; fi
+          npm run port-readiness -- summary "$RUNNER_TEMP/gates" ${BASE:+--base "$BASE"} ${PLANNED:+--planned "$PLANNED"}
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+
+      # One results comment per run: the earlier ones are minimized as outdated (collapsed, still there to compare), and
+      # the new one goes last. Fork pull requests get a read-only token, so they read the job summary instead. A pull
+      # request that judged no tool-pack gets a new comment only when a not-gated check fails, but its earlier comments
+      # are still collapsed, so an earlier push's verdict does not read as this run's.
+      - name: Post the results on the pull request
+        if: >-
+          ${{
+            always() &&
+            github.event_name == 'pull_request' &&
+            github.event.pull_request.head.repo.full_name == github.repository
+          }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          POST: ${{ needs.plan.outputs.legs != '[]' || steps.summary.outputs.status != '0' }}
+        run: |
+          set -euo pipefail
+          marker='<!-- rerail-port-readiness -->'
+          # Comments posted while this was called the rule gates carry the old marker; collapse those too.
+          legacy='<!-- rerail-rule-gates -->'
+          gh api --paginate "repos/$REPO/issues/$PR/comments" \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\") | select((.body | startswith(\"$marker\")) or (.body | startswith(\"$legacy\"))) | .node_id" |
+            while read -r id; do
+              gh api graphql -f id="$id" \
+                -f query='mutation($id: ID!) { minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) { minimizedComment { isMinimized } } }' \
+                > /dev/null || echo "::warning::could not collapse the earlier port readiness gates comment $id"
+            done
+          if [ "$POST" = "true" ]; then
+            body="$RUNNER_TEMP/gates/comment.md"
+            if [ ! -s "$body" ]; then
+              printf '%s\n## Port readiness: the run produced no summary\n\nSee the [workflow run](%s).\n' "$marker" "$RUN_URL" > "$body"
+            fi
+            gh api "repos/$REPO/issues/$PR/comments" -F body=@"$body" > /dev/null
+          fi
+
+      - name: Upload the summary
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: port-readiness-summary
+          path: |
+            ${{ runner.temp }}/gates/summary.md
+            ${{ runner.temp }}/gates/summary.json
+            ${{ runner.temp }}/gates/comment.md
+          if-no-files-found: warn
+          retention-days: 14
+
+      # The gate jobs are skipped, not failed, when the plan selected no leg.
+      - name: Fail when anything blocking failed
+        if: >-
+          steps.summary.outputs.status != '0' || needs.plan.result != 'success' ||
+          (needs.gates.result != 'success' && needs.gates.result != 'skipped')
+        env:
+          STATUS: ${{ steps.summary.outputs.status }}
+          PLAN: ${{ needs.plan.result }}
+          GATES: ${{ needs.gates.result }}
+        run: |
+          echo "::error::Port readiness failed (summary exit ${STATUS}, plan ${PLAN}, gate jobs ${GATES}). The job summary lists each rule, the gate it stopped at and why."
+          exit 1

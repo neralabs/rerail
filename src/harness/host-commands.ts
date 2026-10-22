@@ -4,7 +4,7 @@ import { ENTRY_POINTS } from "../engine/package-root.js";
 import { readPresentation, readRulesDashboard, readSummaryState } from "../presentation/session-presentation.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import { nodeExecutable, openDashboard, type PageOpening } from "../runtime/daemon-control.js";
-import { createRuleInstructions, RERAIL_COMMANDS, type RerailCommandName } from "./rerail-commands.js";
+import { createRuleInstructions, RERAIL_COMMANDS, showMeInstructions, type RerailCommandName } from "./rerail-commands.js";
 import { renderRerailSummary } from "./rerail-summary.js";
 import { repositoryName } from "../engine/catalog/repository-identity.js";
 import { pickSetup, type SetupStepRunner } from "./setup-picker.js";
@@ -135,6 +135,18 @@ async function startFromCommand(options: HostCommandOptions, ctx: HostCommandCon
   return last !== undefined && last.step !== "error";
 }
 
+/**
+ * `rerail stop` for this session, named as `rerail session` takes it, so the reply names the rules that steered it;
+ * the runtime re-attaches only where Rerail is now stopped.
+ */
+async function stopFromCommand(options: HostCommandOptions, ctx: HostCommandContext): Promise<void> {
+  const sessionId = options.sessionId?.();
+  const session = sessionId === undefined ? [] : [options.host ?? "omp", sessionId];
+  const result = await runLauncher(options, ["stop", ...session], databaseArgs(options));
+  if (result.code === 0) await options.reattach?.();
+  notifyResult(ctx, "rerail-stop", result);
+}
+
 /** A POSIX single-quoted shell word, for the launcher command the coding agent runs from `/rerail-create`. */
 const shellWord = (value: string): string => "'" + value.replaceAll("'", String.raw`'\''`) + "'";
 
@@ -161,7 +173,7 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
     });
   }
 
-  register("rerail", async ctx => {
+  const summary: CommandAction = async ctx => {
     const cwd = options.cwd();
     const host = options.host ?? "omp";
     const sessionId = options.sessionId?.();
@@ -180,30 +192,34 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
       repositoryName: repositoryName(cwd),
       sigil: "/",
     }), "info");
-  });
+  };
+  register("rerail", summary);
+  register("rerail-help", summary);
 
-  register("rerail-ui", async ctx => {
+  register("rerail-manage", async ctx => {
     const page = await readRulesDashboard({ cwd: options.cwd() });
     // The page needs a reachable daemon; the reason says why there is none.
     if (page.url === null) throw new Error(`no dashboard to open: ${page.reason}`);
     ctx.ui.notify(openingNotice(page.url, await openDashboard(page.url)), "info");
   });
 
+  // The launcher, as the coding agent runs it from `/rerail-create` and `/rerail-show-me`.
+  const cli = `${shellWord(nodeExecutable())} ${shellWord(join(options.packageRoot, ENTRY_POINTS.cli))}`;
+
   register("rerail-create", async (_ctx, request) => {
-    const cli = `${shellWord(nodeExecutable())} ${shellWord(join(options.packageRoot, ENTRY_POINTS.cli))}`;
     pi.sendUserMessage(createRuleInstructions({ cli, packageRoot: options.packageRoot, request: request === "" ? "(none given)" : `"${request}"` }));
   }, true);
+
+  register("rerail-show-me", async () => {
+    pi.sendUserMessage(showMeInstructions({ cli, sigil: "/", write: "edit-tool" }));
+  });
 
   // Start and stop run the launcher, so the CLI owns the wording; without a terminal it addresses the coding agent's user.
   // Re-attaching attaches the runtime where Rerail is started, and leaves only the "not on here" footer where it is not.
   register("rerail-start", async ctx => {
     if (await startFromCommand(options, ctx)) await options.reattach?.();
   });
-  register("rerail-stop", async ctx => {
-    const result = await runLauncher(options, ["stop"], databaseArgs(options));
-    if (result.code === 0) await options.reattach?.();
-    notifyResult(ctx, "rerail-stop", result);
-  });
+  register("rerail-stop", ctx => stopFromCommand(options, ctx));
 
   register("rerail-update", async ctx => {
     const result = await runLauncher(options, ["update"]);
@@ -213,7 +229,7 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
   });
 
   // Design A9/A10: say what goes and what stays, ask once, and remove only on an explicit yes.
-  register("rerail-rage-quit", async ctx => {
+  register("rerail-uninstall", async ctx => {
     const choice = await ctx.ui.select([
       "This removes Rerail from this computer, from every coding agent, in every repo.",
       "Your rules and history are kept in a backup folder.",
@@ -221,9 +237,7 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
       "Remove Rerail from this computer? You can install it again later and get your rules back.",
     ].join("\n"), [REMOVE, STOP_HERE, "Cancel"]);
     if (choice === STOP_HERE) {
-      const result = await runLauncher(options, ["stop"], databaseArgs(options));
-      if (result.code === 0) await options.reattach?.();
-      notifyResult(ctx, "rerail-stop", result);
+      await stopFromCommand(options, ctx);
       return;
     }
     if (choice !== REMOVE) return;
@@ -237,6 +251,6 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
       throw error;
     }
     if (result.code !== 0) await options.reattach?.();
-    notifyResult(ctx, "rerail-rage-quit", result);
+    notifyResult(ctx, "rerail-uninstall", result);
   });
 }

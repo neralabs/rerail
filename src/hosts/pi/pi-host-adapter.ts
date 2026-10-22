@@ -7,11 +7,15 @@ import {
   resultEvent,
   turnEndEvent,
   userPromptEvent,
+  resultWithSteers,
+  type AdapterDelivery,
   type AdapterEvent,
   type AdapterSession,
 } from "../../engine/adapter-contract.js";
 import { registerPiSemanticTools, type NativeSemanticToolRuntime } from "../../harness/native-semantic-tools.js";
 import { registerPiConversationRulesCommand, type PiConversationRulesCommandRuntime } from "./pi-command.js";
+import { contained } from "../../harness/contained-hook.js";
+import { guardCompaction } from "../../harness/compaction-guard.js";
 import { registerHostCommands } from "../../harness/host-commands.js";
 import { SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, type SessionNoteRules } from "../../engine/code-rule/rerail-steer.js";
 import { dashboardOrigin } from "../../presentation/session-presentation.js";
@@ -38,6 +42,8 @@ export interface PiHostAdapterRuntime {
   shutdown(): Promise<void>;
   sessionFor(): Promise<AdapterSession | undefined>;
   ingest(event: AdapterEvent): Promise<void>;
+  /** Hands Pi the session's steers due at the end of the agent's run, with the digest of those that missed their step. */
+  yieldDeliveries(sessionId: string): Promise<void>;
   conversationRulesTool: PiConversationRulesToolRuntime;
   conversationRulesCommand: Omit<PiConversationRulesCommandRuntime, "reload">;
   packageRoot: string;
@@ -47,6 +53,11 @@ export interface PiHostAdapterRuntime {
   configuredDatabase?(cwd: string): string | undefined;
   /** What the session-start note says about `session`'s rules. */
   sessionNoteRules(session: AdapterSession): Promise<SessionNoteRules>;
+  /**
+   * Opens `toolCallId`'s result to the steers for that call while it is being ingested; the returned function closes
+   * it and yields what was placed, so a later steer for the call goes out as a message.
+   */
+  openToolResult(toolCallId: string): () => readonly AdapterDelivery[];
 }
 
 function streamId(message: PiMessage): string {
@@ -140,6 +151,8 @@ export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRu
 
   pi.on("session_start", (_event, context) => initialize(context));
   pi.on("session_tree", (_event, context) => initialize(context));
+  // Pi compacts the preparation its handlers received (pi-coding-agent 1.1.0 `AgentSession.compact`/`_runAutoCompaction`).
+  pi.on("session_before_compact", event => { guardCompaction(event.preparation); });
   pi.on("input", async event => {
     const session = await runtime.sessionFor();
     if (session === undefined) {
@@ -189,7 +202,8 @@ export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRu
       randomUUID(),
     ));
   });
-  pi.on("tool_call", async event => {
+  // A tool hook must never block the tool: Pi fails a `tool_call` handler that throws closed.
+  pi.on("tool_call", event => contained("tool_call", (async () => {
     const session = await runtime.sessionFor();
     if (session === undefined) return;
     await runtime.ingest(callEvent(
@@ -199,18 +213,23 @@ export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRu
       event.toolName,
       event.input,
     ));
-  });
+  })()));
   pi.on("tool_result", async event => {
-    const session = await runtime.sessionFor();
-    if (session === undefined) return;
-    await runtime.ingest(resultEvent(
-      session.sessionId,
-      `tool-result:${event.toolCallId}`,
-      event.toolCallId,
-      event.toolName,
-      event.content,
-      event.isError,
-    ));
+    const close = runtime.openToolResult(event.toolCallId);
+    await contained("tool_result", (async () => {
+      const session = await runtime.sessionFor();
+      if (session === undefined) return;
+      await runtime.ingest(resultEvent(
+        session.sessionId,
+        `tool-result:${event.toolCallId}`,
+        event.toolCallId,
+        event.toolName,
+        event.content,
+        event.isError,
+      ));
+    })());
+    // The call's steers ride its result: after what it says, or in its place when its edit was rolled back.
+    return resultWithSteers(event.content, close());
   });
   pi.on("turn_end", async event => {
     const session = await runtime.sessionFor();
@@ -220,6 +239,14 @@ export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRu
     rememberCompleted(completedTurns, messageId);
     await runtime.ingest(turnEndEvent(session.sessionId, `turn-end:${messageId}`, messageText(event.message)));
   });
+  // The end of the agent's run, which Pi's turn end is not (it ends one at every model call). Pi's last actionable
+  // boundary: a steer sent here (`deliverAs: "steer"`, still inside the run) is queued, and Pi continues the run with
+  // it (pi-coding-agent 1.1.0 `AgentSession._runBeforeSettleBoundary`: `result.continue || agent.hasQueuedMessages()`).
+  pi.on("agent_before_settle", () => contained("agent_before_settle", (async () => {
+    const session = await runtime.sessionFor();
+    if (session === undefined) return;
+    await runtime.yieldDeliveries(session.sessionId);
+  })()));
   pi.on("session_shutdown", async () => {
     try {
       await runtime.shutdown();

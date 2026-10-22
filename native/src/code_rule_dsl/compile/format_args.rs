@@ -26,8 +26,9 @@ fn style(value: &Value, path: &str) -> Result<Style> {
         "percent" => Ok(Style::Percent),
         "printf" => Ok(Style::Printf),
         "scanf" => Ok(Style::Scanf),
+        "rust" => Ok(Style::Rust),
         other => Err(invalid(format!(
-            "{path}/style: unknown value `{other}`; expected brace, percent, printf or scanf"
+            "{path}/style: unknown value `{other}`; expected brace, percent, printf, scanf or rust"
         ))),
     }
 }

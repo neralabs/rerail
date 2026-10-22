@@ -1,0 +1,11 @@
+{
+  "name": "validation-upstream-eslint-config-next",
+  "private": true,
+  "description": "eslint-config-next 16.3.8 as published (vercel/next.js v16.3.8, packages/eslint-config-next), the environment the Next.js and React packs are linted in: its file globs, its parsers (Next.js's compiled Babel parser with next/babel, which comes from next 16.3.8, and typescript-eslint's) and its browser and Node globals. eslint and typescript at the versions vercel/next.js's root package.json pins at v16.3.8.",
+  "dependencies": {
+    "eslint": "9.37.0",
+    "eslint-config-next": "16.3.8",
+    "next": "16.3.8",
+    "typescript": "6.0.2"
+  }
+}

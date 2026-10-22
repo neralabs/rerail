@@ -3,7 +3,7 @@
   "id": "ruff-w605-invalid-escape-sequence",
   "revision": 2,
   "mode": "steer",
-  "description": "Port of Ruff's W605 (invalid-escape-sequence): a backslash in a non-raw string, bytes, f-string or t-string literal part that does not start a valid escape (newline, backslash, quotes, `a b f n r t v`, octal digits `0`-`7`, `x`, `N`, `u`, `U`; Ruff accepts `N`, `u` and `U` in bytes too), one finding per backslash, spanning the backslash and the character after it as Ruff does. Backslashes pair left to right (`\\\\` is one valid escape). In an f-string or t-string Ruff reads each literal element and the top-level literal text of each replacement field's format specifier, not the specifiers of nested fields (whose expressions are strings of their own); a literal element that ends in an unpaired backslash is completed by the next source character, the `{` that opens the next replacement field or the `}` that closes the specifier's field.",
+  "description": "Avoid invalid backslash escape sequences in Python strings; use a raw string or a doubled backslash instead.",
   "scope": {
     "include": [
       "**/*"
@@ -145,7 +145,7 @@
       "violation": {
         "anchor": "capture.BS",
         "code": "W605",
-        "message": "Invalid escape sequence: `$BS`",
+        "message": "Double this backslash in the format spec, or make the string raw with an `rf` prefix.",
         "each": "BS",
         "suppress": {
           "noqa": {

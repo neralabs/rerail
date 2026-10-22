@@ -1,0 +1,1 @@
+let arr: string = function () {};

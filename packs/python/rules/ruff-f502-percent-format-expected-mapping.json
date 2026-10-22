@@ -3,7 +3,7 @@
   "id": "ruff-f502-percent-format-expected-mapping",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of Ruff's F502 (percent-format-expected-mapping): a valid `%`-format string with a `%(key)` placeholder applied to a list, tuple or set display, a list or set comprehension or a generator. The format string is a str literal (no f/t/b prefix; implicit concatenations joined, escapes decoded, parentheses transparent) left of `%`, read with the `percentFormat` grammar (a port of ruff_python_literal's cformat parser).",
+  "description": "Pass a mapping, not a list, tuple or set, to a %-format string that uses %(key) placeholders; the call fails at run time.",
   "scope": {
     "include": [
       "**/*"

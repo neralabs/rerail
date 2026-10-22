@@ -7,6 +7,7 @@ import type {
   SelectionSpec,
   WatermarkChange,
 } from "../engine/native/semantic-types.js";
+import { internalTesting } from "../engine/internal-testing.js";
 
 export interface NativeSemanticToolRuntime {
   mark(change: WatermarkChange): Promise<unknown>;
@@ -23,6 +24,7 @@ function result(details: unknown) {
   };
 }
 
+/** Internal testing: the semantic tools `rerail_mark`, `rerail_select`, `rerail_project` and `rerail_relate`. */
 export function registerOmpSemanticTools(pi: OmpExtensionAPI, runtime: NativeSemanticToolRuntime): void {
   const z = pi.zod;
   const markParameters = z.object({ change: z.unknown() });
@@ -36,7 +38,7 @@ export function registerOmpSemanticTools(pi: OmpExtensionAPI, runtime: NativeSem
   pi.registerTool({
     name: "rerail_mark",
     label: "Rerail Mark",
-    description: "Attach or detach namespaced watermarks on active-session content.",
+    description: internalTesting("Attach or detach namespaced watermarks on active-session content."),
     parameters: markParameters,
     approval: "write",
     loadMode: "discoverable",
@@ -49,7 +51,7 @@ export function registerOmpSemanticTools(pi: OmpExtensionAPI, runtime: NativeSem
   pi.registerTool({
     name: "rerail_select",
     label: "Rerail Select",
-    description: "Select active-session content with source and watermark filters.",
+    description: internalTesting("Select active-session content with source and watermark filters."),
     parameters: selectParameters,
     approval: "read",
     loadMode: "discoverable",
@@ -62,7 +64,7 @@ export function registerOmpSemanticTools(pi: OmpExtensionAPI, runtime: NativeSem
   pi.registerTool({
     name: "rerail_project",
     label: "Rerail Project",
-    description: "Render and embed a cached selection.",
+    description: internalTesting("Render and embed a cached selection."),
     parameters: projectParameters,
     approval: "read",
     loadMode: "discoverable",
@@ -75,7 +77,7 @@ export function registerOmpSemanticTools(pi: OmpExtensionAPI, runtime: NativeSem
   pi.registerTool({
     name: "rerail_relate",
     label: "Rerail Relate",
-    description: "Compare two cached semantic projections.",
+    description: internalTesting("Compare two cached semantic projections."),
     parameters: relateParameters,
     approval: "read",
     loadMode: "discoverable",
@@ -91,11 +93,12 @@ export function registerOmpSemanticTools(pi: OmpExtensionAPI, runtime: NativeSem
   });
 }
 
+/** Internal testing: the semantic tools, as {@link registerOmpSemanticTools}. */
 export function registerPiSemanticTools(pi: PiExtensionAPI, runtime: NativeSemanticToolRuntime): void {
   pi.registerTool({
     name: "rerail_mark",
     label: "Rerail Mark",
-    description: "Attach or detach namespaced watermarks on active-session content.",
+    description: internalTesting("Attach or detach namespaced watermarks on active-session content."),
     parameters: Type.Object({ change: Type.Unknown() }),
     async execute(_id, input) {
       return result(await runtime.mark(input.change as WatermarkChange));
@@ -104,7 +107,7 @@ export function registerPiSemanticTools(pi: PiExtensionAPI, runtime: NativeSeman
   pi.registerTool({
     name: "rerail_select",
     label: "Rerail Select",
-    description: "Select active-session content with source and watermark filters.",
+    description: internalTesting("Select active-session content with source and watermark filters."),
     parameters: Type.Object({ spec: Type.Unknown() }),
     async execute(_id, input) {
       return result(await runtime.select(input.spec as SelectionSpec));
@@ -113,7 +116,7 @@ export function registerPiSemanticTools(pi: PiExtensionAPI, runtime: NativeSeman
   pi.registerTool({
     name: "rerail_project",
     label: "Rerail Project",
-    description: "Render and embed a cached selection.",
+    description: internalTesting("Render and embed a cached selection."),
     parameters: Type.Object({ selectionId: Type.String(), spec: Type.Unknown() }),
     async execute(_id, input) {
       return result(await runtime.project(input.selectionId, input.spec as ProjectionSpec));
@@ -122,7 +125,7 @@ export function registerPiSemanticTools(pi: PiExtensionAPI, runtime: NativeSeman
   pi.registerTool({
     name: "rerail_relate",
     label: "Rerail Relate",
-    description: "Compare two cached semantic projections.",
+    description: internalTesting("Compare two cached semantic projections."),
     parameters: Type.Object({
       leftProjectionId: Type.String(),
       rightProjectionId: Type.String(),

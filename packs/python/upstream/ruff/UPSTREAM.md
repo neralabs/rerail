@@ -40,6 +40,7 @@ The fixtures listed below were written by Rerail for the pinned tool to score, b
 | `upstream/ruff/fixtures/rerail/noqa/B026.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/B028.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/B029.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/noqa/B030.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/B032.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/B033.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/B034.py` | written by Rerail |

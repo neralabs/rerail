@@ -77,7 +77,7 @@ pub(super) fn prepare_relationship_pass<'a>(
         let catalog_id = *interned
             .catalogs
             .get(&catalog_key)
-            .ok_or(StoreError::Busy)?;
+            .ok_or(StoreError::Vanished("candidate catalog"))?;
         for result in publication.local_results {
             let check_id = *interned
                 .clauses
@@ -86,7 +86,7 @@ pub(super) fn prepare_relationship_pass<'a>(
                     result.candidate.rule,
                     result.candidate.clause.clone(),
                 ))
-                .ok_or(StoreError::Busy)?;
+                .ok_or(StoreError::Vanished("candidate check"))?;
             let raw_length = i64::try_from(result.raw_length).map_err(|_| {
                 StoreError::Invalid("local result length exceeds SQLite range".to_owned())
             })?;

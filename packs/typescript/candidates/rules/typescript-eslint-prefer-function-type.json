@@ -3,10 +3,13 @@
   "id": "typescript-eslint-prefer-function-type",
   "revision": 1,
   "mode": "steer",
-  "description": "Port of typescript-eslint's `prefer-function-type` (https://typescript-eslint.io/rules/prefer-function-type). Flags a type literal, or an interface with no supertype other than `Function`, whose only member is a call or construct signature with a return type; in such an interface the first `this` type (outside nested literals) is reported instead. Fixes cover call signatures without comments; the checks are split by fix shape.",
+  "description": "Use a function type instead of an interface or type literal that holds only a call signature; it is shorter and reads as what it is.",
   "scope": {
     "include": [
-      "**/*"
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts"
     ],
     "exclude": []
   },
@@ -207,7 +210,24 @@
         "anchor": "capture.MEMBER",
         "code": "@typescript-eslint/prefer-function-type",
         "message": "Type literal only has a call signature, you should use a function type instead.",
-        "fix": "$TP$PARAMS => $RET"
+        "fix": "$TP$PARAMS => $RET",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/prefer-function-type"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "prefer-function-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/useShorthandFunctionType"
+            ]
+          }
+        }
       }
     },
     {
@@ -404,7 +424,24 @@
         "anchor": "capture.MEMBER",
         "code": "@typescript-eslint/prefer-function-type",
         "message": "Type literal only has a call signature, you should use a function type instead.",
-        "fix": "($TP$PARAMS => $RET)"
+        "fix": "($TP$PARAMS => $RET)",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/prefer-function-type"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "prefer-function-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/useShorthandFunctionType"
+            ]
+          }
+        }
       }
     },
     {
@@ -600,7 +637,24 @@
       "violation": {
         "anchor": "capture.MEMBER",
         "code": "@typescript-eslint/prefer-function-type",
-        "message": "Type literal only has a call signature, you should use a function type instead."
+        "message": "Type literal only has a call signature, you should use a function type instead.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/prefer-function-type"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "prefer-function-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/useShorthandFunctionType"
+            ]
+          }
+        }
       }
     },
     {
@@ -899,7 +953,24 @@
         "anchor": "capture.MEMBER",
         "code": "@typescript-eslint/prefer-function-type",
         "message": "Interface only has a call signature, you should use a function type instead.",
-        "fix": "type $NAME$ITP = $TP$PARAMS => $RET;"
+        "fix": "type $NAME$ITP = $TP$PARAMS => $RET;",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/prefer-function-type"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "prefer-function-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/useShorthandFunctionType"
+            ]
+          }
+        }
       }
     },
     {
@@ -1200,7 +1271,24 @@
         "anchor": "capture.MEMBER",
         "code": "@typescript-eslint/prefer-function-type",
         "message": "Interface only has a call signature, you should use a function type instead.",
-        "fix": "type $NAME$ITP = $TP$PARAMS => $RET"
+        "fix": "type $NAME$ITP = $TP$PARAMS => $RET",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/prefer-function-type"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "prefer-function-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/useShorthandFunctionType"
+            ]
+          }
+        }
       }
     },
     {
@@ -1474,7 +1562,24 @@
       "violation": {
         "anchor": "capture.MEMBER",
         "code": "@typescript-eslint/prefer-function-type",
-        "message": "Interface only has a call signature, you should use a function type instead."
+        "message": "Interface only has a call signature, you should use a function type instead.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/prefer-function-type"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "prefer-function-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/useShorthandFunctionType"
+            ]
+          }
+        }
       }
     },
     {
@@ -1687,7 +1792,24 @@
       "violation": {
         "anchor": "witness.span",
         "code": "@typescript-eslint/prefer-function-type",
-        "message": "`this` refers to the function type '$IFACE', did you intend to use a generic `this` parameter like `<Self>(this: Self, ...) => Self` instead?"
+        "message": "Replace `this` in '$IFACE' with a generic this parameter, like `<Self>(this: Self, ...) => Self`.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/prefer-function-type"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "prefer-function-type"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/style/useShorthandFunctionType"
+            ]
+          }
+        }
       }
     }
   ]

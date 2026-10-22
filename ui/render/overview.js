@@ -39,7 +39,7 @@ function steeredNote(sum, label) {
 function sessionsNote(sum, label) {
   const sir = sum.sessionsInRange;
   if (sir) return `${label} · ${fmt(Math.max(0, sir - sum.sessionsWithTriggers))} had none`;
-  return data.sessions.length ? `no sessions ${label}` : "your next coding agent session shows here";
+  return sum.anySessions ? `no sessions ${label}` : "your next coding agent session shows here";
 }
 
 export function renderOverview(root, sum) {

@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "ruff-f707-default-except-not-last",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "Port of Ruff's F707 (default-except-not-last) with default settings: a bare `except:` handler followed by another handler of the same `try`. Reported on the `except` keyword.",
+  "description": "Put a bare except handler last in its try statement; Python rejects any handler after it.",
   "scope": {
     "include": [
       "**/*"
@@ -36,7 +36,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "F707",
-        "message": "An `except` block as not the last exception handler",
+        "message": "Move this bare `except:` handler after all typed handlers; a bare handler must be last.",
         "suppress": {
           "noqa": {
             "codes": [

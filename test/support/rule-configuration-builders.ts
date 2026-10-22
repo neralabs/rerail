@@ -7,7 +7,7 @@ import {
   type RerailDatabase,
   codeRuleSchema,
   type CodeRule,
-  type BundledCatalog,
+  type RuleCatalog,
   type CheckoutContext,
   type RepositoryStatus,
   type RuleMode,
@@ -64,10 +64,11 @@ export function conversation(id: string): ConversationRule {
 }
 
 /**
- * A small bundle: pack `lint` (`no-console` starts on in Steer, `no-var` starts off in Log), a By Rerail rule
- * `loose`, and a By Rerail conversation rule `talk`. Documents are Block unless the pack says otherwise.
+ * A small rule catalog: pack `lint` (`no-console` starts on in Steer, `no-var` starts off in Log), a By Rerail rule
+ * `loose`, and a By Rerail conversation rule `talk`. Documents are Block unless the pack says otherwise. The pack
+ * honours suppression comments unless `honourSuppressionComments` is false.
  */
-export function testBundle(overrides: { noConsoleRevision?: number } = {}): BundledCatalog {
+export function testBundle(overrides: { noConsoleRevision?: number; honourSuppressionComments?: boolean } = {}): RuleCatalog {
   const documents: RuleDocument[] = [
     { kind: "code", rule: codeRule("no-console", { revision: overrides.noConsoleRevision ?? 1 }) },
     { kind: "code", rule: codeRule("no-var") },
@@ -77,11 +78,12 @@ export function testBundle(overrides: { noConsoleRevision?: number } = {}): Bund
   const pack: RulePack = {
     id: "lint",
     name: "Lint",
+    version: null,
     category: "language",
     covers: "TypeScript",
     reason: "TypeScript files",
     match: { any: [{ files: ["**/*.ts"], label: "TypeScript" }] },
-    honourSuppressionComments: true,
+    honourSuppressionComments: overrides.honourSuppressionComments ?? true,
     rules: [
       { id: "no-console", kind: "code", title: "No console", group: "Lint", mode: "steer", on: true },
       { id: "no-var", kind: "code", title: "No var", group: "Lint", mode: "log", on: false },
@@ -91,7 +93,9 @@ export function testBundle(overrides: { noConsoleRevision?: number } = {}): Bund
     documents: new Map(documents.map(document => [document.rule.id, document])),
     packs: new Map([[pack.id, pack]]),
     packOf: new Map(pack.rules.map(rule => [rule.id, pack.id])),
+    sources: new Map(documents.flatMap(document => document.kind === "code" ? [[document.rule.id, document.rule] as const] : [])),
     digest: `test:${overrides.noConsoleRevision ?? 1}`,
+    skipped: [],
   };
 }
 

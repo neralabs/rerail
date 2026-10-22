@@ -3,7 +3,7 @@
   "id": "ruff-pie804-unnecessary-dict-kwargs",
   "revision": 2,
   "mode": "steer",
-  "description": "Port of Ruff's PIE804 (unnecessary-dict-kwargs): a call argument `**{...}` (a call's, not a class's bases: Ruff checks `Expr::Call` only) whose dict display is a single `**x` spread, empty, or has only keys that are str literals (not bytes, f- or t-strings; escapes decoded, implicit concatenations joined) whose value is a Python identifier (not a keyword). Reported on the `**` argument.",
+  "description": "Pass keyword arguments directly instead of unpacking a dict literal into a Python call.",
   "scope": {
     "include": [
       "**/*"

@@ -1,0 +1,169 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-plugin-vue-no-child-content",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't put child content inside a Vue element that has v-html or v-text; the directive overwrites it.",
+  "scope": {
+    "include": [
+      "**/*.vue"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "v-html",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "kind": "start_tag",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "directive_attribute",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "directive_name",
+                "regex": "^v-html$"
+              }
+            },
+            "all": [
+              {
+                "precedes": {
+                  "stopBy": "end",
+                  "kind": "end_tag"
+                }
+              },
+              {
+                "precedes": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "kind": "interpolation"
+                    },
+                    {
+                      "kind": "comment"
+                    },
+                    {
+                      "kind": "element"
+                    },
+                    {
+                      "kind": "template_element"
+                    },
+                    {
+                      "kind": "script_element"
+                    },
+                    {
+                      "kind": "style_element"
+                    },
+                    {
+                      "kind": "entity",
+                      "not": {
+                        "regex": "^&(?:#(?:0*(?:9|1[0-3]|32|160|5760|819[2-9]|820[0-2]|8232|8233|8239|8287|12288|65279)|[xX]0*(?:9|[a-dA-D]|20|[aA]0|1680|200[0-9aA]|202[89]|202[fF]|205[fF]|3000|[fF][eE][fF][fF]))|Tab|NewLine|nbsp|NonBreakingSpace|ensp|emsp|emsp13|emsp14|numsp|puncsp|thinsp|ThinSpace|hairsp|VeryThinSpace|MediumSpace);?$"
+                      }
+                    },
+                    {
+                      "kind": "text",
+                      "not": {
+                        "regex": "^(?:\\s|&(?:#(?:0*(?:9|1[0-3]|32|160|5760|819[2-9]|820[0-2]|8232|8233|8239|8287|12288|65279)|[xX]0*(?:9|[a-dA-D]|20|[aA]0|1680|200[0-9aA]|202[89]|202[fF]|205[fF]|3000|[fF][eE][fF][fF]))|Tab|NewLine|nbsp|NonBreakingSpace|ensp|emsp|emsp13|emsp14|numsp|puncsp|thinsp|ThinSpace|hairsp|VeryThinSpace|MediumSpace);?)*$"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.end",
+        "code": "vue/no-child-content",
+        "message": "Child content is disallowed because it will be overwritten by the v-html directive.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-child-content"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "v-text",
+      "forbid": {
+        "ast": {
+          "language": "vue",
+          "rule": {
+            "kind": "start_tag",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "directive_attribute",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "directive_name",
+                "regex": "^v-text$"
+              }
+            },
+            "all": [
+              {
+                "precedes": {
+                  "stopBy": "end",
+                  "kind": "end_tag"
+                }
+              },
+              {
+                "precedes": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "kind": "interpolation"
+                    },
+                    {
+                      "kind": "comment"
+                    },
+                    {
+                      "kind": "element"
+                    },
+                    {
+                      "kind": "template_element"
+                    },
+                    {
+                      "kind": "script_element"
+                    },
+                    {
+                      "kind": "style_element"
+                    },
+                    {
+                      "kind": "entity",
+                      "not": {
+                        "regex": "^&(?:#(?:0*(?:9|1[0-3]|32|160|5760|819[2-9]|820[0-2]|8232|8233|8239|8287|12288|65279)|[xX]0*(?:9|[a-dA-D]|20|[aA]0|1680|200[0-9aA]|202[89]|202[fF]|205[fF]|3000|[fF][eE][fF][fF]))|Tab|NewLine|nbsp|NonBreakingSpace|ensp|emsp|emsp13|emsp14|numsp|puncsp|thinsp|ThinSpace|hairsp|VeryThinSpace|MediumSpace);?$"
+                      }
+                    },
+                    {
+                      "kind": "text",
+                      "not": {
+                        "regex": "^(?:\\s|&(?:#(?:0*(?:9|1[0-3]|32|160|5760|819[2-9]|820[0-2]|8232|8233|8239|8287|12288|65279)|[xX]0*(?:9|[a-dA-D]|20|[aA]0|1680|200[0-9aA]|202[89]|202[fF]|205[fF]|3000|[fF][eE][fF][fF]))|Tab|NewLine|nbsp|NonBreakingSpace|ensp|emsp|emsp13|emsp14|numsp|puncsp|thinsp|ThinSpace|hairsp|VeryThinSpace|MediumSpace);?)*$"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.end",
+        "code": "vue/no-child-content",
+        "message": "Child content is disallowed because it will be overwritten by the v-text directive.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vue/no-child-content"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

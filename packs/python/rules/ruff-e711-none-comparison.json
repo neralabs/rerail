@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "ruff-e711-none-comparison",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "Port of Ruff's E711 (none-comparison) with default settings: `None` compared with `==` or `!=`, reported on the `None` literal (inside any parentheses). The first operand is checked when the second is not a non-singleton constant; each later `None` when the operand before its operator is not one (Ruff's `is_constant_non_singleton`: string, bytes and number literals, and tuples of constants). Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/E711.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it.",
+  "description": "Use is None or is not None instead of == or != to compare with None; equality can be overridden and gives surprising results.",
   "scope": {
     "include": [
       "**/*"
@@ -12,7 +12,7 @@
   },
   "clauses": [
     {
-      "id": "none-comparison",
+      "id": "none-comparison-equal",
       "forbid": {
         "ast": {
           "language": "python",
@@ -113,7 +113,7 @@
                     {
                       "precedes": {
                         "stopBy": "neighbor",
-                        "regex": "^(==|!=)$",
+                        "regex": "^==$",
                         "precedes": {
                           "stopBy": "neighbor",
                           "not": {
@@ -127,7 +127,7 @@
                 {
                   "follows": {
                     "stopBy": "neighbor",
-                    "regex": "^(==|!=)$",
+                    "regex": "^==$",
                     "follows": {
                       "stopBy": "neighbor",
                       "not": {
@@ -185,7 +185,191 @@
       "violation": {
         "anchor": "witness.span",
         "code": "E711",
-        "message": "Comparison to `None` should be `cond is None`",
+        "message": "Use `is None` instead of `== None` for this comparison.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "E711"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "none-comparison-not-equal",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "constant": {
+              "any": [
+                {
+                  "kind": "string",
+                  "not": {
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "interpolation"
+                    }
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "interpolation"
+                    }
+                  }
+                },
+                {
+                  "kind": "integer"
+                },
+                {
+                  "kind": "float"
+                },
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "false"
+                },
+                {
+                  "kind": "ellipsis"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "constant"
+                  }
+                },
+                {
+                  "kind": "tuple",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "matches": "constant"
+                          },
+                          {
+                            "regex": "^[(),]$"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "constant-non-singleton": {
+              "all": [
+                {
+                  "matches": "constant"
+                },
+                {
+                  "not": {
+                    "matches": "singleton"
+                  }
+                }
+              ]
+            },
+            "compared-operand": {
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "comparison_operator"
+              },
+              "any": [
+                {
+                  "all": [
+                    {
+                      "not": {
+                        "follows": {
+                          "stopBy": "neighbor",
+                          "regex": "(?s)."
+                        }
+                      }
+                    },
+                    {
+                      "precedes": {
+                        "stopBy": "neighbor",
+                        "regex": "^!=$",
+                        "precedes": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "matches": "constant-non-singleton"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^!=$",
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "matches": "constant-non-singleton"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "operand": {
+              "any": [
+                {
+                  "matches": "compared-operand"
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "operand"
+                  }
+                }
+              ]
+            },
+            "singleton": {
+              "any": [
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "false"
+                },
+                {
+                  "kind": "ellipsis"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "singleton"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "none",
+            "matches": "operand"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "E711",
+        "message": "Use `is not None` instead of `!= None` for this comparison.",
         "suppress": {
           "noqa": {
             "codes": [

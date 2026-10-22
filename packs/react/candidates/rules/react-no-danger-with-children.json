@@ -3,7 +3,7 @@
   "id": "react-no-danger-with-children",
   "revision": 1,
   "mode": "steer",
-  "description": "eslint-plugin-react 7.37.5 react/no-danger-with-children: an element with both `dangerouslySetInnerHTML` and children (a first child that is not a line break, or a `children` prop), props read through `{...name}` spreads of a variable initialised with an object literal; and `x.createElement(type, props, ...)` with `dangerouslySetInnerHTML` in props (an object literal or a variable initialised with one) and a third argument or a `children` prop.",
+  "description": "Don't give an element both dangerouslySetInnerHTML and children; React throws when both are set.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -217,6 +217,12 @@
                 ]
               }
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -228,6 +234,16 @@
           "eslint": {
             "rules": [
               "react/no-danger-with-children"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-danger-with-children"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/security/noDangerouslySetInnerHtmlWithChildren"
             ]
           }
         }
@@ -334,6 +350,12 @@
             "PROPS": {
               "matches": "props-dangerous"
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -345,6 +367,16 @@
           "eslint": {
             "rules": [
               "react/no-danger-with-children"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-danger-with-children"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/security/noDangerouslySetInnerHtmlWithChildren"
             ]
           }
         }
@@ -499,6 +531,12 @@
             "PROPS": {
               "matches": "props-both"
             }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
           }
         }
       },
@@ -510,6 +548,16 @@
           "eslint": {
             "rules": [
               "react/no-danger-with-children"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-danger-with-children"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/security/noDangerouslySetInnerHtmlWithChildren"
             ]
           }
         }

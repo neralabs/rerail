@@ -65,7 +65,9 @@ A file is fixture data when a directory in its path is `fixtures`/`__fixtures__`
 `*.expected.json` recording or `*.cases.json` case list; it is a code-rule document; it sits in a test
 root (`test/`, `integration/`, `conformance/`, `benchmark/`) and is not TS/JS source or Markdown; or it sits
 in `test/`/`integration/` with a fixture name. It may live only under `fixtures/` or `packs/<id>/upstream/`.
-Exemptions: `packs/<id>/candidates/**` (pack data) and, for code-rule documents, `packs/<id>/rules/**`.
+Exemptions: `packs/<id>/candidates/**` (pack data), `gate-pins` (the port readiness gates' pinned inputs and workers:
+`conformance/port-readiness/*.json`, `conformance/recorders/port-readiness/runtimes/**` and the recorder's Python and PHP workers) and, for
+code-rule documents, `packs/<id>/rules/**`.
 
 ### 4. Engine source roots — target 1 (`native/`)
 
@@ -106,8 +108,8 @@ For each rule document of a pack, REUSE's resolved licence (REUSE.toml: the last
 - `packs/<id>/candidates/**`: only terms the pack declares (Rerail's own probe rules are Apache-2.0 alone).
 
 And for each file a `packs/<id>/licenses/<project>/UPSTREAM.md` table lists as copied (a row whose upstream path is
-`none` is Rerail's and is skipped): the resolved licence includes the one that UPSTREAM.md records
-(`License: <SPDX id>`), and the resolved `SPDX-FileCopyrightText` names a holder besides Rerail. A copied file left to
+`none` is Rerail's and is skipped): the resolved licence names the one that UPSTREAM.md records
+(`License: <SPDX id>`; `MIT OR Apache-2.0` names MIT), and the resolved `SPDX-FileCopyrightText` names a holder besides Rerail. A copied file left to
 the catch-all annotation passes `reuse lint` but fails here.
 
 ## Contract conformance

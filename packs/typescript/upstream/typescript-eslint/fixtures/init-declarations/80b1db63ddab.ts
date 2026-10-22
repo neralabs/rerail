@@ -1,0 +1,1 @@
+function foo(arg1: string = 'string'): void {}

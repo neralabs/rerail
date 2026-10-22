@@ -1,17 +1,24 @@
 /**
  * Fetch orchestration: one conditional GET per resource every 5 s (`If-None-Match`; 304 means
- * nothing changed), backing off to 30 s while the daemon is unreachable. Data lands in the
- * store; the caller re-renders and reconciles in place. With a repository in scope the page
- * polls its context, its rules (and the packs attached to it), the rule packs, its activity,
- * violations and sessions; with or without one, the repository list and the daemon's health.
+ * nothing changed), backing off to 30 s while the daemon is unreachable, and paused while the tab is hidden.
+ * Data lands in the store; the caller re-renders and reconciles in place. Every poll reads the repository
+ * list and the daemon's health, and with a repository in scope its context; beyond that only what the open
+ * view (and an open panel) shows. Long lists are paged with a cursor: a poll refreshes their first page and
+ * keeps the further pages the person loaded.
  */
 import { get, send } from "./api.js";
-import { data, ui, sinceFor, setScope, activityView } from "./state.js";
+import { data, ui, sinceFor, setScope, activityView, pagedList, panelRuleId } from "./state.js";
 
 const INTERVAL = 5_000;
 const MAX_BACKOFF = 30_000;
+/** Page sizes: Activity's violations, a rule panel's, the sessions list, the selected session's violations, its transcript. */
 const FINDINGS_PAGE = 200;
+const RULE_FINDINGS_PAGE = 50;
+const SESSIONS_PAGE = 50;
+const SESSION_FINDINGS_PAGE = 200;
 const EVENTS_PAGE = 500;
+/** Views that show rules and their activity. */
+const RULES_VIEWS = { rules: true, packs: true, review: true };
 
 /**
  * ETag per data slot, not per URL: range-scoped resources fetch a different URL for every range,
@@ -28,14 +35,23 @@ let queued = false;
 /** Bumped when the scope changes, so a response for the previous repository lands nowhere. */
 let generation = 0;
 
-/** Conditional GET; resolves `undefined` on 304 or after a scope change, the body on 200. `slot` names the ETag's data slot. */
-async function fetchFresh(path, slot = path) {
+/**
+ * Conditional GET; resolves `undefined` on 304, after a scope change, or once `wanted()` says the answer no longer
+ * belongs where it would land (its ETag is then not kept either); the body on 200. `slot` names the ETag's data slot.
+ */
+async function fetchFresh(path, slot = path, wanted = () => true) {
   const started = generation;
   const { status, etag, body } = await get(path, { etag: etags.get(slot) });
-  if (started !== generation || status === 304) return undefined;
+  if (started !== generation || status === 304 || !wanted()) return undefined;
   if (etag !== undefined) etags.set(slot, etag);
   return body;
 }
+
+/**
+ * Fetch slot `slot` in full on the next poll, not conditionally: after a write failed, what the page shows was
+ * changed by hand and may differ from what the daemon holds although the daemon's body did not change.
+ */
+export const refetch = slot => { etags.delete(slot); };
 
 /** `repository=…&checkout=…` from the page's scope: the target every repository read and write names. */
 export function scopeTarget() {
@@ -139,11 +155,13 @@ async function loadContext() {
 }
 
 /**
- * One row per rule id, in the renderers' shape: on (`enabled`) only where it is on in every folder it is added at,
- * the first folder's mode on the rule, and each folder's own on and mode (`folderStates`; `mixed` when they differ).
- * A change from the row is written at every folder.
+ * One row per rule id, in the renderers' shape: on (`enabled`, the switch) only where it is on in every folder it is
+ * added at, the first folder's mode, suppressions and options on the rule, and each folder's own on, mode,
+ * suppressions and what decided them (`folderStates`; `mixed` when on or mode differ). `configError` is why the rule's
+ * options don't apply, from any folder: the rule then runs nowhere, whatever its switch says. A change from the row is
+ * written at every folder.
  */
-function toStoredRules(entries) {
+export function toStoredRules(entries) {
   const rules = new Map();
   for (const entry of entries) {
     const id = entry.rule.id;
@@ -151,8 +169,9 @@ function toStoredRules(entries) {
     if (known !== undefined) {
       if (!known.folders.includes(entry.folder)) {
         known.folders.push(entry.folder);
-        known.folderStates.push({ folder: entry.folder, on: entry.on, mode: entry.mode });
+        known.folderStates.push(folderState(entry));
         known.enabled = known.enabled && entry.on;
+        known.configError ??= entry.configError ?? null;
         known.mixed = known.folderStates.some(state => state.on !== entry.on || state.mode !== entry.mode) || known.mixed;
       }
       continue;
@@ -164,15 +183,26 @@ function toStoredRules(entries) {
       origin: entry.source.kind === "library_rule" ? "user" : "rerail",
       source: entry.source,
       folders: [entry.folder],
-      folderStates: [{ folder: entry.folder, on: entry.on, mode: entry.mode }],
+      folderStates: [folderState(entry)],
       mixed: false,
       onSource: entry.onSource,
       modeSource: entry.modeSource,
+      suppressions: entry.suppressions,
+      suppressionsSource: entry.suppressionsSource,
+      config: entry.config,
+      configSource: entry.configSource,
+      configError: entry.configError ?? null,
       revision: entry.revision,
     });
   }
   return rules;
 }
+
+/** One folder's own on, mode and suppressions of a rule, what decided its suppressions, and what added it there. */
+const folderState = entry => ({
+  folder: entry.folder, on: entry.on, mode: entry.mode, suppressions: entry.suppressions, suppressionsSource: entry.suppressionsSource,
+  source: entry.source,
+});
 
 /**
  * The packs added to the repository: pack id → every folder it is attached at, from the rules present
@@ -224,6 +254,30 @@ export async function loadPresence() {
   data.presence = body.preferences.find(p => p.repository === "" && p.host === "")?.presence ?? "compact";
 }
 
+/** Settings: the scoped repository's Follow .gitignore; kept for the page only while it still shows that scope. */
+export async function loadFollowGitignore() {
+  const scope = captureScope();
+  const { body } = await get(`/api/repository?${new URLSearchParams(scope.target)}`);
+  if (inScope(scope)) data.followGitignore = body.repository.followGitignore;
+}
+
+/**
+ * Settings: turn the scoped repository's Follow .gitignore on or off. The page shows it at once and puts it back, with
+ * a toast, when the write fails; nothing of the answer lands once the page shows another repository.
+ */
+export async function saveFollowGitignore(follow, { toast, invalidate }) {
+  const scope = captureScope(), was = data.followGitignore;
+  data.followGitignore = follow; invalidate();
+  try {
+    if (!(await sendInScope(scope, "PUT", "/api/repository/follow-gitignore", { followGitignore: follow }))) return;
+    toast(follow ? "Files Git ignores are not checked in sessions started from now on." : "Files Git ignores are checked in sessions started from now on.");
+  } catch (error) {
+    data.followGitignore = was;
+    toast(`Could not save: ${error.message}`);
+  }
+  invalidate();
+}
+
 /**
  * The packs that fit the scoped repository, each with the folder to add it in: W0, Review, and the folder
  * Add pack uses. Reads the repository, so only when the page needs them.
@@ -243,32 +297,71 @@ async function loadActivity(since, target) {
   const body = await fetchFresh(`/api/rules/activity?since=${since}${repositoryFilter()}`, target);
   if (body === undefined) return false;
   data[target] = body.rules;
+  data[`${target}Sessions`] = body.sessions;
   return true;
 }
 
-async function loadFindings(since) {
-  const body = await fetchFresh(`/api/violations?since=${since}&limit=${FINDINGS_PAGE}&offset=0${repositoryFilter()}`, "findings");
-  if (body === undefined) { data.findingsSince = since; return false; }
-  // Keep pages the user asked for beyond the first, but only if they still belong to this range.
-  const tail = data.findings.length > FINDINGS_PAGE && data.findingsSince === since ? data.findings.slice(FINDINGS_PAGE) : [];
-  data.findings = body.violations.concat(tail.filter(f => !body.violations.some(g => g.auditId === f.auditId && g.id === f.id)));
-  data.findingsTotal = body.total;
-  data.findingsSince = since;
+/** The newest session, for the welcome banner: one row, not the list. */
+async function loadNewestSession() {
+  const body = await fetchFresh(`/api/sessions?limit=1${repositoryFilter()}`, "newestSession");
+  if (body === undefined) return false;
+  data.newestSession = body.sessions[0] ?? null;
   return true;
 }
 
-/** "Show 50 more" past the fetched pages appends the next page of the same range. */
-export async function loadMoreFindings() {
-  const since = sinceFor();
-  const offset = data.findings.length;
-  if (offset >= data.findingsTotal) return false;
+/** How a row of each paged resource is told apart from the others. */
+const ROW_ID = { violations: r => `${r.auditId}:${r.id}`, sessions: r => r.sessionId };
+
+/**
+ * The first page of the paged list `data[name]` at `key` (its URL without a cursor; `field` names the rows in the
+ * answer), conditionally. Another key starts the list over at once, dropping the previous key's pages. Under the
+ * same key, pages loaded beyond the first stay, deduplicated, with the cursor past the last of them, as long as the
+ * fresh page reaches them: when more rows arrived than a page holds, the rows between the fresh page and the kept
+ * ones could never be loaded, so the list starts over from the fresh page and its own cursor.
+ */
+async function loadFirstPage(name, field, key, owner = null) {
+  if (data[name].key !== key) {
+    etags.delete(name);
+    data[name] = pagedList(key, owner);
+  }
+  const body = await fetchFresh(key, name, () => data[name].key === key);
+  if (body === undefined) return false;
+  const current = data[name], rows = body[field];
+  const id = ROW_ID[field];
+  const kept = new Set(current.rows.map(id));
+  // The fresh page is the whole list, or it does not reach the kept pages: it replaces them.
+  const complete = body.nextCursor === null;
+  const reaches = rows.length > 0 && kept.has(id(rows.at(-1)));
+  if (current.pages <= 1 || complete || !reaches) {
+    data[name] = { ...current, rows, total: body.total, next: body.nextCursor, pages: 1 };
+    return true;
+  }
+  const fresh = new Set(rows.map(id));
+  data[name] = { ...current, rows: rows.concat(current.rows.filter(r => !fresh.has(id(r)))), total: body.total };
+  return true;
+}
+
+/**
+ * The page after `data[name]`'s cursor, appended without duplicates. `false` when there is none, or when the list
+ * moved on meanwhile (another key or scope, or this page already appended by an earlier click).
+ */
+async function loadNextPage(name, field) {
+  const { key, next } = data[name];
+  if (key === null || next === null) return false;
   const started = generation;
-  const { body } = await get(`/api/violations?since=${since}&limit=${FINDINGS_PAGE}&offset=${offset}${repositoryFilter()}`);
-  if (data.findingsSince !== since || started !== generation) return false;
-  data.findings = data.findings.concat(body.violations);
-  data.findingsTotal = body.total;
-  return body.violations.length > 0;
+  const { body } = await get(`${key}&cursor=${encodeURIComponent(next)}`);
+  const current = data[name];
+  if (started !== generation || current.key !== key || current.next !== next) return false;
+  const id = ROW_ID[field], have = new Set(current.rows.map(id));
+  data[name] = {
+    ...current, rows: current.rows.concat(body[field].filter(r => !have.has(id(r)))),
+    total: body.total, next: body.nextCursor, pages: current.pages + 1,
+  };
+  return true;
 }
+
+/** Activity: the next page of the range's violations. */
+export const loadMoreFindings = () => loadNextPage("findings", "violations");
 
 /**
  * Activity's "Show more": 50 more rows of what the filters let through, fetching further pages until
@@ -279,40 +372,107 @@ export async function showMoreActivity() {
   while (activityView().list.length < ui.recentShown && await loadMoreFindings()) { /* next page */ }
 }
 
-async function loadSessions() {
-  const body = await fetchFresh(`/api/sessions?${repositoryFilter().slice(1)}`, "sessions");
-  if (body === undefined) return false;
-  data.sessions = body.sessions.slice().sort((a, b) => b.startedAt - a.startedAt || a.sessionId.localeCompare(b.sessionId));
-  return true;
+/** Sessions view: the next page of the list. */
+export const loadMoreSessions = () => loadNextPage("sessions", "sessions");
+
+/**
+ * The selected session's violations, all time, newest first; selecting another session drops the previous one's.
+ * Their total goes into the session's list row too, so its count, the With violations filter and its day agree
+ * however old the page the row came with.
+ */
+export async function loadSessionFindings(id) {
+  const changed = await loadFirstPage("sessionFindings", "violations",
+    `/api/violations?since=0&sessionId=${encodeURIComponent(id)}&limit=${SESSION_FINDINGS_PAGE}${repositoryFilter()}`, id);
+  const slot = data.sessionFindings;
+  if (slot.owner === id && slot.pages > 0) patchSessionRow({ sessionId: id, violationCount: slot.total });
+  return changed;
+}
+
+/** One page of a session's transcript, `query` saying where (`after=…` or `before=…`). */
+async function eventsPage(id, query) {
+  const { body } = await get(`/api/sessions/${encodeURIComponent(id)}/events?${query}&limit=${EVENTS_PAGE}`);
+  return body;
+}
+
+/** Runs `load` as the session's one transcript load; a call while one runs joins it. */
+async function sessionLoad(detail, load) {
+  if (detail.loading) return detail.loading;
+  detail.loading = load();
+  try { return await detail.loading; } finally { detail.loading = null; }
+}
+
+/** Writes a session's fresh fields over its row in the loaded list, so a row past the first page stays current too. */
+function patchSessionRow(fields) {
+  const rows = data.sessions.rows;
+  if (!rows.some(s => s.sessionId === fields.sessionId)) return;
+  data.sessions = { ...data.sessions, rows: rows.map(s => (s.sessionId === fields.sessionId ? { ...s, ...fields } : s)) };
+}
+
+/** Forgets a session the daemon no longer has; the view then falls back to another, as for a session never selected. */
+function dropSession(id) {
+  data.sessionDetail.delete(id);
+  data.sessions = { ...data.sessions, rows: data.sessions.rows.filter(s => s.sessionId !== id) };
+  if (data.sessionFindings.owner === id) data.sessionFindings = pagedList();
+  if (ui.selectedSession === id) ui.selectedSession = null;
 }
 
 /**
- * Full transcript for one session, paged by sequence; later calls append only new events. The
- * session head is fetched once, before any events: a missing session must fail with its 404
- * rather than look like an empty transcript.
+ * One session's head and the newest page of its transcript; later calls refresh the head (it is one row, and the
+ * list may hold an old copy of it) and append the events recorded since. The head is fetched before any events: a
+ * session missing on its first load fails with its 404 rather than looking like an empty transcript, while one that
+ * disappears later (a reset) is dropped. Older events come with Load earlier (`loadEarlier`); `earlier` says some
+ * may be left. `gaps` is what the whole transcript says it missed, from the daemon.
  */
 export async function loadSession(id) {
   let detail = data.sessionDetail.get(id);
   if (detail === undefined) {
-    detail = { events: [], nextAfter: 0, loaded: false, loading: null };
+    detail = { head: null, gaps: null, events: [], nextAfter: 0, loaded: false, earlier: false, loading: null };
     data.sessionDetail.set(id, detail);
   }
-  if (detail.loading) return detail.loading;
-  detail.loading = (async () => {
-    let changed = !detail.loaded;
-    if (!detail.loaded) await get(`/api/sessions/${encodeURIComponent(id)}`);
-    for (;;) {
-      const { body } = await get(`/api/sessions/${encodeURIComponent(id)}/events?after=${detail.nextAfter}&limit=${EVENTS_PAGE}`);
-      if (body.events.length === 0) break;
-      detail.events.push(...body.events);
-      detail.nextAfter = body.nextAfter;
-      changed = true;
-      if (body.events.length < EVENTS_PAGE) break;
+  return sessionLoad(detail, async () => {
+    let body;
+    try {
+      ({ body } = await get(`/api/sessions/${encodeURIComponent(id)}`));
+    } catch (error) {
+      if (!detail.loaded || !/answered 404$/u.test(error.message)) throw error;
+      dropSession(id);
+      return true;
     }
+    const was = detail.head, wasGaps = detail.gaps;
+    detail.head = body.session;
+    detail.gaps = body.gaps;
+    patchSessionRow(body.session);
+    const changed = was?.eventCount !== body.session.eventCount || was?.endedAt !== body.session.endedAt
+      || JSON.stringify(wasGaps) !== JSON.stringify(body.gaps);
+    const page = await eventsPage(id, detail.loaded ? `after=${detail.nextAfter}` : `before=${Number.MAX_SAFE_INTEGER}`);
+    if (!detail.loaded) detail.earlier = page.events.length === EVENTS_PAGE;
     detail.loaded = true;
-    return changed;
-  })();
-  try { return await detail.loading; } finally { detail.loading = null; }
+    detail.nextAfter = page.nextAfter;
+    if (page.events.length === 0) return changed;
+    detail.events = detail.events.concat(page.events);
+    return true;
+  });
+}
+
+/**
+ * Load earlier: reach one page further back in the selected session. The transcript and the session's violations
+ * page back together (`loadedFrom` in `sessions-model.js`): whichever reaches back less far loads its next page.
+ */
+export async function loadEarlier(id) {
+  const detail = data.sessionDetail.get(id);
+  if (detail?.loading) await detail.loading.catch(() => {});
+  if (detail === undefined || !detail.loaded) return false;
+  const slot = data.sessionFindings;
+  const oldestViolation = slot.rows.at(-1)?.at ?? Infinity;
+  const oldestEvent = detail.earlier ? detail.events[0]?.observedAt ?? -Infinity : -Infinity;
+  if (slot.owner === id && slot.next !== null && oldestViolation >= oldestEvent) return loadNextPage("sessionFindings", "violations");
+  if (!detail.earlier) return false;
+  return sessionLoad(detail, async () => {
+    const page = await eventsPage(id, `before=${detail.events[0]?.sequence ?? Number.MAX_SAFE_INTEGER}`);
+    detail.earlier = page.events.length === EVENTS_PAGE;
+    detail.events = page.events.concat(detail.events);
+    return page.events.length > 0;
+  });
 }
 
 const WEAK = /^(continue|yes|no|ok|okay|go|try again|thanks|thank you|do it|next|y|n)\.?$/i;
@@ -347,8 +507,9 @@ export function ensureTitle(session) {
   const tried = titleTried.get(id);
   if (tried !== undefined && (session.endedAt !== null || session.eventCount <= tried)) return;
   titleTried.set(id, session.eventCount);
-  const cached = data.sessionDetail.get(id)?.events;
-  if (cached?.length) { data.titles.set(id, titleFromEvents(cached)); return; }
+  // Only a transcript loaded from its start holds the first prompts; a newer page would name a later one.
+  const detail = data.sessionDetail.get(id);
+  if (detail?.loaded && !detail.earlier && detail.events.length) { data.titles.set(id, titleFromEvents(detail.events)); return; }
   if (!titleQueue.includes(id)) titleQueue.push(id);
   pumpTitles();
 }
@@ -369,13 +530,36 @@ function pumpTitles() {
   }
 }
 
-/** Everything the scoped repository's views need; its context first when the key is not known yet. */
+/**
+ * What the open view shows, and an open panel: Rules (and its rule pack pages) the rules, packs and activity;
+ * Activity the first page of the range's violations, with rules and packs for titles and its pack filter;
+ * Sessions the first page of the list and the selected session only; Settings nothing beyond the shared reads.
+ */
+function viewJobs(since) {
+  const rulesView = RULES_VIEWS[ui.view] === true || ui.panel !== null;
+  const jobs = [];
+  if (rulesView || ui.view === "activity" || ui.view === "sessions") jobs.push(loadRules());
+  if (rulesView || ui.view === "activity") jobs.push(loadPacks());
+  if (rulesView) jobs.push(loadActivity(since, "activity"), since === 0 ? false : loadActivity(0, "activityAll"));
+  if (ui.view === "rules") jobs.push(loadNewestSession());
+  const ruleId = panelRuleId(), repository = repositoryFilter();
+  // The open rule panel: that rule's violations in the range.
+  if (ruleId !== null) {
+    jobs.push(loadFirstPage("ruleFindings", "violations",
+      `/api/violations?since=${since}&ruleId=${encodeURIComponent(ruleId)}&limit=${RULE_FINDINGS_PAGE}${repository}`, ruleId));
+  }
+  if (ui.view === "activity") jobs.push(loadFirstPage("findings", "violations", `/api/violations?since=${since}&limit=${FINDINGS_PAGE}${repository}`));
+  if (ui.view === "sessions") {
+    jobs.push(loadFirstPage("sessions", "sessions", `/api/sessions?limit=${SESSIONS_PAGE}${repository}`));
+    if (ui.selectedSession) jobs.push(loadSession(ui.selectedSession), loadSessionFindings(ui.selectedSession));
+  }
+  return jobs;
+}
+
+/** The scoped repository's context (first, when its key is not known yet), then what the open view needs. */
 async function scopedJobs(since) {
   const context = data.repository === null ? [await loadContext()] : [loadContext()];
-  const jobs = [...context, loadRules(), loadPacks(), loadActivity(since, "activity"), loadFindings(since), loadSessions()];
-  jobs.push(since === 0 ? Promise.resolve(false) : loadActivity(0, "activityAll"));
-  if (ui.selectedSession && ui.view === "sessions") jobs.push(loadSession(ui.selectedSession));
-  return jobs;
+  return [...context, ...viewJobs(since)];
 }
 
 async function poll() {
@@ -385,7 +569,7 @@ async function poll() {
     const shared = [loadRepositories(), loadHealth()];
     const results = await Promise.all(ui.scope === null ? shared : [...shared, ...await scopedJobs(since)]);
     if (started !== generation) return;
-    if (since === 0) data.activityAll = data.activity;
+    if (since === 0) { data.activityAll = data.activity; data.activityAllSessions = data.activitySessions; }
     data.updatedAt = Date.now();
     data.disconnected = false;
     data.missing = false;
@@ -394,8 +578,9 @@ async function poll() {
     onChange(results.some(Boolean));
   } catch (error) {
     if (started !== generation) return;
-    // A repository or checkout the daemon does not know is an answer, not a lost connection.
-    data.missing = /answered 404$/u.test(error.message);
+    // A repository or checkout the daemon does not know is an answer, not a lost connection: the context or rules read
+    // answering 404, not some other read (a session that went away is handled where it is read).
+    data.missing = /^\/api\/repository(\/rules)?\?.* answered 404$/u.test(error.message);
     data.disconnected = !data.missing;
     data.loaded = data.missing;
     backoff = data.missing ? INTERVAL : Math.min(MAX_BACKOFF, backoff * 2);
@@ -415,18 +600,22 @@ export async function refresh() {
   if (queued) { queued = false; await refresh(); }
 }
 
+/** The tab is in the background: nothing is polled until it shows again. */
+const hidden = () => typeof document !== "undefined" && document.hidden;
+
 function schedule() {
   clearTimeout(timer);
+  if (hidden()) return;
   timer = setTimeout(async () => { await refresh(); schedule(); }, backoff);
 }
 
 export function startPolling(listener) {
   onChange = listener;
   refresh().then(schedule);
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) { refresh(); schedule(); } });
+  document.addEventListener("visibilitychange", () => { if (hidden()) clearTimeout(timer); else refreshNow(); });
 }
 
-/** A user action that changes what to fetch (range, selected session) wants data now. */
+/** A user action that changes what to fetch (view, range, selected session) wants data now. */
 export async function refreshNow() {
   await refresh();
   schedule();
@@ -446,7 +635,8 @@ export function changeScope(scope) {
   ui.selectedSession = null;
   Object.assign(data, {
     repository: null, checkout: null, unavailable: [], rules: new Map(), attachedPacks: new Map(), activity: {}, activityAll: {},
-    findings: [], findingsTotal: 0, sessions: [], recommendations: null, loaded: false, missing: false,
+    activitySessions: null, activityAllSessions: null, findings: pagedList(), ruleFindings: pagedList(), sessions: pagedList(),
+    sessionFindings: pagedList(), newestSession: null, recommendations: null, followGitignore: null, loaded: false, missing: false,
   });
   data.sessionDetail.clear();
   refreshNow();

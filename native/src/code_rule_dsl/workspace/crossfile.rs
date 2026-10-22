@@ -5,6 +5,7 @@
 //! keeps their producer and consumer phases ordered.
 
 use super::calls_state;
+use super::documents;
 use super::evaluate::{Job, JobContext, run_jobs};
 use super::global::{forget_evidence, record_evidence};
 use super::ingest::{candidate_dispatch, make_file};
@@ -278,8 +279,41 @@ impl CrossFileScheduler {
                 refresh.replaced.insert(path);
                 continue;
             }
+            // A file whose source a busy store made the workspace free is evaluated on the source
+            // the document contract reads back, as a stored file's is. When nothing can supply it
+            // (outside Git, or the worktree changed) the consumer clauses are reported
+            // incomplete: a busy store costs reuse, never the apply.
+            let released = if state.files.get(&path).is_some_and(|file| file.results_only) {
+                match documents::load(state, &path) {
+                    Ok((_, document)) => Some(Arc::clone(&document.source)),
+                    Err(_) => {
+                        if let Some(file) = state.files.get_mut(&path) {
+                            let mut consumers =
+                                state.crossfile.calls.consumers_for(&file.input, code_rules);
+                            consumers.retain(|id| !quiet.contains(id));
+                            for &id in &quiet {
+                                file.witnesses.insert(id, Vec::new());
+                                file.failures.remove(&id);
+                            }
+                            file.fail_released_source(consumers);
+                            file.crossfile.calls_stamp = Some(stamp);
+                        }
+                        state.crossfile.calls.set_stamp(&path, stamp, silent);
+                        refresh.replaced.insert(path);
+                        continue;
+                    }
+                }
+            } else {
+                None
+            };
             let (mut file, was_evicted) = match state.files.remove(&path) {
-                Some(file) => (file, false),
+                Some(mut file) => {
+                    if let Some(source) = released {
+                        file.input.source = source;
+                        file.results_only = false;
+                    }
+                    (file, false)
+                }
                 None => {
                     let (Some(input), Some(version)) = (
                         state.evicted_inputs.get(&path).cloned(),

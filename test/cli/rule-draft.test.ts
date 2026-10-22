@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  loadBundledCatalog,
+  loadRuleCatalog,
   defaultRerailDatabasePath,
   openRerailDatabase,
   recordCheckout,
@@ -16,6 +16,10 @@ import {
   checkoutStatus,
 } from "../../src/engine/index.js";
 import { runRuleDraftCommand, type RuleDraftReport } from "../../src/cli/rule-draft.js";
+import { installPack } from "../support/installed-packs.js";
+
+// Core ships no packs; these tests add, configure and copy the complexity pack's rules.
+installPack("complexity");
 
 const directories: string[] = [];
 
@@ -71,6 +75,13 @@ async function testReport(file: string, repo: string): Promise<{ exit: number; r
   return { exit, report: JSON.parse(stdout) as RuleDraftReport };
 }
 
+/** The JSON report and the text one `rerail rules test` prints for the same draft. */
+async function testReportText(file: string, repo: string): Promise<{ exit: number; report: RuleDraftReport; stdout: string }> {
+  const { exit, report } = await testReport(file, repo);
+  const { stdout } = await run("test", [file, "--repo", repo]);
+  return { exit, report, stdout };
+}
+
 /** Your library, and `repo`'s repository: whether it is set up and the rules added to it, by id and folder. */
 function rulesOf(repo: string) {
   const database = openRerailDatabase(defaultRerailDatabasePath());
@@ -79,7 +90,7 @@ function rulesOf(repo: string) {
     return {
       library: listLibraryRules(database).map(rule => rule.document.rule.id),
       setUp: checkoutStatus(database, checkout).setUp,
-      repository: listRepositoryRules(database, loadBundledCatalog(), checkout.repositoryKey).rules
+      repository: listRepositoryRules(database, loadRuleCatalog(), checkout.repositoryKey).rules
         .map(rule => ({ id: rule.source.id, kind: rule.source.kind, folder: rule.attachmentFolder, on: rule.on })),
     };
   } finally {
@@ -135,6 +146,38 @@ describe("rerail rules test", () => {
     expect(report.cases[0]).toMatchObject({ expected: "caught", caught: false, ok: false, label: "src/a.ts" });
   });
 
+  it("reads a case's own text into a Next app's server graph, not the repository's file at its path", async () => {
+    // The repository holds a client page; the caught case is a server page at the same path, the passed one a new
+    // client page.
+    const repo = await repository({
+      "package.json": '{ "dependencies": { "next": "16.0.0" } }\n',
+      "app/page.tsx": "'use client';\nexport default function Page() {}\n",
+    });
+    const file = writeDraft(repo, {
+      kind: "code",
+      rule: {
+        format: "rerail.policy/v1", id: "acme:server-graph", revision: 1, mode: "steer",
+        scope: { include: ["**/*.tsx"], exclude: [] },
+        clauses: [{
+          id: "server",
+          forbid: { ast: { language: "typescript", file: { package: { serverGraph: true } }, rule: { kind: "program" } } },
+          violation: { anchor: "witness.span", code: "SERVER", message: "A server module." },
+        }],
+      },
+      cases: {
+        caught: [{ path: "app/page.tsx", content: "export default function Page() {}\n" }],
+        passed: [{ path: "app/new/page.tsx", content: "'use client';\nexport default function Page() {}\n" }],
+      },
+    });
+
+    const { report } = await testReport(file, repo);
+
+    expect(report.cases.map(({ expected, caught, ok }) => ({ expected, caught, ok }))).toEqual([
+      { expected: "caught", caught: true, ok: true },
+      { expected: "passed", caught: false, ok: true },
+    ]);
+  });
+
   it("reports a policy the Engine cannot compile as not valid", async () => {
     const repo = await repository();
     const file = writeDraft(repo, { kind: "code", rule: noConsolePolicy("(unclosed") });
@@ -176,7 +219,102 @@ describe("rerail rules test", () => {
         { path: "src/a.ts", line: 3, column: 1, text: "console.log(a);" },
         { path: "src/nested/b.ts", line: 1, column: 1, text: "console.log('b');" },
       ],
+      unchecked: { count: 0, examples: [], unattributed: [] },
     });
+  });
+
+  it("reports a case and repo files a clause could not check, rather than passing them", async () => {
+    // The negated `inside` is an absence claim over ancestors the parser may not have read, so the clause does not
+    // run on a file with syntax errors.
+    const policy = {
+      ...noConsolePolicy(),
+      clauses: [{
+        id: "top-level-call",
+        forbid: { ast: { language: "typescript", rule: { kind: "call_expression", not: { inside: { kind: "function_declaration", stopBy: "end" } } } } },
+        violation: { anchor: "witness.span", code: "TOP_LEVEL_CALL", message: "No top-level calls." },
+      }],
+    };
+    const broken = "f();\nconst x = (;\n";
+    const repo = await repository({ "src/broken.ts": broken, "src/clean.ts": "f();\n" });
+    const file = writeDraft(repo, {
+      kind: "code",
+      rule: policy,
+      cases: { caught: [{ path: "src/a.ts", content: broken }], passed: [{ path: "src/b.ts", content: "const y = (;\n" }] },
+    });
+
+    const { exit, report, stdout } = await testReportText(file, repo);
+
+    expect(exit).toBe(1);
+    expect(report.cases).toEqual([
+      { expected: "caught", caught: false, ok: false, label: "src/a.ts", notChecked: "file has syntax errors" },
+      { expected: "passed", caught: false, ok: false, label: "src/b.ts", notChecked: "file has syntax errors" },
+    ]);
+    expect(report.repository).toMatchObject({
+      matches: 1,
+      unchecked: { count: 1, examples: [{ path: "src/broken.ts", message: "file has syntax errors" }], unattributed: [] },
+    });
+    expect(stdout).toContain("✗ not checked (file has syntax errors), expected caught: src/a.ts");
+    expect(stdout).toContain("1 file was not checked, so the rule may miss places there:\n    src/broken.ts  file has syntax errors");
+  });
+
+  // The grammar recovers `debugger;`, then reads the prose as one ERROR to the end: 95% of the bytes, so the parser did
+  // not read the file and no AST clause runs there, sound or not.
+  const prose = `debugger;\n${"Install it: run the script, then open the page.\n".repeat(5)}`;
+  const unread = "file did not parse: error regions cover 95% of it, first at line 2, column 1";
+  const debuggerPolicy = (forbid: unknown) => ({
+    ...noConsolePolicy(),
+    clauses: [{ id: "debugger", forbid, violation: { anchor: "witness.span", code: "DEBUGGER", message: "No debugger." } }],
+  });
+
+  it.each([
+    ["a sound local clause", { ast: { language: "typescript", rule: { kind: "debugger_statement" } } }],
+    ["a cross-file select_when clause", {
+      select_when: {
+        exists: { regex: { pattern: "debugger", source: "file.content" } },
+        select: { ast: { language: "typescript", rule: { kind: "debugger_statement" } } },
+      },
+    }],
+  ])("never passes a file the parser did not read, through %s", async (_name, forbid) => {
+    const repo = await repository({ "src/notes.ts": prose, "src/clean.ts": "const a = 1;\n" });
+    const file = writeDraft(repo, {
+      kind: "code",
+      rule: debuggerPolicy(forbid),
+      cases: { caught: [], passed: [{ path: "src/notes.ts", content: prose }] },
+    });
+
+    const { exit, report, stdout } = await testReportText(file, repo);
+
+    expect(exit).toBe(1);
+    expect(report.cases).toEqual([{ expected: "passed", caught: false, ok: false, label: "src/notes.ts", notChecked: unread }]);
+    expect(report.repository).toMatchObject({
+      matches: 0,
+      unchecked: { count: 1, examples: [{ path: "src/notes.ts", message: unread }], unattributed: [] },
+    });
+    expect(stdout).toContain(`✗ not checked (${unread}), expected passed: src/notes.ts`);
+    expect(stdout).toContain(`1 file was not checked, so the rule may miss places there:\n    src/notes.ts  ${unread}`);
+  });
+
+  it("never passes a case on a failure that names no file, and reports it in the repo pass", async () => {
+    // The `llm` clause fails without a path: the rule's verdict on any file is unknown.
+    const policy = {
+      ...noConsolePolicy(),
+      clauses: [{
+        id: "intent",
+        llm: { input: { source: "changed-symbol" }, rubric: "Fail on direct persistence access", verdicts: ["pass", "fail"] },
+        violation: { anchor: "witness.span", code: "INTENT", message: "intent" },
+      }],
+    };
+    const repo = await repository({ "src/a.ts": "const a = 1;\n" });
+    const file = writeDraft(repo, { kind: "code", rule: policy, cases: { caught: [], passed: [{ path: "src/b.ts", content: "const b = 1;\n" }] } });
+
+    const { exit, report, stdout } = await testReportText(file, repo);
+
+    expect(exit).toBe(1);
+    expect(report.cases).toEqual([
+      { expected: "passed", caught: false, ok: false, label: "src/b.ts", notChecked: "LLM capability is unavailable" },
+    ]);
+    expect(report.repository?.unchecked).toEqual({ count: 0, examples: [], unattributed: ["LLM capability is unavailable"] });
+    expect(stdout).toContain("Not checked in any one file (LLM capability is unavailable), so the rule may miss places anywhere.");
   });
 
   it("writes nothing: no library rule, and the repository is left as it was", async () => {
@@ -278,7 +416,7 @@ describe("rerail rules add", () => {
 
   it("refuses to replace a rule by Rerail with the same id", async () => {
     const repo = await repository();
-    const bundled = [...loadBundledCatalog().documents.values()].find(document => document.kind === "code");
+    const bundled = [...loadRuleCatalog().documents.values()].find(document => document.kind === "code");
     if (bundled === undefined) throw new Error("expected a code rule by Rerail");
     const file = writeDraft(repo, { kind: "code", rule: { ...noConsolePolicy(), id: bundled.rule.id } });
 

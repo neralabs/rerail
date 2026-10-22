@@ -319,19 +319,21 @@ built; its peak is 26 to 39 % of tree-sitter's, 45 to 65 % with the tree.
 
 ## Wiring
 
-- **Kinds and fields.** `language::KindCatalog` numbers Blade's own kinds by
-  `tree::KIND_NAMES` (ids from 1; 0 is the tape's error code) and PHP's after them, as before.
-  Blade's fields are PHP's, then the tree's that PHP lacks (`closing_name`, `expression`,
-  `code`, `start`, `end`): a field both name has one id. `kind: comment` names every comment
-  kind of the template (`comment`, `blade_comment`, `conditional_comment`, `bogus_comment`) and
-  the embedded PHP's.
-- **Tapes** (format 4). `TapeImage::encode_template` parses with `tree::parse_tree`, encodes the
-  tree in preorder (`encode_blade_tree`), then the view's program under the root as before.
-  The tree has no error nodes, so the tape keeps its syntax errors as byte ranges beside the
-  records, which `TapeDoc::syntax_error_ranges` returns after the embedded program's ERROR and
-  MISSING records. Those are Forte's, except in arguments Forte read after a line break, which
-  Blade reads as text: there they are that text's, as a template of its own. `TapeImage::parse`
-  picks tree-sitter or Forte by dialect for every caller.
+- **Kinds and fields.** `language::KindCatalog` numbers Blade's kinds by `tree::KIND_NAMES`
+  (ids from 1) and its fields by `tree::FIELD_NAMES`; `ERROR` is tree-sitter's code (`u16::MAX`).
+  A Blade clause names the template's kinds only: the compiled view is a PHP document of its own,
+  which a clause reads with `ast.embedded: compiled-view` and a template rule reaches with
+  `embedded`.
+- **Tapes** (format 7). `TapeImage::encode_blade` parses with `tree::parse_tree`, reads the
+  template as Blade does (`View::read`), and encodes the tree in preorder (`encode_blade_tree`)
+  with the template's syntax errors as Blade reads them as `ERROR` leaves where they lie, as
+  tree-sitter's tapes hold theirs: Forte's, except in arguments Forte read after a line break,
+  which Blade reads as text: there they are that text's, as a template of its own. The view is
+  a document derived from the template's (`tape::DerivedImage`, a generated one): its PHP text,
+  the source map to the template's bytes, its own PHP tape, and the template's errors it reads
+  through (`host_errors`). The template's tape holds its own tree alone; the store keeps the
+  view's tape as a row of its own (`file_documents`). Both documents keep tree-sitter's
+  invariants. `TapeImage::parse` picks tree-sitter or Forte by dialect for every caller.
 - **Registry.** `languages/blade.json` names `"parser": "forte"`, `"grammar": "native:forte"`
   (`native:` is a grammar Rerail implements, which has no tree-sitter language);
   `code-rule-dsl/capabilities.json` names `forte@1.1.0`. Tag 8 stays Blade's.
@@ -339,9 +341,11 @@ built; its peak is 26 to 39 % of tree-sitter's, 45 to 65 % with the tree.
   build id hashes every non-test source under `native/src/code_rule_dsl/blade/` (the port, its
   directive JSON, the view), so no tape parsed by tree-sitter-blade, or by another revision of
   the port or the view, is reused.
-- **Rules.** The Blade pack's rules name Forte's kinds: `directive_name` (`@dd`, `@ray`),
-  `directive_block` with its `start` field (`@forelse`), `echo`/`raw_echo`,
-  `component`/`slot`/`element_name`/`attribute_value`.
+- **Rules.** The Blade pack's rules (`packs/blade/rules/`, and the candidates in
+  `packs/blade/candidates/rules/`) name Forte's kinds: `directive_name` (`@dd`,
+  `@ray`), `directive_block` with its `start` field (`@forelse`), `echo`/`raw_echo`,
+  `component`/`slot`/`element_name`/`attribute_value`; a rule over the PHP a template runs reads
+  the view (`ast.embedded: compiled-view`).
 
 ### Results
 

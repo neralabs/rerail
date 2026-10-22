@@ -1,0 +1,30 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "clippy-many-single-char-names",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid more than four single-character variable names in scope at once in a Rust function, tests excluded; descriptive names are easier to follow.",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "clauses": [
+    {
+      "id": "many-single-char-names",
+      "forbid": { "ast": { "language": "rust",
+        "utils": {
+          "counted": {"kind": "identifier", "regex": "^[^\\p{Lu}\\d_]$", "any": [{"binds": {"form": "parameter", "site": {"kind": "parameter"}}}, {"binds": {"form": "assignment", "site": {"kind": "let_declaration"}}}, {"binds": {"form": "match", "site": {"kind": "match_arm"}}}]},
+          "scope-node": {"any": [{"kind": "block", "not": {"inside": {"field": "body", "kind": "function_item"}}}, {"kind": "match_arm"}]},
+          "stack-before": {"params": ["T"], "rule": {"any": [{"binds": {"form": "parameter", "site": {"kind": "parameter"}}}, {"inside": {"stopBy": {"any": [{"matches": "scope-node"}, {"kind": "function_item"}]}, "kind": "let_declaration", "precedes": {"stopBy": "end", "any": [{"all": [{"pattern": "$S"}, {"compare": {"left": "S", "op": "eq", "right": "T", "text": "node"}}]}, {"has": {"stopBy": "end", "pattern": "$S", "all": [{"compare": {"left": "S", "op": "eq", "right": "T", "text": "node"}}]}}]}}}, {"inside": {"stopBy": {"any": [{"matches": "scope-node"}, {"kind": "function_item"}]}, "kind": "match_pattern", "inside": {"kind": "match_arm", "has": {"field": "value", "any": [{"all": [{"pattern": "$S"}, {"compare": {"left": "S", "op": "eq", "right": "T", "text": "node"}}]}, {"has": {"stopBy": "end", "pattern": "$S", "all": [{"compare": {"left": "S", "op": "eq", "right": "T", "text": "node"}}]}}]}}}}]}},
+          "fresh": {"all": [{"pattern": "$Y"}, {"not": {"binds": {"redefines": {}}}}, {"any": [{"not": {"inside": {"stopBy": {"any": [{"matches": "scope-node"}, {"kind": "function_item"}]}, "matches": "scope-node"}}}, {"inside": {"stopBy": {"any": [{"matches": "scope-node"}, {"kind": "function_item"}]}, "matches": "scope-node", "pattern": "$Z", "not": {"inside": {"stopBy": {"kind": "function_item"}, "kind": "function_item", "has": {"stopBy": {"kind": "function_item"}, "matches": "counted", "pattern": "$Y", "all": [{"matches": {"stack-before": {"T": "$Z"}}}]}}}}}]}]}
+        },
+        "rule": { "all": [
+          {"kind": "function_item"},
+          {"has": {"field": "body", "kind": "block"}},
+          {"count": {"has": {"stopBy": {"kind": "function_item"}, "kind": "identifier", "regex": "^[^\\p{Lu}\\d_]$"}, "min": 5}},
+          {"not": {"inside": {"kind": "declaration_list", "inside": {"kind": "trait_item"}}}},
+          {"not": {"follows": {"stopBy": {"not": {"any": [{"kind": "attribute_item"}, {"kind": "line_comment"}, {"kind": "block_comment"}]}}, "kind": "attribute_item", "regex": "^#\\[\\s*test\\s*\\]$"}}},
+          {"has": {"stopBy": {"any": [{"matches": "scope-node"}, {"kind": "function_item"}]}, "matches": "counted", "pattern": "$B"}},
+          {"any": [{"count": {"has": {"stopBy": {"any": [{"matches": "scope-node"}, {"kind": "function_item"}]}, "matches": "counted", "all": [{"not": {"binds": {"redefines": {}}}}]}, "min": 5}}, {"has": {"stopBy": {"kind": "function_item"}, "matches": "scope-node", "pattern": "$SC", "all": [{"has": {"stopBy": {"any": [{"matches": "scope-node"}, {"kind": "function_item"}]}, "kind": "identifier", "regex": "^[^\\p{Lu}\\d_]$", "matches": "counted"}}, {"inside": {"stopBy": {"kind": "function_item"}, "kind": "function_item", "has": {"stopBy": {"any": [{"matches": "scope-node"}, {"kind": "function_item"}]}, "pattern": "$B", "all": [{"matches": {"stack-before": {"T": "$SC"}}}]}}}, {"any": [{"all": [{"count": {"has": {"stopBy": {"any": [{"matches": "scope-node"}, {"kind": "function_item"}]}, "matches": "counted", "all": [{"matches": "fresh"}]}, "min": 1}}, {"inside": {"stopBy": {"kind": "function_item"}, "kind": "function_item", "count": {"has": {"stopBy": {"kind": "function_item"}, "matches": "counted", "all": [{"matches": {"stack-before": {"T": "$SC"}}}, {"matches": "fresh"}]}, "min": 4}}}]}, {"all": [{"count": {"has": {"stopBy": {"any": [{"matches": "scope-node"}, {"kind": "function_item"}]}, "matches": "counted", "all": [{"matches": "fresh"}]}, "min": 2}}, {"inside": {"stopBy": {"kind": "function_item"}, "kind": "function_item", "count": {"has": {"stopBy": {"kind": "function_item"}, "matches": "counted", "all": [{"matches": {"stack-before": {"T": "$SC"}}}, {"matches": "fresh"}]}, "min": 3}}}]}, {"all": [{"count": {"has": {"stopBy": {"any": [{"matches": "scope-node"}, {"kind": "function_item"}]}, "matches": "counted", "all": [{"matches": "fresh"}]}, "min": 3}}, {"inside": {"stopBy": {"kind": "function_item"}, "kind": "function_item", "count": {"has": {"stopBy": {"kind": "function_item"}, "matches": "counted", "all": [{"matches": {"stack-before": {"T": "$SC"}}}, {"matches": "fresh"}]}, "min": 2}}}]}, {"all": [{"count": {"has": {"stopBy": {"any": [{"matches": "scope-node"}, {"kind": "function_item"}]}, "matches": "counted", "all": [{"matches": "fresh"}]}, "min": 4}}, {"inside": {"stopBy": {"kind": "function_item"}, "kind": "function_item", "count": {"has": {"stopBy": {"kind": "function_item"}, "matches": "counted", "all": [{"matches": {"stack-before": {"T": "$SC"}}}, {"matches": "fresh"}]}, "min": 1}}}]}, {"all": [{"count": {"has": {"stopBy": {"any": [{"matches": "scope-node"}, {"kind": "function_item"}]}, "matches": "counted", "all": [{"matches": "fresh"}]}, "min": 5}}]}]}]}}]}
+        ] } } },
+      "violation": {"suppress": {"clippy": {"lints": ["clippy::many_single_char_names", "clippy::pedantic", "warnings"]}}, "anchor": "capture.B", "code": "many_single_char_names", "message": "Rename some of these single-letter variables to descriptive names; more than four are in scope here."}
+    }
+  ]
+}

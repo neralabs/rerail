@@ -1,0 +1,1 @@
+var arrowFn = () => 'test';

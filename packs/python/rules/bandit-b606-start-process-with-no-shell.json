@@ -3,7 +3,7 @@
   "id": "bandit-b606-start-process-with-no-shell",
   "revision": 1,
   "mode": "steer",
-  "description": "Detect configured process APIs that execute without a command shell",
+  "description": "Validate input passed to the os exec, spawn and startfile functions; they start whatever program and arguments they receive.",
   "scope": {
     "include": [
       "**/*.py"
@@ -49,7 +49,7 @@
       "violation": {
         "code": "B606",
         "anchor": "witness.span",
-        "message": "Review input passed to a no-shell process API",
+        "message": "Validate any untrusted input passed to this os exec, spawn or startfile call; it starts whatever program and arguments it receives.",
         "suppress": {
           "nosec": {
             "codes": [

@@ -1,0 +1,56 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bladestan-random-int-parameters",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Pass random_int() in Blade templates a minimum no greater than its maximum; reversed bounds throw an error at render time.",
+  "scope": {
+    "include": [
+      "**/*.blade.php"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "blade",
+          "embedded": "compiled-view",
+          "rule": {
+            "kind": "function_call_expression",
+            "has": {
+              "field": "function",
+              "resolves": {
+                "import": [
+                  "random_int"
+                ]
+              }
+            },
+            "arguments": {
+              "signature": [
+                "min",
+                "max"
+              ],
+              "bind": {
+                "MIN": "min",
+                "MAX": "max"
+              }
+            },
+            "compare": {
+              "left": "MIN",
+              "op": "gt",
+              "right": "MAX",
+              "text": "value"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "argument.type",
+        "message": "Swap the bounds of this random_int() call so the minimum $MIN is not above the maximum $MAX; reversed bounds throw."
+      }
+    }
+  ]
+}

@@ -6,16 +6,26 @@ import { z } from "zod/v4";
 import { physicalPath } from "../catalog/checkout-control.js";
 import { openRerailDatabase, type RerailDatabase } from "../storage/database.js";
 import { runGit } from "../git.js";
-import { checkouts, repositoryAudits, auditRequests, policySessionOwners, auditSettings, sessions } from "../storage/schema.js";
+import { checkouts, repositoryAudits, auditRequests, policySessionOwners, auditSettings, sessions, audits } from "../storage/schema.js";
+import { isOmittedFailuresSummary, isSourceGap } from "./audit.js";
 
 import {
   auditSettingsSchema, auditSettingsPatchSchema, repositoryAuditSchema, auditRequestInputSchema, auditRequestSchema,
-  type AuditSettings, type RepositoryAudit, type AuditControls, type AuditRequest,
+  DEFAULT_AUDIT_SETTINGS, type AuditSettings, type AuditSettingsPatch, type RepositoryAudit, type AuditControls, type AuditRequest,
 } from "./audit-control-schema.js";
 export interface PolicyOwnerClaim { readonly token: string; }
-
-export const DEFAULT_AUDIT_SETTINGS: Readonly<AuditSettings> = { scope: "touched-files", mode: "steer" };
 const GIT_OUTPUT_LIMIT = 10 * 1024 * 1024;
+
+/**
+ * The scan-level failure recorded when a repository scan stops at its failure limit ("Repository scan stopped after
+ * reaching N failures"). It is not a cause: the failures that reached the limit are recorded beside it, and an earlier
+ * version also counted files read only in part towards the limit, so a failed audit with this marker and nothing else
+ * but such files failed only for them.
+ */
+function isScanLimitMarker(failure: { stage?: string | undefined; code: string; message: string }): boolean {
+  return failure.stage === "scan" && failure.code === "budget-exceeded"
+    && /^Repository scan stopped after reaching \d+ failures$/u.test(failure.message);
+}
 
 function gitPaths(workspaceRoot: string, args: readonly string[]): string[] {
   const result = runGit(workspaceRoot, args, { maxBuffer: GIT_OUTPUT_LIMIT });
@@ -162,17 +172,38 @@ export class SqliteAuditControlStore {
   updateSettings(sessionId: string, patch: z.input<typeof auditSettingsPatchSchema>): AuditControls {
     const parsed = auditSettingsPatchSchema.parse(patch);
     this.#database.transaction(() => {
-      const session = requireSession(this.#database, sessionId);
-      const workspaceRoot = canonicalWorkspace(session.cwd);
-      const previous = this.#database.select().from(auditSettings).where(eq(auditSettings.workspaceRoot, workspaceRoot)).get();
-      const settings = auditSettingsSchema.parse({ ...DEFAULT_AUDIT_SETTINGS, ...(previous === undefined ? {} : parseSettings(previous.settings)), ...parsed });
-      this.#database.insert(auditSettings).values({ workspaceRoot, settings, updatedAt: Date.now() })
-        .onConflictDoUpdate({ target: auditSettings.workspaceRoot, set: { settings, updatedAt: Date.now() } }).run();
+      this.#saveSettings(canonicalWorkspace(requireSession(this.#database, sessionId).cwd), parsed);
     });
     return this.getSettings(sessionId);
   }
-  /** Claim the audit of one checkout for this session; false while another live session audits it. */
-  claimRepositoryAudit(sessionId: string, checkoutRoot: string): boolean {
+  /** `updateSettings` for a checkout by its folder, before any session there exists: what its sessions start with. */
+  updateWorkspaceSettings(workspaceRoot: string, patch: z.input<typeof auditSettingsPatchSchema>): AuditSettings {
+    const parsed = auditSettingsPatchSchema.parse(patch);
+    return this.#database.transaction(() => this.#saveSettings(canonicalWorkspace(workspaceRoot), parsed));
+  }
+  /**
+   * Merges `patch` over the checkout's saved settings, else the defaults, and saves the result. The default strategy,
+   * `message`, is left out of the row, as rows read before the key existed, so a release that reads `{ scope, mode }`
+   * strictly still reads every row that does not opt into an experimental strategy.
+   */
+  #saveSettings(workspaceRoot: string, patch: AuditSettingsPatch): AuditSettings {
+    const previous = this.#database.select().from(auditSettings).where(eq(auditSettings.workspaceRoot, workspaceRoot)).get();
+    const settings = auditSettingsSchema.parse({ ...DEFAULT_AUDIT_SETTINGS, ...(previous === undefined ? {} : parseSettings(previous.settings)), ...patch });
+    const { steerStrategy, ...saved } = settings;
+    const row = steerStrategy === "message" ? saved : settings;
+    this.#database.insert(auditSettings).values({ workspaceRoot, settings: row, updatedAt: Date.now() })
+      .onConflictDoUpdate({ target: auditSettings.workspaceRoot, set: { settings: row, updatedAt: Date.now() } }).run();
+    return settings;
+  }
+  /**
+   * Claim the audit of one checkout for this session: false while another live session audits it or once one completed.
+   * An interrupted attempt was cut short and always runs again. A failed one runs again only when it can now come out
+   * differently: it failed only for files read in part, which no longer fail an audit (NER-1828), or the compiled
+   * catalog is not the one it ran against (`catalogRevision`; unknown when omitted). Anything else would fail the same
+   * way at every session start. The audit runs off the session's request path, so a retry costs background work,
+   * never a turn.
+   */
+  claimRepositoryAudit(sessionId: string, checkoutRoot: string, catalogRevision?: string): boolean {
     return this.#database.transaction(() => {
       requireSession(this.#database, sessionId);
       const workspaceRoot = canonicalWorkspace(checkoutRoot);
@@ -189,18 +220,33 @@ export class SqliteAuditControlStore {
       if (inserted.changes > 0) return true;
       const current = this.#database.select().from(repositoryAudits)
         .where(eq(repositoryAudits.workspaceRoot, workspaceRoot)).get();
-      if (current?.status === "running") {
+      if (current === undefined || current.status === "completed") return false;
+      if (current.status === "failed" && !this.#failedAuditCanDifferNow(current.auditId, catalogRevision)) return false;
+      if (current.status === "running") {
         const owner = this.#database.select().from(policySessionOwners)
           .where(eq(policySessionOwners.sessionId, current.sessionId)).get();
         if (owner?.active && processIsLive(owner.processId)) return false;
-        this.#database.update(repositoryAudits).set({
-          status: "interrupted",
-          finishedAt: Date.now(),
-          error: "Owning runtime exited before repository diagnostic could complete",
-        }).where(eq(repositoryAudits.workspaceRoot, workspaceRoot)).run();
       }
-      return false;
+      this.#database.update(repositoryAudits).set(repositoryAudit)
+        .where(eq(repositoryAudits.workspaceRoot, workspaceRoot)).run();
+      return true;
     });
+  }
+
+  /**
+   * Whether a failed repository audit may come out differently now. Only the failures it recorded tell: a recorded
+   * failure no audit tolerates today (a budget, an adapter error) fails the same way again, and a failed audit with
+   * nothing recorded, or none at all, has nothing to retry on.
+   */
+  #failedAuditCanDifferNow(auditId: string | null, catalogRevision: string | undefined): boolean {
+    const failed = auditId === null
+      ? undefined
+      : this.#database.select({ failures: audits.failures, catalogRevision: audits.catalogRevision })
+        .from(audits).where(eq(audits.auditId, auditId)).get();
+    if (failed === undefined) return false;
+    if (failed.catalogRevision !== null && catalogRevision !== undefined && failed.catalogRevision !== catalogRevision) return true;
+    return failed.failures.length > 0
+      && failed.failures.every(item => isScanLimitMarker(item) || isOmittedFailuresSummary(item) || isSourceGap(item));
   }
   finishRepositoryAudit(
     sessionId: string,

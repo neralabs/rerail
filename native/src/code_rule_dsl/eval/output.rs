@@ -121,6 +121,8 @@ pub(crate) fn evaluation_json(
                 "astMatcherCalls": evaluation.metrics.ast_matcher_calls,
                 "storageRetries": evaluation.metrics.storage_retries,
                 "storageRetryWaitNanoseconds": evaluation.metrics.storage_retry_wait_nanoseconds,
+                "storageUnpublishedFiles": evaluation.metrics.storage_unpublished_files,
+                "storageReleasedFiles": evaluation.metrics.storage_released_files,
                 "storageTransactionNanoseconds": evaluation.metrics.storage_transaction_nanoseconds,
                 "storageObjectTransactionNanoseconds": evaluation.metrics.storage_object_transaction_nanoseconds,
                 "storageRelationshipTransactionNanoseconds": evaluation.metrics.storage_relationship_transaction_nanoseconds,
@@ -336,8 +338,8 @@ mod tests {
                     { "code": "source-incomplete", "count": 1, "paths": ["d.py"] },
                 ] },
                 { "clauseId": "failed", "status": "failed", "reasons": [
-                    { "code": "budget-exceeded", "count": 1, "paths": [] },
                     { "code": "source-partial", "count": 4, "paths": paths },
+                    { "code": "witness-limit", "count": 1, "paths": [] },
                 ] },
             ]),
             "{result}"

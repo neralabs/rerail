@@ -1,5 +1,8 @@
+use super::embed::segments::FileRanges;
 use super::lines::LineTable;
-use super::matcher::{AstMatcher, UtilRef, UtilitySummary, stop_rule};
+use super::matcher::{AstMatcher, GrammarMatcher, UtilRef, UtilitySummary, stop_rule};
+use super::origin::Origin;
+use super::tape::TapeDoc;
 #[cfg(test)]
 use super::test_support::{Walk, record_walk};
 use std::collections::BTreeSet;
@@ -279,10 +282,46 @@ fn utility_leaves_witness(util: &UtilRef, memo: &mut UtilitySummary<usize, bool>
     })
 }
 
-/// Byte ranges the parser could not read: ERROR subtrees and zero-width MISSING tokens.
-/// Sorted by start; overlapping ranges are merged, so range ends never decrease.
+/// Byte ranges of the file a document's parser could not read: ERROR subtrees and zero-width
+/// MISSING tokens, and for a guest document (`embed`) the file bytes its own stand for and the
+/// host's errors it reads through (`TapeDoc::host_errors`). Sorted by start; overlapping ranges
+/// are merged, so range ends never decrease. Each document of a file has its own: a host's errors
+/// are not a guest's, unless the guest reads the host through them (a Blade view).
 pub(super) struct SyntaxErrors {
     regions: Vec<Range<usize>>,
+}
+
+/// The share of a file's bytes, in percent, its error regions must cover for the file to count as
+/// not read at all. Below it, sound clauses run around the regions (`source-partial`); at it or
+/// above, what the parser recovered is mostly guesswork (a tree-sitter grammar that gave up
+/// returns one ERROR over the whole file), so no AST clause runs there.
+const UNREAD_PERCENT: usize = 50;
+
+/// The failure message an AST clause gets on a file the parser did not read; persisted results
+/// store it, and `SyntaxReading::Unread` carries the detail reported in its place.
+pub(super) const UNREAD: &str = "file did not parse";
+
+/// How much of a file with syntax errors its AST clauses read, with the message to report.
+pub(super) enum SyntaxReading {
+    /// Sound clauses ran outside the error regions (`source-partial`).
+    Partial(String),
+    /// The regions cover at least `UNREAD_PERCENT` of the file: no AST clause ran there
+    /// (`source-incomplete`, `UNREAD`).
+    Unread(String),
+}
+
+/// A document's error regions as ranges of the file, unmerged: its ERROR and MISSING nodes', and
+/// the file bytes a guest cannot be read through.
+fn file_ranges(doc: &TapeDoc) -> Vec<std::ops::Range<usize>> {
+    // An error node of a program standing for several file ranges is an error in each.
+    let mut ranges = Vec::new();
+    for (index, range) in doc.syntax_error_nodes() {
+        if let Some(placed) = Origin::of_node(doc, index, range) {
+            ranges.extend(placed.iter().cloned());
+        }
+    }
+    ranges.extend(doc.host_errors());
+    ranges
 }
 
 impl SyntaxErrors {
@@ -322,8 +361,39 @@ impl SyntaxErrors {
         Self { regions }
     }
 
+    /// The regions of a restored document, as ranges of the file.
+    pub(super) fn of_doc(doc: &TapeDoc) -> Self {
+        Self::from_ranges(file_ranges(doc))
+    }
+
+    /// The regions of every document of the file whose own tree `host` is (`embed`): what a rule
+    /// crossing between them (`GrammarMatcher::crosses`) reads around.
+    pub(super) fn of_file(host: &TapeDoc) -> Self {
+        let mut ranges = file_ranges(host);
+        for guest in host.guests().iter().flat_map(|guests| guests.iter()) {
+            ranges.extend(file_ranges(&guest.doc));
+        }
+        Self::from_ranges(ranges)
+    }
+
+    /// Whether the errors leave a clause of `grammar` incomplete: one not sound under them
+    /// (`sound_under_errors`).
+    pub(super) fn incomplete(&self, grammar: &GrammarMatcher) -> bool {
+        !self.is_empty() && !grammar.sound_under_errors
+    }
+
+    /// Whether a binding may hide in an error region from the document's scope tables.
+    pub(super) fn hide_bindings(&self) -> bool {
+        !self.is_empty()
+    }
+
     pub(super) fn is_empty(&self) -> bool {
         self.regions.is_empty()
+    }
+
+    /// Whether any of the file ranges a node stands for meets a region (`overlaps`).
+    pub(super) fn meets(&self, ranges: &FileRanges) -> bool {
+        ranges.iter().any(|range| self.overlaps(range))
     }
 
     /// Whether `range` meets any region; a zero-width MISSING point meets a range that touches it.
@@ -353,6 +423,30 @@ impl SyntaxErrors {
             line + 1,
             column + 1
         )
+    }
+
+    /// Bytes inside some region; merged regions never overlap.
+    fn covered_bytes(&self) -> usize {
+        self.regions
+            .iter()
+            .map(|region| region.end - region.start)
+            .sum()
+    }
+
+    /// How a file of `source_len` bytes with these (non-empty) regions is read. An empty file's
+    /// regions (zero-width MISSING tokens) cover none of it.
+    pub(super) fn reading(&self, lines: &LineTable, source_len: usize) -> SyntaxReading {
+        let covered = self.covered_bytes();
+        if source_len == 0 || covered * 100 < source_len * UNREAD_PERCENT {
+            return SyntaxReading::Partial(self.partial_message(lines));
+        }
+        let (line, column) = lines.point(self.regions[0].start);
+        SyntaxReading::Unread(format!(
+            "{UNREAD}: error regions cover {}% of it, first at line {}, column {}",
+            covered * 100 / source_len,
+            line + 1,
+            column + 1
+        ))
     }
 }
 
@@ -391,6 +485,62 @@ mod tests {
         assert!(errors.partial_message(&lines).contains("first at line 2"));
     }
 
+    fn reading(errors: &SyntaxErrors, source: &str) -> Result<String, String> {
+        let lines = LineTable::new(source, crate::code_rule_dsl::lines::Terminators::Eslint);
+        match errors.reading(&lines, source.len()) {
+            SyntaxReading::Partial(message) => Ok(message),
+            SyntaxReading::Unread(message) => Err(message),
+        }
+    }
+
+    #[test]
+    fn a_file_whose_regions_cover_half_of_it_or_more_is_unread() {
+        let source = "0123456789\n0123456789\n";
+        let region =
+            |range: Range<usize>| SyntaxErrors::from_ranges(std::iter::once(range).collect());
+        // 10 of 22 bytes, then 11 of 22: the share is of bytes, the boundary is unread.
+        assert!(reading(&region(12..22), source).is_ok());
+        assert_eq!(
+            reading(&region(11..22), source),
+            Err(
+                "file did not parse: error regions cover 50% of it, first at line 2, column 1"
+                    .into()
+            )
+        );
+        // Overlapping regions count once; zero-width MISSING points count nothing.
+        let errors = SyntaxErrors::from_ranges(vec![0..6, 3..10, 15..15, 20..20]);
+        assert!(reading(&errors, source).is_ok());
+        assert_eq!(
+            reading(&region(0..22), source),
+            Err(
+                "file did not parse: error regions cover 100% of it, first at line 1, column 1"
+                    .into()
+            )
+        );
+        // An empty file's MISSING point covers nothing of it.
+        assert!(reading(&region(0..0), "").is_ok());
+    }
+
+    #[test]
+    fn a_grammar_that_gave_up_leaves_the_file_unread() {
+        // tree-sitter-javascript recovers the leading statement, then reads the prose as one
+        // ERROR to the end: 95% of the bytes.
+        let source = format!(
+            "debugger;\n{}",
+            "Install it: run the script, then open the page.\n".repeat(5)
+        );
+        let errors = syntax_errors(GrammarDialect::JavaScript, &source);
+        assert_eq!(
+            reading(&errors, &source),
+            Err(
+                "file did not parse: error regions cover 95% of it, first at line 2, column 1"
+                    .into()
+            )
+        );
+        let partial = "debugger; // clean text keeps the error region under half the file\nfunction f( {\n  debugger;\n";
+        assert!(reading(&syntax_errors(GrammarDialect::TypeScript, partial), partial).is_ok());
+    }
+
     #[test]
     fn missing_tokens_suppress_only_the_witnesses_that_contain_them() {
         // An unclosed body parses with a zero-width MISSING `}` after its last statement and no
@@ -415,6 +565,50 @@ mod tests {
             "the declaration spans the MISSING token"
         );
         assert_eq!(result["failures"][0]["code"], "source-partial", "{result}");
+    }
+
+    /// Each document of a file has its own syntax errors (`embed`): a program apart from its
+    /// host's tree (tests' HTML scripts) has none of the host's, and hides no binding of its own;
+    /// a program with errors of its own has them as ranges of the file; a program read through the
+    /// host's errors (Blade's compiled view) has the template's too.
+    #[test]
+    fn each_document_has_its_own_errors_as_ranges_of_the_file() {
+        use crate::code_rule_dsl::embed::test_script::html;
+        use std::sync::Arc;
+        let of = |source: &str| {
+            let doc = html(source);
+            let host = doc.root().get_doc().clone();
+            let guest = host.guests().expect("owned")[0].doc.clone();
+            (SyntaxErrors::of_doc(&host), SyntaxErrors::of_doc(&guest))
+        };
+
+        let (host, clean) = of("<script>let x = 1;</script>\n<div <p\n");
+        assert!(!host.is_empty(), "the host has a syntax error");
+        assert!(clean.is_empty());
+        assert!(!clean.hide_bindings());
+
+        let source = "<script>let = ;</script>\n<div <p\n";
+        let (_, broken) = of(source);
+        assert!(broken.hide_bindings());
+        let script = source.find("let").unwrap()..source.find("</script>").unwrap();
+        assert!(broken.overlaps(&script));
+        assert!(!broken.overlaps(&(source.len() - 3..source.len())));
+
+        let grammar = crate::code_rule_dsl::tape::Grammar::new(GrammarDialect::Blade).unwrap();
+        let source = "{{ $a + }}\n{{-- open\n";
+        let image =
+            crate::code_rule_dsl::tape::TapeImage::encode_template(&grammar, source, &|| false)
+                .unwrap();
+        let blade =
+            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+        let template = SyntaxErrors::of_doc(&blade);
+        let view = SyntaxErrors::of_doc(&blade.guests().unwrap()[0].doc);
+        let comment = source.find("{{--").unwrap();
+        assert!(template.overlaps(&(comment..source.len())));
+        assert!(!template.overlaps(&(0..10)), "the echo's PHP is the view's");
+        assert!(view.overlaps(&(0..10)), "the view's own error");
+        assert!(view.overlaps(&(comment..source.len())), "the template's");
+        assert!(view.hide_bindings());
     }
 
     #[test]
@@ -508,7 +702,7 @@ mod tests {
             &compiled,
             "typescript",
             "open.ts",
-            "debugger;\nfunction f( {\n",
+            "debugger; // clean text keeps the error region under half the file\nfunction f( {\n",
         );
         assert_eq!(result["violations"][0]["span"]["startLine"], 0, "{result}");
         assert_eq!(result["failures"][0]["code"], "source-partial", "{result}");
@@ -520,7 +714,7 @@ mod tests {
             &compiled,
             "typescript",
             "open.ts",
-            "debugger;\nfunction f( {\n",
+            "debugger; // clean text keeps the error region under half the file\nfunction f( {\n",
         );
         assert_eq!(result["violations"], json!([]), "{result}");
     }

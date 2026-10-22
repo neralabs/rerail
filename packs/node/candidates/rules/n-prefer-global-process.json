@@ -1,0 +1,316 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "n-prefer-global-process",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Use the global process instead of importing or requiring the process module; it is always available in Node.js.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "require-callee": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^require$",
+                "resolves": {
+                  "global": [
+                    "require"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "require-callee"
+                }
+              }
+            ]
+          },
+          "builtin-callee": {
+            "any": [
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier",
+                      "regex": "^process$",
+                      "resolves": {
+                        "global": [
+                          "process"
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^getBuiltinModule$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "builtin-callee"
+                }
+              }
+            ]
+          },
+          "module-call": {
+            "kind": "call_expression",
+            "not": {
+              "has": {
+                "field": "arguments",
+                "kind": "template_string"
+              }
+            },
+            "all": [
+              {
+                "has": {
+                  "field": "arguments",
+                  "kind": "arguments",
+                  "has": {
+                    "nthChild": {
+                      "position": 1,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    },
+                    "any": [
+                      {
+                        "kind": "string"
+                      },
+                      {
+                        "kind": "template_string",
+                        "not": {
+                          "has": {
+                            "kind": "template_substitution"
+                          }
+                        }
+                      }
+                    ],
+                    "value": {
+                      "regex": "^(?:node:)?process$"
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "field": "function",
+                  "any": [
+                    {
+                      "matches": "require-callee"
+                    },
+                    {
+                      "matches": "builtin-callee"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "module-value": {
+            "any": [
+              {
+                "matches": "module-call"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "module-value"
+                }
+              },
+              {
+                "kind": "assignment_expression",
+                "has": {
+                  "field": "right",
+                  "matches": "module-value"
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "destructuredValue": false,
+                    "value": {
+                      "matches": "module-value"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "occurrence": {
+                      "inside": {
+                        "kind": "assignment_expression",
+                        "field": "left",
+                        "has": {
+                          "field": "right",
+                          "matches": "module-value"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "matches": "esm-ref"
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "esm-ref"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^default$"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "esm-source": {
+            "kind": "string",
+            "has": {
+              "kind": "string_fragment",
+              "regex": "^(?:node:)?process$"
+            }
+          },
+          "esm-whole-module": {
+            "any": [
+              {
+                "kind": "namespace_import"
+              },
+              {
+                "kind": "import_clause"
+              },
+              {
+                "kind": "identifier",
+                "inside": {
+                  "kind": "import_clause"
+                }
+              }
+            ],
+            "inside": {
+              "stopBy": "end",
+              "kind": "import_statement",
+              "has": {
+                "field": "source",
+                "matches": "esm-source"
+              }
+            }
+          },
+          "esm-ref": {
+            "kind": "identifier",
+            "resolves": {
+              "binding": {
+                "site": {
+                  "matches": "esm-whole-module"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "module-call",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {
+            "globals": {
+              "process": "readonly"
+            }
+          },
+          "rule": {
+            "matches": "module-call"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/prefer-global/process",
+        "message": "Use the global process instead of requiring the process module.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/prefer-global/process"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "esm-declaration",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {
+            "globals": {
+              "process": "readonly"
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "import_statement"
+              },
+              {
+                "kind": "export_statement"
+              }
+            ],
+            "has": {
+              "field": "source",
+              "matches": "esm-source"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/prefer-global/process",
+        "message": "Use the global process instead of importing or re-exporting the process module.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/prefer-global/process"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

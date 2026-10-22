@@ -1,5 +1,5 @@
 import {
-  loadBundledCatalog,
+  loadRuleCatalog,
   defaultRerailDatabasePath,
   openRerailDatabase,
   CheckoutCodeRuleCatalog,
@@ -40,10 +40,10 @@ export function setUpTestRepository(
 ): RepositoryKey {
   const database = openRerailDatabase(databasePath);
   try {
-    const bundle = loadBundledCatalog();
+    const ruleCatalog = loadRuleCatalog();
     const { repositoryKey } = recordCheckout(database, workspace);
     const folder = rules.folder ?? "";
-    for (const document of rules.library ?? []) upsertLibraryRule(database, bundle, document.rule, document.kind);
+    for (const document of rules.library ?? []) upsertLibraryRule(database, ruleCatalog, document.rule, document.kind);
     setUpRepository(database, repositoryKey, {
       packs: (rules.packs ?? []).map(packId => ({ packId, folder })),
       rules: [
@@ -75,7 +75,10 @@ export function testCodeRuleCatalog(
       attachmentFolder: "",
       on: true,
       mode: rule.mode,
-      decidedBy: { on: { by: "rule-default" }, mode: { by: "rule-default" } },
+      suppressions: "honour",
+      config: null,
+      configError: null,
+      decidedBy: { on: { by: "rule-default" }, mode: { by: "rule-default" }, suppressions: { by: "rule-default" }, config: {} },
       revision: rule.revision,
       payloadHash: ruleDocumentDigest({ kind: "code", rule }),
     }));

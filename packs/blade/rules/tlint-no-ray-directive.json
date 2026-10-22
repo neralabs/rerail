@@ -3,7 +3,7 @@
   "id": "tlint-no-ray-directive",
   "revision": 2,
   "mode": "steer",
-  "description": "tlint 9.7.0 NoRayDirective: a @ray directive (spatie/laravel-ray's, which core Blade does not compile: read from the template's tree, where every `@name` is a directive, not its view).",
+  "description": "Remove @ray directives from Blade templates; Ray debugging calls should not ship.",
   "scope": {
     "include": [
       "**/*.blade.php"

@@ -154,15 +154,36 @@ function onTurnEnd(b, e, pl) {
   t.ended = true;
 }
 
-/** Findings for this session from the fetched pages, joined to their rules. */
+/**
+ * How far back the selected session's loaded transcript and violations both reach: events before this time may
+ * have violations not loaded yet, and violations before it belong to events not loaded yet, so the timeline shows
+ * neither until Load earlier brings them. `-Infinity` once both are loaded to the start.
+ */
+export function loadedFrom(sessionId) {
+  const detail = data.sessionDetail.get(sessionId), slot = data.sessionFindings;
+  const events = detail?.earlier ? detail.events[0]?.observedAt ?? Infinity : -Infinity;
+  // Violations of one audit share its start and may straddle a page: the oldest loaded start is not yet complete.
+  const violations = slot.owner === sessionId && slot.next !== null ? (slot.rows.at(-1)?.at ?? Infinity) + 1 : -Infinity;
+  return Math.max(events, violations);
+}
+
+/**
+ * The session's violations from the pages loaded for it and inside `loadedFrom`, joined to their rules. A violation
+ * whose rule is no longer in the repository keeps its card, with `rule: null`, so the timeline still shows it.
+ */
 export function sessionCorrections(sessionId) {
-  const out = [];
-  for (const f of data.findings) {
-    if (f.sessionId !== sessionId) continue;
-    const stored = data.rules.get(f.ruleId);
-    if (stored) out.push({ key: `${f.auditId}:${f.id}`, finding: f, rule: stored });
-  }
-  return out;
+  const slot = data.sessionFindings;
+  if (slot.owner !== sessionId) return [];
+  const from = loadedFrom(sessionId);
+  return slot.rows
+    .filter(f => f.at >= from)
+    .map(f => ({ key: `${f.auditId}:${f.id}`, finding: f, rule: data.rules.get(f.ruleId) ?? null }));
+}
+
+/** Every violation logged in the session, once the first page of them is in; `null` before. */
+export function sessionViolationTotal(sessionId) {
+  const slot = data.sessionFindings;
+  return slot.owner === sessionId && slot.pages > 0 ? slot.total : null;
 }
 
 /**
@@ -171,13 +192,18 @@ export function sessionCorrections(sessionId) {
  * event a finding interrupted.
  */
 export function placeCorrections(turns, corrections) {
+  // The loaded window can start between a tool call and its result, leaving no turn at all: the corrections still
+  // show, in a turn of their own, rather than vanish while the header counts them.
+  const placed = turns.length === 0 && corrections.length > 0
+    ? [{ key: "t-window", ti: 0, u: null, a: null, uSeq: null, aSeq: null, uTime: null, aTime: null, tools: [], orphans: [], ended: true }]
+    : turns;
   for (const c of corrections) {
     const key = c.finding.path ? c.finding.path.split(":")[0] : null;
-    const ev = key ? toolCallTouching(turns, key) : null;
+    const ev = key ? toolCallTouching(placed, key) : null;
     if (ev) ev.correction = c;
-    else if (turns.length) turns[Math.min(1, turns.length - 1)].orphans.push(c);
+    else placed[Math.min(1, placed.length - 1)].orphans.push(c);
   }
-  return turns;
+  return placed;
 }
 
 /** First unclaimed tool call on `key`: a change or command targeting it, else any call whose input mentions it. */
@@ -207,6 +233,18 @@ export function lastEventAt(s) {
   const last = detail?.events.at(-1);
   return last ? last.observedAt : s.endedAt ?? s.startedAt;
 }
+
+/** What the session's whole transcript says it missed, from the daemon (`GET /api/sessions/{id}`); zeros until it answers. */
+const gapsOf = s => data.sessionDetail.get(s.sessionId)?.gaps ?? { droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0 };
+
+/** Session events its host never delivered, from the `events-dropped` records anywhere in the session. */
+export const droppedEvents = s => gapsOf(s).droppedEvents;
+
+/** Boundaries that answered before the session's shell-write check finished. */
+export const uncheckedBoundaries = s => gapsOf(s).uncheckedBoundaries;
+
+/** Boundaries that answered before the session's code-rule evaluator had opened. */
+export const codeRulesPendingBoundaries = s => gapsOf(s).codeRulesPendingBoundaries;
 
 export const isOpen = s => s.endedAt === null;
 /** Open and heard from within STALE_MIN → live; open and silent → "no end recorded". */

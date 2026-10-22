@@ -1,0 +1,105 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "phpstan-array-duplicate-key",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Remove duplicate keys from PHP array literals, including keys PHP coerces to the same value such as 1 and '1'; the later entry silently overwrites the earlier one.",
+  "scope": {
+    "include": [
+      "**/*.php"
+    ],
+    "exclude": [
+      "**/*.blade.php"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "php",
+          "rule": {
+            "all": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "array_creation_expression",
+                  "layout": {
+                    "span": {
+                      "max": 256
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "array_element_initializer",
+                "pattern": {
+                  "context": "[$E]",
+                  "selector": "array_element_initializer"
+                }
+              },
+              {
+                "precedes": {
+                  "stopBy": "end",
+                  "all": [
+                    {
+                      "kind": "array_element_initializer",
+                      "pattern": {
+                        "context": "[$E2]",
+                        "selector": "array_element_initializer"
+                      }
+                    },
+                    {
+                      "compare": {
+                        "left": "E",
+                        "op": "eq",
+                        "right": "E2",
+                        "text": "key"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "follows": {
+                    "stopBy": "end",
+                    "all": [
+                      {
+                        "kind": "array_element_initializer",
+                        "pattern": {
+                          "context": "[$E0]",
+                          "selector": "array_element_initializer"
+                        }
+                      },
+                      {
+                        "compare": {
+                          "left": "E0",
+                          "op": "eq",
+                          "right": "E",
+                          "text": "key"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "array.duplicateKey",
+        "message": "Array has duplicate keys with this value.",
+        "suppress": {
+          "phpstan": {
+            "identifiers": [
+              "array.duplicateKey"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

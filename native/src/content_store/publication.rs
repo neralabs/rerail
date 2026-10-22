@@ -1,34 +1,40 @@
 //! Bulk overlay publication: object preparation, identity resolution, and the publish transaction.
 
-use super::objects::validate_tape_payload;
+use super::connection::retry_busy;
+use super::objects::{compress_documents, validate_tape_payload};
 use super::relationships::{
     execute_relationship_pass, prepare_relationship_pass, relationship_references_current,
 };
 use super::rows::{hash_params, validate_relative_path};
 use super::{
-    CODEC_ZSTD, CandidateClause, ContentStore, HashKey, MAX_PUBLICATION_BATCH,
+    BusyRetries, CODEC_ZSTD, CandidateClause, ContentStore, HashKey, MAX_PUBLICATION_BATCH,
     OverlayFilePublication, PublicationResult, STRING_CLAUSE_KEY, STRING_PATH, SourceId,
-    StoreError, StoreResult, StoredFile, TapeId, WorkspaceId, compress,
+    StoreError, StoreResult, StoredFile, TapeId, TapePayload, WorkspaceId, compress,
 };
 use crate::WORK_POOL;
-#[cfg(test)]
-use parking_lot::Mutex as ParkingMutex;
 use rayon::prelude::*;
 use rusqlite::limits::Limit;
 use rusqlite::{Connection, Transaction, TransactionBehavior, params};
+#[cfg(test)]
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 #[cfg(test)]
-pub(super) static AFTER_PUBLICATION_READ_HOOK: ParkingMutex<Option<Box<dyn FnOnce() + Send>>> =
-    ParkingMutex::new(None);
-#[cfg(test)]
-pub(super) static BEFORE_RELATIONSHIP_WRITE_HOOK: ParkingMutex<Option<Box<dyn FnOnce() + Send>>> =
-    ParkingMutex::new(None);
+type PublicationTestHook = RefCell<Option<Box<dyn FnOnce()>>>;
 
 #[cfg(test)]
-fn run_publication_test_hook(hook: &ParkingMutex<Option<Box<dyn FnOnce() + Send>>>) {
-    if let Some(hook) = hook.lock().take() {
+thread_local! {
+    /// Run on the publishing thread, so a hook never fires in another test's publication.
+    pub(super) static AFTER_PUBLICATION_READ_HOOK: PublicationTestHook =
+        const { RefCell::new(None) };
+    pub(super) static BEFORE_RELATIONSHIP_WRITE_HOOK: PublicationTestHook =
+        const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn run_publication_test_hook(hook: &'static std::thread::LocalKey<PublicationTestHook>) {
+    if let Some(hook) = hook.take() {
         hook();
     }
 }
@@ -60,7 +66,30 @@ impl ContentStore {
         publications: &[OverlayFilePublication<'_>],
         cancelled: &dyn Fn() -> bool,
     ) -> StoreResult<PublicationResult> {
-        self.publish_overlay_files_cancellable_attempt(workspace_id, publications, cancelled, 0)
+        self.publish_overlay_files_reporting_busy(
+            workspace_id,
+            publications,
+            cancelled,
+            &mut BusyRetries::default(),
+        )
+    }
+
+    /// `publish_overlay_files_cancellable`, adding the publication's busy retries to `busy`
+    /// whatever it returns: a publication that ends `Busy` has no result to carry them.
+    pub fn publish_overlay_files_reporting_busy(
+        &self,
+        workspace_id: WorkspaceId,
+        publications: &[OverlayFilePublication<'_>],
+        cancelled: &dyn Fn() -> bool,
+        busy: &mut BusyRetries,
+    ) -> StoreResult<PublicationResult> {
+        self.publish_overlay_files_cancellable_attempt(
+            workspace_id,
+            publications,
+            cancelled,
+            busy,
+            0,
+        )
     }
 
     fn publish_overlay_files_cancellable_attempt(
@@ -68,6 +97,7 @@ impl ContentStore {
         workspace_id: WorkspaceId,
         publications: &[OverlayFilePublication<'_>],
         cancelled: &dyn Fn() -> bool,
+        busy: &mut BusyRetries,
         stale_relationship_retries: usize,
     ) -> StoreResult<PublicationResult> {
         if cancelled() {
@@ -142,6 +172,15 @@ impl ContentStore {
                             .filter(|_| tape_id.is_none())
                             .map(|payload| compress(payload.bytes, self.compression_level))
                             .transpose()?;
+                        // A stored tape's documents are stored with it: only a new tape's are
+                        // written.
+                        let document_frames = publication
+                            .tape
+                            .filter(|payload| tape_id.is_none() && !payload.documents.is_empty())
+                            .map(|payload| {
+                                compress_documents(payload.documents, self.compression_level)
+                            })
+                            .transpose()?;
                         Ok((
                             publication,
                             source_hash,
@@ -150,6 +189,7 @@ impl ContentStore {
                             tape_hash,
                             tape_id,
                             tape_frame,
+                            document_frames,
                         ))
                     },
                 )
@@ -176,8 +216,6 @@ impl ContentStore {
             .map(|publication| publication.path)
             .collect::<BTreeSet<_>>()
             .len();
-        let mut retries = 0;
-        let mut retry_wait_nanoseconds = 0_u64;
         let mut transaction_nanoseconds = 0_u64;
         let mut object_transaction_nanoseconds = 0_u64;
         let mut relationship_transaction_nanoseconds = 0_u64;
@@ -224,58 +262,43 @@ impl ContentStore {
                     &current_path_ids,
                     &current_interned,
                 )?;
-                loop {
-                    let attempt_started = Instant::now();
-                    let result = (|| {
-                        let mut connection = self
-                            .connection
-                            .lock()
-                            .expect("content store connection unavailable");
-                        let transaction =
-                            connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-                        #[cfg(test)]
-                        let _write_lock = super::WriteLockSection::enter();
-                        let started = Instant::now();
-                        let statement_count = execute_object_pass(&transaction, &object_pass)?;
-                        if statement_count > 10 {
-                            return Err(StoreError::Invalid(format!(
-                                "object publication used {} statements; maximum is 10",
-                                statement_count
-                            )));
-                        }
-                        transaction.commit()?;
-                        Ok((
-                            u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
-                            statement_count,
-                        ))
-                    })();
-                    match result {
-                        Ok((elapsed, statement_count)) => {
-                            transaction_nanoseconds =
-                                transaction_nanoseconds.saturating_add(elapsed);
-                            object_transaction_nanoseconds =
-                                object_transaction_nanoseconds.saturating_add(elapsed);
-                            data_statements += statement_count;
-                            max_data_statements_per_pass =
-                                max_data_statements_per_pass.max(statement_count);
-                            transaction_statements += 2;
-                            reconciliation_passes += 1;
-                            break;
-                        }
-                        Err(StoreError::Busy) if retries < 8 => {
-                            retries += 1;
-                            let delay = Duration::from_millis(1_u64 << retries.min(6));
-                            retry_wait_nanoseconds = retry_wait_nanoseconds.saturating_add(
-                                u64::try_from(
-                                    attempt_started.elapsed().saturating_add(delay).as_nanos(),
-                                )
-                                .unwrap_or(u64::MAX),
-                            );
-                            std::thread::sleep(delay);
-                        }
-                        Err(error) => return Err(error),
+                // The loop above polls cancellation before the first attempt; a retry polls again.
+                let mut retry = false;
+                let (elapsed, statement_count) = retry_busy(busy, || {
+                    if std::mem::replace(&mut retry, true) && cancelled() {
+                        return Err(StoreError::Invalid(
+                            "overlay publication was cancelled".to_owned(),
+                        ));
                     }
-                }
+                    let mut connection = self
+                        .connection
+                        .lock()
+                        .expect("content store connection unavailable");
+                    let transaction =
+                        connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                    #[cfg(test)]
+                    let _write_lock = super::WriteLockSection::enter();
+                    let started = Instant::now();
+                    let statement_count = execute_object_pass(&transaction, &object_pass)?;
+                    if statement_count > 10 {
+                        return Err(StoreError::Invalid(format!(
+                            "object publication used {} statements; maximum is 10",
+                            statement_count
+                        )));
+                    }
+                    transaction.commit()?;
+                    Ok((
+                        u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+                        statement_count,
+                    ))
+                })?;
+                transaction_nanoseconds = transaction_nanoseconds.saturating_add(elapsed);
+                object_transaction_nanoseconds =
+                    object_transaction_nanoseconds.saturating_add(elapsed);
+                data_statements += statement_count;
+                max_data_statements_per_pass = max_data_statements_per_pass.max(statement_count);
+                transaction_statements += 2;
+                reconciliation_passes += 1;
 
                 let corrected_identities = prepared
                     .iter()
@@ -327,14 +350,16 @@ impl ContentStore {
             .collect::<Vec<_>>();
         let mut stored = Vec::with_capacity(prepared.len());
         let mut overlay_rows = Vec::with_capacity(prepared.len());
-        for ((publication, _, _, _, _, _, _), (source_id, tape_id)) in
+        for ((publication, _, _, _, _, _, _, _), (source_id, tape_id)) in
             prepared.iter().zip(stored_objects)
         {
-            let source_id = source_id.ok_or_else(|| StoreError::Busy)?;
+            let source_id = source_id.ok_or(StoreError::Vanished("source"))?;
             if publication.tape.is_some() && tape_id.is_none() {
-                return Err(StoreError::Busy);
+                return Err(StoreError::Vanished("tape"));
             }
-            let path_id = *path_ids.get(publication.path).ok_or(StoreError::Busy)?;
+            let path_id = *path_ids
+                .get(publication.path)
+                .ok_or(StoreError::Vanished("path"))?;
             overlay_rows.push((
                 path_id,
                 publication.state_id,
@@ -363,113 +388,96 @@ impl ContentStore {
         )?;
         #[cfg(test)]
         run_publication_test_hook(&BEFORE_RELATIONSHIP_WRITE_HOOK);
-        loop {
+        let (elapsed, statement_count, current) = retry_busy(busy, || {
             if cancelled() {
                 return Err(StoreError::Invalid(
                     "overlay publication was cancelled".to_owned(),
                 ));
             }
-            let attempt_started = Instant::now();
-            let result = (|| {
-                let mut connection = self
-                    .connection
-                    .lock()
-                    .expect("content store connection unavailable");
-                let transaction =
-                    connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-                #[cfg(test)]
-                let _write_lock = super::WriteLockSection::enter();
-                let transaction_started = Instant::now();
-                if !relationship_references_current(
-                    &transaction,
-                    &overlay_rows,
-                    &path_hashes,
-                    &relationship_hashes,
-                    &candidate_identities,
-                    &known_interned,
-                )? {
-                    return Ok((
-                        u64::try_from(transaction_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
-                        0,
-                        false,
-                    ));
-                }
-                execute_relationship_pass(&transaction, &relationship_pass)?;
-                let statement_count = relationship_pass.statement_count();
-                if cancelled() {
-                    return Err(StoreError::Invalid(
-                        "overlay publication was cancelled".to_owned(),
-                    ));
-                }
-                transaction.commit()?;
-                Ok((
+            let mut connection = self
+                .connection
+                .lock()
+                .expect("content store connection unavailable");
+            let transaction =
+                connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            #[cfg(test)]
+            let _write_lock = super::WriteLockSection::enter();
+            let transaction_started = Instant::now();
+            if !relationship_references_current(
+                &transaction,
+                &overlay_rows,
+                &path_hashes,
+                &relationship_hashes,
+                &candidate_identities,
+                &known_interned,
+            )? {
+                return Ok((
                     u64::try_from(transaction_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
-                    statement_count,
-                    true,
-                ))
-            })();
-            match result {
-                Ok((elapsed, statement_count, true)) => {
-                    transaction_nanoseconds = transaction_nanoseconds.saturating_add(elapsed);
-                    relationship_transaction_nanoseconds =
-                        relationship_transaction_nanoseconds.saturating_add(elapsed);
-                    data_statements += statement_count;
-                    max_data_statements_per_pass =
-                        max_data_statements_per_pass.max(statement_count);
-                    transaction_statements += 2;
-                    reconciliation_passes += 1;
-                    if publications
-                        .iter()
-                        .any(|publication| !publication.local_results.is_empty())
-                    {
-                        self.local_result_cache
-                            .lock()
-                            .expect("local result cache mutex poisoned")
-                            .clear();
-                    }
-                    return Ok(PublicationResult {
-                        files: stored,
-                        retries,
-                        retry_wait_nanoseconds,
-                        transaction_nanoseconds,
-                        object_transaction_nanoseconds,
-                        relationship_transaction_nanoseconds,
-                        read_data_statements,
-                        data_statements,
-                        max_data_statements_per_pass,
-                        transaction_statements,
-                        reconciliation_passes,
-                        reused_sources,
-                        reused_tapes,
-                        compressed_sources,
-                        compressed_tapes,
-                    });
-                }
-                Ok((_, _, false)) => {
-                    if stale_relationship_retries >= 8 {
-                        return Err(StoreError::Invalid(
-                            "overlay publication made no progress after 8 reconciliation passes"
-                                .to_owned(),
-                        ));
-                    }
-                    return self.publish_overlay_files_cancellable_attempt(
-                        workspace_id,
-                        publications,
-                        cancelled,
-                        stale_relationship_retries + 1,
-                    );
-                }
-                Err(StoreError::Busy) if retries < 8 => {
-                    retries += 1;
-                    let delay = Duration::from_millis(1_u64 << retries.min(6));
-                    let wait = attempt_started.elapsed().saturating_add(delay);
-                    retry_wait_nanoseconds = retry_wait_nanoseconds
-                        .saturating_add(u64::try_from(wait.as_nanos()).unwrap_or(u64::MAX));
-                    std::thread::sleep(delay);
-                }
-                Err(error) => return Err(error),
+                    0,
+                    false,
+                ));
             }
+            execute_relationship_pass(&transaction, &relationship_pass)?;
+            let statement_count = relationship_pass.statement_count();
+            if cancelled() {
+                return Err(StoreError::Invalid(
+                    "overlay publication was cancelled".to_owned(),
+                ));
+            }
+            transaction.commit()?;
+            Ok((
+                u64::try_from(transaction_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+                statement_count,
+                true,
+            ))
+        })?;
+        if !current {
+            if stale_relationship_retries >= 8 {
+                return Err(StoreError::Invalid(
+                    "overlay publication made no progress after 8 reconciliation passes".to_owned(),
+                ));
+            }
+            return self.publish_overlay_files_cancellable_attempt(
+                workspace_id,
+                publications,
+                cancelled,
+                busy,
+                stale_relationship_retries + 1,
+            );
         }
+        transaction_nanoseconds = transaction_nanoseconds.saturating_add(elapsed);
+        relationship_transaction_nanoseconds =
+            relationship_transaction_nanoseconds.saturating_add(elapsed);
+        data_statements += statement_count;
+        max_data_statements_per_pass = max_data_statements_per_pass.max(statement_count);
+        transaction_statements += 2;
+        reconciliation_passes += 1;
+        if publications
+            .iter()
+            .any(|publication| !publication.local_results.is_empty())
+        {
+            self.local_result_cache
+                .lock()
+                .expect("local result cache mutex poisoned")
+                .clear();
+        }
+        Ok(PublicationResult {
+            files: stored,
+            retries: busy.retries,
+            retry_wait_nanoseconds: busy.wait_nanoseconds,
+            transaction_nanoseconds,
+            object_transaction_nanoseconds,
+            relationship_transaction_nanoseconds,
+            read_data_statements,
+            data_statements,
+            max_data_statements_per_pass,
+            transaction_statements,
+            reconciliation_passes,
+            reused_sources,
+            reused_tapes,
+            compressed_sources,
+            compressed_tapes,
+        })
     }
 }
 
@@ -481,6 +489,8 @@ type PreparedOverlayPublication<'a> = (
     Option<HashKey>,
     Option<TapeId>,
     Option<Vec<u8>>,
+    // The source and tape frames of the documents derived from a tape not stored yet.
+    Option<Vec<(Vec<u8>, Vec<u8>)>>,
 );
 
 struct PreparedObjectPass {
@@ -494,6 +504,8 @@ struct PreparedObjectPass {
     source_values: Vec<rusqlite::types::Value>,
     tape_sql: String,
     tape_values: Vec<rusqlite::types::Value>,
+    /// The `file_documents` rows of the new tapes that derive documents; `None` where none does.
+    document_sql: Option<(String, Vec<rusqlite::types::Value>)>,
 }
 
 fn hash_json(hash: HashKey) -> serde_json::Value {
@@ -516,17 +528,23 @@ fn prepare_missing_object_frames(
     stored_objects: &[(Option<SourceId>, Option<TapeId>)],
     compression_level: i32,
 ) -> StoreResult<()> {
-    for ((publication, _, _, source_frame, _, _, tape_frame), (source_id, tape_id)) in
-        prepared.iter_mut().zip(stored_objects)
+    for (
+        (publication, _, _, source_frame, _, _, tape_frame, document_frames),
+        (source_id, tape_id),
+    ) in prepared.iter_mut().zip(stored_objects)
     {
         if source_id.is_none() && source_frame.is_none() {
             *source_frame = Some(compress(publication.source, compression_level)?);
         }
         if let Some(tape) = publication.tape
             && tape_id.is_none()
-            && tape_frame.is_none()
         {
-            *tape_frame = Some(compress(tape.bytes, compression_level)?);
+            if tape_frame.is_none() {
+                *tape_frame = Some(compress(tape.bytes, compression_level)?);
+            }
+            if document_frames.is_none() && !tape.documents.is_empty() {
+                *document_frames = Some(compress_documents(tape.documents, compression_level)?);
+            }
         }
     }
     Ok(())
@@ -546,9 +564,10 @@ fn prepare_object_pass(
     let mut aliases = BTreeSet::<(HashKey, HashKey)>::new();
     let mut source_rows = Vec::new();
     let mut tape_rows = Vec::new();
+    let mut document_rows = Vec::new();
 
     for (
-        (publication, source_hash, _, source_frame, tape_hash, _, tape_frame),
+        (publication, source_hash, _, source_frame, tape_hash, _, tape_frame, document_frames),
         (source_id, tape_id),
     ) in prepared.iter().zip(stored_objects)
     {
@@ -600,15 +619,55 @@ fn prepare_object_pass(
             }
         }
         if source_id.is_none() {
-            let frame = source_frame.as_ref().ok_or(StoreError::Busy)?;
+            let frame = source_frame
+                .as_ref()
+                .ok_or(StoreError::Vanished("source"))?;
             source_rows.push((*source_hash, publication.source.len(), frame.clone()));
         }
         if let (Some(payload), Some(hash)) = (publication.tape, *tape_hash)
             && tape_id.is_none()
         {
-            let frame = tape_frame.as_ref().ok_or(StoreError::Busy)?;
+            let frame = tape_frame.as_ref().ok_or(StoreError::Vanished("tape"))?;
             hashes.insert(hash);
             tape_rows.push((*source_hash, hash, payload, frame.clone()));
+            // The tape's derived documents: each an ordinary source and tape, and its row.
+            if !payload.documents.is_empty() {
+                let frames = document_frames
+                    .as_ref()
+                    .ok_or(StoreError::Vanished("derived document"))?;
+                for (index, (document, (document_source_frame, document_tape_frame))) in
+                    payload.documents.iter().zip(frames).enumerate()
+                {
+                    let document_source = HashKey::sha256(document.source);
+                    let document_tape = HashKey::sha256(document.tape);
+                    hashes.insert(document_source);
+                    hashes.insert(document_tape);
+                    source_rows.push((
+                        document_source,
+                        document.source.len(),
+                        document_source_frame.clone(),
+                    ));
+                    tape_rows.push((
+                        document_source,
+                        document_tape,
+                        TapePayload {
+                            grammar_id: document.grammar_id,
+                            grammar_version: payload.grammar_version,
+                            tape_format_version: payload.tape_format_version,
+                            bytes: document.tape,
+                            documents: &[],
+                        },
+                        document_tape_frame.clone(),
+                    ));
+                    document_rows.push((
+                        *source_hash,
+                        payload,
+                        index + 1,
+                        document,
+                        document_source,
+                    ));
+                }
+            }
         }
     }
 
@@ -737,6 +796,69 @@ fn prepare_object_pass(
         tape_values.push(CODEC_ZSTD.into());
     }
 
+    // Every row joins its primary tape and its own tape, both written above in this transaction
+    // (or already stored), by identity.
+    let document_sql = (!document_rows.is_empty())
+        .then(|| {
+            let mut sql = String::from(
+                "WITH input(source_algorithm,source_lane0,source_lane1,source_lane2,source_lane3,grammar_id,\
+                 grammar_version,format_version,ordinal,parent_ordinal,role_id,via_id,document_algorithm,\
+                 document_lane0,document_lane1,document_lane2,document_lane3,document_grammar_id,source_map,\
+                 host_errors) AS (VALUES ",
+            );
+            let mut values = Vec::with_capacity(document_rows.len() * 20);
+            for (index, (source, payload, ordinal, document, document_source)) in
+                document_rows.into_iter().enumerate()
+            {
+                if index != 0 {
+                    sql.push(',');
+                }
+                sql.push_str("(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+                values.extend(
+                    hash_params(source)
+                        .into_iter()
+                        .map(rusqlite::types::Value::Integer),
+                );
+                values.push(payload.grammar_id.into());
+                values.push(payload.grammar_version.into());
+                values.push(payload.tape_format_version.into());
+                values.push(
+                    i64::try_from(ordinal)
+                        .map_err(|_| {
+                            StoreError::Invalid("too many derived documents".to_owned())
+                        })?
+                        .into(),
+                );
+                values.push(document.parent_ordinal.into());
+                values.push(document.role_id.into());
+                values.push(document.via_id.into());
+                values.extend(
+                    hash_params(document_source)
+                        .into_iter()
+                        .map(rusqlite::types::Value::Integer),
+                );
+                values.push(document.grammar_id.into());
+                values.push(document.source_map.to_vec().into());
+                values.push(document.host_errors.to_vec().into());
+            }
+            sql.push_str(
+                ") INSERT OR IGNORE INTO file_documents(tape_id,ordinal,parent_ordinal,role_id,via_id,document_tape_id,source_map,host_errors) \
+                 SELECT pt.tape_id,i.ordinal,i.parent_ordinal,i.role_id,i.via_id,dt.tape_id,i.source_map,i.host_errors FROM input i \
+                 JOIN hashes ph INDEXED BY hashes_by_prefix ON ph.algorithm_id=i.source_algorithm AND ph.lane0=i.source_lane0 \
+                 AND ph.lane1=i.source_lane1 AND ph.lane2=i.source_lane2 AND ph.lane3=i.source_lane3 \
+                 JOIN source_objects ps ON ps.canonical_hash_id=ph.hash_id \
+                 JOIN tape_objects pt ON pt.source_id=ps.source_id AND pt.grammar_id=i.grammar_id \
+                 AND pt.grammar_version=i.grammar_version AND pt.tape_format_version=i.format_version \
+                 JOIN hashes dh INDEXED BY hashes_by_prefix ON dh.algorithm_id=i.document_algorithm AND dh.lane0=i.document_lane0 \
+                 AND dh.lane1=i.document_lane1 AND dh.lane2=i.document_lane2 AND dh.lane3=i.document_lane3 \
+                 JOIN source_objects ds ON ds.canonical_hash_id=dh.hash_id \
+                 JOIN tape_objects dt ON dt.source_id=ds.source_id AND dt.grammar_id=i.document_grammar_id \
+                 AND dt.grammar_version=i.grammar_version AND dt.tape_format_version=i.format_version",
+            );
+            Ok::<_, StoreError>((sql, values))
+        })
+        .transpose()?;
+
     Ok(PreparedObjectPass {
         hashes_json,
         strings_json,
@@ -748,6 +870,7 @@ fn prepare_object_pass(
         source_values,
         tape_sql,
         tape_values,
+        document_sql,
     })
 }
 
@@ -852,6 +975,12 @@ fn execute_object_pass(
         .prepare_cached(&pass.tape_sql)?
         .execute(rusqlite::params_from_iter(pass.tape_values.iter()))?;
     statements += 1;
+    if let Some((sql, values)) = &pass.document_sql {
+        transaction
+            .prepare_cached(sql)?
+            .execute(rusqlite::params_from_iter(values.iter()))?;
+        statements += 1;
+    }
     Ok(statements)
 }
 

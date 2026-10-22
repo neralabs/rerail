@@ -5,15 +5,17 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { publicHostSet, operations, presentationResponseSchema } from "../../src/api/index.js";
 import {
   assertHostBindable,
   DEFAULT_DAEMON_PORT,
+  defaultEngineSocketPath,
   parsePublicHosts,
   RerailDaemon,
   type RerailDaemonOptions,
 } from "../../src/daemon/daemon.js";
+import { NativeSessionServer } from "../../src/daemon/native-session-server.js";
 import {
   type DaemonHealth,
   ingestEngineEvent,
@@ -21,7 +23,7 @@ import {
   SESSION_EVENT_PAGE_LIMIT,
 } from "../../src/runtime/index.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../../src/cli/index.js";
-import { SqliteAuditStore, SqliteAuditControlStore } from "../../src/engine/index.js";
+import { openRerailDatabase, SqliteAuditStore, SqliteAuditControlStore } from "../../src/engine/index.js";
 import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
 
 const healthyNative = () => ({ ok: true, kernelVersion: "1" });
@@ -169,7 +171,12 @@ describe("Rerail daemon", () => {
   it("serves sessions and paged events read from the session store", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const daemon = await start();
-    expect(await getJson(daemon, "/api/sessions")).toEqual({ status: 200, body: { sessions: [] } });
+    expect(await getJson(daemon, "/api/sessions")).toEqual({ status: 200, body: { sessions: [], total: 0, nextCursor: null } });
+    // Before anything is recorded, a malformed cursor is refused just as it is once history exists.
+    expect(existsSync(join(root, "rerail.sqlite"))).toBe(false);
+    for (const path of ["/api/sessions?cursor=not-a-cursor", "/api/violations?since=0&cursor=not-a-cursor"]) {
+      expect(await getJson(daemon, path), path).toMatchObject({ status: 400, body: { error: "invalid-cursor" } });
+    }
 
     const store = new SqliteSessionStore(join(root, "rerail.sqlite"), { repositoryId: "test-repository" });
     store.openSession({ host: "claude-code", sessionId: "s1", cwd: "/workspace" }, 1_000);
@@ -181,9 +188,14 @@ describe("Rerail daemon", () => {
 
     expect(await getJson(daemon, "/api/sessions")).toEqual({
       status: 200,
-      body: { sessions: [{
-        sessionId: "s1", host: "claude-code", cwd: "/workspace", repositoryId: "test-repository", startedAt: 1_000, endedAt: 2_000, eventCount: 3,
-      }] },
+      body: {
+        sessions: [{
+          sessionId: "s1", host: "claude-code", cwd: "/workspace", repositoryId: "test-repository", startedAt: 1_000, endedAt: 2_000,
+          eventCount: 3, violationCount: 0,
+        }],
+        total: 1,
+        nextCursor: null,
+      },
     });
 
     const firstPage = await getJson(daemon, "/api/sessions/s1/events?limit=2");
@@ -202,6 +214,11 @@ describe("Rerail daemon", () => {
     expect(secondPage.body.nextAfter).toBe(3);
     expect(secondPage.body.events.map(event => event.eventId)).toEqual(["e3"]);
     expect(await getJson(daemon, "/api/sessions/s1/events?after=3")).toMatchObject({ body: { events: [], nextAfter: 3 } });
+    // Backward: the newest page, then the page before it, each in sequence order with the tail as `nextAfter`.
+    const newest = await getJson<{ events: Array<{ eventId: string }>; nextAfter: number }>(daemon, "/api/sessions/s1/events?before=9007199254740991&limit=2");
+    expect(newest.body).toMatchObject({ events: [{ eventId: "e2" }, { eventId: "e3" }], nextAfter: 3 });
+    expect((await getJson<{ events: Array<{ eventId: string }> }>(daemon, "/api/sessions/s1/events?before=2&limit=2")).body.events.map(event => event.eventId))
+      .toEqual(["e1"]);
     expect(await getJson(daemon, "/api/sessions/missing/events")).toMatchObject({ body: { events: [] } });
     expect(await getJson(daemon, "/api/sessions/s1")).toMatchObject({
       status: 200,
@@ -257,7 +274,21 @@ describe("Rerail daemon", () => {
         mode: "block", message: "x".repeat(2 * 1024 * 1024),
         path: "source.ts", captures: {}, variables: {},
       }],
-      failures: [{ clauseId: "scan", code: "budget-exceeded", message: "scan exceeded its budget", stage: "scan" }],
+      failures: [
+        { clauseId: "scan", code: "budget-exceeded", message: "scan exceeded its budget", stage: "scan" },
+        { clauseId: "source", code: "budget-exceeded", message: "Source exceeds the per-file byte budget", path: "big.ts", stage: "read" },
+        // A file blind for its syntax fails the audit; one blind for its work is a gap.
+        { clauseId: "file", code: "source-incomplete", message: "file has syntax errors", path: "broken.ts", stage: "evaluate", blind: "syntax" },
+        { clauseId: "file", code: "budget-exceeded", message: "file parsing time budget exceeded", path: "huge.ts", stage: "evaluate", blind: "budget" },
+        // A rule that ran out of its own work is a gap, counted per rule.
+        { ruleId: "slow", clauseId: "c", code: "budget-exceeded", message: "clause work budget exceeded", path: "a.ts", stage: "evaluate" },
+        { ruleId: "slow", clauseId: "c", code: "budget-exceeded", message: "clause work budget exceeded", path: "b.ts", stage: "evaluate" },
+        // A rule the file's work stopped is a gap, but did not run out itself.
+        { ruleId: "late", clauseId: "c", code: "file-budget-exceeded", message: "file clause work budget exceeded", path: "a.ts", stage: "evaluate" },
+        { ruleId: "late", clauseId: "c", code: "file-budget-exceeded", message: "file AST work budget exceeded", path: "b.ts", stage: "evaluate" },
+      ],
+      // The list holds eight of the run's failures; it had 140 more.
+      unlistedFailureCount: 140,
     });
     audits.close();
     const daemon = await start();
@@ -270,9 +301,13 @@ describe("Rerail daemon", () => {
     expect(compact.context?.daemon).toEqual({
       pid: process.pid, database: { path, exists: true }, native: { ok: true }, workspaceRoot: root,
     });
-    expect(compact.context?.session).toEqual((await getJson(daemon, "/api/sessions/large-run")).body);
+    // `sessions_get` adds the transcript's gaps, which the status line does not read.
+    const { gaps, ...head } = (await getJson<Record<string, unknown>>(daemon, "/api/sessions/large-run")).body;
+    expect(compact.context?.session).toEqual(head);
+    expect(gaps).toEqual({ droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0 });
     expect(compact.context?.session?.audit).toEqual({
-      workspaceRoot: root, scope: "repository", mode: "log", status: "failed", violationCount: 1, failureCount: 1,
+      workspaceRoot: root, scope: "repository", mode: "log", status: "failed", violationCount: 1, failureCount: 148,
+      unlistedFailureCount: 140, blindFileCount: 2, gapCount: 5, outOfWorkRuleCount: 1, fileWorkStoppedRuleCount: 1,
     });
     for (const mismatch of [{ host: "claude-code" }, { repository: tmpdir() }, { sessionId: "missing" }]) {
       const wrong = new URLSearchParams({ repository: root, host: "omp", sessionId: "large-run", ...mismatch });
@@ -425,7 +460,8 @@ describe("Rerail daemon", () => {
 
     const sessionIds = async (query: string) =>
       (await getJson<{ sessions: Array<{ sessionId: string }> }>(daemon, `/api/sessions${query}`)).body.sessions.map(session => session.sessionId);
-    expect(await sessionIds("")).toEqual(["own", "foreign"]);
+    // Newest first: `foreign` opened after `own`.
+    expect(await sessionIds("")).toEqual(["foreign", "own"]);
     expect(await sessionIds("?since=0&repository=test-repository")).toEqual(["own"]);
     expect((await getJson(daemon, "/api/audits")).body).toMatchObject({ total: 2 });
     expect((await getJson(daemon, "/api/audits?repository=test-repository")).body)
@@ -539,6 +575,8 @@ describe("Rerail daemon", () => {
         path: "generated/client.ts",
         stage: "read",
       }],
+      // The run had 30 more failures than it lists; the repository listing counts them.
+      unlistedFailureCount: 30,
     });
     controls.finishRepositoryAudit("repo-a-session", "/workspace/repo-a", repositoryAuditId, "failed", "Source exceeds the per-file byte budget");
     const historicalAuditId = audits.start({
@@ -590,7 +628,8 @@ describe("Rerail daemon", () => {
               catalogRevision: "catalog-a",
               ruleRevisionCount: 1,
               violationCount: 2,
-              failureCount: 1,
+              failureCount: 31,
+              unlistedFailureCount: 30,
             },
           },
           {
@@ -671,6 +710,35 @@ describe("Rerail daemon", () => {
     } finally {
       await new Promise<void>((resolveClosed) => blocker.close(() => resolveClosed()));
     }
+  });
+
+  it("releases its engine socket when a rollback holds the database, so the next start succeeds", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const databasePath = join(root, "rerail.sqlite");
+    const restoring = `${databasePath}.restoring`;
+    openRerailDatabase(databasePath).$client.close();
+    await writeFile(restoring, "");
+    await expect(start()).rejects.toThrow(/putting back a copy/u);
+    expect(existsSync(defaultEngineSocketPath(databasePath))).toBe(false);
+    await rm(restoring);
+    const daemon = await start();
+    expect((await getJson(daemon, "/healthz")).status).toBe(200);
+  });
+
+  // Review of #49 (N1): a resource that fails to close does not keep the next one open.
+  it("releases its engine socket on a failed start even when the native session server fails to close", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const databasePath = join(root, "rerail.sqlite");
+    const stateFile = join(root, "daemon.json");
+    await mkdir(stateFile);
+    const close = vi.spyOn(NativeSessionServer.prototype, "close").mockRejectedValueOnce(new Error("close failed"));
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    await expect(start({ stateFile })).rejects.toThrow(/EISDIR|illegal operation on a directory/u);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(existsSync(defaultEngineSocketPath(databasePath))).toBe(false);
+    // Review of #49 (N5): the failed close is on record.
+    expect(stderr).toHaveBeenCalledWith("rerail daemon: could not close the native session server after a failed start: close failed\n");
+    stderr.mockRestore();
   });
 
   it("publishes every operation in the OpenAPI document", async () => {
@@ -836,7 +904,7 @@ describe("Rerail daemon", () => {
     // Every loopback spelling on any port, since a port mapping may present one the daemon never bound.
     for (const host of ["localhost:4737", "127.0.0.1:4737", "[::1]:4737", "LOCALHOST", `127.0.0.1:${daemon.port}`]) {
       expect(await rawRequest(daemon, "/healthz", { headers: { host } })).toMatchObject({ status: 200, body: { status: "ok" } });
-      expect(await rawRequest(daemon, "/api/sessions", { headers: { host } })).toEqual({ status: 200, body: { sessions: [] } });
+      expect(await rawRequest(daemon, "/api/sessions", { headers: { host } })).toEqual({ status: 200, body: { sessions: [], total: 0, nextCursor: null } });
     }
     expect((await rawRequest(daemon, "/", { headers: { host: "localhost:4737" } })).status).toBe(200);
   });
