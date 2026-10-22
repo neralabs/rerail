@@ -306,8 +306,9 @@ jobs:
         run: npm run port-readiness:bump -- --pack "$PACK" --tool "$TOOL" --version "$VERSION" --summary "$RUNNER_TEMP/bump/summary.md" --json "$RUNNER_TEMP/bump/bump.json"
 
       # The bump names the tool-packs whose recordings it made stale: its own, and any other that installs a runtime it
-      # changed. Each is derived from the new pins and recorded again, its recording.lock and UPSTREAM.md rows rewritten,
-      # and the per-rule summary of what upstream now answers differently kept for the pull request. Clippy is not gated:
+      # changed. Each is derived from the new pins first (its generator, then the recorder's case sources, rewriting
+      # the UPSTREAM.md rows of new copies), then recorded again: the recorder writes the new recording.lock and the
+      # per-rule summary of what upstream now answers differently, kept for the pull request. Clippy is not gated:
       # nothing is recorded, and CI derives its answers on the pull request.
       - name: Record the bumped tool-packs again
         run: |
@@ -316,7 +317,8 @@ jobs:
           mapfile -t legs < <(jq -r '.record[] | "\(.pack) \(.tool)"' "$RUNNER_TEMP/bump/bump.json")
           for leg in "${legs[@]}"; do
             read -r pack tool <<< "$leg"
-            npm run fixtures:derive -- --pack "$pack" --tool "$tool" --update --changes "$RUNNER_TEMP/bump/changes/$pack--$tool.md"
+            npm run fixtures:derive -- --pack "$pack" --tool "$tool" --update
+            npm run port-readiness:record -- --pack "$pack" --tool "$tool" --changes "$RUNNER_TEMP/bump/changes/$pack--$tool.md"
           done
 
       # Only what git tracks: the derived test data is gitignored and never committed.

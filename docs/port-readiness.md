@@ -422,7 +422,8 @@ The bump moves every pin of the release together, and reads each file back to ch
   rust-clippy tags `.0` releases only: a point release whose `src/tools/clippy` in rust-lang/rust is the `.0` release's
   tree keeps the `.0` tag's commit, and one that changed it stops the bump.
 
-The job then derives and records again every tool-pack whose runtime the bump changed (its own, and every tool-pack that
+The job then derives (`npm run fixtures:derive -- --pack <pack> --tool <tool> --update`) and records again
+(`port-readiness:record --changes`) every tool-pack whose runtime the bump changed (its own, and every tool-pack that
 installs a shared runtime such as `blade`), with the runtimes installed as the record legs install them; the committed
 result is the pins, `recording.lock` and the `UPSTREAM.md` rows of new copies. The recorder runs upstream's code, so
 that job holds no token that can write: it hands a patch to a second job on a fresh runner, which refuses a patch that
