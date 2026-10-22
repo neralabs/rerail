@@ -28,6 +28,19 @@ describe("#1 pack.json location", () => {
 });
 
 describe("#2 rule document location", () => {
+  it("recognizes conversation rules and applies the same pack location requirement", () => {
+    const conversation = JSON.stringify({
+      id: "workflow-example", mode: "log", match: { field: "text", contains: "unfinished" },
+      sample: { source: "assistant-text", boundary: "turn" }, action: { content: "Check completion." },
+    });
+    const result = ruleDocLocation(memoryRepo({
+      "packs/workflow/candidates/rules/workflow-example.json": conversation,
+      "other/workflow-example.json": conversation,
+      "other/not-a-rule.json": JSON.stringify({ sample: { source: "assistant-text" } }),
+    }));
+    expect(paths(result)).toEqual(["other/workflow-example.json"]);
+  });
+
   it("allows pack rules/ and candidates/ and fixtures test inputs, flags rule documents anywhere else", () => {
     const result = ruleDocLocation(
       memoryRepo({

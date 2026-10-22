@@ -22,6 +22,7 @@ import {
   compareDeterministicStrings,
   LANGUAGE_REGISTRY,
   RULE_PACK_LIST,
+  parseConversationRule,
 } from "../src/engine/index.js";
 import { PACK_LIST_MODULE_PATH, PACKS_DIRECTORY, renderPackListModule } from "../scripts/generate/packs/pack-list.js";
 import { CONFORMANCE_FILE, defaultCorpusRoot, documentPath, loadPack, packSchema, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
@@ -148,10 +149,20 @@ function candidateDocuments(directory: string, candidates: readonly string[]): s
   return candidates.filter(file => file.endsWith(".json") && (inRulesDirectory(file) || POLICY_FORMAT.test(headerOf(readFileSync(join(directory, file), "utf8")).format ?? "")));
 }
 
+/** Conversation candidates have no policy format or code-rule description. */
+function isConversationRuleDocument(text: string): boolean {
+  try {
+    parseConversationRule(JSON.parse(text));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The id rule (docs/pack-format.md, check 1): one id style in every pack. A rule's id is lowercase letters, digits and
  * dashes and names its document, shipped (`rules/<id>.json`) or candidate (`candidates/…/rules/<id>.json`); a candidate
- * is a `rerail.policy/v1` document like a shipped rule; and a port in any `conformance.json` of the pack has its
+ * is a `rerail.policy/v1` document or a valid conversation rule; and a port in any `conformance.json` of the pack has its
  * document's id. So the id users turn a rule on and off by is the one its file, its listing and its scores carry, and a
  * candidate keeps it when it ships.
  */
@@ -159,8 +170,9 @@ function idFailures(directory: string): string[] {
   const failures: string[] = [];
   const candidates = filesUnder(directory, join(directory, "candidates"));
   for (const file of candidateDocuments(directory, candidates)) {
-    const { format, id } = headerOf(readFileSync(join(directory, file), "utf8"));
-    if (format !== CODE_RULE_FORMAT) failures.push(`${file}: format is ${format ?? "missing"}; a rule document is ${CODE_RULE_FORMAT}`);
+    const text = readFileSync(join(directory, file), "utf8");
+    const { format, id } = headerOf(text);
+    if (format !== CODE_RULE_FORMAT && !isConversationRuleDocument(text)) failures.push(`${file}: format is ${format ?? "missing"}; a rule document is ${CODE_RULE_FORMAT}`);
     if (!inRulesDirectory(file))
       failures.push(`${file}: a candidate is in a rules/ directory; move it to ${posix.join(posix.dirname(file), "rules", `${id ?? posix.basename(file, ".json")}.json`)}`);
     if (id === undefined) failures.push(`${file}: has no id`);
@@ -444,6 +456,7 @@ const ABBREVIATION = /\b(?:e\.g|i\.e|etc|vs)\./giu;
  * left to review (docs/pack-format.md, "Message"): no check reads them.
  */
 export function textFailures(file: string, text: string): string[] {
+  if (isConversationRuleDocument(text)) return [];
   let document: unknown;
   try {
     document = JSON.parse(text);

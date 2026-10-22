@@ -14,4 +14,5 @@ export const RULE_PACK_LIST: readonly { readonly id: string; readonly packageNam
   { id: "sql", packageName: "@neralabs/rerail-pack-sql" },
   { id: "typescript", packageName: "@neralabs/rerail-pack-typescript" },
   { id: "vue", packageName: "@neralabs/rerail-pack-vue" },
+  { id: "workflow", packageName: "@neralabs/rerail-pack-workflow" },
 ];

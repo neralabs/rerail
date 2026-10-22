@@ -38,7 +38,8 @@ beside the metrics: `repo.mjs` (the repository view; `memoryRepo` builds one in 
 `lib.mjs`, `generated.mjs` (#6, #20, #25) and `fixtures.mjs` (#3, #10). Tests: `test/structure/`, where
 `boundaries.test.mjs` covers the layer boundary lint #13 runs.
 
-Terms used below. A *rule document* is a JSON file whose `format` is `rerail.policy/v1`. A *test file* is
+Terms used below. A *rule document* is a JSON file whose `format` is `rerail.policy/v1`, or a conversation rule
+with `id`, `mode`, `match`, `sample` and `action`. Pack validation checks its schema. A *test file* is
 a `*.test.*`/`*.spec.*` script, a pytest `test_*.py`/`*_test.py` or a PHPUnit `*Test.php`. The *data
 roots* are `fixtures/**` and `packs/<id>/upstream/**`: recorded or copied material, not the repository's
 own code.

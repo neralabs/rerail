@@ -1,0 +1,29 @@
+{
+  "name": "@neralabs/rerail-pack-workflow",
+  "version": "0.1.0",
+  "description": "Rerail rule pack: experimental agent workflow rules.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/neralabs/rerail.git",
+    "directory": "packs/workflow"
+  },
+  "files": [
+    "pack.json",
+    "rules",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@neralabs/rerail": ">=0.1.0-0 <0.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@neralabs/rerail": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "restricted"
+  }
+}

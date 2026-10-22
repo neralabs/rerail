@@ -1,6 +1,6 @@
-// #2 Rule documents (`rerail.policy/v1`) outside `packs/*/{rules,candidates}`.
+// #2 Code and conversation rule documents outside `packs/*/{rules,candidates}`.
 //
-// Predicate: every tracked JSON file whose top-level `format` is `rerail.policy/v1` sits under
+// Predicate: every tracked JSON code policy or conversation-rule shape sits under
 // `packs/<id>/rules/` (shipped) or `packs/<id>/candidates/` (scored, never shipped).
 // Exemption `engine-test-inputs`: a rule document may also be an engine or host test input under
 // `fixtures/` (`fixtures/<family>/compile/…`, `fixtures/host/…`): the input of a test, never shipped (#23)

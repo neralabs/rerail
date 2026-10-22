@@ -110,19 +110,22 @@ A rule from `/rerail-create` is never `block`, and belongs to the repository it 
 
 ### Observing unfinished task reports
 
-The experimental conversation-rule draft in
-[`fixtures/host/task-completion/rule-draft.json`](../fixtures/host/task-completion/rule-draft.json)
+The experimental conversation rule in
+[`packs/workflow/candidates/rules/workflow-check-unfinished-task.json`](../packs/workflow/candidates/rules/workflow-check-unfinished-task.json)
 records direct admissions such as "I haven't finished your request", "The implementation remains incomplete",
 or "Not yet done from the spec". Generic "Still to do" headings and "Next I'll run" promises are insufficient.
 It uses a structural text match at the assistant's `turn` boundary, in **Log** mode, with `repeat.mode: once`.
-It is opt-in and is not attached to repositories automatically. From a source checkout:
+It is a candidate, excluded from the published pack and never attached automatically. Its pack-style id and
+file name are both `workflow-check-unfinished-task`; `local:` ids are reserved for user-created rules.
+Only the examples live under
+[`fixtures/host/task-completion/workflow-check-unfinished-task.cases.json`](../fixtures/host/task-completion/workflow-check-unfinished-task.cases.json).
+From a source checkout:
 
 ```sh
-rerail rules test fixtures/host/task-completion/rule-draft.json --json
-rerail rules add fixtures/host/task-completion/rule-draft.json
+npm exec vitest run test/engine/catalog/workflow-check-unfinished-task.test.ts
 ```
 
-Log records matches without sending the action to the agent. The draft includes shortened examples from internal
+Log records matches without sending the action to the agent. The test cases include shortened examples from internal
 Haiku runs, other Rerail sessions and an Opus run, plus constructed phrasing, completion, blocker, quotation, source,
 and boundary cases; the catalog regression test runs them through the engine.
 The wording detects possible unfinished work, not actual task completion. It can match quoted text, optional work,

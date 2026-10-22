@@ -104,6 +104,10 @@ the upstream tool's name then its rule for a port (`eslint-no-empty`, `typescrip
 its id when it ships), and its port's `id` in `conformance.json`. Check 1 enforces this, and the pack tests reject an id
 that two documents in any packs share.
 
+Experimental conversation candidates use the existing conversation-rule schema without a `format` or
+`description`, under `candidates/rules/<id>.json`. They follow the same pack-prefixed id and file-name convention;
+their text cases live in `fixtures/host/` and run through the conversation engine. They are not shipped.
+
 ### conformance.json, divergences.json, upstream/
 
 Today's schemas from `conformance/languages/pack.ts`, moved next to the rules they validate. The runner reads a pack's

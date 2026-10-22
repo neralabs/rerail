@@ -31,6 +31,8 @@ A pack's `mode` and `on` are the values its rules start with in a repository tha
 
 A rule honours its linter's suppression comments only where its document says so (`suppress`), and only while the repository's `suppressions` setting for it is `honour` ([rule scoping](rule-scoping.md#rules-attachments-and-settings)); the pack's `honourSuppressionComments` is the value its rules start with.
 
+The `workflow` pack contains only experimental conversation candidates; it ships no rules and is not recommended.
+
 ## Installing packs
 
 Packs are installed into one npm prefix in the Rerail home, `$RERAIL_HOME/packs`, never into a project's `node_modules` (one Rerail serves every repository on the machine, and a Python or PHP repository has none) nor into core's own install (`rerail update` replaces it). Installing uses the person's npm login, as installing Rerail does: whoever can read `@neralabs/rerail` can read every pack.

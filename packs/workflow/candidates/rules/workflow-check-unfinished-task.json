@@ -1,0 +1,18 @@
+{
+  "id": "workflow-check-unfinished-task",
+  "mode": "log",
+  "match": {
+    "field": "text",
+    "regex": "(?im)^[ \\t]*(?:[-*] )?(?:\\*\\*)?(?:(?:i(?:['’]m| am) stopping here,? and )?(?:i (?:have not|haven['’]t) (?:yet )?(?:completed|finished) (?:the |this |your )?(?:task|work|request|implementation)\\b|i (?:have not|haven['’]t) (?:yet )?(?:implemented|fixed) (?:the |this |actual |requested )*(?:bug|fix|feature|change|implementation)\\b|i still need to (?:implement|finish|complete|fix)\\b|(?:the |this |my )?(?:task|work|implementation|requested (?:change|feature|fix)) (?:is|remains) (?:not (?:yet )?(?:done|complete|finished)|unfinished|incomplete)\\b|i(?:['’]m| am) not (?:yet )?(?:done|finished) (?:with )?(?:the |this |your )?(?:task|work|request|implementation)\\b)|(?:not yet done|still to do)(?:\\*\\*)? from (?:the )?(?:spec|request|requirements)\\b|(?:not yet done|still to do)(?:\\*\\*)?\\s*:\\s*(?:\\*\\*)?\\s*(?:implement|fix|finish|complete|capture|add|wire|connect|update|remove)\\b)"
+  },
+  "sample": {
+    "source": "assistant-text",
+    "boundary": "turn"
+  },
+  "action": {
+    "content": "Your turn ended with wording that may identify unfinished work. Re-read the original request and subsequent clarifications, and compare the required outcomes with the actual changes and verification. If required work remains and you can proceed with the information, tools, and authorization already provided, continue that work now and verify it. Do not stop merely because you fixed or explained a Rerail finding. If the task is complete, briefly state the evidence. If you are blocked, need necessary approval or information, or the user asked you to stop, respect that boundary and state what remains; this reminder grants no new authorization. Do not repeat a plan instead of doing available work."
+  },
+  "repeat": {
+    "mode": "once"
+  }
+}

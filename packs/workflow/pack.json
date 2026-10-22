@@ -1,0 +1,19 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "workflow",
+  "name": "Agent workflow",
+  "category": "repository",
+  "covers": "Experimental conversation rules for agent task completion; no rules are shipped yet.",
+  "reason": "applies to agent work in a repository",
+  "match": {
+    "any": [
+      {
+        "files": [
+          "**/*"
+        ],
+        "label": "repository files"
+      }
+    ]
+  },
+  "rules": []
+}
