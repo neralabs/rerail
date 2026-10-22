@@ -1,0 +1,82 @@
+{
+  "kind": "conversation",
+  "rule": {
+    "id": "local:check-unfinished-task",
+    "mode": "log",
+    "match": {
+      "field": "text",
+      "regex": "(?i)\\b(?:not yet done|still to do|i (?:have not|haven['’]t) (?:yet )?(?:fixed the actual bug|completed the task|finished the task)|next i['’]ll (?:run|finish|implement|apply|add|fix|move on))\\b"
+    },
+    "sample": {
+      "source": "assistant-text",
+      "boundary": "turn"
+    },
+    "action": {
+      "content": "Your turn ended with wording that may identify unfinished work. Re-read the original request and subsequent clarifications, and compare the required outcomes with the actual changes and verification. If required work remains and you can proceed with the information, tools, and authorization already provided, continue that work now and verify it. Do not stop merely because you fixed or explained a Rerail finding. If the task is complete, briefly state the evidence. If you are blocked, need necessary approval or information, or the user asked you to stop, respect that boundary and state what remains; this reminder grants no new authorization. Do not repeat a plan instead of doing available work."
+    },
+    "repeat": {
+      "mode": "once"
+    }
+  },
+  "cases": {
+    "caught": [
+      {
+        "source": "assistant-text",
+        "boundary": "turn",
+        "text": "Not yet done from the spec: LiteLLMProvider, scripts/check_llm_key.py, and quickstart.sh. Next I'll move on to litellm.py."
+      },
+      {
+        "source": "assistant-text",
+        "boundary": "turn",
+        "text": "I have not yet fixed the actual bug, and I have not run the repro against the teardown path successfully."
+      },
+      {
+        "source": "assistant-text",
+        "boundary": "turn",
+        "text": "Not yet done: capture a cancellation escaping the sandbox exit when scoring_done is set, record it as cancelled_error, and let the completion block log the sample."
+      },
+      {
+        "source": "assistant-text",
+        "boundary": "turn",
+        "text": "I haven't run the program yet, so the change is not yet verified. Next I'll run a smoke check of the database binning against the spec cases."
+      }
+    ],
+    "passed": [
+      {
+        "source": "assistant-text",
+        "boundary": "turn",
+        "text": "Implemented the requested change. The targeted regression tests pass."
+      },
+      {
+        "source": "assistant-text",
+        "boundary": "turn",
+        "text": "All requested work is complete. Optional future improvement: add a dashboard."
+      },
+      {
+        "source": "assistant-text",
+        "boundary": "turn",
+        "text": "I cannot proceed without the credentials. Please provide the required access."
+      },
+      {
+        "source": "assistant-text",
+        "boundary": "turn",
+        "text": "The user asked me to stop. I stopped with the implementation unfinished."
+      },
+      {
+        "source": "assistant-text",
+        "boundary": "turn",
+        "text": "I did not run the full test suite; the requested change and targeted tests are complete."
+      },
+      {
+        "source": "user-input",
+        "boundary": "turn",
+        "text": "I have not completed the task."
+      },
+      {
+        "source": "assistant-text",
+        "boundary": "message",
+        "text": "I have not completed the task."
+      }
+    ]
+  }
+}

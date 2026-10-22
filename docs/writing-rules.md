@@ -107,3 +107,28 @@ the fix ladder for a rule that misfires.
   often to steer on.
 
 A rule from `/rerail-create` is never `block`, and belongs to the repository it was made in.
+
+### Observing unfinished task reports
+
+The experimental conversation-rule draft in
+[`fixtures/host/task-completion/rule-draft.json`](../fixtures/host/task-completion/rule-draft.json)
+records explicit admissions such as "Not yet done", "I have not yet fixed the actual bug", and "Next I'll run".
+It uses a structural text match at the assistant's `turn` boundary, in **Log** mode, with `repeat.mode: once`.
+It is opt-in and is not attached to repositories automatically. From a source checkout:
+
+```sh
+rerail rules test fixtures/host/task-completion/rule-draft.json --json
+rerail rules add fixtures/host/task-completion/rule-draft.json
+```
+
+Log records matches without sending the action to the agent. The draft includes shortened examples from internal
+Haiku runs and completion, blocker, source, and boundary cases; the catalog regression test runs them through the engine.
+The wording detects possible unfinished work, not actual task completion. It can match quoted text, optional work,
+or historical admissions, and it misses incomplete work reported as "Done". A blocker and an admission can also
+appear together. The action therefore asks the agent to check the original request and continue only within its
+existing authorization, respecting missing information, necessary approvals, and user stop instructions.
+
+Keep this experiment in Log while measuring its matches. If later changed to Steer, the existing OMP adapter has a
+late-delivery continuation path; Claude Code and Codex hold stop-time steers until the next context event. A `turn`
+boundary is host-dependent: OMP emits one after each model call, so this is not a portable final-stop detector.
+Once-per-session delivery is not once per user request, and a successful match test does not verify host continuation.
