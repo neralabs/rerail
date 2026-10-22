@@ -226,10 +226,31 @@
                           "kind": "module",
                           "has": {
                             "stopBy": "end",
-                            "kind": "identifier",
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "dotted_name"
+                              }
+                            ],
                             "regex": "^staticmethod$",
                             "binds": {
                               "scope": "module"
+                            },
+                            "not": {
+                              "any": [
+                                {
+                                  "binds": {
+                                    "form": "annotation"
+                                  }
+                                },
+                                {
+                                  "binds": {
+                                    "form": "except"
+                                  }
+                                }
+                              ]
                             }
                           }
                         }
@@ -251,10 +272,31 @@
                           "kind": "module",
                           "has": {
                             "stopBy": "end",
-                            "kind": "identifier",
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "dotted_name"
+                              }
+                            ],
                             "regex": "^classmethod$",
                             "binds": {
                               "scope": "module"
+                            },
+                            "not": {
+                              "any": [
+                                {
+                                  "binds": {
+                                    "form": "annotation"
+                                  }
+                                },
+                                {
+                                  "binds": {
+                                    "form": "except"
+                                  }
+                                }
+                              ]
                             }
                           }
                         }
@@ -301,8 +343,7 @@
                       "has": {
                         "stopBy": "neighbor",
                         "field": "object",
-                        "kind": "identifier",
-                        "pattern": "$FN"
+                        "matches": "accessor-object"
                       }
                     },
                     {
@@ -420,7 +461,7 @@
                   ],
                   "has": {
                     "stopBy": "neighbor",
-                    "matches": "export-string"
+                    "matches": "export-entry"
                   }
                 },
                 {
@@ -500,7 +541,7 @@
                   ],
                   "has": {
                     "stopBy": "neighbor",
-                    "matches": "export-string"
+                    "matches": "export-entry"
                   }
                 },
                 {
@@ -698,6 +739,35 @@
                 },
                 "kind": "class_definition"
               }
+            },
+            "accessor-object": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$FN"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "accessor-object"
+                  }
+                }
+              ]
+            },
+            "export-entry": {
+              "any": [
+                {
+                  "matches": "export-string"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "export-entry"
+                  }
+                }
+              ]
             }
           },
           "rule": {

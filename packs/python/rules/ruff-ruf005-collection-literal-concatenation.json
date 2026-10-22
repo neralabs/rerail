@@ -217,7 +217,7 @@
               }
             ]
           },
-          "concat": {
+          "concat-core": {
             "kind": "binary_operator",
             "any": [
               {
@@ -226,7 +226,10 @@
               {
                 "matches": "tuple-add"
               }
-            ],
+            ]
+          },
+          "concat": {
+            "matches": "concat-core",
             "not": {
               "inside": {
                 "stopBy": {
@@ -241,6 +244,28 @@
                 }
               }
             }
+          },
+          "plus-op": {
+            "kind": "binary_operator",
+            "has": {
+              "stopBy": "neighbor",
+              "regex": "^\\+$"
+            }
+          },
+          "outer-operand": {
+            "any": [
+              {
+                "matches": "concat-core",
+                "pattern": "$E"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "outer-operand"
+                }
+              }
+            ]
           },
           "type-string": {
             "any": [
@@ -276,12 +301,25 @@
         "ast": {
           "language": "python",
           "rule": {
-            "matches": "concat"
+            "not": {
+              "any": [
+                {
+                  "matches": "plus-op"
+                },
+                {
+                  "kind": "parenthesized_expression"
+                }
+              ]
+            },
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "outer-operand"
+            }
           }
         }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "capture.E",
         "code": "RUF005",
         "message": "Write one literal with unpacking, such as `[*a, 1, *b]` or `(*a, 1)`, instead of adding collections with `+`. Keep `+` if an operand defines its own `__add__`.",
         "suppress": {
@@ -290,7 +328,8 @@
               "RUF005"
             ]
           }
-        }
+        },
+        "each": "E"
       }
     },
     {

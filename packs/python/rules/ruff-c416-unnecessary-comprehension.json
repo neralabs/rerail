@@ -1348,16 +1348,8 @@
                 }
               }
             ]
-          }
-        }
-      }
-    },
-    {
-      "id": "list-comprehension",
-      "forbid": {
-        "ast": {
-          "language": "python",
-          "rule": {
+          },
+          "list-comprehension-node": {
             "kind": "list_comprehension",
             "matches": "single-for",
             "any": [
@@ -1435,38 +1427,43 @@
             ],
             "not": {
               "matches": "shadowed"
-            }
+            },
+            "pattern": "$COMP"
           },
-          "transform": {
-            "KN": {
-              "replace": {
-                "source": "$IT",
-                "replace": "(?s)^.*$",
-                "by": "list"
+          "list-comprehension-in-annotation": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "concatenated_string"
+                  }
+                ],
+                "parse": {
+                  "grammar": "annotation",
+                  "has": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "matches": "list-comprehension-node"
+                      },
+                      {
+                        "matches": "list-comprehension-in-annotation"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "matches": "shadowed"
+                }
               }
-            }
-          }
-        }
-      },
-      "violation": {
-        "anchor": "witness.span",
-        "code": "C416",
-        "message": "Replace this comprehension with `list($IT)`, which copies the same items; keep it inside `__len__`, where `list()` can recurse.",
-        "suppress": {
-          "noqa": {
-            "codes": [
-              "C416"
             ]
-          }
-        }
-      }
-    },
-    {
-      "id": "set-comprehension",
-      "forbid": {
-        "ast": {
-          "language": "python",
-          "rule": {
+          },
+          "set-comprehension-node": {
             "kind": "set_comprehension",
             "matches": "single-for",
             "any": [
@@ -1544,38 +1541,43 @@
             ],
             "not": {
               "matches": "shadowed"
-            }
+            },
+            "pattern": "$COMP"
           },
-          "transform": {
-            "KN": {
-              "replace": {
-                "source": "$IT",
-                "replace": "(?s)^.*$",
-                "by": "set"
+          "set-comprehension-in-annotation": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "concatenated_string"
+                  }
+                ],
+                "parse": {
+                  "grammar": "annotation",
+                  "has": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "matches": "set-comprehension-node"
+                      },
+                      {
+                        "matches": "set-comprehension-in-annotation"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "matches": "shadowed"
+                }
               }
-            }
-          }
-        }
-      },
-      "violation": {
-        "anchor": "witness.span",
-        "code": "C416",
-        "message": "Replace this comprehension with `set($IT)`, which copies the same items; keep it inside `__len__`, where `set()` can recurse.",
-        "suppress": {
-          "noqa": {
-            "codes": [
-              "C416"
             ]
-          }
-        }
-      }
-    },
-    {
-      "id": "dict-comprehension",
-      "forbid": {
-        "ast": {
-          "language": "python",
-          "rule": {
+          },
+          "dict-comprehension-node": {
             "kind": "dictionary_comprehension",
             "matches": "single-for",
             "all": [
@@ -1626,12 +1628,147 @@
             ],
             "not": {
               "matches": "shadowed"
-            }
+            },
+            "pattern": "$COMP"
+          },
+          "dict-comprehension-in-annotation": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "concatenated_string"
+                  }
+                ],
+                "parse": {
+                  "grammar": "annotation",
+                  "has": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "matches": "dict-comprehension-node"
+                      },
+                      {
+                        "matches": "dict-comprehension-in-annotation"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "matches": "shadowed"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "list-comprehension",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$W",
+            "any": [
+              {
+                "matches": "list-comprehension-node"
+              },
+              {
+                "matches": "list-comprehension-in-annotation"
+              }
+            ]
           },
           "transform": {
             "KN": {
               "replace": {
-                "source": "$IT",
+                "source": "$W",
+                "replace": "(?s)^.*$",
+                "by": "list"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.COMP",
+        "code": "C416",
+        "message": "Replace this comprehension with `list($IT)`, which copies the same items; keep it inside `__len__`, where `list()` can recurse.",
+        "each": "COMP",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C416"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "set-comprehension",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$W",
+            "any": [
+              {
+                "matches": "set-comprehension-node"
+              },
+              {
+                "matches": "set-comprehension-in-annotation"
+              }
+            ]
+          },
+          "transform": {
+            "KN": {
+              "replace": {
+                "source": "$W",
+                "replace": "(?s)^.*$",
+                "by": "set"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.COMP",
+        "code": "C416",
+        "message": "Replace this comprehension with `set($IT)`, which copies the same items; keep it inside `__len__`, where `set()` can recurse.",
+        "each": "COMP",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C416"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "dict-comprehension",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$W",
+            "any": [
+              {
+                "matches": "dict-comprehension-node"
+              },
+              {
+                "matches": "dict-comprehension-in-annotation"
+              }
+            ]
+          },
+          "transform": {
+            "KN": {
+              "replace": {
+                "source": "$W",
                 "replace": "(?s)^.*$",
                 "by": "dict"
               }
@@ -1640,9 +1777,10 @@
         }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "capture.COMP",
         "code": "C416",
         "message": "Replace this comprehension with `dict($IT)`; if `$IT` is a mapping whose keys are pairs, use `dict($IT.keys())`; keep it inside `__len__`, where `dict()` can recurse.",
+        "each": "COMP",
         "suppress": {
           "noqa": {
             "codes": [

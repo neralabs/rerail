@@ -679,9 +679,19 @@
               },
               {
                 "inside": {
-                  "stopBy": "neighbor",
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
                   "kind": "expression_statement",
                   "matches": "only-stmt",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  },
                   "any": [
                     {
                       "inside": {

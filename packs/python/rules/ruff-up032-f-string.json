@@ -252,6 +252,20 @@
                     ]
                   },
                   {
+                    "pattern": "($S.format)($$$A)",
+                    "all": [
+                      { "has": {"field": "function", "has": {"kind": "attribute", "has": {"field": "object", "matches": "template"}}} },
+                      { "has": {"field": "arguments", "has": {"matches": "real-arg"}} },
+                      { "not": {"has": {"field": "arguments", "has": {"matches": "bad-arg"}}} },
+                      { "not": {"has": {"field": "function", "has": {"kind": "attribute", "has": {"field": "object", "matches": "repeats-effect"}}}} },
+                      {
+                        "not": {
+                          "formatArgs": { "style": "brace", "string": "S", "args": "A", "missing": {"kind": "field"} }
+                        }
+                      }
+                    ]
+                  },
+                  {
                     "kind": "call",
                     "all": [
                       {
@@ -264,10 +278,24 @@
                       {
                         "has": {
                           "field": "function",
-                          "kind": "attribute",
-                          "all": [
-                            { "has": {"field": "attribute", "regex": "^format$"} },
-                            { "has": {"field": "object", "matches": "gen-template"} }
+                          "any": [
+                            {
+                              "kind": "attribute",
+                              "all": [
+                                { "has": {"field": "attribute", "regex": "^format$"} },
+                                { "has": {"field": "object", "matches": "gen-template"} }
+                              ]
+                            },
+                            {
+                              "kind": "parenthesized_expression",
+                              "has": {
+                                "kind": "attribute",
+                                "all": [
+                                  { "has": {"field": "attribute", "regex": "^format$"} },
+                                  { "has": {"field": "object", "matches": "gen-template"} }
+                                ]
+                              }
+                            }
                           ]
                         }
                       }

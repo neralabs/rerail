@@ -22,78 +22,124 @@
                 "stopBy": "neighbor",
                 "regex": "^,$"
               }
-            }
-          },
-          "rule": {
-            "kind": "concatenated_string",
-            "any": [
-              {
-                "inside": {
-                  "stopBy": "neighbor",
-                  "any": [
-                    {
-                      "kind": "list"
-                    },
-                    {
-                      "kind": "tuple"
-                    },
-                    {
-                      "kind": "set"
-                    },
-                    {
-                      "kind": "expression_list"
-                    }
-                  ]
-                }
-              },
-              {
-                "inside": {
-                  "stopBy": "neighbor",
-                  "any": [
-                    {
-                      "kind": "expression_statement"
-                    },
-                    {
-                      "kind": "match_statement"
-                    },
-                    {
-                      "kind": "print_statement"
-                    }
-                  ],
-                  "matches": "comma"
-                }
-              },
-              {
-                "inside": {
-                  "stopBy": "neighbor",
-                  "kind": "subscript",
-                  "matches": "comma"
+            },
+            "target": {
+              "kind": "concatenated_string",
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "list"
+                      },
+                      {
+                        "kind": "tuple"
+                      },
+                      {
+                        "kind": "set"
+                      },
+                      {
+                        "kind": "expression_list"
+                      }
+                    ]
+                  }
                 },
-                "not": {
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "expression_statement"
+                      },
+                      {
+                        "kind": "match_statement"
+                      },
+                      {
+                        "kind": "print_statement"
+                      }
+                    ],
+                    "matches": "comma"
+                  }
+                },
+                {
                   "inside": {
                     "stopBy": "neighbor",
                     "kind": "subscript",
-                    "field": "value"
+                    "matches": "comma"
+                  },
+                  "not": {
+                    "precedes": {
+                      "stopBy": {
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "comment"
+                            },
+                            {
+                              "kind": "line_continuation"
+                            }
+                          ]
+                        }
+                      },
+                      "regex": "^\\[$"
+                    }
                   }
-                }
-              },
-              {
-                "inside": {
-                  "stopBy": "neighbor",
-                  "kind": "type",
+                },
+                {
                   "inside": {
                     "stopBy": "neighbor",
-                    "kind": "type_parameter",
-                    "matches": "comma"
+                    "kind": "type",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "type_parameter",
+                      "matches": "comma"
+                    }
                   }
                 }
+              ]
+            },
+            "in-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "target",
+                      "capture": "C"
+                    },
+                    {
+                      "matches": "in-string"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "target",
+                "pattern": "$C"
+              },
+              {
+                "matches": "in-string"
               }
             ]
           }
         }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "capture.C",
         "code": "ISC004",
         "message": "Add the missing comma if these strings are separate items; if joining them is intended, wrap the concatenation in parentheses.",
         "suppress": {

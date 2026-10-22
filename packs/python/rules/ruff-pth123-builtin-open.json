@@ -283,6 +283,26 @@
         "message": "Use `Path(file).open(...)` instead of `open(file, ...)`; the other arguments carry over. Leave `open()` when the argument is a file descriptor, or when it needs `closefd=False` or an `opener`.",
         "suppress": {"noqa": {"codes": ["PTH123"]}}
       }
+    },
+    {
+      "id": "builtin-open-in-string-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {"matches": "ann-string"},
+          "utils": {
+            "callee": {"any": [{"any": [{"kind": "identifier"}, {"kind": "attribute"}], "resolves": {"global": ["open"], "import": ["builtins.open"]}, "pattern": "$F"}, {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "callee"}}]},
+            "true-literal": {"any": [{"kind": "true"}, {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "true-literal"}}]},
+            "none-literal": {"any": [{"kind": "none"}, {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "none-literal"}}]},
+            "positional": {"not": {"any": [{"kind": "keyword_argument"}, {"kind": "dictionary_splat"}, {"kind": "comment"}, {"kind": "line_continuation"}, {"regex": "^[(),]$"}]}},
+            "unread-file": {"any": [{"kind": "integer"}, {"kind": "identifier"}, {"kind": "attribute"}, {"kind": "call"}, {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "unread-file"}}]},
+            "args-ok": {"kind": "argument_list", "not": {"has": {"stopBy": "neighbor", "any": [{"all": [{"matches": "positional", "count": {"follows": {"stopBy": "end", "matches": "positional"}, "min": 0, "max": 0}}, {"matches": "unread-file"}]}, {"kind": "keyword_argument", "has": {"stopBy": "neighbor", "kind": "identifier", "regex": "^file$", "precedes": {"stopBy": "neighbor", "regex": "^=$"}}, "all": [{"has": {"stopBy": "neighbor", "matches": "unread-file", "follows": {"stopBy": "neighbor", "regex": "^=$"}}}]}, {"all": [{"matches": "positional", "count": {"follows": {"stopBy": "end", "matches": "positional"}, "min": 6, "max": 6}}, {"not": {"matches": "true-literal"}}]}, {"all": [{"matches": "positional", "count": {"follows": {"stopBy": "end", "matches": "positional"}, "min": 7, "max": 7}}, {"not": {"matches": "none-literal"}}]}, {"kind": "keyword_argument", "has": {"stopBy": "neighbor", "kind": "identifier", "regex": "^closefd$", "precedes": {"stopBy": "neighbor", "regex": "^=$"}}, "not": {"has": {"stopBy": "neighbor", "matches": "true-literal", "follows": {"stopBy": "neighbor", "regex": "^=$"}}}}, {"kind": "keyword_argument", "has": {"stopBy": "neighbor", "kind": "identifier", "regex": "^opener$", "precedes": {"stopBy": "neighbor", "regex": "^=$"}}, "not": {"has": {"stopBy": "neighbor", "matches": "none-literal", "follows": {"stopBy": "neighbor", "regex": "^=$"}}}}]}}},
+            "ann-call": {"kind": "call", "has": {"stopBy": "neighbor", "matches": "callee", "precedes": {"stopBy": "neighbor", "matches": "args-ok"}}},
+            "ann-string": {"kind": "string", "not": {"has": {"stopBy": "end", "kind": "escape_sequence"}}, "parse": {"grammar": "annotation", "has": {"stopBy": "end", "any": [{"matches": "ann-call"}, {"matches": "ann-string"}]}}}
+          }
+        }
+      },
+      "violation": {"anchor": "capture.F", "code": "PTH123", "message": "Use `Path(file).open(...)` instead of `open(file, ...)`; the other arguments carry over. Leave `open()` when the argument is a file descriptor, or when it needs `closefd=False` or an `opener`.", "suppress": {"noqa": {"codes": ["PTH123"]}}, "each": "F"}
     }
   ]
 }

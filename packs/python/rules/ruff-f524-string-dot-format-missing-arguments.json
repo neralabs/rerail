@@ -17,14 +17,97 @@
         "ast": {
           "language": "python",
           "rule": {
-            "pattern": "$S.format($$$A)",
-            "formatArgs": {
-              "style": "brace",
-              "string": "S",
-              "args": "A",
-              "missing": {
-                "kind": "field"
+            "any": [
+              {
+                "pattern": "$S.format($$$A)",
+                "formatArgs": {
+                  "style": "brace",
+                  "string": "S",
+                  "args": "A",
+                  "missing": {
+                    "kind": "field"
+                  }
+                }
+              },
+              {
+                "kind": "call",
+                "has": {
+                  "field": "arguments",
+                  "kind": "generator_expression"
+                },
+                "all": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "kind": "attribute",
+                      "has": {
+                        "field": "attribute",
+                        "regex": "^format$"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "function",
+                      "has": {
+                        "field": "object",
+                        "matches": "reads-past-one"
+                      }
+                    }
+                  }
+                ]
               }
+            ]
+          },
+          "utils": {
+            "plain-string": {
+              "any": [
+                {
+                  "kind": "string",
+                  "not": {
+                    "regex": "^[A-Za-z]*[fFbBtT][A-Za-z]*['\"]"
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "kind": "string",
+                      "regex": "^[A-Za-z]*[fFbBtT][A-Za-z]*['\"]"
+                    }
+                  }
+                }
+              ]
+            },
+            "reads-past-one": {
+              "any": [
+                {
+                  "matches": "plain-string",
+                  "parse": {
+                    "grammar": "braceFormat",
+                    "not": {
+                      "has": {
+                        "kind": "error"
+                      }
+                    },
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "field_name",
+                      "not": {
+                        "value": {
+                          "eq": 0
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "reads-past-one"
+                  }
+                }
+              ]
             }
           }
         }

@@ -2892,8 +2892,7 @@ PROBES = {
     "ICN001-non-ascii-module-spellings.py": "import ｐandas\nfrom matplotlib import ｐyplot\nimport numpy.ｔyping as nt\n"
                                             "import ｐandas as pd\nfrom ｍatplotlib import pyplot as plt\n"
                                             "from ｎumpy import array\nfrom ｍatplotlib.pyplot import plot\n"
-                                            "from ｍatplotlib import (cm, pyplot as pp)\n"
-                                            "import xml.etree.Ｅ lementTree as ET\nfrom . import ｐandas\n"
+                                            "from ｍatplotlib import (cm, pyplot as pp)\nfrom . import ｐandas\n"
                                             "import ｍatplotlib, os\n",
     # INT001: Pins f-strings in translation calls inside string type definitions: a plain annotation, an aliased import, nested `List[...]`, a `cast` argument and an escaped (complex) return annotation, reported at the inner argument or the whole string. Also pins three cases that are not reported: inside `Literal[...]`, in an f-string host, and as a second argument.
     "INT001-string-annotations.py": "from typing import List, Literal, TypeVar, cast\nimport gettext as g\n\na = 1\n"

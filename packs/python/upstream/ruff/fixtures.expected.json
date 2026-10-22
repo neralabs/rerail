@@ -66117,6 +66117,12 @@
   },
   {
    "rule": "D100",
+   "path": "rerail/probes/ICN001-non-ascii-module-spellings.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D100",
    "path": "rerail/probes/INT001-string-annotations.py",
    "line": 1,
    "column": 1
@@ -108327,6 +108333,12 @@
   },
   {
    "rule": "E401",
+   "path": "rerail/probes/ICN001-non-ascii-module-spellings.py",
+   "line": 10,
+   "column": 1
+  },
+  {
+   "rule": "E401",
    "path": "rerail/probes/PYI052-container-element-forms.pyi",
    "line": 1,
    "column": 1
@@ -121278,6 +121290,72 @@
    "path": "rerail/probes/G002-binding-forms.py",
    "line": 1,
    "column": 53
+  },
+  {
+   "rule": "F401",
+   "path": "rerail/probes/ICN001-non-ascii-module-spellings.py",
+   "line": 2,
+   "column": 24
+  },
+  {
+   "rule": "F401",
+   "path": "rerail/probes/ICN001-non-ascii-module-spellings.py",
+   "line": 3,
+   "column": 24
+  },
+  {
+   "rule": "F401",
+   "path": "rerail/probes/ICN001-non-ascii-module-spellings.py",
+   "line": 4,
+   "column": 18
+  },
+  {
+   "rule": "F401",
+   "path": "rerail/probes/ICN001-non-ascii-module-spellings.py",
+   "line": 5,
+   "column": 34
+  },
+  {
+   "rule": "F401",
+   "path": "rerail/probes/ICN001-non-ascii-module-spellings.py",
+   "line": 6,
+   "column": 19
+  },
+  {
+   "rule": "F401",
+   "path": "rerail/probes/ICN001-non-ascii-module-spellings.py",
+   "line": 7,
+   "column": 31
+  },
+  {
+   "rule": "F401",
+   "path": "rerail/probes/ICN001-non-ascii-module-spellings.py",
+   "line": 8,
+   "column": 25
+  },
+  {
+   "rule": "F401",
+   "path": "rerail/probes/ICN001-non-ascii-module-spellings.py",
+   "line": 8,
+   "column": 39
+  },
+  {
+   "rule": "F401",
+   "path": "rerail/probes/ICN001-non-ascii-module-spellings.py",
+   "line": 9,
+   "column": 15
+  },
+  {
+   "rule": "F401",
+   "path": "rerail/probes/ICN001-non-ascii-module-spellings.py",
+   "line": 10,
+   "column": 8
+  },
+  {
+   "rule": "F401",
+   "path": "rerail/probes/ICN001-non-ascii-module-spellings.py",
+   "line": 10,
+   "column": 20
   },
   {
    "rule": "F401",
@@ -137520,6 +137598,12 @@
    "path": "rerail/probes/G003-deferred-and-class-scope.py",
    "line": 18,
    "column": 17
+  },
+  {
+   "rule": "F811",
+   "path": "rerail/probes/ICN001-non-ascii-module-spellings.py",
+   "line": 9,
+   "column": 15
   },
   {
    "rule": "F811",
@@ -170375,6 +170459,36 @@
    "rule": "ICN001",
    "path": "rerail/noqa/ICN001.py",
    "line": 9,
+   "column": 8
+  },
+  {
+   "rule": "ICN001",
+   "path": "rerail/probes/ICN001-non-ascii-module-spellings.py",
+   "line": 1,
+   "column": 8
+  },
+  {
+   "rule": "ICN001",
+   "path": "rerail/probes/ICN001-non-ascii-module-spellings.py",
+   "line": 2,
+   "column": 24
+  },
+  {
+   "rule": "ICN001",
+   "path": "rerail/probes/ICN001-non-ascii-module-spellings.py",
+   "line": 3,
+   "column": 24
+  },
+  {
+   "rule": "ICN001",
+   "path": "rerail/probes/ICN001-non-ascii-module-spellings.py",
+   "line": 8,
+   "column": 39
+  },
+  {
+   "rule": "ICN001",
+   "path": "rerail/probes/ICN001-non-ascii-module-spellings.py",
+   "line": 10,
    "column": 8
   },
   {

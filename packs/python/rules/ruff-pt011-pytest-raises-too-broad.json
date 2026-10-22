@@ -298,6 +298,179 @@
                 }
               }
             ]
+          },
+          "ann-empty-or-null": {
+            "any": [
+              {
+                "kind": "none"
+              },
+              {
+                "kind": "string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string_start",
+                    "regex": "[tTfFbB]"
+                  }
+                },
+                "value": {
+                  "eq": ""
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "ann-empty-or-null"
+                }
+              }
+            ]
+          },
+          "ann-pos1": {
+            "matches": "positional",
+            "all": [
+              {
+                "not": {
+                  "kind": "list_splat"
+                }
+              },
+              {
+                "follows": {
+                  "stopBy": "end",
+                  "matches": "positional"
+                }
+              },
+              {
+                "not": {
+                  "follows": {
+                    "stopBy": "end",
+                    "kind": "list_splat"
+                  }
+                }
+              }
+            ]
+          },
+          "ann-args-ok": {
+            "kind": "argument_list",
+            "follows": {
+              "stopBy": "neighbor",
+              "matches": "raises"
+            },
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "matches": "ann-pos1"
+                  },
+                  {
+                    "kind": "keyword_argument",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "regex": "^func$",
+                      "precedes": {
+                        "stopBy": "neighbor",
+                        "regex": "^=$"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "keyword_argument",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "regex": "^match$",
+                      "precedes": {
+                        "stopBy": "neighbor",
+                        "regex": "^=$"
+                      }
+                    },
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "ann-empty-or-null",
+                        "follows": {
+                          "stopBy": "neighbor",
+                          "regex": "^=$"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "kind": "keyword_argument",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "regex": "^check$",
+                      "precedes": {
+                        "stopBy": "neighbor",
+                        "regex": "^=$"
+                      }
+                    },
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "none-p",
+                        "follows": {
+                          "stopBy": "neighbor",
+                          "regex": "^=$"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "ann-slot": {
+            "any": [
+              {
+                "matches": "pos0",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "ann-args-ok",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "keyword_argument",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "identifier",
+                        "regex": "^expected_exception$",
+                        "precedes": {
+                          "stopBy": "neighbor",
+                          "regex": "^=$"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "follows": {
+                  "stopBy": "neighbor",
+                  "regex": "^=$"
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "keyword_argument",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "regex": "^expected_exception$",
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "regex": "^=$"
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "ann-args-ok"
+                  }
+                }
+              }
+            ]
           }
         }
       }
@@ -332,13 +505,48 @@
                   }
                 }
               ]
+            },
+            "ann-string": {
+              "kind": "string",
+              "not": {
+                "has": {
+                  "stopBy": "end",
+                  "kind": "escape_sequence"
+                }
+              },
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "exc",
+                      "all": [
+                        {
+                          "matches": "ann-slot"
+                        }
+                      ]
+                    },
+                    {
+                      "matches": "ann-string"
+                    }
+                  ]
+                }
+              }
             }
           },
           "rule": {
-            "matches": "exc",
-            "all": [
+            "any": [
               {
-                "matches": "exc-slot"
+                "matches": "exc",
+                "all": [
+                  {
+                    "matches": "exc-slot"
+                  }
+                ]
+              },
+              {
+                "matches": "ann-string"
               }
             ]
           }
@@ -354,7 +562,8 @@
               "PT011"
             ]
           }
-        }
+        },
+        "each": "X"
       }
     },
     {
@@ -389,13 +598,48 @@
                   }
                 }
               ]
+            },
+            "ann-string": {
+              "kind": "string",
+              "not": {
+                "has": {
+                  "stopBy": "end",
+                  "kind": "escape_sequence"
+                }
+              },
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "exc",
+                      "all": [
+                        {
+                          "matches": "ann-slot"
+                        }
+                      ]
+                    },
+                    {
+                      "matches": "ann-string"
+                    }
+                  ]
+                }
+              }
             }
           },
           "rule": {
-            "matches": "exc",
-            "all": [
+            "any": [
               {
-                "matches": "exc-slot"
+                "matches": "exc",
+                "all": [
+                  {
+                    "matches": "exc-slot"
+                  }
+                ]
+              },
+              {
+                "matches": "ann-string"
               }
             ]
           }
@@ -411,7 +655,8 @@
               "PT011"
             ]
           }
-        }
+        },
+        "each": "X"
       }
     }
   ]

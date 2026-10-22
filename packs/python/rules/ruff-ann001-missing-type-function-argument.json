@@ -89,10 +89,31 @@
                           "kind": "module",
                           "has": {
                             "stopBy": "end",
-                            "kind": "identifier",
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "dotted_name"
+                              }
+                            ],
                             "regex": "^staticmethod$",
                             "binds": {
                               "scope": "module"
+                            },
+                            "not": {
+                              "any": [
+                                {
+                                  "binds": {
+                                    "form": "annotation"
+                                  }
+                                },
+                                {
+                                  "binds": {
+                                    "form": "except"
+                                  }
+                                }
+                              ]
                             }
                           }
                         }

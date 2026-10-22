@@ -128,7 +128,14 @@
               "kind": "decorated_definition",
               "has": {
                 "field": "definition",
-                "kind": "function_definition"
+                "any": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "kind": "class_definition"
+                  }
+                ]
               }
             },
             "any": [

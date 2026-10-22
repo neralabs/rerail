@@ -93,58 +93,6 @@
                 }
               ]
             },
-            "python2-syntax": {
-              "any": [
-                {
-                  "kind": "print_statement",
-                  "not": {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "kind": "chevron"
-                    }
-                  }
-                },
-                {
-                  "kind": "exec_statement"
-                },
-                {
-                  "kind": "integer",
-                  "regex": "^(?:0[0-9_]*[1-9][0-9_]*|.*[lL])$"
-                },
-                {
-                  "kind": "string",
-                  "regex": "^(?:`|[uU][rR])"
-                },
-                {
-                  "kind": "comparison_operator",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "regex": "^<>$"
-                  }
-                },
-                {
-                  "kind": "raise_statement",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "kind": "expression_list"
-                  }
-                },
-                {
-                  "any": [
-                    {
-                      "kind": "parameters"
-                    },
-                    {
-                      "kind": "lambda_parameters"
-                    }
-                  ],
-                  "has": {
-                    "stopBy": "neighbor",
-                    "kind": "tuple_pattern"
-                  }
-                }
-              ]
-            },
             "python3-file": {
               "inside": {
                 "stopBy": "end",
@@ -152,7 +100,56 @@
                 "not": {
                   "has": {
                     "stopBy": "end",
-                    "matches": "python2-syntax"
+                    "any": [
+                      {
+                        "kind": "print_statement",
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "chevron"
+                          }
+                        }
+                      },
+                      {
+                        "kind": "exec_statement"
+                      },
+                      {
+                        "kind": "integer",
+                        "regex": "^(?:0[0-9_]*[1-9][0-9_]*|.*[lL])$"
+                      },
+                      {
+                        "kind": "string",
+                        "regex": "^(?:`|[uU][rR])"
+                      },
+                      {
+                        "kind": "comparison_operator",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "regex": "^<>$"
+                        }
+                      },
+                      {
+                        "kind": "raise_statement",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "expression_list"
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "kind": "parameters"
+                          },
+                          {
+                            "kind": "lambda_parameters"
+                          }
+                        ],
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "tuple_pattern"
+                        }
+                      }
+                    ]
                   }
                 }
               }

@@ -931,6 +931,131 @@
                 }
               }
             ]
+          },
+          "arg-trivia": {
+            "any": [
+              {
+                "kind": "comment"
+              },
+              {
+                "kind": "line_continuation"
+              },
+              {
+                "regex": "^[(),]$"
+              }
+            ]
+          },
+          "cast-of-int": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "int-callee"
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "kind": "argument_list",
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "matches": "arg-trivia"
+                      }
+                    },
+                    "min": 1,
+                    "max": 1
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "arg-int"
+                  }
+                }
+              }
+            ]
+          },
+          "cast-of-int-in-type": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "cast-of-int",
+                    "capture": "C"
+                  },
+                  {
+                    "matches": "cast-of-int-in-type"
+                  }
+                ]
+              }
+            }
+          },
+          "cast-of-rounded": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "int-callee"
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "kind": "argument_list",
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "matches": "arg-trivia"
+                      }
+                    },
+                    "min": 1,
+                    "max": 1
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "arg-rounded"
+                  }
+                }
+              }
+            ]
+          },
+          "cast-of-rounded-in-type": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "cast-of-rounded",
+                    "capture": "C"
+                  },
+                  {
+                    "matches": "cast-of-rounded-in-type"
+                  }
+                ]
+              }
+            }
           }
         }
       }
@@ -968,6 +1093,30 @@
       }
     },
     {
+      "id": "int-of-integer-in-string-type",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "cast-of-int-in-type"
+          }
+        }
+      },
+      "violation": {
+        "code": "RUF046",
+        "anchor": "capture.C",
+        "message": "Drop the `int(...)` wrapper and use its argument directly; the argument is already an integer.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF046"
+            ]
+          }
+        },
+        "each": "C"
+      }
+    },
+    {
       "id": "int-of-rounding",
       "forbid": {
         "ast": {
@@ -997,6 +1146,30 @@
             ]
           }
         }
+      }
+    },
+    {
+      "id": "int-of-rounding-in-string-type",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "cast-of-rounded-in-type"
+          }
+        }
+      },
+      "violation": {
+        "code": "RUF046",
+        "anchor": "capture.C",
+        "message": "Drop the `int(...)` wrapper; this call already returns an int. Keep it if the operand's type overrides `__round__`, `__ceil__`, `__floor__` or `__trunc__` to return a non-int.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF046"
+            ]
+          }
+        },
+        "each": "C"
       }
     }
   ]

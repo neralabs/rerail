@@ -14,5 +14,477 @@
     "line": 5,
     "kind": "upstream-wrong",
     "evidence": "`from xml.sax.saxutils import XMLGenerator` imports an XML writer, not a parser. Bandit 1.9.4's import blacklist reports any imported name whose dotted path starts with `xml.sax` (bandit/core/blacklisting.py), so it steers toward defusedxml, which has no saxutils. xml.sax.saxutils defines no parse, parseString or make_parser (CPython 3.14.7: `python3 -I -c \"import xml.sax.saxutils as s; print(dir(s))\"` lists only XMLFilterBase, XMLGenerator, escape, quoteattr, unescape, prepare_input_source and its own imports), and XMLFilterBase parses only through a parent reader its caller supplies. The port does not report `from xml.sax.saxutils import ...` or `from xml.sax import saxutils` (NER-1827); B317 still reports xml.sax parse calls."
+  },
+  {
+    "rule": "ruff-up035-deprecated-import",
+    "source": "fixtures",
+    "path": "pyflakes/F401_0.py",
+    "line": 13,
+    "kind": "rerail-unknown",
+    "evidence": "Ruff 0.16.9 reports four UP035 findings on the `from typing import (... Dict, Type, List, Set ...)` at line 13: Dict, Type, List and Set. Rerail's parser reports a syntax error at 91:15 on `match *0, 1, *2:` and the engine skips the whole file (T1). CPython 3.13 parses the file without error (`python3.13 -I -c 'import ast; ast.parse(...)'`), so the starred match subject is valid Python. On a copy without the match blocks, the rule agrees with live Ruff (port-check probe: ruff 5, rule 5)."
+  },
+  {
+    "rule": "ruff-up035-deprecated-import",
+    "source": "fixtures",
+    "path": "pyflakes/F401_0.py",
+    "line": 84,
+    "kind": "rerail-unknown",
+    "evidence": "Ruff 0.16.9 reports UP035 on `from typing_extensions import TypeAlias` at line 84 (`Import from typing instead`). Rerail's parser rejects the valid `match *0, 1, *2:` at line 91 (CPython 3.13 parses the file), so the engine skips the file and never runs the rule. On a copy without the match blocks, the rule reports this line, as Ruff does."
+  },
+  {
+    "rule": "ruff-up035-deprecated-import",
+    "source": "fixtures",
+    "path": "pyupgrade/UP045_1.py",
+    "line": 55,
+    "kind": "rerail-unknown",
+    "evidence": "Ruff 0.16.9 reports UP035 on the `from typing_extensions import (NamedTuple as NamedTupleTE, Optional as OptionalTE)` at line 55. Rerail's parser reports a syntax error at 44:28 on `service_specification: Optional[str]is not True = None` and skips the file (T1). That line is an annotated assignment whose annotation is a comparison, and CPython 3.13 accepts it. With line 44 rewritten to a plain annotation, the rule agrees with live Ruff (port-check probe: ruff 1, rule 1)."
+  },
+  {
+    "rule": "ruff-up036-outdated-version-block",
+    "source": "fixtures",
+    "path": "pyflakes/F401_0.py",
+    "line": 81,
+    "kind": "rerail-unknown",
+    "evidence": "Ruff 0.16.9 (target py310) reports UP036 on `if sys.version_info >= (3, 10):` at line 81. Rerail's parser reports a syntax error at 91:15 on `match *0, 1, *2:` and the engine skips the whole file (T1). CPython 3.13 parses the file without error, so the statement is valid Python. On a copy with the match blocks removed, the rule agrees with live Ruff (port-check probe agrees)."
+  },
+  {
+    "rule": "ruff-t201-print",
+    "source": "fixtures",
+    "path": "pyflakes/F401_0.py",
+    "line": 73,
+    "kind": "rerail-unknown",
+    "evidence": "Ruff 0.16.9 reports T201 on `print(pa.csv.read_csv(\"test.csv\"))` at line 73. Rerail's parser reports a syntax error at 91:15 on `match *0, 1, *2:` and the engine skips the file (T1). CPython 3.13's ast.parse accepts the file, so the rule never runs on valid Python. On a copy without the match blocks, the rule reports this call, as Ruff does."
+  },
+  {
+    "rule": "ruff-t201-print",
+    "source": "fixtures",
+    "path": "pyflakes/F401_0.py",
+    "line": 101,
+    "kind": "rerail-unknown",
+    "evidence": "Ruff 0.16.9 reports T201 on `print(bop.baz.read_csv(\"test.csv\"))` at line 101. The engine skips the file because Rerail's parser rejects the valid starred match subject `match *0, 1, *2:` at line 91 (CPython 3.13 parses it). The rule agrees with live Ruff on a copy of lines 1-89 and 96-102 (port-check probe agrees)."
+  },
+  {
+    "rule": "ruff-pyi020-quoted-annotation-in-stub",
+    "source": "fixtures",
+    "path": "pyupgrade/UP037_2.pyi",
+    "line": 32,
+    "kind": "rerail-unknown",
+    "evidence": "The annotation `'''\\\\` + newline + `list[int]'''` has the decoded value backslash, newline, `list[int]`. Ruff 0.16.9 reads such a string with parse_complex_type_annotation (crates/ruff_python_parser/src/typing.rs:85), which runs parse_expression on the value, accepts the leading line continuation and reports PYI020 at 32:4. Rerail's annotation grammar (native/src/code_rule_dsl/literal/annotation.rs, `expression`) refuses a value that begins with a backslash continuation, so the string gets an ERROR root and the port's `parse: annotation` never matches. Probes run with port-check.mts showed this: `\"\\\\\\nlist[int]\"` is missed (ruff 1, rule 0), while `'''list\\\\` + newline + `[int]'''`, `\"\\N{...}ist[int]\"` and `\"\\x6cist[int]\"` all agree."
+  },
+  {
+    "rule": "ruff-pyi024-collections-named-tuple",
+    "source": "fixtures",
+    "path": "pyflakes/F401_0.py",
+    "line": 46,
+    "kind": "rerail-unknown",
+    "evidence": "Line 91 of pyflakes/F401_0.py, `match *0, 1, *2:`, is a valid Python 3.10 match statement (star patterns in an open sequence subject), and Ruff parses it and reports PYI024 at 46:21 on `\"namedtuple\"`. tree-sitter-python fails at 91:15 (the CLI lists the file as SYNTAX, T1), so the engine marks the file source-incomplete and drops every finding in it. port-check.mts on a copy of the file returns `source-incomplete: query source is incomplete`; rewriting only line 91 as `match (0, 1, 2):` makes the sibling UP006 port agree with live Ruff (ruff 4, rule 4), which shows the gap is the file-level parse, not the document."
+  },
+  {
+    "rule": "ruff-up006-non-pep585-annotation",
+    "source": "fixtures",
+    "path": "pyflakes/F401_0.py",
+    "line": 44,
+    "kind": "rerail-unknown",
+    "evidence": "Ruff 0.16.9 reports UP006 at 44:10 on `Type` in `foo: Type[\"NamedTuple\"]`. Rerail drops every finding in this file because tree-sitter-python fails on the valid Python 3.10 statement `match *0, 1, *2:` at 91:15 (CLI SYNTAX, T1), and the engine reports `source-incomplete: query source is incomplete`. port-check.mts on a copy with only line 91 rewritten as `match (0, 1, 2):` agrees with live Ruff (ruff 4, rule 4)."
+  },
+  {
+    "rule": "ruff-up006-non-pep585-annotation",
+    "source": "fixtures",
+    "path": "pyflakes/F401_0.py",
+    "line": 59,
+    "kind": "rerail-unknown",
+    "evidence": "Ruff 0.16.9 reports UP006 at 59:25 on `\"Dict\"` in `TypeVar(\"Y\", bound=\"Dict\")`. Rerail drops every finding in this file because tree-sitter-python fails on the valid statement `match *0, 1, *2:` at 91:15 (CLI SYNTAX, T1), and the engine returns source-incomplete for it. A probe copy with only line 91 rewritten agrees with live Ruff (ruff 4, rule 4)."
+  },
+  {
+    "rule": "ruff-up006-non-pep585-annotation",
+    "source": "fixtures",
+    "path": "pyflakes/F401_0.py",
+    "line": 60,
+    "kind": "rerail-unknown",
+    "evidence": "Ruff 0.16.9 reports UP006 at 60:19 on `\"List\"` in `TypeVar(\"Z\", \"List\", \"Set\")`. Rerail drops every finding in this file because tree-sitter-python fails on the valid statement `match *0, 1, *2:` at 91:15 (CLI SYNTAX, T1), and the engine returns source-incomplete for it. A probe copy with only line 91 rewritten agrees with live Ruff (ruff 4, rule 4)."
+  },
+  {
+    "rule": "ruff-f822-undefined-export",
+    "source": "fixtures",
+    "path": "ruff/RUF022.py",
+    "line": 11,
+    "kind": "rerail-unknown",
+    "evidence": "`__all__: list = ['b', \"c\", ((('a')))]`: Ruff's AST has no parentheses, so add_to_names (crates/ruff_python_semantic/src/model/all.rs:79) sees `'a'` as an ExprStringLiteral entry and F822 reports it at 11:31. The engine's Exports::add (native/src/code_rule_dsl/scope/usage.rs:587) reads the element through value::python::string_literal, which returns None for a parenthesized_expression. So no entry is recorded and `resolves.unresolved` cannot match; a probe `__all__ = [\"a\", (\"b\"), \"c\"]` misses `b` the same way."
+  },
+  {
+    "rule": "ruff-f822-undefined-export",
+    "source": "fixtures",
+    "path": "ruff/RUF022.py",
+    "line": 19,
+    "kind": "rerail-unknown",
+    "evidence": "`__all__ += \"foo3\", \"foo2\", \"foo1\"` is an implicit tuple: Ruff reads it as an Expr::Tuple (crates/ruff_python_semantic/src/model/all.rs:155) and reports all three entries. tree-sitter-python gives it as an expression_list, and the engine's extract (native/src/code_rule_dsl/scope/usage.rs, match on node kind) handles only list/tuple/parenthesized/call, so it records no entries. A probe `__all__ += \"d\", \"e\"` confirms the miss (Ruff 2, rule 0)."
+  },
+  {
+    "rule": "ruff-f822-undefined-export",
+    "source": "fixtures",
+    "path": "ruff/RUF022.py",
+    "line": 23,
+    "kind": "rerail-unknown",
+    "evidence": "`__all__ = (\"parenthesized_item\"), \"in\", (\"an_unparenthesized_tuple\")` is a bare tuple, which Ruff reads as Expr::Tuple with three string entries (crates/ruff_python_semantic/src/model/all.rs:155). The engine's extract in native/src/code_rule_dsl/scope/usage.rs has no expression_list arm (and Exports::add does not unwrap the parenthesized elements), so none of the three entries is recorded and the rule misses all three."
+  },
+  {
+    "rule": "ruff-f822-undefined-export",
+    "source": "fixtures",
+    "path": "ruff/RUF022.py",
+    "line": 207,
+    "kind": "rerail-unknown",
+    "evidence": "The tuple element `(\"a_veeeeeeeeeeeeeeeeeeery_long_parenthesized_item\")` (lines 206-208) is a parenthesized string. Ruff's parenthesis-free AST passes it to add_to_names as a string literal and reports it at 207:9. The engine's Exports::add (native/src/code_rule_dsl/scope/usage.rs:587) gets a parenthesized_expression, for which string_literal returns None, so the entry is never recorded."
+  },
+  {
+    "rule": "ruff-f822-undefined-export",
+    "source": "fixtures",
+    "path": "ruff/RUF022.py",
+    "line": 214,
+    "kind": "rerail-unknown",
+    "evidence": "The tuple element `((\"c\"))` (lines 213-215) is a doubly parenthesized string that Ruff reads as a plain string literal entry (crates/ruff_python_semantic/src/model/all.rs:79) and reports at 214:9. The engine's Exports::add does not unwrap parenthesized_expression elements (native/src/code_rule_dsl/scope/usage.rs:587), so no entry exists for `resolves.unresolved` to test."
+  },
+  {
+    "rule": "ruff-f822-undefined-export",
+    "source": "fixtures",
+    "path": "ruff/RUF022.py",
+    "line": 359,
+    "kind": "rerail-unknown",
+    "evidence": "`__all__ = \"foo\", \"an\" \"implicitly_concatenated_second_item\", not_a_string_literal` is a bare tuple. Ruff records the two string entries and only flags the third as INVALID_OBJECT (crates/ruff_python_semantic/src/model/all.rs:84-96), reporting 359:11 and 359:18. The engine's extract (native/src/code_rule_dsl/scope/usage.rs) has no expression_list arm and records no entries for it."
+  },
+  {
+    "rule": "ruff-d101-undocumented-public-class",
+    "source": "fixtures",
+    "path": "pyupgrade/UP045_1.py",
+    "line": 35,
+    "kind": "rerail-unknown",
+    "evidence": "Ruff 0.16.9 parses UP045_1.py and reports D101 on `class ServiceRefOrValue` at 35:7. tree-sitter-python reports a syntax error at 44:28 on the annotation `Optional[str]is not True` (the CLI lists it as SYNTAX, T1, and port-check reports `source-incomplete: query source is incomplete`). D101's clauses use constructs that are source-incomplete under syntax errors (negated inside, binds.exported, resolves), so the engine skips the file. A probe copy with line 44 replaced by `pass` agrees with Ruff (2 of 2)."
+  },
+  {
+    "rule": "ruff-d101-undocumented-public-class",
+    "source": "fixtures",
+    "path": "pyupgrade/UP045_1.py",
+    "line": 43,
+    "kind": "rerail-unknown",
+    "evidence": "The class at 43:7 is the one whose body holds `service_specification: Optional[str]is not True = None`. tree-sitter-python rejects that annotation (syntax error at 44:28), and the engine therefore skips the whole file for D101's source-incomplete clauses, while Ruff parses it and reports D101. A probe copy with line 44 replaced by `pass` agrees with Ruff, so the miss is the grammar's, not the document's."
+  },
+  {
+    "rule": "ruff-d103-undocumented-public-function",
+    "source": "fixtures",
+    "path": "flake8_bugbear/B012.py",
+    "line": 1,
+    "kind": "rerail-unknown",
+    "evidence": "Ruff 0.16.9 parses B012.py and reports D103 on `def a()` at 1:5. tree-sitter-python does not read the file: port-check reports `source-incomplete: file did not parse: error regions cover 99% of it, first at line 1, column 1`, caused by the star-expression match subjects `match *0, 1, *2:` (lines 114 and 125). A probe copy of lines 1-108 (no match statements) agrees with Ruff, 9 of 9."
+  },
+  {
+    "rule": "ruff-d103-undocumented-public-function",
+    "source": "fixtures",
+    "path": "flake8_bugbear/B012.py",
+    "line": 8,
+    "kind": "rerail-unknown",
+    "evidence": "`def b()` at 8:5 is missed because tree-sitter-python leaves 99% of B012.py in error regions: port-check reports `source-incomplete: file did not parse`, caused by `match *0, 1, *2:` at lines 114 and 125. Ruff parses the file. The copy without the match blocks agrees with Ruff, so the grammar is at fault, not the document."
+  },
+  {
+    "rule": "ruff-d103-undocumented-public-function",
+    "source": "fixtures",
+    "path": "flake8_bugbear/B012.py",
+    "line": 16,
+    "kind": "rerail-unknown",
+    "evidence": "Same cause as B012.py:1. tree-sitter-python cannot read the star-subject `match *0, 1, *2:` statements, so error regions cover 99% of the file and the engine skips it (source-incomplete). Ruff reports D103 at 16:5, and the probe copy without the match statements agrees with Ruff."
+  },
+  {
+    "rule": "ruff-d103-undocumented-public-function",
+    "source": "fixtures",
+    "path": "flake8_bugbear/B012.py",
+    "line": 26,
+    "kind": "rerail-unknown",
+    "evidence": "Same cause as B012.py:1. The engine skips B012.py as unread (error regions cover 99% of it, from tree-sitter-python's failure on `match *0, 1, *2:`), while Ruff parses it and reports D103 at 26:5. The trimmed probe copy agrees with Ruff."
+  },
+  {
+    "rule": "ruff-d103-undocumented-public-function",
+    "source": "fixtures",
+    "path": "flake8_bugbear/B012.py",
+    "line": 36,
+    "kind": "rerail-unknown",
+    "evidence": "Same cause as B012.py:1. tree-sitter-python's failure on the star-subject match statements leaves the file unread, so D103 at 36:5 is missed. Ruff parses the file, and the probe without those statements agrees with Ruff."
+  },
+  {
+    "rule": "ruff-d103-undocumented-public-function",
+    "source": "fixtures",
+    "path": "flake8_bugbear/B012.py",
+    "line": 50,
+    "kind": "rerail-unknown",
+    "evidence": "Same cause as B012.py:1. The grammar fails on `match *0, 1, *2:` (lines 114, 125), port-check shows `file did not parse: error regions cover 99% of it`, and the function at 50:5 that Ruff reports is never evaluated. The trimmed copy agrees with Ruff."
+  },
+  {
+    "rule": "ruff-d103-undocumented-public-function",
+    "source": "fixtures",
+    "path": "flake8_bugbear/B012.py",
+    "line": 61,
+    "kind": "rerail-unknown",
+    "evidence": "Same cause as B012.py:1. The whole-file parse failure from tree-sitter-python on the star-subject match statements makes the engine skip B012.py, so D103 at 61:5 is missed. Ruff parses it, and the probe without the match statements agrees."
+  },
+  {
+    "rule": "ruff-d103-undocumented-public-function",
+    "source": "fixtures",
+    "path": "flake8_bugbear/B012.py",
+    "line": 73,
+    "kind": "rerail-unknown",
+    "evidence": "Same cause as B012.py:1. B012.py is unread by tree-sitter-python (99% error regions from `match *0, 1, *2:`), so the function Ruff reports at 73:5 is not evaluated. The probe copy without the match blocks agrees with Ruff."
+  },
+  {
+    "rule": "ruff-d103-undocumented-public-function",
+    "source": "fixtures",
+    "path": "flake8_bugbear/B012.py",
+    "line": 85,
+    "kind": "rerail-unknown",
+    "evidence": "Same cause as B012.py:1. tree-sitter-python's failure on the star-subject match statements leaves B012.py unread, so D103 at 85:5 (`def k()`) is missed while Ruff reports it. The trimmed copy (lines 1-108) agrees with Ruff."
+  },
+  {
+    "rule": "ruff-d103-undocumented-public-function",
+    "source": "fixtures",
+    "path": "pyupgrade/UP045_1.py",
+    "line": 5,
+    "kind": "rerail-unknown",
+    "evidence": "Ruff parses UP045_1.py and reports D103 at 5:5. tree-sitter-python reports a syntax error at 44:28 on the annotation `Optional[str]is not True` (CLI lists SYNTAX, T1). D103's clauses are source-incomplete under syntax errors (negated inside, binds.exported, resolves), so the engine skips the file (port-check: `source-incomplete: query source is incomplete`). A copy with line 44 replaced by `pass` agrees with Ruff, 7 of 7."
+  },
+  {
+    "rule": "ruff-d103-undocumented-public-function",
+    "source": "fixtures",
+    "path": "pyupgrade/UP045_1.py",
+    "line": 9,
+    "kind": "rerail-unknown",
+    "evidence": "Same cause as UP045_1.py:5. The grammar's syntax error at 44:28 (`Optional[str]is not True`) makes D103's source-incomplete clauses skip the file, so the function at 9:5 that Ruff reports is missed. The copy with line 44 neutralised agrees with Ruff."
+  },
+  {
+    "rule": "ruff-d103-undocumented-public-function",
+    "source": "fixtures",
+    "path": "pyupgrade/UP045_1.py",
+    "line": 13,
+    "kind": "rerail-unknown",
+    "evidence": "Same cause as UP045_1.py:5. tree-sitter-python rejects the `Optional[str]is not True` annotation at 44:28 and the engine skips the file for D103's source-incomplete clauses, while Ruff reports 13:5. The probe with line 44 replaced agrees with Ruff."
+  },
+  {
+    "rule": "ruff-d103-undocumented-public-function",
+    "source": "fixtures",
+    "path": "pyupgrade/UP045_1.py",
+    "line": 18,
+    "kind": "rerail-unknown",
+    "evidence": "Same cause as UP045_1.py:5. A grammar syntax error at 44:28 makes the engine skip UP045_1.py for this rule (source-incomplete), so D103 at 18:5 is missed. The neutralised probe copy agrees with Ruff."
+  },
+  {
+    "rule": "ruff-d103-undocumented-public-function",
+    "source": "fixtures",
+    "path": "pyupgrade/UP045_1.py",
+    "line": 22,
+    "kind": "rerail-unknown",
+    "evidence": "Same cause as UP045_1.py:5. tree-sitter-python's syntax error on `Optional[str]is not True` (44:28) makes D103's clauses skip the file, so the function Ruff reports at 22:5 is missed. The copy with line 44 replaced by `pass` agrees with Ruff."
+  },
+  {
+    "rule": "ruff-d103-undocumented-public-function",
+    "source": "fixtures",
+    "path": "pyupgrade/UP045_1.py",
+    "line": 26,
+    "kind": "rerail-unknown",
+    "evidence": "Same cause as UP045_1.py:5. The file is skipped as source-incomplete because tree-sitter-python rejects line 44's annotation, while Ruff parses it and reports D103 at 26:5. The neutralised probe agrees with Ruff."
+  },
+  {
+    "rule": "ruff-d103-undocumented-public-function",
+    "source": "fixtures",
+    "path": "pyupgrade/UP045_1.py",
+    "line": 30,
+    "kind": "rerail-unknown",
+    "evidence": "Same cause as UP045_1.py:5. tree-sitter-python's syntax error at 44:28 makes the engine skip UP045_1.py for D103's source-incomplete clauses, so the function at 30:5 that Ruff reports is missed. The copy with line 44 replaced by `pass` agrees with Ruff, 7 of 7."
+  },
+  {
+    "rule": "ruff-ann201-missing-return-type-undocumented-public-function",
+    "source": "fixtures",
+    "path": "flake8_bugbear/B012.py",
+    "line": 1,
+    "kind": "rerail-unknown",
+    "evidence": "Rerail's Python grammar cannot parse B012.py. The CLI lists it as a T1 syntax-error file at 1:1, and a reduced copy holding only `match *0, 1, *2:` fails port-check.mts with 'source-incomplete: file did not parse: error regions cover 99% of it', so the rule never runs on the file. Lines 1-108 alone, without the match statements, agree with live Ruff (ruff 9, rule 9), so `def a()` is missed only because of the parse failure."
+  },
+  {
+    "rule": "ruff-ann201-missing-return-type-undocumented-public-function",
+    "source": "fixtures",
+    "path": "flake8_bugbear/B012.py",
+    "line": 8,
+    "kind": "rerail-unknown",
+    "evidence": "Rerail's Python grammar cannot parse B012.py: the `match *0, 1, *2:` subject at its end turns 99% of the file into error regions (port-check.mts probe: 'file did not parse'). The rule is therefore skipped on the file. The first 108 lines on their own agree with Ruff 9/9, including `def b()`."
+  },
+  {
+    "rule": "ruff-ann201-missing-return-type-undocumented-public-function",
+    "source": "fixtures",
+    "path": "flake8_bugbear/B012.py",
+    "line": 16,
+    "kind": "rerail-unknown",
+    "evidence": "Rerail's Python grammar cannot parse B012.py: the `match *0, 1, *2:` subject at its end turns 99% of the file into error regions (port-check.mts probe: 'file did not parse'). The rule is therefore skipped on the file. The first 108 lines on their own agree with Ruff 9/9, including `def c()`."
+  },
+  {
+    "rule": "ruff-ann201-missing-return-type-undocumented-public-function",
+    "source": "fixtures",
+    "path": "flake8_bugbear/B012.py",
+    "line": 26,
+    "kind": "rerail-unknown",
+    "evidence": "Rerail's Python grammar cannot parse B012.py: the `match *0, 1, *2:` subject at its end turns 99% of the file into error regions (port-check.mts probe: 'file did not parse'). The rule is therefore skipped on the file. The first 108 lines on their own agree with Ruff 9/9, including `def d()`."
+  },
+  {
+    "rule": "ruff-ann201-missing-return-type-undocumented-public-function",
+    "source": "fixtures",
+    "path": "flake8_bugbear/B012.py",
+    "line": 36,
+    "kind": "rerail-unknown",
+    "evidence": "Rerail's Python grammar cannot parse B012.py: the `match *0, 1, *2:` subject at its end turns 99% of the file into error regions (port-check.mts probe: 'file did not parse'). The rule is therefore skipped on the file. The first 108 lines on their own agree with Ruff 9/9, including `def e()`."
+  },
+  {
+    "rule": "ruff-ann201-missing-return-type-undocumented-public-function",
+    "source": "fixtures",
+    "path": "flake8_bugbear/B012.py",
+    "line": 50,
+    "kind": "rerail-unknown",
+    "evidence": "Rerail's Python grammar cannot parse B012.py: the `match *0, 1, *2:` subject at its end turns 99% of the file into error regions (port-check.mts probe: 'file did not parse'). The rule is therefore skipped on the file. The first 108 lines on their own agree with Ruff 9/9, including `def g()`."
+  },
+  {
+    "rule": "ruff-ann201-missing-return-type-undocumented-public-function",
+    "source": "fixtures",
+    "path": "flake8_bugbear/B012.py",
+    "line": 61,
+    "kind": "rerail-unknown",
+    "evidence": "Rerail's Python grammar cannot parse B012.py: the `match *0, 1, *2:` subject at its end turns 99% of the file into error regions (port-check.mts probe: 'file did not parse'). The rule is therefore skipped on the file. The first 108 lines on their own agree with Ruff 9/9, including `def i()`."
+  },
+  {
+    "rule": "ruff-ann201-missing-return-type-undocumented-public-function",
+    "source": "fixtures",
+    "path": "flake8_bugbear/B012.py",
+    "line": 73,
+    "kind": "rerail-unknown",
+    "evidence": "Rerail's Python grammar cannot parse B012.py: the `match *0, 1, *2:` subject at its end turns 99% of the file into error regions (port-check.mts probe: 'file did not parse'). The rule is therefore skipped on the file. The first 108 lines on their own agree with Ruff 9/9, including `def h()`."
+  },
+  {
+    "rule": "ruff-ann201-missing-return-type-undocumented-public-function",
+    "source": "fixtures",
+    "path": "flake8_bugbear/B012.py",
+    "line": 85,
+    "kind": "rerail-unknown",
+    "evidence": "Rerail's Python grammar cannot parse B012.py: the `match *0, 1, *2:` subject at its end turns 99% of the file into error regions (port-check.mts probe: 'file did not parse'). The rule is therefore skipped on the file. The first 108 lines on their own agree with Ruff 9/9, including `def k()`."
+  },
+  {
+    "rule": "ruff-ann202-missing-return-type-private-function",
+    "source": "fixtures",
+    "path": "flake8_bugbear/B012.py",
+    "line": 40,
+    "kind": "rerail-unknown",
+    "evidence": "Rerail's Python grammar cannot parse B012.py. A reduced copy holding only its `match *0, 1, *2:` statement fails port-check.mts with 'source-incomplete: file did not parse: error regions cover 99% of it', so the rule is skipped on the file (the CLI lists it as a T1 syntax-error file). Lines 1-108 alone agree with live Ruff (ruff 4, rule 4), including the nested `def f()`."
+  },
+  {
+    "rule": "ruff-ann202-missing-return-type-private-function",
+    "source": "fixtures",
+    "path": "flake8_bugbear/B012.py",
+    "line": 55,
+    "kind": "rerail-unknown",
+    "evidence": "Rerail's Python grammar cannot parse B012.py: the `match *0, 1, *2:` subject turns 99% of the file into error regions (port-check.mts probe: 'file did not parse'). The rule is therefore skipped on the file. Lines 1-108 alone agree with Ruff 4/4, including the nested `def h()`."
+  },
+  {
+    "rule": "ruff-ann202-missing-return-type-private-function",
+    "source": "fixtures",
+    "path": "flake8_bugbear/B012.py",
+    "line": 68,
+    "kind": "rerail-unknown",
+    "evidence": "Rerail's Python grammar cannot parse B012.py: the `match *0, 1, *2:` subject turns 99% of the file into error regions (port-check.mts probe: 'file did not parse'). The rule is therefore skipped on the file. Lines 1-108 alone agree with Ruff 4/4, including the nested `def j()` at line 68."
+  },
+  {
+    "rule": "ruff-ann202-missing-return-type-private-function",
+    "source": "fixtures",
+    "path": "flake8_bugbear/B012.py",
+    "line": 80,
+    "kind": "rerail-unknown",
+    "evidence": "Rerail's Python grammar cannot parse B012.py: the `match *0, 1, *2:` subject turns 99% of the file into error regions (port-check.mts probe: 'file did not parse'). The rule is therefore skipped on the file. Lines 1-108 alone agree with Ruff 4/4, including the nested `def j()` at line 80."
+  },
+  {
+    "rule": "ruff-d300-triple-single-quotes",
+    "source": "fixtures",
+    "path": "pydocstyle/bom.py",
+    "line": 1,
+    "kind": "not-comparable",
+    "evidence": "pydocstyle/bom.py starts with a UTF-8 BOM (bytes EF BB BF before `'''`). Ruff 0.16.9 reports D300 at 1:1 because its column ignores the BOM. The harness's pointOf (conformance/languages/runner.ts:223-224) counts the decoded U+FEFF as one code point, so the same docstring finding lands at 1:2. Both tools flag the same docstring, so the FP at 1:2 and the FN at 1:1 are one finding measured two ways. port-check.mts agrees with live Ruff on the file, compared by range."
+  },
+  {
+    "rule": "ruff-isc001-single-line-implicit-string-concatenation",
+    "source": "fixtures",
+    "path": "flake8_implicit_str_concat/ISC_syntax_error.py",
+    "line": 2,
+    "kind": "not-comparable",
+    "evidence": "Line 2 is `\"a\" \"b` with the second string unterminated. Ruff's lexer emits an unterminated string as a string token (the fixture's own comment says so), and ISC001 pairs it. Rerail's grammar finds error regions covering 64% of this file and reads none of it (port-check: `source-incomplete: file did not parse: error regions cover 64% of it, first at line 2, column 5`), so the two tools' error recovery cannot be compared here."
+  },
+  {
+    "rule": "ruff-isc001-single-line-implicit-string-concatenation",
+    "source": "fixtures",
+    "path": "flake8_implicit_str_concat/ISC_syntax_error.py",
+    "line": 3,
+    "kind": "not-comparable",
+    "evidence": "`\"a\" \"b\" \"c` ends in an unterminated string. Ruff reports two pairs here (3:1 and 3:5) from its lexer's recovery tokens. Rerail does not read the file: error regions cover 64% of it (port-check failure source-incomplete). The input is invalid Python, so there is nothing to compare."
+  },
+  {
+    "rule": "ruff-isc001-single-line-implicit-string-concatenation",
+    "source": "fixtures",
+    "path": "flake8_implicit_str_concat/ISC_syntax_error.py",
+    "line": 4,
+    "kind": "not-comparable",
+    "evidence": "Lines 4-5 are `\"a\" \"\"\"b` / `c\"\"\" \"d` with a trailing unterminated string. Ruff's finding at 4:1 comes from the token stream it recovers from that broken file. Rerail skips the file as unread because error regions cover 64% of it (port-check source-incomplete)."
+  },
+  {
+    "rule": "ruff-isc001-single-line-implicit-string-concatenation",
+    "source": "fixtures",
+    "path": "flake8_implicit_str_concat/ISC_syntax_error.py",
+    "line": 10,
+    "kind": "not-comparable",
+    "evidence": "`f\"a\" f\"b\" f\"c` ends in an unterminated f-string. Ruff reports the pair at 10:1 from its recovered tokens. Rerail does not read the file: port-check reports `file did not parse: error regions cover 64% of it`."
+  },
+  {
+    "rule": "ruff-isc001-single-line-implicit-string-concatenation",
+    "source": "fixtures",
+    "path": "flake8_implicit_str_concat/ISC_syntax_error.py",
+    "line": 11,
+    "kind": "not-comparable",
+    "evidence": "Lines 11-12, `f\"a\" f\"\"\"b` / `c\"\"\" f\"d {e`, end in an unterminated f-string with an open replacement field. Ruff's 11:1 finding depends on its lexer recovery. Rerail reads none of this file because error regions cover 64% of it."
+  },
+  {
+    "rule": "ruff-isc001-single-line-implicit-string-concatenation",
+    "source": "fixtures",
+    "path": "flake8_implicit_str_concat/ISC_syntax_error_2.py",
+    "line": 2,
+    "kind": "not-comparable",
+    "evidence": "Line 2 is `'' '` with an unterminated string (the regression test for ruff issue 21023). Ruff pairs `''` with the recovered `'` token. Rerail parses this file only partly, and port-check reports `AST clauses ran outside 3 error region(s), first at line 2, column 4`. This finding lies in an error region, where the AST rule does not run."
+  },
+  {
+    "rule": "ruff-isc001-single-line-implicit-string-concatenation",
+    "source": "fixtures",
+    "path": "flake8_implicit_str_concat/ISC_syntax_error_2.py",
+    "line": 4,
+    "kind": "not-comparable",
+    "evidence": "`'' '' '` ends in an unterminated string. Ruff's 4:1 finding (`'' ''`) comes from the token stream it recovers. Rerail's grammar folds this line into one of the file's 3 syntax-error regions, and AST clauses do not run inside those (port-check source-partial). Rerail's grammar still reports the valid line 3 (`\"\" \"\"`), so it agrees wherever it parses."
+  },
+  {
+    "rule": "ruff-isc001-single-line-implicit-string-concatenation",
+    "source": "fixtures",
+    "path": "flake8_implicit_str_concat/ISC_syntax_error_2.py",
+    "line": 5,
+    "kind": "not-comparable",
+    "evidence": "Line 5, `\"\" \"\" \"`, ends in an unterminated string. Ruff reports the pair at 5:4 from its recovered tokens, while Rerail's grammar leaves this line in a syntax-error region where AST clauses do not run (port-check source-partial). The line is invalid Python, so the two tools' recovery cannot be compared."
+  },
+  {
+    "rule": "ruff-isc001-single-line-implicit-string-concatenation",
+    "source": "fixtures",
+    "path": "flake8_implicit_str_concat/ISC_syntax_error_2.py",
+    "line": 7,
+    "kind": "not-comparable",
+    "evidence": "`f\"\" f\"\" f\"` ends in an unterminated f-string. Ruff's 7:1 finding comes from its lexer recovery, and the line sits in one of the 3 error regions where Rerail's AST clauses do not run (port-check source-partial). The equivalent valid pair on line 6 is not reported by Ruff either, which shows this finding depends on recovery."
+  },
+  {
+    "rule": "ruff-f523-string-dot-format-extra-positional-arguments",
+    "source": "fixtures",
+    "path": "rerail/probes/UP030-generator-and-annotation.py",
+    "line": 7,
+    "kind": "rerail-unknown",
+    "evidence": "Ruff reports F523 on `'{0} {0}'.format(a, b)` inside the string annotation `y: \"...\"` because it runs expression rules over parsed string type definitions. In Rerail the call can only be reached through `parse: annotation`, and the engine refuses `formatArgs` there (compile error: \"`formatArgs` is not supported inside parse (annotation trees)\"). The DSL reference also lets an annotation rule nest only `parse: annotation`, not braceFormat, so there is no way to count fields against arguments inside a string annotation."
   }
 ]

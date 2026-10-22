@@ -149,59 +149,146 @@
                   }
                 }
               ]
+            },
+            "repeated-key": {
+              "pattern": "$KEY",
+              "not": {
+                "kind": "parenthesized_expression"
+              },
+              "all": [
+                {
+                  "matches": "literal-key"
+                },
+                {
+                  "matches": "key-slot"
+                }
+              ],
+              "inside": {
+                "stopBy": {
+                  "not": {
+                    "kind": "parenthesized_expression"
+                  }
+                },
+                "kind": "pair",
+                "count": {
+                  "follows": {
+                    "stopBy": "end",
+                    "kind": "pair",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "follows": {
+                          "stopBy": "neighbor",
+                          "regex": "(?s)."
+                        }
+                      },
+                      "pattern": "$J"
+                    },
+                    "compare": {
+                      "left": "J",
+                      "op": "eq",
+                      "right": "KEY",
+                      "text": "structure-hash"
+                    }
+                  },
+                  "min": 1
+                }
+              }
+            },
+            "escaped-or-concatenated": {
+              "any": [
+                {
+                  "kind": "concatenated_string"
+                },
+                {
+                  "kind": "string",
+                  "regex": "^[uU]?['\"]+[\\s\\S]*\\\\([\\\\'\"abfnrtv0-7xNuU]|\\r|\\n)"
+                }
+              ]
+            },
+            "plain-annotation": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "not": {
+                "matches": "escaped-or-concatenated"
+              }
+            },
+            "in-annotation": {
+              "matches": "plain-annotation",
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "repeated-key",
+                      "capture": "KEYA"
+                    },
+                    {
+                      "matches": "in-annotation"
+                    }
+                  ]
+                }
+              }
+            },
+            "any-annotation": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "repeated-key"
+                    },
+                    {
+                      "matches": "any-annotation"
+                    }
+                  ]
+                }
+              }
             }
           },
           "rule": {
-            "pattern": "$KEY",
-            "not": {
-              "kind": "parenthesized_expression"
-            },
-            "all": [
+            "any": [
               {
-                "matches": "literal-key"
+                "pattern": "$KEYA",
+                "matches": "repeated-key"
               },
               {
-                "matches": "key-slot"
-              }
-            ],
-            "inside": {
-              "stopBy": {
-                "not": {
-                  "kind": "parenthesized_expression"
-                }
+                "matches": "in-annotation"
               },
-              "kind": "pair",
-              "count": {
-                "follows": {
-                  "stopBy": "end",
-                  "kind": "pair",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "not": {
-                      "follows": {
-                        "stopBy": "neighbor",
-                        "regex": "(?s)."
-                      }
-                    },
-                    "pattern": "$J"
-                  },
-                  "compare": {
-                    "left": "J",
-                    "op": "eq",
-                    "right": "KEY",
-                    "text": "structure-hash"
+              {
+                "pattern": "$KEYA",
+                "matches": "escaped-or-concatenated",
+                "all": [
+                  {
+                    "matches": "any-annotation"
                   }
-                },
-                "min": 1
+                ]
               }
-            }
+            ]
           }
         }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "capture.KEYA",
         "code": "F601",
-        "message": "Dictionary key literal `$KEY` repeated",
+        "message": "Dictionary key literal `$KEYA` repeated",
+        "each": "KEYA",
         "suppress": {
           "noqa": {
             "codes": [

@@ -6,6 +6,5 @@ from ｍatplotlib import pyplot as plt
 from ｎumpy import array
 from ｍatplotlib.pyplot import plot
 from ｍatplotlib import (cm, pyplot as pp)
-import xml.etree.Ｅ lementTree as ET
 from . import ｐandas
 import ｍatplotlib, os
