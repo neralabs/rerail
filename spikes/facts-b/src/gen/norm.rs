@@ -606,6 +606,20 @@ impl<'a> Ctx<'a> {
         Ok(self.add(Op::Map { input: f, exprs: (0..w).map(col).collect() }, w, p))
     }
 
+    /// A subquery body whose rows (not only existence) are read: an uncorrelated relation as is,
+    /// or a correlated WHERE over an uncorrelated input split into body and correlations.
+    /// Correlation anywhere else is refused (projections and DISTINCT must be kept here).
+    fn rows_of(&mut self, rel: &Rel<RepoSource>) -> R<(Rel<RepoSource>, Vec<(X, X, (Aff, Aff))>)> {
+        if !rel_free(rel, 1) {
+            return Ok((rel.clone(), Vec::new()));
+        }
+        if !matches!(rel, Rel::Filter { .. }) {
+            return refuse(&self.at, "correlated scalar subquery whose correlation is not its top-level WHERE");
+        }
+        let (b, c, _) = self.decorrelate(rel)?;
+        Ok((b, c))
+    }
+
     /// Split a subquery body into its uncorrelated part and the equality correlations with the
     /// enclosing row: `(body, [(outer expr at depth 0 of the enclosing row, inner expr, affs)],
     /// projection of the first output column)`.
@@ -782,7 +796,7 @@ impl<'a> Ctx<'a> {
         let pn = self.g.poison[n].clone();
         match cur {
             Rel::Aggregate { input, keys, aggs } if keys.is_empty() => {
-                let (body, corr, _) = self.decorrelate(input)?;
+                let (body, corr) = self.rows_of(input)?;
                 let b = self.rel(&body)?;
                 let wb = self.width(b);
                 // Group by the inner correlation expressions; the group row is
@@ -830,7 +844,7 @@ impl<'a> Ctx<'a> {
                 if sel.iter().any(|e| expr_free(e, 1) || has_subquery(e)) {
                     return refuse(&self.at, "scalar subquery projecting an outer column or a subquery");
                 }
-                let (body, corr, _) = self.decorrelate(inner)?;
+                let (body, corr) = self.rows_of(inner)?;
                 let b = self.rel(&body)?;
                 let k = corr.len();
                 for (_, i, _) in &corr {
