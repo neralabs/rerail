@@ -5,8 +5,12 @@ Per run (thread seconds unless noted):
   cpu, wall        process user+sys and real time, `/usr/bin/time -l` in the run's stderr.txt
   extraction       read + parse + extract (per-file.tsv sums, `thread_ns`)
   ast_inputs       AST evidence inputs still evaluated by the matcher (`input_ns`)
-  views            substituted stages: every `view:*` stage, `view:dump` (the one-pass node
-                   dumps) included
+  views            substituted stages: every `view:*` stage except the dump's selection phases
+                   (`view:dump.rows`, `view:nodes`, `view:edges`, `view:ownership`,
+                   `view:descendants`)
+  dump_logic       the dumps' selection (`view:dump.select`: members' own conjuncts and the
+                   shared gate) and ancestor capture (`view:dump.ancestor`): rule logic the
+                   node-dumping inputs carry
   sql              every other SQL stage and final query
   spill_load       repository partitions: reading the spill files back (`spill:load`)
   rss              peak (`maximum resident set size`), and current RSS at the end of the
@@ -40,12 +44,17 @@ def run_summary(p):
            "spill_bytes": res.get("spill_bytes"), "finish_s": res["phases_ns"]["finish"] / S,
            "extraction": (t["read"] + t["parse"] + t["extract"]) / S, "eval": t["eval"] / S, "ast_inputs": t["input_rows"] / S,
            "a3": res["a3_clause_file_ns"], "per_rule": {r["check"]: r["ns"] / S for r in res["rules"]}}
-    views = sql = spill = tree = 0.0
+    views = logic = sql = spill = tree = 0.0
+    by_view = collections.Counter()
     if "clause_stage_ns" in res:
         for x in res["clause_stage_ns"]:
             s = x["ns"] / S
-            if x["stage"].startswith("view:"):
+            if x["stage"] in ("view:dump.select", "view:dump.ancestor"):
+                logic += s
+                by_view[x["stage"][5:]] += s
+            elif x["stage"].startswith("view:"):
                 views += s
+                by_view[x["stage"][5:]] += s
             elif x["stage"] == "spill:load":
                 spill += s
             else:
@@ -57,7 +66,7 @@ def run_summary(p):
             sql += ns / S
             if TREE.match(k):
                 tree += ns / S
-    out.update(views=views, sql=sql, tree_sql=tree, spill_load=spill)
+    out.update(views=views, dump_logic=logic, by_view=dict(by_view), sql=sql, tree_sql=tree, spill_load=spill)
     return out, res
 
 

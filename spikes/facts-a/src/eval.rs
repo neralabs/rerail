@@ -447,13 +447,22 @@ impl Input {
     }
 }
 
+/// Nanoseconds of one dump: the selection (members' own conjuncts and the shared gate), the
+/// ancestor capture (X over ancestors) and the rows (captures and projections from the facts).
+#[derive(Default)]
+pub struct DumpNs {
+    pub select: u64,
+    pub ancestor: u64,
+    pub rows: u64,
+}
+
 /// Spike A3: a dump group's member tables in one pass over the facts (`subst::DumpGroup`): per
 /// member, its own selection over its candidate roots in preorder; the shared gate once per node;
 /// the captures from the facts (`$NODE` named, the parent when named, per field the first child
 /// with that field when named). Rows, their order and the anchors are `Input::rows`' for each
 /// member. `None` when any evaluation refused or decoded a named escape: the caller then runs
 /// the members' own queries, so failures stay exactly the original path's.
-pub fn dump_rows(rule: &Rule, g: &crate::subst::DumpGroup, plan: &RelPlan, ctx: &FileCtx<'_>) -> Option<(Vec<Table>, Vec<(u32, u32, u32)>)> {
+pub fn dump_rows(rule: &Rule, g: &crate::subst::DumpGroup, plan: &RelPlan, ctx: &FileCtx<'_>, ns: &mut DumpNs) -> Option<(Vec<Table>, Vec<(u32, u32, u32)>)> {
     let f = ctx.f;
     let mut tables: Vec<Table> = g.members.iter().map(|m| Table { schema: plan.input_schemas[m.plan_input].clone(), rows: Vec::new() }).collect();
     let mut anchors = Vec::new();
@@ -469,15 +478,20 @@ pub fn dump_rows(rule: &Rule, g: &crate::subst::DumpGroup, plan: &RelPlan, ctx: 
     let mut refused = false;
     let mut env = Env::default();
     // The ancestor capture: X per node (memoised), and per node the nearest proper ancestor
-    // where X holds (`NONE`: none; `PENDING`: not computed yet).
+    // where X holds (`NONE`: none; `PENDING`: not computed yet). X binds nothing, reads no
+    // values and parses nothing (checked), so evaluating it after the selection changes no
+    // verdict and no refusal.
     let anc_ev = g.ancestor.as_ref().map(|(_, xq)| ast::Eval::new(f, ctx.path, xq));
     let mut near = if anc_ev.is_some() { vec![PENDING; f.len()] } else { Vec::new() };
     let mut xval = if anc_ev.is_some() { vec![0u8; f.len()] } else { Vec::new() };
     let mut chain: Vec<u32> = Vec::new();
+    let mut selected: Vec<u32> = Vec::new();
+    let mut ancestors: Vec<u32> = Vec::new();
     for (mi, m) in g.members.iter().enumerate() {
         let inp = &rule.inputs[m.rule_input];
+        let t = Instant::now();
         let ev = ast::Eval::new(f, ctx.path, &m.sel);
-        let rows = &mut tables[mi].rows;
+        selected.clear();
         for root in ev.roots() {
             if ev.match_root(root).is_none() {
                 continue;
@@ -486,9 +500,27 @@ pub fn dump_rows(rule: &Rule, g: &crate::subst::DumpGroup, plan: &RelPlan, ctx: 
             if *v == 0 {
                 *v = if gate.match_root(root).is_some() { 1 } else { 2 };
             }
-            if *v != 1 || !f.named(root) {
-                continue;
+            if *v == 1 && f.named(root) {
+                selected.push(root);
             }
+        }
+        ns.select += t.elapsed().as_nanos() as u64;
+        if ev.unsupported.borrow().is_some() {
+            refused = true;
+            break;
+        }
+        let t = Instant::now();
+        ancestors.clear();
+        if let Some(xev) = &anc_ev {
+            for &root in &selected {
+                ancestors.push(nearest_where(f, xev, root, &mut near, &mut xval, &mut chain));
+            }
+        }
+        ns.ancestor += t.elapsed().as_nanos() as u64;
+        let t = Instant::now();
+        let rows = &mut tables[mi].rows;
+        rows.reserve(selected.len());
+        for (k, &root) in selected.iter().enumerate() {
             env.vars.clear();
             env.vars.push((m.tail.node, Bound::Node(root)));
             if let Some(p) = m.tail.parent {
@@ -504,8 +536,8 @@ pub fn dump_rows(rule: &Rule, g: &crate::subst::DumpGroup, plan: &RelPlan, ctx: 
                     }
                 }
             }
-            if let (Some((aname, _)), Some(xev)) = (&g.ancestor, &anc_ev) {
-                let a = nearest_where(f, xev, root, &mut near, &mut xval, &mut chain);
+            if let Some((aname, _)) = &g.ancestor {
+                let a = ancestors[k];
                 if a != crate::facts::NONE && f.named(a) {
                     env.vars.push((*aname, Bound::Node(a)));
                 }
@@ -534,12 +566,9 @@ pub fn dump_rows(rule: &Rule, g: &crate::subst::DumpGroup, plan: &RelPlan, ctx: 
             rows.push(row.into_boxed_slice());
             anchors.push((s, e, line_of(f, s)));
         }
-        if ev.unsupported.borrow().is_some() {
-            refused = true;
-            break;
-        }
+        ns.rows += t.elapsed().as_nanos() as u64;
     }
-    if gate.unsupported.borrow().is_some() {
+    if gate.unsupported.borrow().is_some() || anc_ev.as_ref().is_some_and(|x| x.unsupported.borrow().is_some()) {
         refused = true;
     }
     if crate::pyvalue::NAMED_ESCAPES.with(|n| n.replace(saved)) > 0 {
@@ -814,8 +843,12 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                     let mut from_dump: Vec<Option<Table>> = (0..plan.inputs.len()).map(|_| None).collect();
                     if let Some(g) = &plan.dump {
                         let td = Instant::now();
-                        let dumped = dump_rows(rule, g, plan, ctx);
-                        out.add_stages(ri, ci, vec![("view:dump".into(), td.elapsed().as_nanos() as u64)]);
+                        let mut dns = DumpNs::default();
+                        let dumped = dump_rows(rule, g, plan, ctx, &mut dns);
+                        let total = td.elapsed().as_nanos() as u64;
+                        // The selection and ancestor phases evaluate rule logic; the rest (the
+                        // captures, projections and setup) is the dump itself.
+                        out.add_stages(ri, ci, vec![("view:dump.select".into(), dns.select), ("view:dump.ancestor".into(), dns.ancestor), ("view:dump.rows".into(), total - dns.select - dns.ancestor)]);
                         if let Some((member_tables, member_anchors)) = dumped {
                             if crate::subst::check_mode() {
                                 for (m, t) in g.members.iter().zip(&member_tables) {
