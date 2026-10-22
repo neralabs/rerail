@@ -1,6 +1,6 @@
 // Regenerates the parsers vendored grammars commit generated (native/build.rs's `committed_parser`: SQL's
 // native/grammars/tree-sitter-sql/src/parser.generated.c.gz), after a change to their grammar.json. The engine's build
-// script is the generator: with RERAIL_GENERATE_PARSERS set it runs tree-sitter-generate (the version Cargo.lock pins)
+// script is the generator: with RERAIL_GENERATE_PARSERS=1 it runs tree-sitter-generate (the version Cargo.lock pins)
 // and writes the gzipped parser back beside grammar.json; without it, a build refuses a committed parser generated from
 // anything else. About 15 minutes for SQL's, with the release build it runs.
 import { spawnSync } from "node:child_process";
