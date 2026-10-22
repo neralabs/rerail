@@ -30,10 +30,11 @@ must let through.
 ## `rerail-message-tool-names`
 
 Flags a message that names an upstream tool: eslint, oxlint, biome, ruff, bandit, pylint, flake8, clippy, sqlfluff,
-phpstan, psalm, phpcs, tlint, bladestan, lizard, blade-parser or unicorn, in any case and as a whole word (so also
-`typescript-eslint`). That catches the old bare messages, such as `Bandit B113 (request_without_timeout)`, and a pasted
-rule id that starts with a tool's name. The steer says to name the change instead of the tool or its rules, and to
-backtick a tool name only in code the reader must write, such as a suppression comment.
+phpstan, psalm, phpcs (PHP_CodeSniffer), tlint, bladestan, lizard, blade-parser or unicorn, in any case and as a whole
+word (so also `typescript-eslint`). That catches the old bare messages, such as `Bandit B113 (request_without_timeout)`,
+and a pasted rule id that starts with a tool's name. The steer says to name the change instead of the tool or its
+rules, and to write "this rule" where the message says what was checked, so a hedge such as "this rule can't see your
+target version" stays. A tool name may stay inside quoted code, such as `phpcs:ignore`.
 
 What it gets wrong:
 
@@ -46,28 +47,31 @@ What it gets wrong:
 ## `rerail-message-rerail-name`
 
 Flags a message that names Rerail, in any case: the block around every message already shows where the finding came
-from. A `` `// rerail-ignore` `` comment in backticks passes.
+from. The steer says to write "this rule" where the message says what was checked ("this rule found no write to `$V`")
+and to leave the name out otherwise; it may stay inside quoted code, so a `` `// rerail-ignore` `` comment in backticks
+passes.
 
 What it gets wrong: backticks hide the name as they do a tool's, and the [quoting limits](#what-both-get-wrong) below.
 
 ## What both get wrong
 
-- **An apostrophe that pairs with no quote**, such as a Rust lifetime (`'a`) or `print()'s`, ends what a rule reads of
-  a message, unless a quote later in the message pairs with it: then what that quote opened counts as unquoted.
+- **An apostrophe that pairs with no quote**, such as a Rust lifetime (`'a`), `print()'s` or `the tests' names`, ends
+  what a rule reads of a message, unless a quote later in the message pairs with it: then what that quote opened counts
+  as unquoted.
 
 ## What the pack does not check
 
 The rest of criterion 5 (a location, "fix it or explain", a tool version, a matcher term) and the other criteria. A
 regex can't tell `line 42` or `1.24.0` in a message from text the change needs, and criterion 3, a risk stated only as
-far as the rule can confirm it, is about what the rule can confirm: capitals such as NEVER are a symptom of overclaiming,
-and writing them in lower case would not fix the claim. Those are for review.
+far as the rule can confirm it, is about what the rule can confirm: capitals such as NEVER are a symptom of
+overclaiming, and writing them in lower case would not fix the claim. Those are for review.
 
 ## How the pattern reads a message
 
-There is no JSON language: each rule is one regex over the file's text, and the two share everything but the words
-they look for. The pattern finds a `violation`'s `message` key (in the violation itself or in one an option chooses),
-then its string, or a string value under a key that doesn't start with `$` inside the object an option chooses,
-skipping whole objects up to seven deep. It reads that string as tokens: words (with apostrophes inside them),
-`$metavariables` and `${…}`, JSON escapes, backtick spans, and single-quoted spans that open and close next to a
-non-word character. A word counts only outside every span. To add a tool, add it to the word list at the end of
-`rerail-message-tool-names`' pattern; the rest is shared and changes in both at once.
+There is no JSON language: each rule is one regex over the file's text, and the two share everything but the words they
+look for. The pattern finds a `violation`'s `message` key (in the violation itself or in one an option chooses), then
+its string, or a string value under a key that doesn't start with `$` inside the object an option chooses, skipping
+whole objects up to seven deep. It reads that string as tokens: words (with apostrophes inside them), `$metavariables`
+and `${…}`, JSON escapes, backtick spans, and single-quoted spans that open and close next to a non-word character. A
+word counts only outside every span, and also right after a JSON escape (`\nESLint`). To add a tool, add it to the word
+list at the end of `rerail-message-tool-names`' pattern; the rest is shared and changes in both at once.

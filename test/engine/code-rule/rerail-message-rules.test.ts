@@ -97,8 +97,19 @@ const RULES: Record<string, { caught: [string, string, string][]; passed: [strin
       ["packs/javascript/rules/eslint-sort-keys.json", document("eslint-sort-keys", sortKeys("Sort these keys in ascending order, as Biome does."), { minified: true }), "Biome"],
       // A tool name after two quoted spans.
       ["packs/javascript/rules/eslint-no-console-levels.json", document("eslint-no-console-levels", "Pass 'warn' or 'error', the levels ESLint accepts."), "ESLint"],
+      // A hedge that names the tool: the steer asks for "this rule", not for the hedge to go.
+      ["packs/python/rules/ruff-up007-non-pep604-annotation.json",
+        document("ruff-up007-non-pep604-annotation", "Ruff can't see your target version; if it is below 3.10, keep this Union."), "Ruff"],
+      // The tool's full name, and a name right after a JSON escape.
+      ["packs/php/rules/phpcs-no-silenced-errors.json",
+        document("phpcs-no-silenced-errors", "PHP_CodeSniffer flags this silenced call; handle the error instead of using @."), "PHP_CodeSniffer"],
+      ["packs/javascript/rules/eslint-max-len.json", document("eslint-max-len", "Keep this on one line.\nESLint reports the rest."), "ESLint"],
     ],
     passed: [
+      // The same hedge as "this rule", and a tool name in code the change removes.
+      ["packs/python/rules/ruff-up007-non-pep604-annotation.json",
+        document("ruff-up007-non-pep604-annotation", "This rule can't see your target version; if it is below 3.10, keep this `Union`.")],
+      ["packs/php/rules/phpcs-no-unused-ignore.json", document("phpcs-no-unused-ignore", "Remove this unused `phpcs:ignore` comment; this rule found nothing on the line it silences.")],
       // Tool names everywhere but the message: the id, the clause's pattern, the code and suppress, and an option's
       // default holding a "message" of its own.
       ["packs/javascript/rules/eslint-no-restricted-imports.json",
@@ -142,8 +153,16 @@ const RULES: Record<string, { caught: [string, string, string][]; passed: [strin
           cases: { true: "Pass the command as a list of arguments instead of `shell=True`." },
           default: "Pass a list of arguments instead of `shell=True`, so rerail stops reporting it.",
         }), "rerail"],
+      // A hedge that names Rerail: the steer asks for "this rule", not for the hedge to go.
+      ["packs/php/candidates/rules/php-count-in-loop-condition.json",
+        document("php-count-in-loop-condition", "Rerail found no write to `$V` in this loop; if `$V` grows inside it, keep the call here, otherwise hoist it."), "Rerail"],
+      // Code left unquoted: the steer asks to quote it.
+      ["packs/php/rules/phpcs-no-silenced-errors.json",
+        document("phpcs-no-silenced-errors", "Add a rerail-ignore comment with a reason where the silenced call is intended."), "rerail"],
     ],
     passed: [
+      ["packs/php/candidates/rules/php-count-in-loop-condition.json",
+        document("php-count-in-loop-condition", "This rule found no write to `$V` in this loop; if `$V` grows inside it, keep the call here, otherwise hoist it.")],
       // Quoted code may hold it.
       ["packs/php/rules/phpcs-no-silenced-errors.json", document("phpcs-no-silenced-errors", "Add a `// rerail-ignore <id> -- <reason>` comment only where silencing is intended.")],
       // The name everywhere but the message: the description, and an option's default holding a "message" of its own.
