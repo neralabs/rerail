@@ -176,6 +176,7 @@ struct Out {
     nodes_mismatch: Vec<String>,
     extra_nodes: BTreeMap<String, u64>,
     failures: Vec<String>,
+    annotations: u64,
 }
 
 fn col<'t>(t: &'t Table, name: &str) -> usize {
@@ -491,6 +492,8 @@ pub fn run(args: &[String]) {
     let limit: Option<usize> = arg(args, "--limit").map(|x| x.parse().unwrap());
     let only: Option<String> = arg(args, "--only");
     let check = !args.iter().any(|a| a == "--no-check");
+    // `--typedefs`: also time `string_type_definition` per file (SCHEMA § 1.3).
+    let typedefs = args.iter().any(|a| a == "--typedefs");
     std::fs::create_dir_all(&out_dir).unwrap();
     let root = Path::new(&root);
     let mut paths = walk(root);
@@ -524,7 +527,16 @@ pub fn run(args: &[String]) {
                         let mut ns = facts::BuildNs::default();
                         let Ok(facts::Built::Facts(f)) = facts::build_timed(path, source.clone(), &mut ns) else { continue };
                         let vns = check_file(&rules, &targets, &vc, &f, path, &source, &mut out, check);
-                        out.per_file.push((i as u32, source.len() as u32, f.len() as u32, ns.parse, ns.extract, vns, 0));
+                        let mut tns = 0;
+                        if typedefs {
+                            let t = Instant::now();
+                            match f.typedefs() {
+                                Ok(d) => out.annotations += d.len() as u64,
+                                Err(e) => out.failures.push(format!("{path}: typedefs: {e}")),
+                            }
+                            tns = t.elapsed().as_nanos() as u64;
+                        }
+                        out.per_file.push((i as u32, source.len() as u32, f.len() as u32, ns.parse, ns.extract, vns, tns));
                     }
                     out
                 })
@@ -538,7 +550,7 @@ pub fn run(args: &[String]) {
     let mut per_file = Vec::new();
     let mut view_ns = vec![0u64; vc.stmts.len()];
     let mut view_rows = vec![0u64; vc.stmts.len()];
-    let (mut skipped, mut collisions) = (0, 0);
+    let (mut skipped, mut collisions, mut annotations) = (0, 0, 0u64);
     let (mut nodes_mismatch, mut failures) = (Vec::new(), Vec::new());
     let mut extra_nodes: BTreeMap<String, u64> = BTreeMap::new();
     for o in outs {
@@ -557,6 +569,7 @@ pub fn run(args: &[String]) {
             view_rows[i] += o.view_rows[i];
         }
         skipped += o.skipped_errors;
+        annotations += o.annotations;
         collisions += o.key_collisions;
         nodes_mismatch.extend(o.nodes_mismatch);
         for (k, v) in o.extra_nodes {
@@ -565,9 +578,9 @@ pub fn run(args: &[String]) {
         failures.extend(o.failures);
     }
     per_file.sort();
-    let mut tsv = String::from("path\tbytes\tnodes\tparse_ns\textract_ns\tviews_ns\n");
+    let mut tsv = String::from("path\tbytes\tnodes\tparse_ns\textract_ns\tviews_ns\ttypedefs_ns\n");
     for p in &per_file {
-        tsv.push_str(&format!("{}\t{}\t{}\t{}\t{}\t{}\n", paths[p.0 as usize], p.1, p.2, p.3, p.4, p.5));
+        tsv.push_str(&format!("{}\t{}\t{}\t{}\t{}\t{}\t{}\n", paths[p.0 as usize], p.1, p.2, p.3, p.4, p.5, p.6));
     }
     std::fs::write(Path::new(&out_dir).join("per-file.tsv"), tsv).unwrap();
     let stage_json: Vec<Json> = stats.iter().map(|((s, c), v)| json!({"stage": s, "clause": c, "files": v.files, "rows": v.rows, "bag_mismatch": v.bag_mismatch, "order_mismatch": v.order_mismatch, "bag_examples": v.bag_examples, "examples": v.examples})).collect();
@@ -591,6 +604,8 @@ pub fn run(args: &[String]) {
         "extract_ns": summary(per_file.iter().map(|p| p.4).collect()),
         "parse_extract_ns": summary(per_file.iter().map(|p| p.3 + p.4).collect()),
         "views_ns": summary(per_file.iter().map(|p| p.5).collect()),
+        "typedefs_ns": summary(per_file.iter().map(|p| p.6).collect()),
+        "annotations": annotations,
     });
     std::fs::write(Path::new(&out_dir).join("results.json"), serde_json::to_string_pretty(&res).unwrap()).unwrap();
     println!("{}", serde_json::to_string_pretty(&json!({"files": res["files"], "wall_s": wall, "bag_mismatch_total": total_bag, "order_mismatch_total": total_order, "failures": res["failures"].as_array().map(|a| a.len()), "nodes_mismatch": res["nodes_mismatch"].as_array().map(|a| a.len()), "collisions": collisions, "skipped": skipped, "views_ns": res["views_ns"], "parse_extract_ns": res["parse_extract_ns"]})).unwrap());
