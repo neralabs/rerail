@@ -21,9 +21,10 @@ Branch `Moti-Velz/facts-engine-s1-ir` (local, not pushed); worktree `~/orca/work
 
 | Gate | Target | Measured | Pass/fail | Run dir (`~/rerail-bench/facts/phase-2/s1-ir/runs/…`) |
 |---|---|---|---|---|
-| G2.1 compile + classify | 60/60, or each refusal named | **60/60 classified, every refusal named.** Leaf-executor pass: 20/60 compile clean; 282 refusals over 40 rules, all named (§ 5.3), 1 runtime refusal (`annotation`). IR-level pass: 55/60 compile clean; 33 refusals over 5 rules (§ 5.4): 31 order-dependent constructs in repository plans, `reference_edges`, a `calls` atom | **pass** (as stated; see § 6 for what "compile" means at each level) | `20261022T153432-census` (`census.md`, `census-ir.md`, `census-ir-scan-project-sources.md`, JSON beside each) |
+| G2.1 compile + classify | 60/60, or each refusal named | **60/60 classified, every refusal named.** Leaf-executor pass: 20/60 compile clean; 282 refusals over 40 rules, all named (§ 5.3), 1 runtime refusal (`annotation`). IR-level pass: 55/60 compile clean; 33 refusals over 5 rules (§ 5.4): 31 order-dependent constructs in repository plans, `reference_edges`, a `calls` atom | **pass** (as stated; see § 6 for what "compile" means at each level) | `20261022T155655-census` (`census.md`, `census-ir.md`, `census-ir-scan-project-sources.md`, JSON beside each) |
 | G2.1 leak test | the seeded cross-file leak fails to compile | `cargo test -p rerail-facts leak`: 4 tests. The seeded `partitionBy: file` clause reading `reference_edges` is refused ("cross-file read in a per-file plan: `reference_edges`"); so are a `calls` atom in a `forbid` and a `file.module` projection in a per-file input; the control compiles. Type level: a `compile_fail` doctest (`ir.rs`) shows `Rel<FileSource>` cannot hold `RepoSource::Exported`. Mutant 7 (`classify::file_source` admits a cross-file leaf) fails 3 of the 4 | **pass** | `cargo test` output (no run dir; reproduce with the command) |
 | Move: no behaviour change | Spike A replay unchanged | 1,253/1,259; 0 FP; 2 FN; 6 failures; all mismatches `serverplan_quality` (= Phase 1) | **pass** | `20261022T145533-replay` |
+| Parity after merging integration (`2b111331b`) | replay and repository unchanged | replay: 1,253/1,259, 0 FP, 6 failures, all `serverplan_quality`. Repository: 173/173, 0 FP, 0 FN, 38 failures, all `quality-contracts-1`; file set 9,010 = oracle's | **pass** | `20261022T154937-replay`, `20261022T155011-repo/parity.json` (bench-lock; load 29–31, so its time is not reported) |
 | EXPLAIN stable | byte-identical across runs | logical EXPLAIN of all 60 rules: 10,910 lines; two runs identical (sha256 `02aa1ebc…`) | **pass** | `20261022T152742-explain` |
 | Rewrite mutants | each caught | 7, 8, 11, 12, 13, 14, 15: each fails ≥ 1 `rerail-facts` test with `--features mutants FACTS_MUTANT=<n>`; the clean run passes 12/12 | **pass** | command in § 3 |
 
@@ -43,7 +44,7 @@ Branch `Moti-Velz/facts-engine-s1-ir` (local, not pushed); worktree `~/orca/work
 
 ## 4. Artifacts
 
-- Census: `20261022T153432-census/*.json`. The JSON lists every refusal per rule (clause, location, construct), every exported relation's columns and flags, the sharing groups with their stage lists, and the order-dependent constructs per repository plan.
+- Census: `20261022T155655-census/*.json`. The JSON lists every refusal per rule (clause, location, construct), every exported relation's columns and flags, the sharing groups with their stage lists, and the order-dependent constructs per repository plan.
 - Logical plans of all 60 rules: `20261022T152742-explain/explain-1.txt`.
 - Export volume: `20261022T153856-export-volume/export-volume.json`.
 
@@ -389,7 +390,12 @@ Order-dependent constructs left in repository plans (after the cut):
   - regex: `content` gate 53, `lines.exclude` 38, `lines.include` 1, `lines.indentation` 5.
 
   These are S2's (the leaf executor). Under INVARIANTS I3 the end state is the pattern front end lowering matcher rules into the algebra over `node`/`child`/`field`. This slice keeps them as leaves, checked by the executor, as PHASE-2's S1 text says.
-- **The order audit is conservative.** Candidate keys come from set reads, `DISTINCT`, group keys and `row_number` partitions only, not yet from I2's declared fact keys (SCHEMA § 1.2.1). A refusal may therefore be lifted by a key the audit cannot see yet. S3's narrowing items 1–7 match the refusals listed in § 5.8.
+- **The order audit is conservative.** Candidate keys come from:
+  - set reads, `DISTINCT`, group keys and `row_number` partitions;
+  - the syntax tables' declared keys (`id`, `dst`);
+  - per-content keys plus a path column for exports.
+
+  An export that is distinct per content but carries no path column has no key across contents; `9e2861b87` fixed an earlier acceptance of that case. Adding the keys changed no refusal count. I2's full declarations (SCHEMA § 1.2.1: FDs, the preorder interval, cardinalities) are not yet attached to sources, so a key the audit cannot see may lift a refusal. S3's narrowing items 1–7 match the refusals listed in § 5.8.
 - **File-locality is syntactic.** A stage that is per path in effect, but whose inputs pass through a cross-file filter (e.g. `contract_blocks` → `block_results`), stays on the repository side. That is exact and conservative.
 - **Row order of exports.** An `ordered` export is read in path order with rows in content order. That equals the repository evaluation's order for these file-local subtrees because their leftmost leaf is path-ordered (IR.md § 7). S5's reference evaluator checks it.
 - `json_each` over objects: keys sorted, as in Phase 1.
@@ -402,7 +408,9 @@ Order-dependent constructs left in repository plans (after the cut):
   - `e2aece9c0`: front ends, classifier, compile, leak tests, census;
   - `02b49ed65`: registry and mutants;
   - `862ccb7c4`: EXPLAIN, physical nodes, audit;
-  - `3da66020f`, `0912ab1eb`: census passes, order audit, export volume.
+  - `3da66020f`, `0912ab1eb`, `b32aa901a`: census passes, order audit, export volume;
+  - `7d7cab646`: report, IR.md § 7/7a; `693828e43`: merge of integration `2b111331b`;
+  - `9e2861b87`: key inference from declared syntax keys and export path columns.
 - **Interfaces:**
   - `docs/facts/IR.md`, `facts/src/ir.rs`;
   - `rerail_facts::compile::{compile, compile_report}`;
