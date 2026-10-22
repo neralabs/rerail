@@ -1,5 +1,5 @@
 adapter: ruff
-# Ruff's documents in rerail's python pack (NER-1739).
+# Ruff's documents in rerail's python pack.
 rerail:
   pack: python
   project: ruff

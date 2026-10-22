@@ -1,5 +1,5 @@
 adapter: clippy
-# Clippy's documents in rerail's rust pack (NER-1894).
+# Clippy's documents in rerail's rust pack.
 rerail:
   pack: rust
   project: clippy

@@ -1017,7 +1017,7 @@ export const SPECS = [
       },
     ],
   },
-  // Ships off when promoted (NER-1797): its pack.json entry takes `"on": false`, mirroring plugin:react/jsx-runtime.
+  // Ships off when promoted: its pack.json entry takes `"on": false`, mirroring plugin:react/jsx-runtime.
   // Under React 17's automatic JSX runtime (tsconfig `"jsx": "react-jsx"`, babel `runtime: "automatic"`, Next.js,
   // Vite) `React` need not be in scope, so the rule flags every JSX file and steers agents to add an unused
   // `import React`. Upstream has no option for this either, and a policy cannot read the project's runtime. A repo should

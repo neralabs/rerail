@@ -1,6 +1,6 @@
 /**
  * phpcs-generic-php-no-silenced-errors (packs/php/, candidate) must not steer an agent into removing an @ that the code needs
- * (NER-1811). PHP_CodeSniffer's sniff reports every @ operator and its message only says silencing is discouraged, so
+ *. PHP_CodeSniffer's sniff reports every @ operator and its message only says silencing is discouraged, so
  * an agent removes the @. Two idioms need it:
  *
  * - The race-safe directory or file call, `!@mkdir($d) && !is_dir($d)`: when another process creates the directory
@@ -89,7 +89,7 @@ const REPORTED: ReadonlyArray<[string, string, string]> = [
 /** An @ the code needs, followed by the check that decides the outcome: the rule stays silent. */
 const SILENT: ReadonlyArray<[string, string]> = [
   [
-    "the race-safe mkdir idiom from Laravel-Excel's TemporaryFileFactory (NER-1811)",
+    "the race-safe mkdir idiom from Laravel-Excel's TemporaryFileFactory",
     php("if (!is_dir($d) && !@mkdir($d) && !is_dir($d)) { throw new RuntimeException(); }"),
   ],
   ["mkdir re-checked with is_dir", php("if (!@mkdir($dir, 0o777, true) && !is_dir($dir)) {", "    throw new RuntimeException();", "}")],
@@ -107,7 +107,7 @@ const SILENT: ReadonlyArray<[string, string]> = [
   ["unlink re-checked with is_file", php("if (!@unlink($f) && is_file($f)) {}")],
   ["unlink re-checked inside a larger expression", php("$pruned = (@unlink($file) || !file_exists($file)) && $pruned;")],
   ["rmdir re-checked with is_dir", php("if (!@rmdir($dir) && is_dir($dir)) { throw new RuntimeException(); }")],
-  ["Symfony's deprecation notice (NER-1811)", php("@trigger_error('X is deprecated', E_USER_DEPRECATED);")],
+  ["Symfony's deprecation notice", php("@trigger_error('X is deprecated', E_USER_DEPRECATED);")],
   ["a deprecation notice built with sprintf and a fully qualified constant", php("@trigger_error(sprintf('The \"%s\" class is deprecated.', Foo::class), \\E_USER_DEPRECATED);")],
   ["a fully qualified trigger_error deprecation", php("@\\trigger_error('X is deprecated', E_USER_DEPRECATED);")],
   ["a deprecation notice with a named level", php("@trigger_error('X is deprecated', error_level: E_USER_DEPRECATED);")],

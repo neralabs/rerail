@@ -1,4 +1,4 @@
-/** Safety conditions in native findings are part of the agent-facing guidance contract (NER-2036). */
+/** Safety conditions in native findings are part of the agent-facing guidance contract. */
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
