@@ -43,7 +43,7 @@ pub fn run(args: &[String]) {
     std::fs::create_dir_all(&out).unwrap();
     let root = Path::new(&root);
     let paths = repo::walk(root);
-    let config = Map::new();
+    let config: Map<String, Json> = crate::arg(args, "--config").map(|c| serde_json::from_str(&c).expect("--config")).unwrap_or_default();
     let mut report = Vec::new();
     for rule in RULES {
         let doc: Json = serde_json::from_str(&std::fs::read_to_string(format!("{rules_dir}/data-layer-{rule}.json")).unwrap()).unwrap();
@@ -127,6 +127,6 @@ pub fn run(args: &[String]) {
             }));
         }
     }
-    std::fs::write(out.join("export-volume.json"), serde_json::to_string_pretty(&json!({ "files": paths.len(), "exports": report })).unwrap()).unwrap();
+    std::fs::write(out.join("export-volume.json"), serde_json::to_string_pretty(&json!({ "files": paths.len(), "config": config, "exports": report })).unwrap()).unwrap();
     println!("{} exports measured over {} files", report.len(), paths.len());
 }
