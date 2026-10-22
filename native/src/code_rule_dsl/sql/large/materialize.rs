@@ -63,6 +63,29 @@ pub(super) struct Producer {
     pub columns: Vec<String>,
     pub body: String,
 }
+
+/// A single-use producer at its consumer's first FROM can stay relational. A reference
+/// inside a predicate or after another row source must still publish once: inlining it
+/// there can repeat a window, DISTINCT, or aggregate for every outer data row.
+pub(super) fn pipeline(name: &str, consumers: &[&str]) -> bool {
+    let mut uses = 0;
+    let mut direct = false;
+    for sql in consumers {
+        let words = lex::identifiers(sql);
+        for pair in words.windows(2) {
+            if !matches!(pair[0], "FROM" | "JOIN") || pair[1] != name {
+                continue;
+            }
+            uses += 1;
+            let pos = pair[0].as_ptr() as usize - sql.as_ptr() as usize;
+            direct = lex::top(sql).contains(&pos)
+                && pair[0] == "FROM"
+                && words.iter().position(|w| matches!(*w, "FROM" | "JOIN"))
+                    == words.iter().position(|w| std::ptr::eq(*w, pair[0]));
+        }
+    }
+    uses == 1 && direct
+}
 pub(super) fn split(
     sql: &str,
     schemas: &BTreeMap<String, Schema>,
@@ -233,6 +256,17 @@ pub(super) fn membership(sql: &str) -> Option<Membership<'_>> {
             continue;
         }
         let identifiers = lex::identifiers(query);
+        // Workspace demands are immutable throughout a SQL execution. Keep their IN
+        // predicates visible to node's all-at-once file constraint. Rewriting them to
+        // correlated EXISTS removes that access path and scans unrelated files/nodes.
+        let tables = identifiers
+            .windows(2)
+            .filter(|w| matches!(w[0], "FROM" | "JOIN"))
+            .map(|w| w[1])
+            .collect::<Vec<_>>();
+        if !tables.is_empty() && tables.iter().all(|t| matches!(*t, "runs" | "roots")) {
+            continue;
+        }
         let mut aliases = BTreeSet::new();
         for (j, &w) in identifiers.iter().enumerate() {
             if !matches!(w, "FROM" | "JOIN") {

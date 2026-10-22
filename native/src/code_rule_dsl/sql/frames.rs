@@ -831,10 +831,47 @@ impl FrameStore {
 
     /// SQL-program storage boundary. The SELECT has consumed its inputs before its aggregate
     /// calls this method. No rule or SQL is evaluated here; it implements table append/replace.
+    #[cfg(test)]
     pub(super) fn program_rows(
         &self,
         name: &str,
-        rows: Vec<Vec<Value>>,
+        mut rows: Vec<Vec<Value>>,
+        replace: bool,
+        ignore: bool,
+    ) -> Result<usize> {
+        self.program_slices(
+            name,
+            rows.iter_mut().map(Vec::as_mut_slice),
+            replace,
+            ignore,
+        )
+    }
+
+    /// A publication buffers bounded row-aligned chunks, rather than one allocation per row.
+    /// Values still belong to the aggregate until its producer cursors have reached EOF.
+    pub(super) fn program_chunks(
+        &self,
+        name: &str,
+        mut chunks: Vec<Vec<Value>>,
+        width: usize,
+        replace: bool,
+        ignore: bool,
+    ) -> Result<usize> {
+        if width == 0 || chunks.iter().any(|c| !c.len().is_multiple_of(width)) {
+            return Err(Error::ModuleError("program publication width".into()));
+        }
+        self.program_slices(
+            name,
+            chunks.iter_mut().flat_map(|c| c.chunks_mut(width)),
+            replace,
+            ignore,
+        )
+    }
+
+    fn program_slices<'a>(
+        &self,
+        name: &str,
+        rows: impl Iterator<Item = &'a mut [Value]>,
         replace: bool,
         ignore: bool,
     ) -> Result<usize> {
@@ -845,11 +882,6 @@ impl FrameStore {
             .cloned()
             .ok_or_else(|| Error::ModuleError(format!("unknown program relation {name}")))?;
         let width = shared.get().columns.len();
-        if rows.iter().any(|row| row.len() != width) {
-            return Err(Error::ModuleError(format!(
-                "program relation {name}: wrong row width"
-            )));
-        }
         if replace {
             self.clear(name);
         }
@@ -861,11 +893,10 @@ impl FrameStore {
             Key::Rowid(at) => vec![*at],
             Key::Primary(columns) => columns.clone(),
         };
-        let encode = |values: &[Value]| -> Vec<u8> {
+        fn encode<'a>(values: impl Iterator<Item = ValueRef<'a>>) -> Vec<u8> {
             let mut out = Vec::new();
-            for &at in &keys {
-                let value = &values[at];
-                let value = Probe::of(value.into());
+            for value in values {
+                let value = Probe::of(value);
                 match value {
                     Probe::Null => out.push(0),
                     Probe::Integer(n) => {
@@ -894,20 +925,20 @@ impl FrameStore {
                 }
             }
             out
-        };
+        }
         let mut seen = std::collections::HashSet::new();
         if ignore && !keys.is_empty() {
             for row in 0..frame.len {
-                let values: Vec<Value> = frame
-                    .columns
-                    .iter()
-                    .map(|c| Value::try_from(c.get(row)))
-                    .collect::<std::result::Result<_, _>>()?;
-                seen.insert(encode(&values));
+                seen.insert(encode(keys.iter().map(|&at| frame.columns[at].get(row))));
             }
         }
         let mut inserted = 0;
-        for mut values in rows {
+        for values in rows {
+            if values.len() != width {
+                return Err(Error::ModuleError(format!(
+                    "program relation {name}: wrong row width"
+                )));
+            }
             if let Key::Rowid(at) = frame.key {
                 if values[at] == Value::Null {
                     values[at] = Value::Integer(
@@ -925,7 +956,10 @@ impl FrameStore {
                     ));
                 }
             }
-            if ignore && !keys.is_empty() && !seen.insert(encode(&values)) {
+            if ignore
+                && !keys.is_empty()
+                && !seen.insert(encode(keys.iter().map(|&at| ValueRef::from(&values[at]))))
+            {
                 continue;
             }
             let live = self.live.fetch_add(1, Atomic::Relaxed) + 1;
@@ -943,7 +977,7 @@ impl FrameStore {
                 frame.dense &= row == 0 || Some(id) == frame.largest.checked_add(1);
                 frame.largest = if row == 0 { id } else { frame.largest.max(id) };
             }
-            for (column, value) in frame.columns.iter_mut().zip(&values) {
+            for (column, value) in frame.columns.iter_mut().zip(values.iter()) {
                 column.push(row, value.into());
             }
             frame.len += 1;

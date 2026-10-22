@@ -173,6 +173,9 @@ export function actionableSummary(report) {
       : measuredCpuNs === 0 ? "No thread CPU time was captured. Inspect the wall-time trace before assigning CPU priorities."
       : "Start with the highest-cost action. Confirm improvements with an unprofiled run and native output parity.",
     budget: {
+      preparationCpuMs: queries.some(q=>q.preparation) ? ms(queries.reduce((n,q)=>n+(q.preparation?.cpuNs??0),0)) : null,
+      preparationRuns: queries.reduce((n,q)=>n+(q.preparation?.runs??0),0),
+      largestStatementMemoryBytes: Math.max(0,...queries.map(q=>q.preparation?.maxStatementMemoryBytes??0)),
       cpuTimingAvailable: measuredCpuNs > 0, measuredCpuMs: ms(measuredCpuNs), sqlExecutionCpuMs: ms(total(sqlQueries, "selfCpuNs")),
       operatorExclusiveCpuMs: ms(total(queries.filter(query => query.kind === "operator"), "selfCpuNs")),
       profiledApplyCpuMs: report.workload?.results?.sql?.apply?.cpuMs ?? null,
@@ -225,6 +228,9 @@ export function summaryMarkdown(report) {
   lines.push("", summary.budget.frameIndexCpuMs === null
     ? "Frame index construction was not timed in this capture. Re-run with the current profiler to isolate this cost."
     : `Frame index construction: **${fmt(summary.budget.frameIndexCpuMs)} ms** across ${fmt(summary.budget.frameIndexTimedBuilds)} timed builds (${fmt(summary.budget.frameIndexBuilds)} total). This subcost includes scan-order preparation on lookup cache misses and is already included in SQL CPU.`);
+  if (summary.budget.preparationCpuMs !== null) lines.push("",
+    `Measured preparation and cache lookup: **${fmt(summary.budget.preparationCpuMs)} ms** across ${fmt(summary.budget.preparationRuns)} submissions. This time is included in operator CPU.`, "",
+    `Largest prepared statement: **${fmt(summary.budget.largestStatementMemoryBytes / 1048576)} MiB** before execution. This excludes relation storage and other cached statements.`);
   lines.push("", "## Priority actions", "", summary.interpretation);
   if (!summary.actions.length) lines.push("", "No action group reaches both 10 ms and 1% of recorded CPU. Use a larger representative capture before drawing a conclusion.");
   for (const action of summary.actions) {
@@ -247,10 +253,10 @@ export function summaryMarkdown(report) {
   if (report.relationalStages?.length) {
     lines.push("", "## Work inside SQL programs", "",
       "These stage times are included in SQL CPU above. Do not add them to the recorded budget.", "",
-      "| Stage | Source | CPU ms | Runs | Columns | Incomplete |", "|---|---|---:|---:|---:|---:|");
+      "| Stage | Source | CPU ms | Runs | Columns | Published rows | Frame advances | Incomplete |", "|---|---|---:|---:|---:|---:|---:|---:|");
     for (const [index, stage] of report.relationalStages.slice(0, 10).entries()) {
       const source=stage.source?.ruleId ? `${stage.source.ruleId}/${stage.source.clauseId}` : stage.source ? `${stage.source.scope}:${stage.source.statement}` : "shared relation";
-      lines.push(`| S${index} | ${source.replaceAll("|","\\|").replaceAll("\n"," ")} | ${fmt(stage.cpuNs / 1e6)} | ${stage.runs} | ${stage.columns.length} | ${stage.incomplete} |`);
+      lines.push(`| S${index} | ${source.replaceAll("|","\\|").replaceAll("\n"," ")} | ${fmt(stage.cpuNs / 1e6)} | ${stage.runs} | ${stage.columns.length} | ${stage.publishedRows === undefined ? "—" : fmt(stage.publishedRows)} | ${stage.frameNext === undefined ? "—" : fmt(stage.frameNext)} | ${stage.incomplete} |`);
     }
     lines.push("", "Inspect the hottest stage bodies in profile.json. Restrict their input grain and capture width before changing materialization boundaries.");
   }

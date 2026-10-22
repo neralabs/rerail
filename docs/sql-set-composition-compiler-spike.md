@@ -1679,3 +1679,136 @@ Seven compiler regressions cover iteration freshness, defaults, mutation predica
 The profiling and query-shape scripts pass 18 tests.
 Library Clippy passes with and without `unbounded-work`.
 Formatting and whitespace checks pass.
+
+## Profile-guided SQL generation fixes — 2026-10-21
+
+The baseline for this investigation is commit `5f1960f2`.
+Its complete profiles identify preparation and intermediate relation publication as separate costs.
+The 32-file capture records 441,117,364 VM instructions and 9,970,270 published frame rows.
+The 138-file capture shifts more CPU into SQL execution.
+The workloads, exclusions, worker count, allocator override, and native outcome oracle remain unchanged.
+
+### Preserve access paths and remove unnecessary copies
+
+The general membership rewrite destroys an existing batched access path.
+It converts immutable file demands from `IN` into correlated `EXISTS` predicates.
+The node virtual table then loses its all-at-once file constraint.
+The compiler now preserves membership queries that read only immutable workspace demands.
+Mutable demands still refresh on every SQL control iteration.
+
+The rewrite also copies primary-key sets before it considers direct indexed probes.
+The compiler now resolves proven non-null key probes before general nullable membership lowering.
+A composite primary key alone does not prove that its columns are non-null.
+The NULL, empty-set, and negation regression now includes nullable composite keys.
+The proof also excludes keys that an outer join can extend with NULL.
+A separate regression checks nullable keys on both sides of membership.
+
+Single-use CTEs at their consumer's first row source now remain relational.
+The compiler still publishes shared producers and producers beneath per-row predicates.
+It also resolves nested `WITH` scopes before it considers this transformation.
+These restrictions preserve iteration freshness and prevent repeated materialization inside data-row loops.
+
+The first inlining candidate incorrectly extracts membership from a nested CTE scope.
+Its profile fails closed at 28 executions because the job is incomplete.
+Thirteen existing tests also reject that candidate with `no such table: u`.
+The corrected transformation passes those tests and a new nested-scope regression.
+The corrected 32-file job passes the complete 72-execution gate with native parity.
+
+Publication aggregates now use bounded row-aligned chunks instead of one allocation per row.
+Duplicate suppression reads only key columns from existing rows.
+It no longer clones complete capture rows to encode a primary key.
+The SQL producer still determines every row; storage callbacks execute no SQL or rule predicates.
+
+Together, these changes reduce stateful SQL from 11,466,112 to 10,404,379 bytes.
+They reduce registered stateful relations from 3,922 to 3,746.
+The corrected intermediate capture records 359,884,105 VM instructions and 8,841,123 published frame rows.
+Its unprofiled 32-file apply uses 12.64 CPU seconds, compared with the baseline's 14.86 seconds.
+
+### Identify preparation directly
+
+Operator-exclusive CPU previously combines preparation, result handling, and profiling overhead.
+The profiler now measures preparation and cache lookup separately within that span.
+It also records prepared-statement memory before execution.
+Set-step traces include published rows, frame advances, column reads, insertions, and index costs.
+These subcosts do not create SQL executions or add CPU twice to the summary.
+
+The corrected intermediate capture measures 7.24 CPU seconds in preparation across 60 submissions.
+Its largest prepared statement occupies 17.84 MiB before execution.
+A native sample identifies SQLite expression comparison and constant handling during preparation.
+The generated instruction dispatcher contributes thousands of distinct comparison constants per program.
+SQLite's constant factoring searches a linear expression list, which amplifies preparation work.
+
+The dispatcher now tests PC bits and uses eight reusable leaf labels.
+Its masks are powers of two, so dispatch no longer creates a distinct comparison constant for every instruction.
+Sparse branches retain the full program address range and cannot alias higher PCs onto lower leaf labels.
+A regression checks every PC in a 16,384-address sparse program.
+The first unprofiled 32-file sample uses 9.84 CPU seconds with complete native parity.
+
+The isolated dispatch capture measures 4.37 CPU seconds in preparation, compared with 7.24 seconds before that change.
+SQL execution remains approximately 5.5 CPU seconds in both captures.
+The bit dispatcher executes slightly more VM instructions, but avoids substantial work during preparation.
+This comparison isolates preparation savings from relational execution savings.
+
+### Final verification and remaining work
+
+The final build passes 1,494 code-rule tests, including generated differential cases and the actual-program plan audit.
+It retains the 44 existing ignored tests.
+The profiling and query-shape scripts pass 19 tests.
+Library Clippy passes with and without `unbounded-work`.
+The frozen build and its source hashes are recorded in `/tmp/rerail-sql-tuning-20261021/build-chunks.json`.
+
+Both final complete-job captures pass at 72 actual executions with complete native outcome parity.
+Each capture includes all four sessions, setup, transactions, matching, plans, and bytecode.
+The captures are `chunks-32-profile` and `chunks-138-profile` under the same artifact directory.
+The native outcomes remain 33 and 580 violations, with no failures or blind files.
+
+The larger job still publishes about 58.8 million frame rows and executes about 2.38 billion VM instructions.
+Its baseline publishes about 67.0 million rows and executes about 2.86 billion instructions.
+B023's recursive demand insertion and expansion remain the hottest individual set steps.
+Their SQL repeats canonical node-to-atom lookups inside demand joins and anti-joins.
+The total cost also includes many smaller publications across other clauses.
+
+The remaining compiler work is broader than changing join syntax.
+Straight-line operators must remain relational producers across operator boundaries, with publication reserved for recursion and shared reuse.
+Capture columns should survive through selection views or late joins instead of repeated value-buffer copies.
+Canonical demand keys should be projected once before joins and duplicate suppression.
+These are proposed next changes; the current fixes do not claim those reductions.
+Peak process memory remains high, so lower CPU does not close the memory regression against `c109a915`.
+
+
+### Reject unbounded publication buffers
+
+The first publication-buffer spike uses one growing value vector.
+Three cold runs confirm CPU improvements but expose a memory regression on the larger workload.
+Its median peak RSS rises from 2.78 GB to 3.27 GB.
+This candidate is rejected despite its CPU improvement.
+
+The selected buffer uses row-aligned chunks with at most 4,096 values per ordinary chunk.
+A row wider than that limit receives its own chunk.
+Unused capacity is bounded independently of the relation's total size.
+A regression crosses several chunk boundaries and checks generated rowids, NULL values, and ignored duplicate keys.
+
+Both chunk-buffer acceptance captures pass, and all repeated measurements preserve complete native outcomes.
+Three cold runs per build and cohort give these medians:
+
+| Files | Previous apply CPU, seconds | New apply CPU, seconds | CPU reduction | Previous peak RSS, GB | New peak RSS, GB |
+|---:|---:|---:|---:|---:|---:|
+| 32 | 14.75 | 9.78 | 33.7% | 1.43 | 1.28 |
+| 138 | 52.08 | 41.43 | 20.5% | 2.78 | 2.52 |
+
+Each sample uses a new Node process and four workers.
+The baseline samples alternate with the rejected flat-buffer candidate; the final chunk-buffer samples run subsequently.
+All builds use the same diagnostic allocator override.
+Host load varies, so these comparisons use CPU rather than wall time.
+The evidence retains every wall-time, CPU, memory, and outcome sample.
+
+The final stateful SQL totals 10,954,255 bytes across eleven programs, with 3,746 registered relations.
+The final 32-file capture executes 364,668,440 VM instructions and publishes 8,841,123 frame rows.
+The larger capture executes 2,384,203,863 instructions and publishes 58,799,718 rows.
+Frame index construction costs 0.42 CPU seconds within 36.07 SQL CPU seconds on the larger capture.
+This measured subcost does not account for the remaining runtime by itself.
+
+The compact evidence is `benchmark/sql-generation-tuning-evidence.json`.
+It records the source fingerprint, frozen addon hash, complete acceptance gates, intermediate failures, isolated dispatcher comparison, and repeated samples.
+The final addon hash is `2a06576473d6517d6fc56cfca2cf49f948483b8023a0b20ee49577215f0d6df5`.
+The evidence identifies proposed further changes separately from implemented changes.

@@ -53,6 +53,10 @@ pub(super) fn frame(event: FrameEvent, count: usize) {
     }
 }
 
+pub(super) fn frame_snapshot() -> [u64; 9] {
+    FRAME.get()
+}
+
 /// Time only cache misses, including any scan-order preparation needed by the lookup.
 /// These spans are contained in SQL time; they must not be added to the CPU budget.
 pub(super) fn index_build(rows: usize) -> IndexBuild {
@@ -241,6 +245,7 @@ impl Profiler {
             started: Started::now(),
             start_ns: now(),
             rows: None,
+            preparation: None,
         }
     }
 
@@ -325,9 +330,14 @@ pub(super) struct Operation<'a> {
     started: Started,
     start_ns: u64,
     rows: Option<usize>,
+    preparation: Option<Value>,
 }
 
 impl Operation<'_> {
+    pub(super) fn prepared(&mut self, elapsed: Timing, memory: i32) {
+        self.preparation = Some(json!({"cpuNs":elapsed.cpu,"wallNs":elapsed.wall,
+            "statementMemoryBytes":memory}));
+    }
     pub(super) fn finish(mut self, rows: usize) {
         self.rows = Some(rows);
     }
@@ -343,6 +353,7 @@ impl Drop for Operation<'_> {
             "wallNs":elapsed.wall,"cpuNs":elapsed.cpu,
             "selfWallNs":elapsed.wall.saturating_sub(sql.wall),"selfCpuNs":elapsed.cpu.saturating_sub(sql.cpu),
             "rows":self.rows,"completed":self.rows.is_some(),"context":context,
+            "preparation":self.preparation,
             "thread":format!("{:?}",std::thread::current().id())}));
         state.context = self.previous.take().unwrap_or(Value::Null);
     }

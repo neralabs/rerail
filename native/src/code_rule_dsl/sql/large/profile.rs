@@ -58,8 +58,8 @@ pub(super) fn register(db: &Connection) -> rusqlite::Result<()> {
         })
         .transpose()
         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-    let state = Mutex::new((writer, None::<(i64, i64, i64, Started)>));
-    db.create_scalar_function("p_position", 3, FunctionFlags::SQLITE_UTF8, move |ctx| {
+    let state = Mutex::new((writer, None::<(i64, i64, i64, Started, [u64; 9])>));
+    db.create_scalar_function("p_position", 4, FunctionFlags::SQLITE_UTF8, move |ctx| {
         let mut state = state.lock().unwrap();
         if state.0.is_none() {
             return Ok(1i64);
@@ -67,12 +67,19 @@ pub(super) fn register(db: &Connection) -> rusqlite::Result<()> {
         let phase: i64 = ctx.get(0)?;
         let pc: i64 = ctx.get(1)?;
         let tick: i64 = ctx.get(2)?;
-        if let Some((p, c, t, start)) = state.1.take() {
+        #[cfg(any(test, feature = "unbounded-work"))]
+        let frame = super::super::super::profiling::frame_snapshot();
+        #[cfg(not(any(test, feature = "unbounded-work")))]
+        let frame = [0u64; 9];
+        if let Some((p, c, t, start, before)) = state.1.take() {
             let elapsed = start.elapsed();
+            let published: Option<i64> = ctx.get(3)?;
+            let counters = std::array::from_fn::<_, 9, _>(|i| frame[i].saturating_sub(before[i]));
             writeln!(
                 state.0.as_mut().unwrap(),
                 "{}",
-                json!({"phase":p,"pc":c,"tick":t,"cpuNs":elapsed.cpu,"wallNs":elapsed.wall})
+                json!({"phase":p,"pc":c,"tick":t,"cpuNs":elapsed.cpu,"wallNs":elapsed.wall,
+                    "frame":counters,"publishedRows":published})
             )
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         }
@@ -83,7 +90,7 @@ pub(super) fn register(db: &Connection) -> rusqlite::Result<()> {
                 json!({"phase":phase,"pc":pc,"tick":tick,"started":true})
             )
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-            state.1 = Some((phase, pc, tick, Started::now()));
+            state.1 = Some((phase, pc, tick, Started::now(), frame));
         } else {
             state
                 .0

@@ -67,11 +67,35 @@ impl<'a> Builder<'a> {
         id
     }
     fn materialized(&mut self, sql: &str) -> Result<(String, Vec<String>), String> {
-        let mut sql = sql.to_owned();
+        // Resolve proven key membership before the general nullable-set materializer.
+        // Otherwise a direct indexed probe becomes a copied relation and three probes.
+        let mut sql = dml::key_probes(sql, self.schemas);
         let mut transient = Vec::new();
         if let Some((producers, body)) = materialize::split(&sql, self.schemas) {
             let mut names = HashMap::new();
-            for producer in producers {
+            for (at, producer) in producers.iter().enumerate() {
+                let source = materialize::bindings(&producer.body, &names);
+                let consumers = producers[at + 1..]
+                    .iter()
+                    .map(|p| p.body.as_str())
+                    .chain(std::iter::once(body.as_str()))
+                    .collect::<Vec<_>>();
+                // Resolve nested WITH scopes through the materializer first. Moving them
+                // under a FROM wrapper would hide local names from membership extraction.
+                if !lex::identifiers(&source).contains(&"WITH")
+                    && materialize::pipeline(&producer.name, &consumers)
+                {
+                    names.insert(
+                        producer.name.clone(),
+                        format!(
+                            "(WITH {}({}) AS NOT MATERIALIZED ({source}) SELECT * FROM {})",
+                            producer.name,
+                            producer.columns.join(","),
+                            producer.name
+                        ),
+                    );
+                    continue;
+                }
                 let mut columns = producer.columns.clone();
                 for key in ["k", "ek"] {
                     if producer.columns.iter().any(|c| c == key) {
@@ -84,12 +108,11 @@ impl<'a> Builder<'a> {
                     columns.push("INDEX (file,node)".into());
                 }
                 let name = self.temporary(&columns.join(","))?;
-                let source = materialize::bindings(&producer.body, &names);
                 let (source, nested) = self.materialized(&source)?;
                 self.action(dml::publish(self.schemas, &name, &source, "replace")?);
                 self.release(nested);
                 transient.push(name.clone());
-                names.insert(producer.name, name);
+                names.insert(producer.name.clone(), name);
             }
             let body = if body.contains("t.ek = f.file * 4294967296") {
                 body.replace(" JOIN t ON ", " CROSS JOIN t ON ")
@@ -558,13 +581,17 @@ impl<'a> Builder<'a> {
                     (value != default).then_some((i, value))
                 })
                 .collect::<Vec<_>>();
-            dispatch(&values, default)
+            dispatch(
+                &values,
+                default,
+                (usize::BITS - (end - 1).leading_zeros()).saturating_sub(1) as usize,
+            )
         };
         static PROGRAM: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         self.phase = PROGRAM.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         profile::definitions(self.phase, &self.code, &self.scopes)?;
         Ok(format!(
-            "WITH RECURSIVE driver(pc,tick,token,loops,stack) AS (VALUES(0,0,0,json('{{}}'),json('[]')) UNION ALL SELECT {},tick+1,CASE WHEN p_position({},pc,tick) THEN {} ELSE 0 END,{},{} FROM driver WHERE pc>=0 AND token IS NOT NULL), ready AS MATERIALIZED (SELECT CASE WHEN p_position({},-1,tick) THEN token END AS token FROM driver WHERE pc=-1 LIMIT 1) SELECT r.clause,r.file,r.node,r.payload,r.round FROM ready CROSS JOIN p_results r WHERE ready.token IS NOT NULL",
+            "WITH RECURSIVE driver(pc,tick,token,loops,stack) AS (VALUES(0,0,0,json('{{}}'),json('[]')) UNION ALL SELECT {},tick+1,CASE WHEN p_position({},pc,tick,token) THEN {} ELSE 0 END,{},{} FROM driver WHERE pc>=0 AND token IS NOT NULL), ready AS MATERIALIZED (SELECT CASE WHEN p_position({},-1,tick,token) THEN token END AS token FROM driver WHERE pc=-1 LIMIT 1) SELECT r.clause,r.file,r.node,r.payload,r.round FROM ready CROSS JOIN p_results r WHERE ready.token IS NOT NULL",
             cases(|i| &i.next, &forward),
             self.phase,
             cases(|i| &i.effect, "0"),
@@ -664,28 +691,32 @@ pub(super) fn compile(plan: &Plan) -> Result<Option<Program>, String> {
         clauses,
     }))
 }
-fn dispatch(values: &[(usize, &str)], default: &str) -> String {
+// Dispatch on bits, not thousands of distinct PC constants. SQLite factors comparison
+// constants through a linear expression list during preparation. Distinct PC literals make
+// that work quadratic; bit masks and the eight leaf labels reuse a small constant set.
+fn dispatch(values: &[(usize, &str)], default: &str, bit: usize) -> String {
     if values.is_empty() {
         return default.into();
     }
-    if values.len() <= 8 {
+    if bit <= 2 {
         return format!(
-            "CASE pc {} ELSE {default} END",
+            "CASE (pc & 7) {} ELSE {default} END",
             values
                 .iter()
-                .map(|(id, sql)| format!("WHEN {id} THEN {sql}"))
+                .map(|(id, sql)| format!("WHEN {} THEN {sql}", id & 7))
                 .collect::<Vec<_>>()
                 .join(" ")
         );
     }
-    let mid = values.len() / 2;
+    let mask = 1usize << bit;
+    let mid = values.partition_point(|(id, _)| id & mask == 0);
     format!(
-        "CASE WHEN pc<{} THEN {} ELSE {} END",
-        values[mid].0,
-        dispatch(&values[..mid], default),
-        dispatch(&values[mid..], default)
+        "CASE (pc & {mask}) WHEN 0 THEN {} ELSE {} END",
+        dispatch(&values[..mid], default, bit - 1),
+        dispatch(&values[mid..], default, bit - 1)
     )
 }
+
 impl Program {
     pub fn table_count(&self) -> usize {
         self.schemas.len()

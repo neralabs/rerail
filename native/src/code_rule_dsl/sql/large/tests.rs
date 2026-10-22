@@ -1,5 +1,305 @@
 use super::*;
 
+#[test]
+fn publication_chunks_keep_rowids_nulls_and_ignore_conflicts_across_boundaries() {
+    let mut schemas = BTreeMap::from([
+        (
+            "input".into(),
+            Schema::of("input(k INTEGER PRIMARY KEY)".into()).unwrap(),
+        ),
+        (
+            "output".into(),
+            Schema::of("output(k INTEGER PRIMARY KEY,value)".into()).unwrap(),
+        ),
+    ]);
+    let sql = render_steps(
+        &mut schemas,
+        &[
+            "INSERT INTO output SELECT NULL,CASE WHEN k%2=0 THEN k ELSE NULL END FROM input",
+            "INSERT OR IGNORE INTO output SELECT k,k FROM input",
+        ],
+    );
+    let db = Connection::open_in_memory().unwrap();
+    let frames = Arc::new(FrameStore::default());
+    storage::register(&db, &frames, &schemas).unwrap();
+    for count in [8193, 4097] {
+        frames
+            .program_rows(
+                "input",
+                (1..=count).map(|k| vec![Value::Integer(k)]).collect(),
+                true,
+                false,
+            )
+            .unwrap();
+        frames.clear("output");
+        db.prepare_cached(&sql)
+            .unwrap()
+            .query([])
+            .unwrap()
+            .next()
+            .unwrap();
+        let actual = db
+            .query_row(
+                "SELECT count(*),min(k),max(k),sum(value),sum(value IS NULL) FROM output",
+                [],
+                |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, i64>(2)?,
+                        r.get::<_, i64>(3)?,
+                        r.get::<_, i64>(4)?,
+                    ))
+                },
+            )
+            .unwrap();
+        let even = count / 2;
+        assert_eq!(actual, (count, 1, count, even * (even + 1), count - even));
+    }
+}
+
+#[test]
+fn sparse_dispatch_covers_high_pcs_without_aliasing_low_bits() {
+    let values = [
+        (0, "11"),
+        (7, "12"),
+        (8, "13"),
+        (1023, "14"),
+        (4096, "15"),
+        (10019, "16"),
+    ];
+    let sql = format!(
+        "WITH driver(pc) AS (VALUES(?1)) SELECT {} FROM driver",
+        dispatch(&values, "-1", 13)
+    );
+    let db = Connection::open_in_memory().unwrap();
+    let mut statement = db.prepare(&sql).unwrap();
+    for pc in 0..16384 {
+        let expected = values
+            .iter()
+            .find(|(id, _)| *id == pc)
+            .map_or(-1, |(_, v)| v.parse::<i64>().unwrap());
+        assert_eq!(
+            statement
+                .query_row([pc as i64], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            expected,
+            "pc {pc}"
+        );
+    }
+}
+
+#[test]
+fn outer_join_keys_remain_nullable_on_both_sides_of_membership() {
+    for query in [
+        "SELECT a.k,b.k IN(SELECT k FROM chosen),b.k NOT IN(SELECT k FROM chosen) FROM data a LEFT JOIN data b ON b.k=a.k+100",
+        "SELECT a.k,a.k IN(SELECT b.k FROM data a LEFT JOIN data b ON b.k=a.k+100),a.k NOT IN(SELECT b.k FROM data a LEFT JOIN data b ON b.k=a.k+100) FROM data a",
+    ] {
+        let mut schemas = BTreeMap::from([
+            (
+                "data".into(),
+                Schema::of("data(k INTEGER PRIMARY KEY)".into()).unwrap(),
+            ),
+            (
+                "chosen".into(),
+                Schema::of("chosen(k INTEGER PRIMARY KEY)".into()).unwrap(),
+            ),
+            (
+                "output".into(),
+                Schema::of("output(k INTEGER PRIMARY KEY,yes,no)".into()).unwrap(),
+            ),
+        ]);
+        let insert = format!("INSERT INTO output {query}");
+        let sql = render_steps(&mut schemas, &[&insert]);
+        let db = Connection::open_in_memory().unwrap();
+        let frames = Arc::new(FrameStore::default());
+        storage::register(&db, &frames, &schemas).unwrap();
+        frames
+            .program_rows(
+                "data",
+                vec![vec![Value::Integer(1)], vec![Value::Integer(2)]],
+                true,
+                false,
+            )
+            .unwrap();
+        frames
+            .program_rows("chosen", vec![vec![Value::Integer(1)]], true, false)
+            .unwrap();
+        let read = |sql: &str| {
+            db.prepare(sql)
+                .unwrap()
+                .query_map([], |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, Value>(1)?,
+                        r.get::<_, Value>(2)?,
+                    ))
+                })
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
+        };
+        let expected = read(query);
+        assert!(
+            expected
+                .iter()
+                .all(|(_, yes, no)| *yes == Value::Null && *no == Value::Null)
+        );
+        db.prepare(&sql).unwrap().query([]).unwrap().next().unwrap();
+        assert_eq!(read("SELECT k,yes,no FROM output"), expected);
+    }
+}
+
+#[test]
+fn immutable_demands_keep_batch_constraints_and_key_sets_use_direct_probes() {
+    assert!(
+        materialize::membership(
+            "SELECT n.id FROM node n WHERE n.file IN (SELECT file FROM runs WHERE run=3)"
+        )
+        .is_none()
+    );
+    // A mutable membership set must refresh at each SQL control iteration.
+    assert!(
+        materialize::membership(
+            "SELECT n.id FROM node n WHERE n.file IN (SELECT file FROM changing)"
+        )
+        .is_some()
+    );
+    let mut schemas = BTreeMap::from([
+        (
+            "input".into(),
+            Schema::of("input(k INTEGER PRIMARY KEY)".into()).unwrap(),
+        ),
+        (
+            "chosen".into(),
+            Schema::of("chosen(k INTEGER PRIMARY KEY)".into()).unwrap(),
+        ),
+        (
+            "output".into(),
+            Schema::of("output(k INTEGER PRIMARY KEY)".into()).unwrap(),
+        ),
+    ]);
+    let sql = render_steps(
+        &mut schemas,
+        &["INSERT INTO output SELECT f.k FROM input f WHERE f.k IN (SELECT k FROM chosen)"],
+    );
+    assert!(!schemas.keys().any(|s| s.starts_with("p_cte_")));
+    let db = Connection::open_in_memory().unwrap();
+    let frames = Arc::new(FrameStore::default());
+    storage::register(&db, &frames, &schemas).unwrap();
+    frames
+        .program_rows(
+            "input",
+            (1..=1000).map(|i| vec![Value::Integer(i)]).collect(),
+            true,
+            false,
+        )
+        .unwrap();
+    for value in [17, 41] {
+        frames
+            .program_rows("chosen", vec![vec![Value::Integer(value)]], true, false)
+            .unwrap();
+        frames.clear("output");
+        let mut statement = db.prepare_cached(&sql).unwrap();
+        statement.query([]).unwrap().next().unwrap();
+        assert_eq!(
+            db.query_row("SELECT k FROM output", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            value
+        );
+        assert!(statement.get_status(rusqlite::StatementStatus::VmStep) < 30_000);
+    }
+}
+
+#[test]
+fn pipelines_inline_only_one_direct_consumer() {
+    assert!(materialize::pipeline("t", &["SELECT * FROM t"]));
+    assert!(!materialize::pipeline("t", &["SELECT * FROM t JOIN t b"]));
+    assert!(!materialize::pipeline(
+        "t",
+        &["SELECT * FROM a WHERE EXISTS(SELECT 1 FROM t)"]
+    ));
+    assert!(!materialize::pipeline(
+        "t",
+        &["SELECT * FROM a CROSS JOIN t"]
+    ));
+    let mut schemas = BTreeMap::from([
+        (
+            "input".into(),
+            Schema::of("input(k INTEGER PRIMARY KEY)".into()).unwrap(),
+        ),
+        (
+            "output".into(),
+            Schema::of("output(k INTEGER PRIMARY KEY)".into()).unwrap(),
+        ),
+    ]);
+    let sql = render_steps(
+        &mut schemas,
+        &["WITH t(v) AS MATERIALIZED (SELECT k+1 FROM input) INSERT INTO output SELECT v FROM t"],
+    );
+    assert!(!schemas.keys().any(|s| s.starts_with("p_cte_")));
+    let db = Connection::open_in_memory().unwrap();
+    let frames = Arc::new(FrameStore::default());
+    storage::register(&db, &frames, &schemas).unwrap();
+    for value in [17, 41] {
+        frames
+            .program_rows("input", vec![vec![Value::Integer(value)]], true, false)
+            .unwrap();
+        frames.clear("output");
+        db.prepare_cached(&sql)
+            .unwrap()
+            .query([])
+            .unwrap()
+            .next()
+            .unwrap();
+        assert_eq!(
+            db.query_row("SELECT k FROM output", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            value + 1
+        );
+    }
+}
+
+#[test]
+fn nested_cte_membership_keeps_its_local_binding() {
+    let mut schemas = BTreeMap::from([
+        (
+            "input".into(),
+            Schema::of("input(k INTEGER PRIMARY KEY)".into()).unwrap(),
+        ),
+        (
+            "output".into(),
+            Schema::of("output(k INTEGER PRIMARY KEY)".into()).unwrap(),
+        ),
+    ]);
+    let sql = render_steps(
+        &mut schemas,
+        &[
+            "WITH s(k) AS (WITH u(v) AS (SELECT k FROM input) SELECT k FROM input WHERE k IN (SELECT v FROM u)) INSERT INTO output SELECT k FROM s",
+        ],
+    );
+    let db = Connection::open_in_memory().unwrap();
+    let frames = Arc::new(FrameStore::default());
+    storage::register(&db, &frames, &schemas).unwrap();
+    for value in [17, 41] {
+        frames
+            .program_rows("input", vec![vec![Value::Integer(value)]], true, false)
+            .unwrap();
+        frames.clear("output");
+        db.prepare_cached(&sql)
+            .unwrap()
+            .query([])
+            .unwrap()
+            .next()
+            .unwrap();
+        assert_eq!(
+            db.query_row("SELECT k FROM output", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            value
+        );
+    }
+}
+
 fn render_steps(schemas: &mut BTreeMap<String, Schema>, statements: &[&str]) -> String {
     let rule = crate::code_rule_dsl::test_support::compiled(
         serde_json::json!({"rule":{"kind":"identifier"}}),
@@ -35,9 +335,12 @@ fn hoisted_membership_preserves_nulls_negation_and_empty_sets() {
     let mut schemas = BTreeMap::from([
         (
             "data".into(),
-            Schema::of("data(id INTEGER PRIMARY KEY,n)".into()).unwrap(),
+            Schema::of("data(id,n,PRIMARY KEY(n,id))".into()).unwrap(),
         ),
-        ("keys".into(), Schema::of("keys(value)".into()).unwrap()),
+        (
+            "keys".into(),
+            Schema::of("keys(value,PRIMARY KEY(value))".into()).unwrap(),
+        ),
         (
             "output".into(),
             Schema::of("output(id INTEGER PRIMARY KEY,yes,no)".into()).unwrap(),

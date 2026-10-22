@@ -6,6 +6,7 @@ pub(super) struct Schema {
     pub columns: Vec<String>,
     pub defaults: Vec<String>,
     pub keys: BTreeSet<String>,
+    non_null: BTreeSet<String>,
 }
 impl Schema {
     pub fn of(declaration: String) -> Result<Self, String> {
@@ -15,6 +16,7 @@ impl Schema {
         let mut defaults = Vec::new();
         let mut defs = Vec::new();
         let mut keys = BTreeSet::new();
+        let mut non_null = BTreeSet::new();
         for def in lex::arguments(&declaration[open + 1..close]) {
             if let Some(key) = def.strip_prefix("PRIMARY KEY") {
                 keys.extend(
@@ -37,6 +39,10 @@ impl Schema {
             if def.contains("PRIMARY KEY") {
                 keys.insert(name.clone());
             }
+            // A composite PRIMARY KEY alone permits NULL in SQLite rowid tables.
+            if def.contains("NOT NULL") || def.contains("INTEGER PRIMARY KEY") {
+                non_null.insert(name.clone());
+            }
             columns.push(name);
             defaults.push(
                 def.split_once("DEFAULT")
@@ -56,6 +62,7 @@ impl Schema {
             columns,
             defaults,
             keys,
+            non_null,
         })
     }
 }
@@ -216,6 +223,13 @@ fn aliases<'a>(
         if !matches!(word, "FROM" | "JOIN") {
             continue;
         }
+        // A declared key on the nullable side of an outer join is not a non-null value.
+        if word == "JOIN"
+            && (i > 0 && words[i - 1] == "LEFT"
+                || i > 1 && words[i - 1] == "OUTER" && words[i - 2] == "LEFT")
+        {
+            continue;
+        }
         let Some(&table) = words.get(i + 1) else {
             continue;
         };
@@ -252,8 +266,11 @@ fn aliases<'a>(
     }
     out
 }
-fn key_probes(sql: &str, schemas: &BTreeMap<String, Schema>) -> String {
+pub(super) fn key_probes(sql: &str, schemas: &BTreeMap<String, Schema>) -> String {
     let words = lex::identifiers(sql);
+    if words.iter().any(|w| matches!(*w, "RIGHT" | "FULL")) {
+        return sql.to_owned();
+    }
     let bindings = aliases(sql, schemas);
     let mut edits = Vec::new();
     let mut used = 0;
@@ -298,7 +315,7 @@ fn key_probes(sql: &str, schemas: &BTreeMap<String, Schema>) -> String {
         let Some((_, _, table, _)) = table else {
             continue;
         };
-        if !schemas[*table].keys.contains(col) {
+        if !schemas[*table].keys.contains(col) || !schemas[*table].non_null.contains(col) {
             continue;
         }
         let at = word.as_ptr() as usize - sql.as_ptr() as usize + 2;
@@ -348,7 +365,9 @@ fn key_probes(sql: &str, schemas: &BTreeMap<String, Schema>) -> String {
         let field = projection.rsplit('.').next().unwrap();
         let qualified = projection.rsplit_once('.').map(|(a, _)| a);
         if !aliases(inner, schemas).iter().any(|(_, _, t, a)| {
-            qualified.is_none_or(|q| q == *a) && schemas[*t].keys.contains(field)
+            qualified.is_none_or(|q| q == *a)
+                && schemas[*t].keys.contains(field)
+                && schemas[*t].non_null.contains(field)
         }) {
             continue;
         }

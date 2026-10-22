@@ -2456,11 +2456,18 @@ impl Session {
             #[cfg_attr(not(feature = "unbounded-work"), allow(clippy::unused_enumerate_index))]
             for (_phase, sql) in queries.iter().enumerate() {
                 #[cfg(any(test, feature = "unbounded-work"))]
-                let operation = profiling
+                let mut operation = profiling
                     .as_deref()
                     .map(|p| p.operation(sql, (_scope, _phase), 0, Vec::new()));
                 let started = Started::now();
                 let mut statement = connection.prepare_cached(sql)?;
+                #[cfg(any(test, feature = "unbounded-work"))]
+                if let Some(operation) = operation.as_mut() {
+                    operation.prepared(
+                        started.elapsed(),
+                        statement.get_status(rusqlite::StatementStatus::MemUsed),
+                    );
+                }
                 let has_round = statement.column_count() > 4;
                 let mut rows = statement.query([])?;
                 let mut count = 0;

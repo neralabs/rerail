@@ -1,0 +1,762 @@
+{
+  "version": 1,
+  "baseCommit": "5f1960f2",
+  "branch": "jeremy/sql-capture-demand-spikes",
+  "beforeAddonSha256": "29fd947aa4564ab2df577e3d67010f558ada59d4621bf13d7ae7787935c33eed",
+  "afterAddonSha256": "2a06576473d6517d6fc56cfca2cf49f948483b8023a0b20ee49577215f0d6df5",
+  "nativeSourceTreeSha256": "60856121ee004f70eec5930262db178c7350486c7af5a3db7dfe89e77f8b20ca",
+  "baselineEvidence": {
+    "path": "benchmark/sql-large-plans-evidence.json",
+    "sha256": "087736fab510769ed4076a5715e16bcdd0c774e2e63dcbaa8959e070ac2fe60f"
+  },
+  "buildCommand": "env -u LIBSQLITE3_FLAGS JEMALLOC_OVERRIDE=/tmp/librerail_jemalloc_check_shim.dylib cargo rustc --release --features unbounded-work --manifest-path native/Cargo.toml -- -C codegen-units=16 -C incremental=/tmp/rerail-engine-integration-20261021/incremental",
+  "buildManifest": "/tmp/rerail-sql-tuning-20261021/build-chunks.json",
+  "allocator": "Same diagnostic JEMALLOC_OVERRIDE=/tmp/librerail_jemalloc_check_shim.dylib for every build. Diagnostic release builds, not a production latency claim.",
+  "measurement": {
+    "kind": "unprofiled cold apply CPU",
+    "workerThreads": 4,
+    "samplesPerBuildAndCohort": 3,
+    "comparisonStatistic": "median",
+    "ordering": "Baseline samples alternate with the rejected flat-buffer candidate. Final chunk-buffer samples run subsequently. Each sample uses a new Node process.",
+    "inputValidation": "Every sample compares complete outcomes against the native oracle, checks the digest, and checks input hashes before and after execution.",
+    "wallTimeInterpretation": "Shared host load makes wall time less reliable. All raw wall and CPU samples are retained."
+  },
+  "comparison": [
+    {
+      "files": 32,
+      "runsPerBuild": 3,
+      "beforeMedianApplyCpuMs": 14747.822,
+      "afterMedianApplyCpuMs": 9779.127,
+      "applyCpuReductionPercent": 33.691042650229974,
+      "beforeMedianPeakRssBytes": 1431060480,
+      "afterMedianPeakRssBytes": 1277558784,
+      "beforeSamples": [
+        {
+          "files": 32,
+          "repeat": 0,
+          "label": "before",
+          "apply": {
+            "wallMs": 6793.132708,
+            "cpuMs": 14492.015
+          },
+          "setup": {
+            "wallMs": 483.33658399999996,
+            "cpuMs": 458.793
+          },
+          "maxRssBytes": 1431060480,
+          "digest": "16284c2e6cf80a95761f5b3e6510f30d3df32f69de72fc4a1685556b130a736c",
+          "addonSha256": "29fd947aa4564ab2df577e3d67010f558ada59d4621bf13d7ae7787935c33eed",
+          "result": "/tmp/rerail-sql-tuning-20261021/repeat-32-0-before.json"
+        },
+        {
+          "files": 32,
+          "repeat": 1,
+          "label": "before",
+          "apply": {
+            "wallMs": 8197.141875,
+            "cpuMs": 14747.822
+          },
+          "setup": {
+            "wallMs": 679.180667,
+            "cpuMs": 465.495
+          },
+          "maxRssBytes": 1435992064,
+          "digest": "16284c2e6cf80a95761f5b3e6510f30d3df32f69de72fc4a1685556b130a736c",
+          "addonSha256": "29fd947aa4564ab2df577e3d67010f558ada59d4621bf13d7ae7787935c33eed",
+          "result": "/tmp/rerail-sql-tuning-20261021/repeat-32-1-before.json"
+        },
+        {
+          "files": 32,
+          "repeat": 2,
+          "label": "before",
+          "apply": {
+            "wallMs": 10464.277583,
+            "cpuMs": 14850.804
+          },
+          "setup": {
+            "wallMs": 496.659959,
+            "cpuMs": 455.922
+          },
+          "maxRssBytes": 1394376704,
+          "digest": "16284c2e6cf80a95761f5b3e6510f30d3df32f69de72fc4a1685556b130a736c",
+          "addonSha256": "29fd947aa4564ab2df577e3d67010f558ada59d4621bf13d7ae7787935c33eed",
+          "result": "/tmp/rerail-sql-tuning-20261021/repeat-32-2-before.json"
+        }
+      ],
+      "afterSamples": [
+        {
+          "files": 32,
+          "repeat": 0,
+          "label": "after",
+          "apply": {
+            "wallMs": 3759.6335839999997,
+            "cpuMs": 9423.349
+          },
+          "setup": {
+            "wallMs": 455.038958,
+            "cpuMs": 445.327
+          },
+          "maxRssBytes": 1310687232,
+          "digest": "16284c2e6cf80a95761f5b3e6510f30d3df32f69de72fc4a1685556b130a736c",
+          "addonSha256": "2a06576473d6517d6fc56cfca2cf49f948483b8023a0b20ee49577215f0d6df5",
+          "result": "/tmp/rerail-sql-tuning-20261021/chunks-repeat-32-0-after.json"
+        },
+        {
+          "files": 32,
+          "repeat": 1,
+          "label": "after",
+          "apply": {
+            "wallMs": 4152.9220000000005,
+            "cpuMs": 9779.127
+          },
+          "setup": {
+            "wallMs": 515.3802499999999,
+            "cpuMs": 500.642
+          },
+          "maxRssBytes": 1270661120,
+          "digest": "16284c2e6cf80a95761f5b3e6510f30d3df32f69de72fc4a1685556b130a736c",
+          "addonSha256": "2a06576473d6517d6fc56cfca2cf49f948483b8023a0b20ee49577215f0d6df5",
+          "result": "/tmp/rerail-sql-tuning-20261021/chunks-repeat-32-1-after.json"
+        },
+        {
+          "files": 32,
+          "repeat": 2,
+          "label": "after",
+          "apply": {
+            "wallMs": 5389.202833,
+            "cpuMs": 9800.499
+          },
+          "setup": {
+            "wallMs": 538.835084,
+            "cpuMs": 514.221
+          },
+          "maxRssBytes": 1277558784,
+          "digest": "16284c2e6cf80a95761f5b3e6510f30d3df32f69de72fc4a1685556b130a736c",
+          "addonSha256": "2a06576473d6517d6fc56cfca2cf49f948483b8023a0b20ee49577215f0d6df5",
+          "result": "/tmp/rerail-sql-tuning-20261021/chunks-repeat-32-2-after.json"
+        }
+      ]
+    },
+    {
+      "files": 138,
+      "runsPerBuild": 3,
+      "beforeMedianApplyCpuMs": 52079.724,
+      "afterMedianApplyCpuMs": 41429.283,
+      "applyCpuReductionPercent": 20.450263906928534,
+      "beforeMedianPeakRssBytes": 2777448448,
+      "afterMedianPeakRssBytes": 2524790784,
+      "beforeSamples": [
+        {
+          "files": 138,
+          "repeat": 0,
+          "label": "before",
+          "apply": {
+            "wallMs": 29216.392249999997,
+            "cpuMs": 50861.303
+          },
+          "setup": {
+            "wallMs": 419.469792,
+            "cpuMs": 392.516
+          },
+          "maxRssBytes": 2777448448,
+          "digest": "4ad2049fb003a6f5866efb44847b086a09a4e6b015bed17dc9aef77c3313669e",
+          "addonSha256": "29fd947aa4564ab2df577e3d67010f558ada59d4621bf13d7ae7787935c33eed",
+          "result": "/tmp/rerail-sql-tuning-20261021/repeat-138-0-before.json"
+        },
+        {
+          "files": 138,
+          "repeat": 1,
+          "label": "before",
+          "apply": {
+            "wallMs": 35832.506875,
+            "cpuMs": 52594.275
+          },
+          "setup": {
+            "wallMs": 1283.541291,
+            "cpuMs": 459.951
+          },
+          "maxRssBytes": 2791669760,
+          "digest": "4ad2049fb003a6f5866efb44847b086a09a4e6b015bed17dc9aef77c3313669e",
+          "addonSha256": "29fd947aa4564ab2df577e3d67010f558ada59d4621bf13d7ae7787935c33eed",
+          "result": "/tmp/rerail-sql-tuning-20261021/repeat-138-1-before.json"
+        },
+        {
+          "files": 138,
+          "repeat": 2,
+          "label": "before",
+          "apply": {
+            "wallMs": 25114.808042,
+            "cpuMs": 52079.724
+          },
+          "setup": {
+            "wallMs": 424.964458,
+            "cpuMs": 413.943
+          },
+          "maxRssBytes": 2736832512,
+          "digest": "4ad2049fb003a6f5866efb44847b086a09a4e6b015bed17dc9aef77c3313669e",
+          "addonSha256": "29fd947aa4564ab2df577e3d67010f558ada59d4621bf13d7ae7787935c33eed",
+          "result": "/tmp/rerail-sql-tuning-20261021/repeat-138-2-before.json"
+        }
+      ],
+      "afterSamples": [
+        {
+          "files": 138,
+          "repeat": 0,
+          "label": "after",
+          "apply": {
+            "wallMs": 19939.085,
+            "cpuMs": 41640.158
+          },
+          "setup": {
+            "wallMs": 601.6531249999999,
+            "cpuMs": 488.065
+          },
+          "maxRssBytes": 2524790784,
+          "digest": "4ad2049fb003a6f5866efb44847b086a09a4e6b015bed17dc9aef77c3313669e",
+          "addonSha256": "2a06576473d6517d6fc56cfca2cf49f948483b8023a0b20ee49577215f0d6df5",
+          "result": "/tmp/rerail-sql-tuning-20261021/chunks-repeat-138-0-after.json"
+        },
+        {
+          "files": 138,
+          "repeat": 1,
+          "label": "after",
+          "apply": {
+            "wallMs": 19883.569333,
+            "cpuMs": 41326.19
+          },
+          "setup": {
+            "wallMs": 511.22120900000004,
+            "cpuMs": 499.815
+          },
+          "maxRssBytes": 2633236480,
+          "digest": "4ad2049fb003a6f5866efb44847b086a09a4e6b015bed17dc9aef77c3313669e",
+          "addonSha256": "2a06576473d6517d6fc56cfca2cf49f948483b8023a0b20ee49577215f0d6df5",
+          "result": "/tmp/rerail-sql-tuning-20261021/chunks-repeat-138-1-after.json"
+        },
+        {
+          "files": 138,
+          "repeat": 2,
+          "label": "after",
+          "apply": {
+            "wallMs": 19109.686083,
+            "cpuMs": 41429.283
+          },
+          "setup": {
+            "wallMs": 642.25375,
+            "cpuMs": 488.817
+          },
+          "maxRssBytes": 2481750016,
+          "digest": "4ad2049fb003a6f5866efb44847b086a09a4e6b015bed17dc9aef77c3313669e",
+          "addonSha256": "2a06576473d6517d6fc56cfca2cf49f948483b8023a0b20ee49577215f0d6df5",
+          "result": "/tmp/rerail-sql-tuning-20261021/chunks-repeat-138-2-after.json"
+        }
+      ]
+    }
+  ],
+  "acceptance": [
+    {
+      "files": 32,
+      "gate": {
+        "limit": 100,
+        "observed": 72,
+        "excess": 0,
+        "accepted": true,
+        "status": "passed",
+        "scope": "One complete cold workload across all workers, including setup, DDL, transactions, matching, and cleanup. Profiler-generated EXPLAIN is diagnostic work outside the job.",
+        "enforcement": "Acceptance gate after the complete run; this does not interrupt the workload at execution 101.",
+        "categories": {
+          "setup": 4,
+          "transaction": 8,
+          "matchingAndCleanup": 60
+        },
+        "sessions": [
+          {
+            "session": "profile-30767-0.json",
+            "pid": 30767,
+            "completed": 18,
+            "fromSessionStart": true,
+            "running": 0,
+            "source": "ast-session",
+            "started": 18,
+            "observed": 18
+          },
+          {
+            "session": "profile-30767-1.json",
+            "pid": 30767,
+            "completed": 18,
+            "fromSessionStart": true,
+            "running": 0,
+            "source": "ast-session",
+            "started": 18,
+            "observed": 18
+          },
+          {
+            "session": "profile-30767-2.json",
+            "pid": 30767,
+            "completed": 18,
+            "fromSessionStart": true,
+            "running": 0,
+            "source": "ast-session",
+            "started": 18,
+            "observed": 18
+          },
+          {
+            "session": "profile-30767-3.json",
+            "pid": 30767,
+            "completed": 18,
+            "fromSessionStart": true,
+            "running": 0,
+            "source": "ast-session",
+            "started": 18,
+            "observed": 18
+          }
+        ],
+        "problems": [],
+        "firstOverBudget": null
+      },
+      "cpu": {
+        "preparationCpuMs": 4605.910002,
+        "preparationRuns": 60,
+        "largestStatementMemoryBytes": 18640112,
+        "cpuTimingAvailable": true,
+        "measuredCpuMs": 10166.480132,
+        "sqlExecutionCpuMs": 5462.569994,
+        "operatorExclusiveCpuMs": 4703.910138,
+        "profiledApplyCpuMs": 24094.446,
+        "nativeApplyCpuMs": 1302.148,
+        "frameIndexCpuMs": 47.559428,
+        "frameIndexBuilds": 7548,
+        "frameIndexTimedBuilds": 7548,
+        "interpretation": "Recorded spans do not partition apply CPU. Profiling, parsing, preparation outside operators, and report work contribute to the difference. Some setup spans precede apply. These costs are not an unprofiled speedup estimate."
+      },
+      "counters": {
+        "vmSteps": 364668440,
+        "frameNext": 15061704,
+        "frameInserts": 8841123,
+        "frameColumns": 64474036,
+        "frameIndexCpuNs": 47559428
+      },
+      "program": {
+        "btrees": 0,
+        "bytes": 2168013,
+        "frames": 3746,
+        "shapes": 137,
+        "skeletons": 10482,
+        "steps": 34274,
+        "storedBytes": 595216,
+        "texts": 13473
+      },
+      "sql": {
+        "cteProgramBytes": 10954255,
+        "ctePrograms": 11,
+        "sqlStatements": 15
+      },
+      "digest": "16284c2e6cf80a95761f5b3e6510f30d3df32f69de72fc4a1685556b130a736c",
+      "counts": {
+        "violations": 33,
+        "failures": 0,
+        "blindFiles": 0
+      },
+      "hottestSteps": [
+        {
+          "cpuMs": 116.157041,
+          "runs": 8,
+          "sql": "(WITH payload(id,file,node,c0,dirty) AS NOT MATERIALIZED (SELECT NULL,v.file,v.node,v.c0,1 FROM (WITH supplied(file,node,c0) AS NOT MATERIALIZED (SELECT DISTINCT f.file, f.node, COALESCE((SELECT atom FROM node WHERE file = f.file AND id = f.s1), f.s1) FROM (SELECT * FROM f6_12 WHERE driver.tick >= 0) f WHERE NOT EXISTS (SELECT 1 FROM (SELECT * FROM c68_d1 WHERE driver.tick >= 0) d WHERE d.file = f.file AND d.node = f.node AND d.c0 IS COALESCE((SELECT atom FROM node WHERE file = f.file AND id = f.s1), f.s1))) SELECT * FROM supplied) v) SELECT p_append_c68_d1(driver.tick,p.id,p.file,p.node,p.c0,p.dirty) FROM payload p)",
+          "nextSql": "CASE WHEN pc+1 >= 5067 THEN -1 ELSE pc+1 END",
+          "source": {
+            "scope": "clause",
+            "statement": 68,
+            "clauseId": "function-uses-loop-variable",
+            "ruleId": "ruff-b023-function-uses-loop-variable"
+          },
+          "publishedRows": 51209,
+          "frameNext": 144492
+        },
+        {
+          "cpuMs": 105.345582,
+          "runs": 4,
+          "sql": "(WITH payload(su,s,du,d) AS NOT MATERIALIZED (SELECT DISTINCT -1, 0, 1, d.id FROM (SELECT * FROM f6_12 WHERE driver.tick >= 0) f CROSS JOIN (SELECT * FROM c68_d1 WHERE driver.tick >= 0) d ON d.file = f.file AND d.node = f.node AND d.c0 IS COALESCE((SELECT atom FROM node WHERE file = f.file AND id = f.s1), f.s1) WHERE EXISTS(SELECT 1 FROM (SELECT k AS __key FROM (SELECT * FROM f13_0 WHERE driver.tick >= 0) AS f13_0) membership WHERE membership.__key=f.k)) SELECT p_append_c68_ex(driver.tick,p.su,p.s,p.du,p.d) FROM payload p)",
+          "nextSql": "CASE WHEN pc+1 >= 5067 THEN -1 ELSE pc+1 END",
+          "source": {
+            "scope": "clause",
+            "statement": 68,
+            "clauseId": "function-uses-loop-variable",
+            "ruleId": "ruff-b023-function-uses-loop-variable"
+          },
+          "publishedRows": 51209,
+          "frameNext": 172996
+        },
+        {
+          "cpuMs": 92.007875,
+          "runs": 4,
+          "sql": "SELECT -1 AS clause,-1 AS file,-1 AS node,CAST((SELECT count(*) FROM q414)+(SELECT count(*) FROM q422)+(SELECT count(*) FROM q648)+(SELECT count(*) FROM q652)+(SELECT count(*) FROM q653)+(SELECT count(*) FROM q657)+(SELECT count(*) FROM q658)+(SELECT count(*) FROM q718)+(SELECT count(*) FROM q762)+(SELECT count(*) FROM q806) AS TEXT) AS captures UNION ALL SELECT 0,file,node,json_array() FROM q2 UNION ALL SELECT 5,file,node,json_array(s0a,s0b,s0h,s0n,s1) FROM q10 UNION ALL SELECT 6,file,node,json_array(s0a,s0b,s0h,s0n,s1) FROM q18 UNION ALL SELECT 7,file,node,json_array() FROM buffer_23_e3d2d17bb5faef56 UNION ALL SELECT 8,file,node,json_array(s0a,s0b,s0h,s0n,s1) FROM q31 UNION ALL SELECT 9,file,node,json_array(s0a,s0b,s0h,s0n,s1) FROM q42 UNION ALL SELECT 11,file,node,json_array(s0a,s0b,s0h,s0n,s1) FROM q50 UNION ALL SELECT 12,file,node,json_array(s0a,s0b,s0h,s0n,s1) FROM q58 UNION ALL SELECT 13,file,node,json_array(s0a,s0b,s0h,s0n,s1) FROM q66 UNION ALL SELECT 14,file,node,json_array(s0a,s0b,s0h,s0n,s1) FROM q74 UNION ALL SELECT 15,file,node,json_array(s0a,s0b,s0h,s0n,s1) FROM q82 UNION ALL SELECT 16,file,node,json_array(s0a,s0b,s0h,s0n,s1) FROM q90 UNION ALL SELECT 17,file,node,json_array(s0a,s0b,s0h,s0n,s1) FROM q98 UNION ALL SELECT 18,file,node,json_array(s0a,s0b,s0h,s0n,s1) FROM q106 UNION ALL SELECT 19,file,node,json_array(s0a,s0b,s0h,s0n,s1) FROM q116 UNION ALL SELECT 20,file,node,json_array(s0a,s0b,s0h,s0n,s1) FROM q124 UNION ALL SELECT 21,file,node,json_array(s0a,s0b,s0h,s0n,s1) FROM q132 UNION ALL SELECT 22,file,node,json_array(s0a,s0b,s0h,s0n,s1) FROM q140 UNION ALL SELECT 23,file,node,json_array(s0a,s0b,s0h,s0n,s1) FROM q148 UNION ALL SELECT 24,file,node,json_array(s0,s1a,s1b,s1h,s1n) FROM q157 UNION ALL SELECT 25,file,node,json_array(s0,s1a,s1b,s1h,s1n) FROM q166 UNION ALL SELECT 26,file,node,json_array(s0,s1a,s1b,s1h,s1n) FROM q189 UNION ALL SELECT 27,file,node,json_array(s0,s1a,s1b,s1h,s1n) FROM q219 UNION ALL SELECT 28,file,node,json_array(s0,s1a,s1b,s1h,s1n) FROM q232 UNION ALL SELECT 29,file,node,json_array(s0,s1a,s1b,s1h,s1n) FROM q245 UNION ALL SELECT 30,file,node,json_array(s0,s1a,s1b,s1h,s1n) FROM q258 UNION ALL SELECT 31,file,node,json_array(s0,s1a,s1b,s1h,s1n) FROM q267 UNION ALL SELECT 32,file,node,json_array(s0,s1a,s1b,s1h,s1n) FROM q350 UNION ALL SELECT 33,file,node,json_array(s0,s1a,s1b,s1h,s1n) FROM q359 UNION ALL SELECT 34,file,node,json_array(s0a,s0b,s0h,s0n,s1,s2) FROM q373 UNION ALL SELECT 37,file,node,json_array(s0a,s0b,s0h,s0n,s1) FROM q381 UNION ALL SELECT 70,file,node,json_array() FROM buffer_391_e3d2d17bb5faef56 UNION ALL SELECT 81,file,node,json_array() FROM buffer_407_e3d2d17bb5faef56 UNION ALL SELECT 82,file,node,json_array() FROM q415 UNION ALL SELECT 83,file,node,json_array() FROM q423 UNION ALL SELECT 84,file,node,json_array(s0) FROM q442 UNION ALL SELECT 85,file,node,json_array(s0) FROM q452 UNION ALL SELECT 90,file,node,json_array(s0,s1) FROM q470 UNION ALL SELECT 91,file,node,json_array(s0,s1) FROM q496 UNION ALL SELECT 93,file,node,json_array(s0,s1) FROM q543 UNION ALL SELECT 97,file,node,json_array(s0a,s0b,s0h,s0n,s1) FROM q561 UNION ALL SELECT 98,file,node,json_array(s0a,s0b,s0h,s0n,s1) FROM q580 UNION ALL SELECT 99,file,node,json_array(s0a,s0b,s0h,s0n,s1) FROM q600 UNION ALL SELECT 106,file,node,json_array() FROM q613 UNION ALL SELECT 107,file,node,json_array() FROM q623 UNION ALL SELECT 108,file,node,json_array() FROM q637 UNION ALL SELECT 109,file,node,json_array() FROM q649 UNION ALL SELECT 110,file,node,json_array(s0) FROM q654 UNION ALL SELECT 111,file,node,json_array(s0) FROM q659 UNION ALL SELECT 112,file,node,json_array(s0) FROM q671 UNION ALL SELECT 123,file,node,json_array() FROM buffer_715_e3d2d17bb5faef56 UNION ALL SELECT 124,file,node,json_array() FROM buffer_759_e3d2d17bb5faef56 UNION ALL SELECT 125,file,node,json_array() FROM buffer_803_e3d2d17bb5faef56 UNION ALL SELECT 126,file,node,json_array() FROM buffer_847_e3d2d17bb5faef56 UNION ALL SELECT 128,file,node,json_array() FROM buffer_878_e3d2d17bb5faef56",
+          "nextSql": null,
+          "source": null,
+          "publishedRows": null,
+          "frameNext": null
+        },
+        {
+          "cpuMs": 86.469417,
+          "runs": 4,
+          "sql": "WITH payload(k,file,node,s1,s2,s3,s4,s5,s6,s7,s8,s9,pk,ord,unk) AS (WITH e AS MATERIALIZED (SELECT f.k AS k, f.file || ',' || f.node AS ek FROM q666 f), t AS MATERIALIZED (SELECT ek, v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11 FROM fact WHERE term = 425 AND ek IN (SELECT ek FROM e)) SELECT NULL, COALESCE(t.v0, f.file), t.v1, t.v3, t.v4, t.v5, t.v6, t.v7, t.v8, t.v9, t.v10, t.v11, f.k, t.v2, 0 FROM q666 f JOIN e ON e.k = f.k JOIN t ON t.ek = e.ek) SELECT CAST(COALESCE(p.k,ROW_NUMBER() OVER () + 0) AS INTEGER),+(p.file),+(p.node),+(p.s1),+(p.s2),+(p.s3),+(p.s4),+(p.s5),+(p.s6),+(p.s7),+(p.s8),+(p.s9),+(p.pk),+(p.ord),+(p.unk) FROM payload p",
+          "nextSql": null,
+          "source": null,
+          "publishedRows": null,
+          "frameNext": null
+        },
+        {
+          "cpuMs": 73.886667,
+          "runs": 4,
+          "sql": "(WITH payload(k,file,node) AS NOT MATERIALIZED (SELECT NULL, file, id FROM (SELECT n.file AS file, n.id AS id FROM node n WHERE n.file IN (SELECT file FROM runs WHERE run = -5) AND (((EXISTS (SELECT 1 FROM node g WHERE g.file = n.file AND g.id < n.id AND g.\"last\" >= n.id AND g.kind IN (145, 154))) OR (EXISTS (SELECT 1 FROM node g WHERE g.file = n.file AND g.id < n.id AND g.\"last\" >= n.id AND g.kind IN (197))))) UNION ALL SELECT n.file, n.id FROM (SELECT file, node FROM roots WHERE run = -5) r CROSS JOIN node n ON n.file = r.file AND n.id = r.node WHERE 1 AND (((EXISTS (SELECT 1 FROM node g WHERE g.file = n.file AND g.id < n.id AND g.\"last\" >= n.id AND g.kind IN (145, 154))) OR (EXISTS (SELECT 1 FROM node g WHERE g.file = n.file AND g.id < n.id AND g.\"last\" >= n.id AND g.kind IN (197))))))) SELECT p_append_s4_f0_0(driver.tick,p.k,p.file,p.node) FROM payload p)",
+          "nextSql": "CASE WHEN pc+1 >= 2867 THEN -1 ELSE pc+1 END",
+          "source": {
+            "scope": "stage",
+            "statement": 4
+          },
+          "publishedRows": 237572,
+          "frameNext": 0
+        },
+        {
+          "cpuMs": 70.042125,
+          "runs": 4,
+          "sql": "(WITH payload(k,file,node,s0,s1,pk,ord,position) AS NOT MATERIALIZED (SELECT *,ROW_NUMBER() OVER (PARTITION BY pk ORDER BY ord,k) FROM (SELECT * FROM f6_11 WHERE driver.tick >= 0) AS f6_11) SELECT p_replace_p_rank_219(driver.tick,p.k,p.file,p.node,p.s0,p.s1,p.pk,p.ord,p.position) FROM payload p)",
+          "nextSql": "CASE WHEN pc+1 >= 5067 THEN -1 ELSE pc+1 END",
+          "source": {
+            "scope": "clause",
+            "statement": 68,
+            "clauseId": "function-uses-loop-variable",
+            "ruleId": "ruff-b023-function-uses-loop-variable"
+          },
+          "publishedRows": 86498,
+          "frameNext": 86498
+        },
+        {
+          "cpuMs": 61.77225,
+          "runs": 4,
+          "sql": "WITH payload(k,file,node,s0,s1,s2,s3,s4,s5,s6,s7,s8,s9,unk) AS (WITH p AS MATERIALIZED (SELECT file, node, v0 FROM pattern WHERE term = 423 AND nk IN (SELECT file * 4294967296 + node FROM q661)) SELECT f.k, f.file, f.node, p.v0, NULL AS s1, NULL AS s2, NULL AS s3, NULL AS s4, NULL AS s5, NULL AS s6, NULL AS s7, NULL AS s8, NULL AS s9, 0 FROM q661 f JOIN p ON p.file = f.file AND p.node = f.node) SELECT CAST(p.k AS INTEGER),+(p.file),+(p.node),+(p.s0),+(p.unk) FROM payload p",
+          "nextSql": null,
+          "source": null,
+          "publishedRows": null,
+          "frameNext": null
+        },
+        {
+          "cpuMs": 53.943376,
+          "runs": 12,
+          "sql": "(WITH payload(id,file,node,c0,dirty) AS NOT MATERIALIZED (SELECT id,file,node,c0,CASE WHEN (CASE WHEN (id) IS NULL THEN CASE WHEN p_rows(driver.tick,'p_cte_210')>0 THEN NULL ELSE 0 END WHEN EXISTS(SELECT 1 FROM (SELECT * FROM p_cte_210 WHERE driver.tick >= 0) AS p_cte_210 WHERE value=(id)) THEN 1 WHEN EXISTS(SELECT 1 FROM (SELECT * FROM p_cte_210 WHERE driver.tick >= 0) AS p_cte_210 WHERE value IS (NULL + driver.tick)) THEN NULL ELSE 0 END) THEN 0 ELSE dirty END FROM (SELECT * FROM c68_d1 WHERE driver.tick >= 0) AS c68_d1) SELECT p_replace_c68_d1(driver.tick,p.id,p.file,p.node,p.c0,p.dirty) FROM payload p)",
+          "nextSql": "CASE WHEN pc+1 >= 5067 THEN -1 ELSE pc+1 END",
+          "source": {
+            "scope": "clause",
+            "statement": 68,
+            "clauseId": "function-uses-loop-variable",
+            "ruleId": "ruff-b023-function-uses-loop-variable"
+          },
+          "publishedRows": 116092,
+          "frameNext": 116092
+        },
+        {
+          "cpuMs": 49.851792,
+          "runs": 8,
+          "sql": "(WITH payload(k,file,node,s0,s1,pk,ord) AS NOT MATERIALIZED (SELECT r.k,r.file,r.node,r.s0,r.s1,r.pk,r.ord FROM (SELECT * FROM p_rank_219 WHERE driver.tick >= 0) r JOIN (SELECT * FROM p_frontier_219 WHERE driver.tick >= 0) s ON r.pk=s.pk WHERE r.position<=s.lim ORDER BY r.k) SELECT p_replace_f6_12(driver.tick,p.k,p.file,p.node,p.s0,p.s1,p.pk,p.ord) FROM payload p)",
+          "nextSql": "CASE WHEN pc+1 >= 5067 THEN -1 ELSE pc+1 END",
+          "source": {
+            "scope": "clause",
+            "statement": 68,
+            "clauseId": "function-uses-loop-variable",
+            "ruleId": "ruff-b023-function-uses-loop-variable"
+          },
+          "publishedRows": 144492,
+          "frameNext": 345992
+        },
+        {
+          "cpuMs": 46.164083,
+          "runs": 4,
+          "sql": "(WITH payload(k,file,node) AS NOT MATERIALIZED (SELECT f.k, f.file, f.node FROM (SELECT * FROM s4_f0_0 WHERE driver.tick >= 0) f WHERE NOT EXISTS(SELECT 1 FROM (SELECT k AS __key FROM (SELECT * FROM s4_f0_2 WHERE driver.tick >= 0) AS s4_f0_2) membership WHERE membership.__key=f.k)) SELECT p_append_s4_f0_1(driver.tick,p.k,p.file,p.node) FROM payload p)",
+          "nextSql": "CASE WHEN pc+1 >= 2867 THEN -1 ELSE pc+1 END",
+          "source": {
+            "scope": "stage",
+            "statement": 4
+          },
+          "publishedRows": 235373,
+          "frameNext": 237572
+        }
+      ],
+      "profileDirectory": "/tmp/rerail-sql-tuning-20261021/chunks-32-profile",
+      "workloadSha256": "c29e2665555e57a9ed441bcf3818ae7d5dbfdbff1d6fe1a3abc8c0bc54185220",
+      "parity": true
+    },
+    {
+      "files": 138,
+      "gate": {
+        "limit": 100,
+        "observed": 72,
+        "excess": 0,
+        "accepted": true,
+        "status": "passed",
+        "scope": "One complete cold workload across all workers, including setup, DDL, transactions, matching, and cleanup. Profiler-generated EXPLAIN is diagnostic work outside the job.",
+        "enforcement": "Acceptance gate after the complete run; this does not interrupt the workload at execution 101.",
+        "categories": {
+          "setup": 4,
+          "transaction": 8,
+          "matchingAndCleanup": 60
+        },
+        "sessions": [
+          {
+            "session": "profile-37360-0.json",
+            "pid": 37360,
+            "completed": 18,
+            "fromSessionStart": true,
+            "running": 0,
+            "source": "ast-session",
+            "started": 18,
+            "observed": 18
+          },
+          {
+            "session": "profile-37360-1.json",
+            "pid": 37360,
+            "completed": 18,
+            "fromSessionStart": true,
+            "running": 0,
+            "source": "ast-session",
+            "started": 18,
+            "observed": 18
+          },
+          {
+            "session": "profile-37360-2.json",
+            "pid": 37360,
+            "completed": 18,
+            "fromSessionStart": true,
+            "running": 0,
+            "source": "ast-session",
+            "started": 18,
+            "observed": 18
+          },
+          {
+            "session": "profile-37360-3.json",
+            "pid": 37360,
+            "completed": 18,
+            "fromSessionStart": true,
+            "running": 0,
+            "source": "ast-session",
+            "started": 18,
+            "observed": 18
+          }
+        ],
+        "problems": [],
+        "firstOverBudget": null
+      },
+      "cpu": {
+        "preparationCpuMs": 4001.792959,
+        "preparationRuns": 60,
+        "largestStatementMemoryBytes": 19479184,
+        "cpuTimingAvailable": true,
+        "measuredCpuMs": 40166.217461,
+        "sqlExecutionCpuMs": 36070.975585,
+        "operatorExclusiveCpuMs": 4095.241876,
+        "profiledApplyCpuMs": 54689.741,
+        "nativeApplyCpuMs": 7219.827,
+        "frameIndexCpuMs": 422.107588,
+        "frameIndexBuilds": 15983,
+        "frameIndexTimedBuilds": 15983,
+        "interpretation": "Recorded spans do not partition apply CPU. Profiling, parsing, preparation outside operators, and report work contribute to the difference. Some setup spans precede apply. These costs are not an unprofiled speedup estimate."
+      },
+      "counters": {
+        "vmSteps": 2384203863,
+        "frameNext": 104565549,
+        "frameInserts": 58799718,
+        "frameColumns": 443532144,
+        "frameIndexCpuNs": 422107588
+      },
+      "program": {
+        "btrees": 0,
+        "bytes": 2168013,
+        "frames": 3746,
+        "shapes": 137,
+        "skeletons": 10482,
+        "steps": 34274,
+        "storedBytes": 595216,
+        "texts": 13473
+      },
+      "sql": {
+        "cteProgramBytes": 10954255,
+        "ctePrograms": 11,
+        "sqlStatements": 15
+      },
+      "digest": "4ad2049fb003a6f5866efb44847b086a09a4e6b015bed17dc9aef77c3313669e",
+      "counts": {
+        "violations": 580,
+        "failures": 0,
+        "blindFiles": 0
+      },
+      "hottestSteps": [
+        {
+          "cpuMs": 922.843627,
+          "runs": 8,
+          "sql": "(WITH payload(id,file,node,c0,dirty) AS NOT MATERIALIZED (SELECT NULL,v.file,v.node,v.c0,1 FROM (WITH supplied(file,node,c0) AS NOT MATERIALIZED (SELECT DISTINCT f.file, f.node, COALESCE((SELECT atom FROM node WHERE file = f.file AND id = f.s1), f.s1) FROM (SELECT * FROM f6_12 WHERE driver.tick >= 0) f WHERE NOT EXISTS (SELECT 1 FROM (SELECT * FROM c68_d1 WHERE driver.tick >= 0) d WHERE d.file = f.file AND d.node = f.node AND d.c0 IS COALESCE((SELECT atom FROM node WHERE file = f.file AND id = f.s1), f.s1))) SELECT * FROM supplied) v) SELECT p_append_c68_d1(driver.tick,p.id,p.file,p.node,p.c0,p.dirty) FROM payload p)",
+          "nextSql": "CASE WHEN pc+1 >= 5067 THEN -1 ELSE pc+1 END",
+          "source": {
+            "scope": "clause",
+            "statement": 68,
+            "clauseId": "function-uses-loop-variable",
+            "ruleId": "ruff-b023-function-uses-loop-variable"
+          },
+          "publishedRows": 369871,
+          "frameNext": 1067180
+        },
+        {
+          "cpuMs": 886.459417,
+          "runs": 4,
+          "sql": "(WITH payload(su,s,du,d) AS NOT MATERIALIZED (SELECT DISTINCT -1, 0, 1, d.id FROM (SELECT * FROM f6_12 WHERE driver.tick >= 0) f CROSS JOIN (SELECT * FROM c68_d1 WHERE driver.tick >= 0) d ON d.file = f.file AND d.node = f.node AND d.c0 IS COALESCE((SELECT atom FROM node WHERE file = f.file AND id = f.s1), f.s1) WHERE EXISTS(SELECT 1 FROM (SELECT k AS __key FROM (SELECT * FROM f13_0 WHERE driver.tick >= 0) AS f13_0) membership WHERE membership.__key=f.k)) SELECT p_append_c68_ex(driver.tick,p.su,p.s,p.du,p.d) FROM payload p)",
+          "nextSql": "CASE WHEN pc+1 >= 5067 THEN -1 ELSE pc+1 END",
+          "source": {
+            "scope": "clause",
+            "statement": 68,
+            "clauseId": "function-uses-loop-variable",
+            "ruleId": "ruff-b023-function-uses-loop-variable"
+          },
+          "publishedRows": 369869,
+          "frameNext": 1286311
+        },
+        {
+          "cpuMs": 546.680501,
+          "runs": 4,
+          "sql": "(WITH payload(k,file,node,s0,s1,pk,ord,position) AS NOT MATERIALIZED (SELECT *,ROW_NUMBER() OVER (PARTITION BY pk ORDER BY ord,k) FROM (SELECT * FROM f6_11 WHERE driver.tick >= 0) AS f6_11) SELECT p_replace_p_rank_219(driver.tick,p.k,p.file,p.node,p.s0,p.s1,p.pk,p.ord,p.position) FROM payload p)",
+          "nextSql": "CASE WHEN pc+1 >= 5067 THEN -1 ELSE pc+1 END",
+          "source": {
+            "scope": "clause",
+            "statement": 68,
+            "clauseId": "function-uses-loop-variable",
+            "ruleId": "ruff-b023-function-uses-loop-variable"
+          },
+          "publishedRows": 643217,
+          "frameNext": 643217
+        },
+        {
+          "cpuMs": 466.996749,
+          "runs": 4,
+          "sql": "WITH payload(k,file,node,s0) AS (WITH p AS MATERIALIZED (SELECT file, node, v0 FROM pattern WHERE term = 421 AND nk IN (SELECT file * 4294967296 + node FROM q656)) SELECT f.k, f.file, f.node, p.v0 FROM q656 f JOIN p ON p.file = f.file AND p.node = f.node) SELECT CAST(p.k AS INTEGER),+(p.file),+(p.node),+(p.s0) FROM payload p",
+          "nextSql": null,
+          "source": null,
+          "publishedRows": null,
+          "frameNext": null
+        },
+        {
+          "cpuMs": 453.095291,
+          "runs": 4,
+          "sql": "WITH payload(k,file,node,s0,s1,s2,s3,s4,s5,s6,s7,s8,s9,unk) AS (WITH p AS MATERIALIZED (SELECT file, node, v0 FROM pattern WHERE term = 423 AND nk IN (SELECT file * 4294967296 + node FROM q661)) SELECT f.k, f.file, f.node, p.v0, NULL AS s1, NULL AS s2, NULL AS s3, NULL AS s4, NULL AS s5, NULL AS s6, NULL AS s7, NULL AS s8, NULL AS s9, 0 FROM q661 f JOIN p ON p.file = f.file AND p.node = f.node) SELECT CAST(p.k AS INTEGER),+(p.file),+(p.node),+(p.s0),+(p.unk) FROM payload p",
+          "nextSql": null,
+          "source": null,
+          "publishedRows": null,
+          "frameNext": null
+        },
+        {
+          "cpuMs": 435.820959,
+          "runs": 12,
+          "sql": "(WITH payload(id,file,node,c0,dirty) AS NOT MATERIALIZED (SELECT id,file,node,c0,CASE WHEN (CASE WHEN (id) IS NULL THEN CASE WHEN p_rows(driver.tick,'p_cte_210')>0 THEN NULL ELSE 0 END WHEN EXISTS(SELECT 1 FROM (SELECT * FROM p_cte_210 WHERE driver.tick >= 0) AS p_cte_210 WHERE value=(id)) THEN 1 WHEN EXISTS(SELECT 1 FROM (SELECT * FROM p_cte_210 WHERE driver.tick >= 0) AS p_cte_210 WHERE value IS (NULL + driver.tick)) THEN NULL ELSE 0 END) THEN 0 ELSE dirty END FROM (SELECT * FROM c68_d1 WHERE driver.tick >= 0) AS c68_d1) SELECT p_replace_c68_d1(driver.tick,p.id,p.file,p.node,p.c0,p.dirty) FROM payload p)",
+          "nextSql": "CASE WHEN pc+1 >= 5067 THEN -1 ELSE pc+1 END",
+          "source": {
+            "scope": "clause",
+            "statement": 68,
+            "clauseId": "function-uses-loop-variable",
+            "ruleId": "ruff-b023-function-uses-loop-variable"
+          },
+          "publishedRows": 845721,
+          "frameNext": 845721
+        },
+        {
+          "cpuMs": 407.334418,
+          "runs": 4,
+          "sql": "(WITH payload(k,file,node) AS NOT MATERIALIZED (SELECT f.k, f.file, f.node FROM (SELECT * FROM s4_f0_1 WHERE driver.tick >= 0) f WHERE (CASE WHEN (f.k) IS NULL THEN CASE WHEN p_rows(driver.tick,'p_cte_133')>0 THEN NULL ELSE 0 END WHEN EXISTS(SELECT 1 FROM (SELECT * FROM p_cte_133 WHERE driver.tick >= 0) AS p_cte_133 WHERE value=(f.k)) THEN 1 WHEN EXISTS(SELECT 1 FROM (SELECT * FROM p_cte_133 WHERE driver.tick >= 0) AS p_cte_133 WHERE value IS (NULL + driver.tick)) THEN NULL ELSE 0 END)) SELECT p_append_s4_f0_0(driver.tick,p.k,p.file,p.node) FROM payload p)",
+          "nextSql": "CASE WHEN pc+1 >= 2867 THEN -1 ELSE pc+1 END",
+          "source": {
+            "scope": "stage",
+            "statement": 4
+          },
+          "publishedRows": 555,
+          "frameNext": 1292330
+        },
+        {
+          "cpuMs": 406.764749,
+          "runs": 4,
+          "sql": "(WITH payload(k,file,node) AS NOT MATERIALIZED (SELECT NULL, file, id FROM (SELECT n.file AS file, n.id AS id FROM node n WHERE n.file IN (SELECT file FROM runs WHERE run = -5) AND (((EXISTS (SELECT 1 FROM node g WHERE g.file = n.file AND g.id < n.id AND g.\"last\" >= n.id AND g.kind IN (145, 154))) OR (EXISTS (SELECT 1 FROM node g WHERE g.file = n.file AND g.id < n.id AND g.\"last\" >= n.id AND g.kind IN (197))))) UNION ALL SELECT n.file, n.id FROM (SELECT file, node FROM roots WHERE run = -5) r CROSS JOIN node n ON n.file = r.file AND n.id = r.node WHERE 1 AND (((EXISTS (SELECT 1 FROM node g WHERE g.file = n.file AND g.id < n.id AND g.\"last\" >= n.id AND g.kind IN (145, 154))) OR (EXISTS (SELECT 1 FROM node g WHERE g.file = n.file AND g.id < n.id AND g.\"last\" >= n.id AND g.kind IN (197))))))) SELECT p_append_s4_f0_0(driver.tick,p.k,p.file,p.node) FROM payload p)",
+          "nextSql": "CASE WHEN pc+1 >= 2867 THEN -1 ELSE pc+1 END",
+          "source": {
+            "scope": "stage",
+            "statement": 4
+          },
+          "publishedRows": 1301695,
+          "frameNext": 0
+        },
+        {
+          "cpuMs": 381.339625,
+          "runs": 8,
+          "sql": "(WITH payload(k,file,node,s0,s1,pk,ord) AS NOT MATERIALIZED (SELECT r.k,r.file,r.node,r.s0,r.s1,r.pk,r.ord FROM (SELECT * FROM p_rank_219 WHERE driver.tick >= 0) r JOIN (SELECT * FROM p_frontier_219 WHERE driver.tick >= 0) s ON r.pk=s.pk WHERE r.position<=s.lim ORDER BY r.k) SELECT p_replace_f6_12(driver.tick,p.k,p.file,p.node,p.s0,p.s1,p.pk,p.ord) FROM payload p)",
+          "nextSql": "CASE WHEN pc+1 >= 5067 THEN -1 ELSE pc+1 END",
+          "source": {
+            "scope": "clause",
+            "statement": 68,
+            "clauseId": "function-uses-loop-variable",
+            "ruleId": "ruff-b023-function-uses-loop-variable"
+          },
+          "publishedRows": 1067180,
+          "frameNext": 2572868
+        },
+        {
+          "cpuMs": 365.884791,
+          "runs": 4,
+          "sql": "WITH payload(k,file,node,s0,s1,s2,s3,s4,s5,s6,s7,s8,s9,unk) AS (SELECT o.k, o.file, o.node, o.s0, NULL AS s1, NULL AS s2, NULL AS s3, NULL AS s4, NULL AS s5, NULL AS s6, NULL AS s7, NULL AS s8, NULL AS s9, p.unk | o.unk FROM q665 o JOIN q663 p ON p.k = o.k) SELECT CAST(p.k AS INTEGER),+(p.file),+(p.node),+(p.s0),+(p.s1),+(p.s2),+(p.s3),+(p.s4),+(p.s5),+(p.s6),+(p.s7),+(p.s8),+(p.s9),+(p.unk) FROM payload p",
+          "nextSql": null,
+          "source": null,
+          "publishedRows": null,
+          "frameNext": null
+        }
+      ],
+      "profileDirectory": "/tmp/rerail-sql-tuning-20261021/chunks-138-profile",
+      "workloadSha256": "96461db4a51f882bd956161670201516bdb1b722dff8d0360876f7c1b2de345a",
+      "parity": true
+    }
+  ],
+  "dispatchIsolation": {
+    "beforeProfile": "/tmp/rerail-sql-tuning-20261021/pipeline-fixed-32-profile",
+    "afterProfile": "/tmp/rerail-sql-tuning-20261021/final-32-profile",
+    "beforePreparationCpuMs": 7238.50375,
+    "afterPreparationCpuMs": 4371.490789,
+    "beforeSqlCpuMs": 5481.514994,
+    "afterSqlCpuMs": 5519.659711,
+    "interpretation": "Comparison isolates the dispatcher on top of the predicate, CTE, and initial buffer changes; these are profiled costs, not whole-job unprofiled improvements."
+  },
+  "rejectedCandidates": [
+    {
+      "name": "unrestricted single-consumer CTE inlining",
+      "failure": "no such table: u; membership extraction escaped a nested CTE scope",
+      "executionBudgetObserved": 28,
+      "executionBudgetStatus": "invalid-capture",
+      "profileDirectory": "/tmp/rerail-sql-tuning-20261021/pipeline-spike-32-profile",
+      "testsFailed": 13
+    },
+    {
+      "name": "one growing publication value buffer",
+      "reason": "Median peak RSS on 138 files rose from 2,777,448,448 to 3,270,639,616 bytes despite lower CPU.",
+      "samples": "/tmp/rerail-sql-tuning-20261021/repeat-results.json",
+      "replacement": "Bounded row-aligned chunks, at most 4096 values per ordinary chunk."
+    }
+  ],
+  "tests": {
+    "nativeCodeRules": {
+      "passed": 1494,
+      "failed": 0,
+      "ignored": 44,
+      "log": "/tmp/rerail-tuning-chunks-tests.log"
+    },
+    "scriptTests": {
+      "passed": 19,
+      "failed": 0,
+      "log": "/tmp/rerail-tuning-chunks-script-tests.log"
+    },
+    "clippy": [
+      "/tmp/rerail-tuning-chunks-clippy.log",
+      "/tmp/rerail-tuning-chunks-clippy-ordinary.log"
+    ],
+    "formatAndWhitespace": "passed"
+  },
+  "remainingWork": "The compiler still publishes 58.8 million frame rows and executes 2.38 billion VM instructions on 138 files. Preserve relational pipelines across operator boundaries, reduce capture copies, and compute recursive canonical demand keys once. These further changes are not claimed as implemented."
+}

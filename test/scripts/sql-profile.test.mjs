@@ -16,13 +16,15 @@ test("CTE set-step times stay inside SQL and preserve unfinished steps", async (
   try {
     writeFileSync(join(directory,"cte-program-9-4.json"),JSON.stringify([{pc:0,sql:"WITH payload(k) AS (SELECT 1)",next:"1",source:{scope:"clause",statement:7}},{pc:1,sql:"0",next:"-1"}]));
     writeFileSync(join(directory,"cte-control-9-0.jsonl"),[
-      {phase:4,pc:0,tick:0,started:true},{phase:4,pc:0,tick:0,cpuNs:50,wallNs:100},
+      {phase:4,pc:0,tick:0,started:true},{phase:4,pc:0,tick:0,cpuNs:50,wallNs:100,publishedRows:3,frame:[1,2,50,70,3,1,5,7,8]},
       {phase:4,pc:1,tick:1,started:true},
     ].map(JSON.stringify).join("\n")+"\n");
     const stages=await controlStages(directory,new Map([[7,{ruleId:"example",clauseId:"clause"}]]));
     assert.deepEqual(stages.map(s=>[s.cpuNs,s.runs,s.incomplete]),[[50,1,0],[0,0,1]]);
     assert.deepEqual(stages[0].columns,["k"]);
     assert.equal(stages[0].kind,"cte-set-step");
+    assert.equal(stages[0].publishedRows,3);
+    assert.equal(stages[0].frameNext,50);
     assert.deepEqual(stages[0].source,{scope:"clause",statement:7,ruleId:"example",clauseId:"clause"});
   } finally { rmSync(directory,{recursive:true,force:true}); }
 });
@@ -45,6 +47,26 @@ test("plan variants ignore connection addresses and retain every raw capture", a
     assert.equal(report.queries[0].bytecode,undefined);
     const saved=JSON.parse(readFileSync(join(directory,"profile.json"),"utf8"));
     assert.equal(saved.queries[0].plans[1].captures[0].catalogue,"raw/profile-9-2.json");
+  } finally {rmSync(directory,{recursive:true,force:true});}
+});
+
+test("preparation is a subcost and never another SQL execution", async () => {
+  const directory=mkdtempSync(join(tmpdir(),"rerail-prepare-")),raw=join(directory,"raw");mkdirSync(raw);
+  try {
+    writeFileSync(join(raw,"profile-9-0.json"),JSON.stringify({version:1,pid:9,events:2,
+      queries:[{id:0,kind:"sql",sql:"SELECT 1",plan:[],bytecode:[]},{id:1,kind:"operator",sql:"SELECT 1"}],
+      executionCoverage:{source:"ast-session",fromSessionStart:true,started:1,completed:1,running:0}}));
+    writeFileSync(join(raw,"profile-9-0.jsonl"),[
+      {kind:"sql",query:0,startNs:20,cpuNs:30,wallNs:30,selfCpuNs:30,selfWallNs:30,rows:1,counters:[1,0,0,0]},
+      {kind:"operator",query:1,startNs:0,cpuNs:50,wallNs:50,selfCpuNs:20,selfWallNs:20,rows:1,completed:true,
+        preparation:{cpuNs:20,wallNs:20,statementMemoryBytes:4096}},
+    ].map(JSON.stringify).join("\n")+"\n");
+    const report=await buildReport(raw,directory);
+    assert.equal(report.executionBudget.observed,1);
+    assert.equal(report.actionableSummary.budget.measuredCpuMs,0.00005);
+    assert.equal(report.actionableSummary.budget.preparationCpuMs,0.00002);
+    assert.equal(report.actionableSummary.budget.largestStatementMemoryBytes,4096);
+    assert.match(readFileSync(join(directory,"summary.md"),"utf8"),/Measured preparation and cache lookup/);
   } finally {rmSync(directory,{recursive:true,force:true});}
 });
 

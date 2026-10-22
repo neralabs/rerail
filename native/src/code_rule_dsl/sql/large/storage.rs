@@ -4,12 +4,16 @@ use rusqlite::functions::{Aggregate, Context, FunctionFlags};
 use std::panic::AssertUnwindSafe;
 
 #[derive(Default)]
-struct Rows(Vec<Vec<Value>>);
+struct Rows {
+    chunks: Vec<Vec<Value>>,
+    len: usize,
+}
 struct Publish {
     frames: AssertUnwindSafe<Arc<FrameStore>>,
     name: String,
     replace: bool,
     ignore: bool,
+    width: usize,
 }
 impl Aggregate<Rows, i64> for Publish {
     fn init(&self, _: &mut Context<'_>) -> rusqlite::Result<Rows> {
@@ -17,24 +21,36 @@ impl Aggregate<Rows, i64> for Publish {
     }
     fn step(&self, ctx: &mut Context<'_>, rows: &mut Rows) -> rusqlite::Result<()> {
         // Argument zero is the SQL iteration token, forcing evaluation at every back-edge.
-        if rows.0.len() >= super::super::super::frames::BUDGET {
+        if rows.len >= super::super::super::frames::BUDGET {
             return Err(rusqlite::Error::ModuleError(
                 "program publication budget".into(),
             ));
         }
-        rows.0.push(
-            (1..ctx.len())
-                .map(|i| ctx.get(i))
-                .collect::<rusqlite::Result<_>>()?,
-        );
+        if ctx.len() - 1 != self.width {
+            return Err(rusqlite::Error::ModuleError(
+                "program publication width".into(),
+            ));
+        }
+        // Bound unused capacity independently of relation size. One growing Vec doubles
+        // multi-million-value buffers and retains that excess while the frame is published.
+        if rows.chunks.last().is_none_or(|c| c.len() == c.capacity()) {
+            rows.chunks
+                .push(Vec::with_capacity((4096 / self.width).max(1) * self.width));
+        }
+        let chunk = rows.chunks.last_mut().unwrap();
+        for i in 1..ctx.len() {
+            chunk.push(ctx.get(i)?);
+        }
+        rows.len += 1;
         Ok(())
     }
     fn finalize(&self, _: &mut Context<'_>, rows: Option<Rows>) -> rusqlite::Result<i64> {
         self.frames
             .0
-            .program_rows(
+            .program_chunks(
                 &self.name,
-                rows.unwrap_or_default().0,
+                rows.unwrap_or_default().chunks,
+                self.width,
                 self.replace,
                 self.ignore,
             )
@@ -72,6 +88,7 @@ pub(super) fn register(
                     name: name.clone(),
                     replace,
                     ignore,
+                    width: schema.columns.len(),
                 },
             )?;
         }

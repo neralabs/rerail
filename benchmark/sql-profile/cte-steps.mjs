@@ -30,6 +30,11 @@ export async function controlStages(directory, clauseNames = new Map()) {
         stage.cpuNs += event.cpuNs;
         stage.wallNs += event.wallNs;
         stage.runs++;
+        if (event.frame) {
+          const fields = ["frameScans","frameLookups","frameNext","frameColumns","frameInserts","frameIndexBuilds","frameIndexedRows","frameIndexCpuNs","frameIndexWallNs"];
+          fields.forEach((field,i)=>{stage[field]=(stage[field]??0)+event.frame[i];});
+          stage.publishedRows=(stage.publishedRows??0)+(event.publishedRows??0);
+        }
         active = undefined;
       }
     }
