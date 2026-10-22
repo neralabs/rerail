@@ -59,6 +59,8 @@ function gitRepository(path: string): string {
   return path;
 }
 
+const stripAnsi = (text: string): string => text.replace(/\u001b\[[0-9;]*m/gu, "");
+
 type Recorded = RepositorySetupIo & { said: string[]; text(): string };
 
 /** The coding agent's side: no terminal, so set-up stops at each question. */
@@ -586,6 +588,40 @@ describe("set-up in a terminal", { timeout: SETUP_TIMEOUT_MS }, () => {
     expect(io.text()).toContain("Try it");
     expect(io.text()).toContain("Good to know");
     expect(io.text()).not.toContain("optional");
+  });
+
+  it("says which numbers it takes when a typed answer names none, then asks again", async () => {
+    const setup = await fixture();
+    const io = terminalIo(["9", "maybe", "", "1"]);
+    expect(await runSetup(io, request(setup, fakeSetupEnvironment()))).toMatchObject({ status: "started" });
+    expect(io.said.map(stripAnsi).filter(text => text === "Type a number from 1 to 3.")).toHaveLength(2);
+  });
+
+  it("asks through the terminal's menu where it has one, drawing the answers there and not in the question", async () => {
+    const setup = await fixture();
+    const frames: string[] = [];
+    const picks = [0, 0];
+    const io: Recorded = {
+      ...terminalIo([]),
+      choose: async menu => {
+        frames.push(stripAnsi(menu.frame(1)));
+        return picks.shift();
+      },
+    };
+    expect(await runSetup(io, request(setup, fakeSetupEnvironment()))).toMatchObject({ status: "started" });
+    expect(selected(setup)).toEqual(TS_PACKS);
+    expect(frames).toHaveLength(2);
+    expect(frames[0]).toMatch(/^  1\. Yes, scan acme-api.*\n❯ 2\. Scan a different repo…/u);
+    expect(frames[0]).toMatch(/\n\n↑↓ to move, Enter to choose, or type a number: $/u);
+    expect(stripAnsi(io.text())).toContain("Step 1 of 2 · Find rule packs for acme-api?");
+    expect(stripAnsi(io.text())).not.toContain("1. Yes, scan acme-api");
+  });
+
+  it("stops, as when input ends, when the menu is cancelled", async () => {
+    const setup = await fixture();
+    const io: Recorded = { ...terminalIo([]), choose: async () => undefined };
+    expect(await runSetup(io, request(setup, fakeSetupEnvironment()))).toMatchObject({ status: "cancelled" });
+    expectUntouched(setup);
   });
 
   it("numbers the main flow's questions, counting the sessions question only when it is asked", async () => {

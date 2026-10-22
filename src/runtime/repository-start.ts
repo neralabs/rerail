@@ -171,6 +171,17 @@ export interface RepositorySetupIo {
   say(text: string): void;
   /** The terminal lane's answer to a question; undefined when input ended. Absent in the other lanes. */
   ask?(prompt: string): Promise<string | undefined>;
+  /**
+   * The terminal lane at a real terminal: the answer the person moves the cursor to, as its index; undefined when
+   * input ended or they cancelled. Absent where answers are typed as lines, which `ask` reads.
+   */
+  choose?(menu: ChoiceMenu): Promise<number | undefined>;
+}
+
+/** A question's answers as a menu: `frame` draws them with the cursor on one, then the line to answer on. */
+export interface ChoiceMenu {
+  readonly count: number;
+  frame(highlight: number): string;
 }
 
 export interface RepositoryStopOptions {

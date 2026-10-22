@@ -201,30 +201,53 @@ export interface QuestionStep {
  * Json: the body without the question line, which `setupQuestion` carries with the answers.
  */
 export function renderQuestion(form: QuestionForm, lane: SetupLane, step?: QuestionStep): string {
-  const style = styleFor(lane);
   if (lane === "json") return lines([...form.lead, ...form.trail]);
-  const prompt = lane === "terminal" && step !== undefined ? `Step ${step.index} of ${step.total} · ${form.prompt}` : form.prompt;
-  const body = [...form.lead, ...(form.lead.length === 0 ? [] : [""]), style.bold(prompt), ...form.trail];
-  // The hints line up in one column, past the longest answer.
-  const width = Math.max(...form.choices.map((choice, index) => `${index + 1}. ${choice.label}`.length)) + 4;
-  const answer = (choice: Choice, index: number): string => {
-    const text = `${index + 1}. ${choice.label}`;
-    return choice.hint === undefined ? text : `${text.padEnd(width)}${style.dim(choice.hint)}`;
-  };
-  if (lane === "terminal") {
-    // A blank line first, so each question stands apart from what the answer before it printed.
-    return lines(["", ...body, "", ...form.choices.map((choice, index) => `${index === 0 ? style.brand("❯") : " "} ${answer(choice, index)}`)]);
-  }
+  if (lane === "terminal") return `${renderQuestionHead(form, step)}${lines(choiceRows(form, TERMINAL_STYLE, 0))}`;
+  const style = styleFor(lane);
   return lines([
     AGENT_QUESTION_INTRO,
     "",
-    ...body,
+    ...questionBody(form, style, form.prompt),
     "",
-    ...form.choices.map(answer),
+    ...form.choices.map((choice, index) => answerText(form, choice, index, style)),
     "",
     AGENT_QUESTION_OUTRO,
     ...form.choices.map((choice, index) => `${index + 1}. ${agentCommand(form, choice)}`),
   ]);
+}
+
+/** The lines above a question's answers: what leads up to it, the question, and what follows it. */
+function questionBody(form: QuestionForm, style: Style, prompt: string): string[] {
+  return [...form.lead, ...(form.lead.length === 0 ? [] : [""]), style.bold(prompt), ...form.trail];
+}
+
+/** One answer, numbered; its hint lines up in one column, past the longest answer. */
+function answerText(form: QuestionForm, choice: Choice, index: number, style: Style): string {
+  const width = Math.max(...form.choices.map((other, otherIndex) => `${otherIndex + 1}. ${other.label}`.length)) + 4;
+  const text = `${index + 1}. ${choice.label}`;
+  return choice.hint === undefined ? text : `${text.padEnd(width)}${style.dim(choice.hint)}`;
+}
+
+/** Terminal: the answers, with the cursor on `highlight`. */
+function choiceRows(form: QuestionForm, style: Style, highlight: number): string[] {
+  return form.choices.map((choice, index) => `${index === highlight ? style.brand("❯") : " "} ${answerText(form, choice, index, style)}`);
+}
+
+/**
+ * Terminal: the step and the body, ending on the blank line the answers follow. A blank line first, so each question
+ * stands apart from what the answer before it printed.
+ */
+export function renderQuestionHead(form: QuestionForm, step?: QuestionStep): string {
+  const prompt = step === undefined ? form.prompt : `Step ${step.index} of ${step.total} · ${form.prompt}`;
+  return lines(["", ...questionBody(form, TERMINAL_STYLE, prompt), ""]);
+}
+
+/**
+ * Terminal, where the arrow keys move the cursor: the answers with the cursor on `highlight`, a blank line, and the
+ * line to answer on, without a line break after it. The menu draws it again in place each time the cursor moves.
+ */
+export function renderMenu(form: QuestionForm, highlight: number): string {
+  return [...choiceRows(form, TERMINAL_STYLE, highlight), "", `${TERMINAL_STYLE.dim("↑↓ to move, Enter to choose, or type a number:")} `].join("\n");
 }
 
 /** The question as `--json` reports it. `baseArgs` start every answer's arguments: `setup`, `--port`, `--json`. */
@@ -830,6 +853,11 @@ export function renderStoppedRepo(input: StoppedRepoInput, lane: SetupLane): str
 /** Under a question in the terminal: Enter takes the answer the cursor is on. */
 export function renderAnswerPrompt(): string {
   return `\n${TERMINAL_STYLE.dim("Enter for 1, or type a number:")} `;
+}
+
+/** A typed answer that names none of the question's answers; the question is asked again. */
+export function renderAnswerHint(count: number): string {
+  return TERMINAL_STYLE.yellow(`Type a number from 1 to ${count}.`);
 }
 
 /** After "Use a different folder…" or "Type the folder…". */

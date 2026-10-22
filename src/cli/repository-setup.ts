@@ -52,12 +52,15 @@ import {
   SETUP_FLAGS,
   recommendedPacksQuestion,
   renderPacksPrompt,
+  renderAnswerHint,
   renderAnswerPrompt,
   renderFolderNotFound,
   renderFolderPrompt,
   renderNotNow,
   renderPickedMyself,
+  renderMenu,
   renderQuestion,
+  renderQuestionHead,
   renderSkipped,
   renderSessionsDeclined,
   renderStoppedRepo,
@@ -272,11 +275,16 @@ function pickAnswer<K extends string>(line: string, keys: readonly K[]): K | und
   return keys.find(key => key === text);
 }
 
-/** Say the question; in the terminal, wait for a valid answer. Undefined: the agent lane stops here, or input ended. */
+/** Say the question; in the terminal, wait for a valid answer (a menu at a real terminal). Undefined: the agent lane stops here, or input ended. */
 async function choose<K extends string>(run: Run, form: QuestionForm, keys: readonly K[]): Promise<K | undefined> {
   const { io } = run;
   const index = run.steps.indexOf(form.id);
   const step: QuestionStep | undefined = index < 0 ? undefined : { index: index + 1, total: run.steps.length };
+  if (io.lane === "terminal" && io.choose !== undefined) {
+    say(io, renderQuestionHead(form, step));
+    const index = await io.choose({ count: keys.length, frame: highlight => renderMenu(form, highlight) });
+    return index === undefined ? undefined : keys[index];
+  }
   say(io, renderQuestion(form, io.lane, step));
   if (io.lane === "json") run.request.onQuestion?.(setupQuestion(form, run.request.nextArgs ?? DEFAULT_NEXT_ARGS));
   if (io.ask === undefined) return undefined;
@@ -285,6 +293,7 @@ async function choose<K extends string>(run: Run, form: QuestionForm, keys: read
     if (line === undefined) return undefined;
     const picked = pickAnswer(line, keys);
     if (picked !== undefined) return picked;
+    io.say(renderAnswerHint(keys.length));
   }
 }
 

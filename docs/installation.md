@@ -236,6 +236,12 @@ than 64 deep, and a rule the person already set in the dashboard's
 review (in that folder) keeps that setting. "I'll pick rule packs myself" takes nothing from
 the lint config, even for the packs the person then picks.
 
+**In a terminal** (stdin and stdout are TTYs, no `--relay`), each question is
+a menu: ↑/↓ (or k/j) move the `❯` from answer to answer, wrapping around, a
+digit moves it to that answer, and Enter takes the answer it is on, so typing
+`2` then Enter answers as before. Ctrl-C puts the terminal back and stops
+set-up; Ctrl-D cancels it. The folder and rule-pack prompts read a typed line.
+
 **Without a terminal** (stdin or stdout is not a TTY, as when a coding agent
 runs it), or with `--relay`, each run prints the next question for the coding
 agent to relay, as written, with one command per answer, and exits 0. The

@@ -8,7 +8,10 @@ import {
   renderBanner,
   renderInstalled,
   renderOnPath,
+  renderAnswerHint,
+  renderMenu,
   renderQuestion,
+  renderQuestionHead,
   renderSessionsDeclined,
   sessionsQuestion,
   renderNoRepoQuestion,
@@ -163,6 +166,21 @@ describe("question steps", () => {
     const skip = rows.find(row => row.includes("3. Skip, I’ll pick packs")) ?? "";
     expect(other.indexOf("e.g. ~/code/landing-page")).toBe(skip.indexOf("Rerail won’t scan"));
     expect(other).toMatch(/…    e\.g\./);
+  });
+
+  it("draws the terminal menu as the question draws its answers, with the cursor where it is moved", () => {
+    const question = stripAnsi(renderQuestion(form, "terminal", { index: 2, total: 3 }));
+    expect(`${stripAnsi(renderQuestionHead(form, { index: 2, total: 3 }))}${stripAnsi(renderMenu(form, 0))}`)
+      .toBe(`${question}\n↑↓ to move, Enter to choose, or type a number: `);
+    const rows = stripAnsi(renderMenu(form, 2)).split("\n");
+    expect(rows).toHaveLength(form.choices.length + 2);
+    expect(rows[0]).toMatch(/^  1\. Yes, scan acme-web/u);
+    expect(rows[2]).toMatch(/^❯ 3\. Skip, I’ll pick packs/u);
+    expect(rows.at(-2)).toBe("");
+  });
+
+  it("says which numbers a typed answer may be", () => {
+    expect(stripAnsi(renderAnswerHint(3))).toBe("Type a number from 1 to 3.");
   });
 });
 

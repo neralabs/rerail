@@ -374,7 +374,7 @@ describe("rerail setup, the command", { timeout: SETUP_TIMEOUT_MS }, () => {
   /** A coding agent's pseudo-terminal, or a person's terminal: a TTY on stdout and (unless piped) stdin, which reaches its end at once. */
   function terminal(stdinIsTTY = true): { output: () => string; listenedToStdin: () => boolean } {
     const written: string[] = [];
-    const stdin = Object.assign(Readable.from([]), { isTTY: stdinIsTTY });
+    const stdin = Object.assign(Readable.from([]), { isTTY: stdinIsTTY, setRawMode: vi.fn() });
     const listen = vi.spyOn(stdin, "on");
     const stdout = Object.assign(new Writable({ write(chunk, _encoding, done) { written.push(String(chunk)); done(); } }), { isTTY: true });
     vi.spyOn(process, "stdin", "get").mockReturnValue(stdin as unknown as typeof process.stdin);
@@ -409,6 +409,8 @@ describe("rerail setup, the command", { timeout: SETUP_TIMEOUT_MS }, () => {
     expect(await runSetupCommand([], context)).toBe(1);
     expect(person.listenedToStdin()).toBe(true);
     expect(person.output()).toContain("Find rule packs for acme api?");
+    // A question there is a menu the arrow keys move through.
+    expect(person.output()).toContain("↑↓ to move, Enter to choose, or type a number:");
     expect(person.output()).not.toContain("Ask them this");
 
     const piped = terminal(false);

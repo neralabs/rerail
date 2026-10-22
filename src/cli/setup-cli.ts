@@ -2,7 +2,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { createInterface, type Interface } from "node:readline";
 import { setTimeout as sleep } from "node:timers/promises";
 import { rulesDashboardUrl, type RulesDashboardScope } from "../api/session-contracts.js";
 import {
@@ -24,6 +23,7 @@ import {
 } from "../setup/harness-registration.js";
 import { checkNodeVersion } from "../setup/node-version.js";
 import { addLauncherToPath, describeLauncherPath, removeLauncherFromPath } from "../setup/shell-path.js";
+import { TerminalInput } from "./setup-menu.js";
 import { checkSetupAnswer, parseCodingAgents, runSetup, runSetupStep, setupAgents, setupPacks, startRerailStep, type DashboardPage, type SetupEnvironment, type SetupRequest } from "./repository-setup.js";
 import { npmPackStore, type PackStore, type PackVersion } from "../setup/rule-pack-store.js";
 import { workspaceStartState, type RepositorySetupIo } from "../runtime/repository-start.js";
@@ -257,20 +257,15 @@ export function setupIo(args: readonly string[] = []): SetupIo {
     process.stdout.write(`${text}\n`);
   };
   if (args.includes(SETUP_FLAGS.relay) || !process.stdin.isTTY || !process.stdout.isTTY) return { lane: "agent", say, close: () => {} };
-  // The iterator buffers lines typed ahead of the next question; `question()` would drop them.
-  let input: Interface | undefined;
-  let lines: AsyncIterator<string> | undefined;
+  // One reader for the run: lines for the folder and pack prompts, keys for each question's menu, and what is typed
+  // ahead of a prompt kept for it.
+  const input = new TerminalInput(process.stdin, text => process.stdout.write(text));
   return {
     lane: "terminal",
     say,
-    async ask(prompt) {
-      process.stdout.write(prompt);
-      input ??= createInterface({ input: process.stdin, crlfDelay: Number.POSITIVE_INFINITY });
-      lines ??= input[Symbol.asyncIterator]();
-      const next = await lines.next();
-      return next.done === true ? undefined : next.value;
-    },
-    close: () => input?.close(),
+    ask: async prompt => await input.line(prompt),
+    choose: async menu => await input.choose(menu),
+    close: () => input.close(),
   };
 }
 
