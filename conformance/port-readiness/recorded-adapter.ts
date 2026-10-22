@@ -176,17 +176,18 @@ export interface RecordedInputs {
   names: string[];
 }
 
-/** What to do when a recording the lock names is not in the cache: record it, which writes the lock it names. */
+/** What to do when a recording the lock names is not in the cache: fetch it from S3, or record it, which writes the lock it names. */
 function missingMessage(pack: string, tool: string, file: string): string {
   return `the recording packs/${pack}/upstream/${tool}/${RECORDING_LOCK} names for ${file} is not in the cache:`
-    + ` record it with npm run port-readiness:record -- --pack ${pack} --tool ${tool} (CI restores it from the Actions cache, or records it)`;
+    + ` fetch it with node scripts/s3/pack-fixtures.mjs recordings --pack ${pack} --tool ${tool}, or record it with npm run port-readiness:record -- --pack ${pack} --tool ${tool}`
+    + ` (CI restores it from the Actions cache or S3, or records it)`;
 }
 
 /**
  * Read a gated tool-pack's `gates.yaml` and `recording.lock` from the working tree at `root`, and the two recordings
- * the lock names from the cache. The recordings are not in the tree: `port-readiness:record` puts them in the cache (CI
- * restores it from the Actions cache, recording/store.ts), and they are checked against the lock's digests on every read, so
- * a rule is never judged against bytes this commit did not name.
+ * the lock names from the cache. The recordings are not in the tree: `port-readiness:record` puts them in the cache, and
+ * `pack-fixtures.mjs recordings` fetches them there from S3 (recording/store.ts); they are checked against the lock's
+ * digests on every read, so a rule is never judged against bytes this commit did not name.
  */
 export function readRecordedInputs(root: string, cacheRoot: string, pack: string, tool: string, names: string[]): RecordedInputs {
   const manifest = readGatesManifest(root, pack, tool);
@@ -283,7 +284,7 @@ export function toolPackChecks(inputs: RecordedInputs): Check[] {
   }
   // A recording whose case carries no sha256 of its source is stale.
   const sourceMismatches: string[] = [];
-  // Case sources are pack test data, in S3: a checkout without them is told to pull them, not to re-record.
+  // Case sources are pack test data, not in git: a checkout without them is told to pull and derive them, not to re-record.
   const unpulled: string[] = [];
   for (const [file, digests] of [...recordedDigests].sort(([a], [b]) => (a < b ? -1 : 1))) {
     const recorded = digests.size === 1 ? [...digests][0] : undefined;

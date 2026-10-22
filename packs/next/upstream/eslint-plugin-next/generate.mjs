@@ -7,7 +7,8 @@
 // 6194d642b6fd743437da21dac3c720a587e6b9b2, commerce @ 3761e52e60df9c6a316e067dbfd7032e494d3634
 // (`.rerail/corpora/next/<name>`). Any other version or commit is refused.
 //
-// Usage (offline, maintainer only; Node >= 23.6 for type stripping and module.registerHooks):
+// Run by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release; never pull request
+// CI). Usage (Node >= 23.6 for type stripping and module.registerHooks):
 //   node packs/next/upstream/eslint-plugin-next/generate.mjs [--tools <dir>] [--corpora <dir>] [--upstream <dir>]
 //                                                            [--only fixtures|corpora|tests|licenses]
 //
@@ -299,7 +300,7 @@ function writeLicenses() {
 
 Upstream: [vercel/next.js](${UPSTREAM_REPOSITORY}/tree/${UPSTREAM_COMMIT}) at tag \`v${PLUGIN_VERSION}\` (commit \`${UPSTREAM_COMMIT}\`), the source of \`@next/eslint-plugin-next\` ${PLUGIN_VERSION}. License: MIT (Copyright (c) 2025 Vercel, Inc.); [\`LICENSE\`](LICENSE) is the upstream \`license.md\`, copied verbatim at that tag.
 
-The files listed below are the plugin's rule tests and the test cases extracted from them, and remain under Next.js's license. Every other file in this pack is Rerail's, under the Apache License 2.0 (the pack's \`LICENSE\`): the rule documents in \`rules/\`, the recorder \`upstream/${TOOL}/generate.mjs\` (with its stub \`RuleTester\` and stub plugin module), \`upstream/${TOOL}/fixtures.cases.json\`, and the \`*.expected.json\` outputs recorded by running the pinned plugin.
+The files listed below are the plugin's rule tests and the test cases extracted from them, and remain under Next.js's license. Every other file in this pack is Rerail's. The rule documents in \`rules/\` and \`candidates/rules/\` are Rerail's re-implementations of @next/eslint-plugin-next's rules, published under the pack's licence expression, \`Apache-2.0 AND MIT\`, as \`REUSE.toml\` annotates them. The rest is under the Apache License 2.0 (the pack's \`LICENSE\`): the recorder \`upstream/${TOOL}/generate.mjs\` (with its stub \`RuleTester\` and stub plugin module), \`upstream/${TOOL}/fixtures.cases.json\`, and the \`*.expected.json\` outputs recorded by running the pinned plugin.
 
 Paths are relative to the pack directory, \`packs/next/\`.
 

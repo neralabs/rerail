@@ -116,6 +116,7 @@
     "port-readiness:record": "node --import tsx conformance/recorders/port-readiness/cli.ts",
     "fixtures:pull": "node scripts/s3/pack-fixtures.mjs pull",
     "fixtures:push": "node scripts/s3/pack-fixtures.mjs push",
+    "fixtures:derive": "node --import tsx scripts/pack-data/derive.ts",
     "port-readiness:upstream-releases": "node --import tsx conformance/port-readiness/upstream-releases.ts",
     "generate:schema": "node --import tsx scripts/generate/schema/schema-sql.ts",
     "generate:languages": "node --import tsx scripts/generate/languages/registry.ts",

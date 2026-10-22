@@ -3,9 +3,9 @@ name: Port readiness
 # The port readiness gates (docs/port-readiness.md): every rule a pack ships must pass them; candidates run through them and are
 # only reported. Called by ci.yml after its build job (the gates read the `built` artifact's engine) when a pull request
 # or a push to main touches a gate input, and by port-readiness-nightly.yml, which judges every rule again and refreshes
-# the result cache. Both callers run it only for pushes and same-repository pull requests, and grant id-token: write:
-# the gates read the packs' test data (upstream's copied tests, the case sources) from S3 under an OIDC token
-# (.github/actions/pack-fixtures), which GitHub gives no fork's pull request. The gates read each tool-pack's
+# the result cache. Both callers run it only for pushes and same-repository pull requests, after their pack-test-data
+# job (.github/workflows/pack-test-data.yml): the gates read the packs' test data (upstream's copied tests, the case
+# sources, the recorded answers) from its artifact (.github/actions/pack-test-data). The gates read each tool-pack's
 # recordings (recording.json and corpus.json, which packs/<id>/upstream/<tool>/recording.lock names by sha256) from the
 # Actions cache, keyed by those digests; a leg that misses records its tool-pack from this commit's recorder, which must
 # write the lock the commit has, and saves the recordings for later runs. No rule runs over the real-code corpus (that
@@ -87,10 +87,8 @@ jobs:
     # An uncached leg judges every rule again: javascript/eslint (121 rules, 11,368 upstream cases) takes 35 min on a
     # laptop, as nera-rule-validation does, and Ruff took 4.5 times longer on a cold CI runner than on a laptop.
     timeout-minutes: 180
-    # id-token: reading the packs' test data from S3 (pack-fixtures). The callers grant the same.
     permissions:
       contents: read
-      id-token: write
     strategy:
       fail-fast: false
       # One leg per gated tool-pack the plan selects, or one per shard of a tool-pack in plan.mjs's SHARDS: `shard`
@@ -111,7 +109,7 @@ jobs:
 
       # Before anything reads a case source or fixtures.expected.json, and before the recorder below compares what it
       # writes with what the tool-pack has.
-      - uses: ./.github/actions/pack-fixtures
+      - uses: ./.github/actions/pack-test-data
 
       - uses: ./.github/actions/node-deps
         with:
@@ -237,7 +235,7 @@ jobs:
       # The recorder writes both recordings into the cache the gates read, and the lock and case sources into the tree:
       # those must be what the commit already has, or the commit's lock names a recording its own recorder does not make.
       # The comparison is over every file under the tool-pack and the pack's licences, tracked or not: the packs' test
-      # data is gitignored once pulled from S3, so `git status` would not show a case source the recorder added. No
+      # data is gitignored (pulled or derived), so `git status` would not show a case source the recorder added. No
       # maintainer's recording run posts a per-rule summary for this commit, so the leg writes one into its job summary
       # and its report artifact: against the recording the base's lock names, put in the commit's lock's place while the
       # recorder runs, or as a first recording when the base has no lock. The recorder runs upstream's code and the
@@ -274,7 +272,7 @@ jobs:
             jq -r '.files[].sha256' "$lock" | while read -r digest; do
               cp ".rerail/port-readiness/recordings/$digest.json" "$RUNNER_TEMP/gates/recorded-$PACK--$TOOL/"
             done
-            echo "::error::the recorder wrote files this commit does not have; record $PACK/$TOOL again and commit them, or check new test data in (the report artifact holds what it recorded):"
+            echo "::error::the recorder wrote files this commit does not have; record $PACK/$TOOL again and commit them (a case source it copied is derived data: npm run fixtures:derive must make it, so check that it does) (the report artifact holds what it recorded):"
             sed -n '1,200p' "$RUNNER_TEMP/written.diff"
             exit 1
           fi
