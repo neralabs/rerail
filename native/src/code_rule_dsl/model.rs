@@ -733,7 +733,7 @@ impl CompiledCodeRule {
 }
 
 #[derive(Clone)]
-pub(super) struct FileInput {
+pub struct FileInput {
     pub(super) path: String,
     pub(super) language: String,
     pub(super) source: Arc<String>,
@@ -750,7 +750,7 @@ impl FileInput {
     /// that holds package markers derives it first (`python_module_in`). `package` is the ECMA
     /// file's nearest `package.json` (`Manifest::from_wire`, `Manifests`); without it the file
     /// has none.
-    pub(super) fn new(
+    pub fn new(
         path: String,
         language: String,
         source: Arc<String>,

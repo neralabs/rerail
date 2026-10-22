@@ -55,7 +55,7 @@ const OTHER_JSX_PACKAGES: [&str; 7] = [
 
 /// An ECMA file's nearest `package.json`, as `file.package` and the module system read it.
 #[derive(Clone, Debug)]
-pub(crate) struct Manifest {
+pub struct Manifest {
     /// The manifest's directory, relative to the workspace root (`""` at the root).
     folder: String,
     package_type: PackageType,

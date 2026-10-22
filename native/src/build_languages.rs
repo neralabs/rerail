@@ -538,7 +538,7 @@ fn render(entries: &[Entry], test_planned: &[String]) -> String {
     out.push_str("macro_rules! grammar_dialect {\n");
     out.push_str("    ($($test:ident => $support:path),* $(,)?) => {\n");
     out.push_str("        /// Rerail's grammar dialect. `ast_grep_language::SupportLang` is closed, while vendored\n        /// grammars (Blade's, the patched Python and TypeScript) are part of Rerail's source surface.\n");
-    out.push_str("        #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]\n        pub(crate) enum GrammarDialect {\n");
+    out.push_str("        #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]\n        pub enum GrammarDialect {\n");
     for dialect in supported.iter().flat_map(|entry| &entry.dialects) {
         let _ = writeln!(
             out,

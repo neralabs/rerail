@@ -60,9 +60,9 @@ pub(super) fn take_table_reservation() -> usize {
 
 /// Deterministic grammar-wide codes: kind code is the dialect's kind id, field code its field id
 /// (zero means no field), both as `GrammarDialect::kinds` numbers them.
-pub(super) struct Grammar {
+pub struct Grammar {
     lang: GrammarDialect,
-    kinds: KindCatalog,
+    pub kinds: KindCatalog,
     /// Each kind code's name and whether it is named, read once: Tree-sitter answers a name
     /// by measuring and validating its C string on every call, and `kind` is the matcher's
     /// most frequent question.
@@ -70,13 +70,13 @@ pub(super) struct Grammar {
 }
 
 impl Grammar {
-    pub(super) fn field_code(&self, name: &str) -> Option<u16> {
+    pub fn field_code(&self, name: &str) -> Option<u16> {
         self.kinds.field_id(name)
     }
     pub(super) fn has_field(&self, name: &str) -> bool {
         self.kinds.field_id(name).is_some()
     }
-    pub(super) fn new(lang: GrammarDialect) -> Result<Arc<Self>, String> {
+    pub fn new(lang: GrammarDialect) -> Result<Arc<Self>, String> {
         let kinds = lang.kinds();
         if kinds.kind_count() > KIND_LIMIT || kinds.field_count() >= FIELD_LIMIT {
             return Err("grammar exceeds rec6 kind/field code width".into());
@@ -1464,7 +1464,7 @@ struct Rec {
 }
 
 #[derive(Clone)]
-pub(super) struct TapeDoc {
+pub struct TapeDoc {
     source: Arc<String>,
     grammar: Arc<Grammar>,
     data: Arc<Vec<Rec>>,
@@ -1866,7 +1866,7 @@ impl TapeDoc {
 
     /// Ranges of ERROR nodes and MISSING tokens that no ERROR node contains, as
     /// `SyntaxErrors::collect` finds them on the native tree.
-    pub(super) fn syntax_error_ranges(&self) -> Vec<Range<usize>> {
+    pub fn syntax_error_ranges(&self) -> Vec<Range<usize>> {
         self.syntax_error_nodes().map(|(_, range)| range).collect()
     }
 
@@ -1964,11 +1964,11 @@ impl TapeDoc {
         &self.lines
     }
 
-    pub(super) fn transducer_len(&self) -> usize {
+    pub fn transducer_len(&self) -> usize {
         self.data.len()
     }
 
-    pub(super) fn transducer_kind(&self, node: u32) -> u16 {
+    pub fn transducer_kind(&self, node: u32) -> u16 {
         self.data[node as usize].kind
     }
 
@@ -1986,11 +1986,11 @@ impl TapeDoc {
         )
     }
 
-    pub(super) fn transducer_field(&self, node: u32) -> u16 {
+    pub fn transducer_field(&self, node: u32) -> u16 {
         self.data[node as usize].field
     }
 
-    pub(super) fn transducer_flags(&self, node: u32) -> u8 {
+    pub fn transducer_flags(&self, node: u32) -> u8 {
         let rec = &self.data[node as usize];
         u8::from(self.node_is_named(node))
             | (u8::from(rec.extra) << 1)
@@ -1998,7 +1998,7 @@ impl TapeDoc {
             | (u8::from(rec.error) << 3)
     }
 
-    pub(super) fn transducer_span(&self, node: u32) -> Range<usize> {
+    pub fn transducer_span(&self, node: u32) -> Range<usize> {
         let rec = &self.data[node as usize];
         rec.start as usize..rec.end as usize
     }
@@ -2018,7 +2018,7 @@ impl TapeDoc {
         [rec.extra, rec.error, rec.missing]
     }
 
-    pub(super) fn transducer_parent(&self, node: u32) -> Option<u32> {
+    pub fn transducer_parent(&self, node: u32) -> Option<u32> {
         let parent = self.data[node as usize].parent;
         (parent != NONE).then_some(parent)
     }
@@ -2036,7 +2036,7 @@ impl TapeDoc {
         })
     }
 
-    pub(super) fn transducer_descendants(&self, node: u32) -> Range<u32> {
+    pub fn transducer_descendants(&self, node: u32) -> Range<u32> {
         let rec = &self.data[node as usize];
         node + 1..node + rec.size
     }
@@ -2060,13 +2060,13 @@ impl TapeDoc {
     }
 
     /// A node's source slice. Restoring the tape validates every span as a UTF-8 boundary.
-    pub(super) fn transducer_text_str(&self, node: u32) -> &str {
+    pub fn transducer_text_str(&self, node: u32) -> &str {
         &self.source[self.transducer_span(node)]
     }
 
     /// The node at a preorder ordinal: `root.adopt(doc.node(ordinal))` is the node ast-grep
     /// matches on.
-    pub(super) fn node(&self, ordinal: u32) -> TapeNode<'_> {
+    pub fn node(&self, ordinal: u32) -> TapeNode<'_> {
         self.root_node().at(ordinal)
     }
 
@@ -2085,7 +2085,7 @@ impl TapeDoc {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct TapeNode<'a> {
+pub struct TapeNode<'a> {
     nodes: &'a [Rec],
     grammar: &'a Grammar,
     points: &'a Points,

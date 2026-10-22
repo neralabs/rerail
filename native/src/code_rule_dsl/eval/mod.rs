@@ -18,8 +18,9 @@ pub(super) use output::{
 };
 pub(super) use query::{
     Engine, TapeCacheSlot, WitnessError, document_matcher, evaluate_files, evaluate_query,
-    file_language, file_tape, grammar_matcher, witness_from_match, witnesses_from_match,
+    grammar_matcher, witness_from_match, witnesses_from_match,
 };
+pub use query::{file_language, file_tape};
 #[cfg(test)]
 pub(super) use query::{reset_shared_group_lookups, shared_group_lookups};
 use serde_json::Value;

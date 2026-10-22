@@ -1127,7 +1127,7 @@ impl Leaves for SnapshotLeaves<'_, '_> {
     }
 }
 
-pub(crate) fn file_language(file: &FileInput) -> Option<GrammarDialect> {
+pub fn file_language(file: &FileInput) -> Option<GrammarDialect> {
     crate::code_rule_dsl::language::dialect_by_label(&file.language)
 }
 
@@ -1196,7 +1196,7 @@ impl Drop for TapeCacheSlot {
 /// A file's tape, as the workspace stores it, and its line table, reused within the current
 /// evaluation; `None` where the parser stopped at a limit before it read the file (Forte's nesting
 /// depth or step budget).
-pub(in crate::code_rule_dsl) fn file_tape(
+pub fn file_tape(
     language: GrammarDialect,
     file: &FileInput,
 ) -> Result<Option<(crate::code_rule_dsl::tape::TapeDoc, Arc<LineTable>)>> {
