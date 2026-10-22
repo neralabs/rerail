@@ -6,6 +6,7 @@ import { z } from "zod";
 import { codeRuleSchema, encodeCodeRuleWorkspaceRequest, loadNativeBinding, resolveNativeBindingPath, RESULT_PAGE_BYTES } from "../../src/engine/index.js";
 import { capabilitiesJson } from "../engine.js";
 import { escapeHatchSignatureFailure } from "./signed-allowlist.js";
+import { factsBinarySha256, runFactsRepository } from "./facts-engine.js";
 
 const recordingSchema = z.object({
   commit: z.string(), workers: z.number(), oracle_ms: z.number().nullable(), source_mismatches: z.array(z.string()),
@@ -20,14 +21,44 @@ const applyResponseSchema = z.object({ evaluation: z.object({ profile: z.record(
 const { values } = parseArgs({ options: { recording: { type: "string" }, output: { type: "string" }, allocator: { type: "string", default: "unspecified" },
   policies: { type: "string", default: "packs/data-layer/candidates/rules" }, progress: { type: "boolean", default: false }, "cold-only": { type: "boolean", default: false }, "memory-census": { type: "boolean", default: false }, "batch-files": { type: "string", default: "32" },
   engine: { type: "string", default: "native" } } });
-if (values.recording === undefined || values.output === undefined) throw new Error("Usage: suite.ts --recording <json> --output <json> [--engine native|sql]");
+if (values.recording === undefined || values.output === undefined) throw new Error("Usage: suite.ts --recording <json> --output <json> [--engine native|sql|facts]");
 const engine = values.engine;
-if (engine !== "native" && engine !== "sql") throw new Error("--engine must be native or sql");
+if (engine !== "native" && engine !== "sql" && engine !== "facts") throw new Error("--engine must be native, sql or facts");
 const batchFiles = Number(values["batch-files"]);
 if (!Number.isInteger(batchFiles) || batchFiles < 1 || batchFiles > 2048) throw new Error("--batch-files must be an integer between 1 and 2048");
 const recording = recordingSchema.parse(JSON.parse(readFileSync(values.recording, "utf8")));
 const workloadSha256 = createHash("sha256").update(JSON.stringify({ commit: recording.commit, files: recording.files, events: recording.events })).digest("hex");
 if (recording.source_mismatches.length !== 0) throw new Error("Pinned source verification failed");
+if (engine === "facts") {
+  // The facts engine has no resident workspace: the cold run is its parallel repository run over the recording's files,
+  // and each incremental phase is a from-scratch run over the edited file set.
+  const expected = recording.events.flatMap(event => event.findings.map(f => JSON.stringify([`data-layer-${event.check.replaceAll("_", "-")}`, f.path, f.line, f.code]))).sort();
+  const difference = (a: string[], b: string[]) => { const rest = [...b]; return a.filter(key => { const at = rest.indexOf(key); if (at < 0) return true; rest.splice(at, 1); return false; }); };
+  const started = performance.now();
+  const cold = runFactsRepository(recording.files, values.policies);
+  const coldMs = performance.now() - started;
+  const incrementalDifferences: { phase: string; falsePositives: string[]; falseNegatives: string[]; failures: unknown[] }[] = [];
+  let unchangedFileMs: number | null = null, editedFileMs: number | null = null;
+  const edited = recording.files.find(file => file.path === "impl/common/l2200_sql_dialect/sql_connection.py") ?? recording.files[0]!;
+  if (!values["cold-only"]) {
+    for (const [phase, files] of [["unchanged", recording.files], ["trailing-newline-edit", recording.files.map(file => file === edited ? { ...file, source: file.source + "\n" } : file)]] as const) {
+      const phaseStarted = performance.now();
+      const run = runFactsRepository(files, values.policies);
+      if (phase === "unchanged") unchangedFileMs = performance.now() - phaseStarted; else editedFileMs = performance.now() - phaseStarted;
+      const falsePositives = difference(run.keys, expected), falseNegatives = difference(expected, run.keys);
+      if (falsePositives.length + falseNegatives.length + run.failures.length !== 0) incrementalDifferences.push({ phase, falsePositives, falseNegatives, failures: run.failures });
+    }
+  }
+  const report = { commit: recording.commit, files: recording.files.length, bytes: recording.files.reduce((sum, file) => sum + Buffer.byteLength(file.source), 0),
+    oracleMs: recording.oracle_ms, oracleWorkers: recording.workers, coldMs, unchangedFileMs, editedFileMs, editedPath: edited.path,
+    incrementalMode: "from-scratch", incrementalDifferences, workloadSha256,
+    expected: expected.length, actual: cold.keys.length, falsePositives: difference(cold.keys, expected), falseNegatives: difference(expected, cold.keys), failures: cold.failures,
+    policies: values.policies, factsSha256: factsBinarySha256(), factsWorkers: 4, factsRun: cold.results, engine };
+  writeFileSync(values.output, JSON.stringify(report, null, 2) + "\n");
+  // Synchronous writes: the process exits before the native path below.
+  writeFileSync(1, JSON.stringify({ ...report, falsePositives: report.falsePositives.length, falseNegatives: report.falseNegatives.length, failures: cold.failures.length, incrementalDifferences: incrementalDifferences.length }, null, 2) + "\n");
+  process.exit(report.falsePositives.length + report.falseNegatives.length + cold.failures.length + incrementalDifferences.length === 0 ? 0 : 1);
+}
 const native = loadNativeBinding();
 const nativeSha256 = createHash("sha256").update(readFileSync(resolveNativeBindingPath())).digest("hex");
 const workspace = new native.CodeRuleDslWorkspace({ engine });

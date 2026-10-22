@@ -1521,7 +1521,7 @@ impl<'a> Eval<'a> {
         if known != 0 {
             return known;
         }
-        let end = self.f.subtree_end[n as usize];
+        let end = (self.f.subtree_end[n as usize] + crate::mutant::on(3) as u32).min(self.f.len() as u32);
         let mut i = n + 1;
         let mut unknown = false;
         let mut res = F;

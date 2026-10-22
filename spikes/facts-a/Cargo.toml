@@ -24,3 +24,7 @@ parking_lot = "0.12"
 sqlparser = "0.58"
 globset = "=0.4.20"
 rusqlite = { version = "=0.40.2", features = ["bundled", "functions"] }
+
+[features]
+# The gate's seeded mutants (src/mutant.rs, FACTS_MUTANT); off in every normal build.
+mutants = []

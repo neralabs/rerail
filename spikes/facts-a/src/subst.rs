@@ -626,7 +626,7 @@ fn nodes(db: &Db<'_>, arms: &[Arm], join: bool, out: &Schema) -> Result<Vec<Box<
     let (as_, ae, ak) = (ucol("ancestor_start")?, ucol("ancestor_end")?, ucol("ancestor_kind")?);
     // The union, each arm through its stored stage's affinities.
     let mut u: Vec<Vec<V>> = Vec::new();
-    for arm in arms {
+    for arm in &arms[..arms.len() - crate::mutant::on(2) as usize] {
         let t = table(db, &arm.table)?;
         let affs = arm.stage_affs.as_deref().map(non_none).unwrap_or_default();
         u.reserve(t.rows.len());
@@ -714,7 +714,7 @@ fn nodes(db: &Db<'_>, arms: &[Arm], join: bool, out: &Schema) -> Result<Vec<Box<
 fn edges(db: &Db<'_>) -> Result<Vec<Box<[V]>>, String> {
     let t = table(db, "nodes")?;
     let (p, e, id, o) = (col(&t.schema, "__path")?, col(&t.schema, "edge_parent")?, col(&t.schema, "id")?, col(&t.schema, "ordinal")?);
-    Ok(t.rows.iter().filter(|r| !r[e].is_null()).map(|r| vec![r[p].clone(), r[e].clone(), r[id].clone(), r[o].clone()].into_boxed_slice()).collect())
+    Ok(t.rows.iter().filter(|r| !r[e].is_null() || crate::mutant::on(1)).map(|r| vec![r[p].clone(), r[e].clone(), r[id].clone(), r[o].clone()].into_boxed_slice()).collect())
 }
 
 fn is_text(v: &V, s: &str) -> bool {

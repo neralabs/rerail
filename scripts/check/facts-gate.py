@@ -66,16 +66,50 @@ BATCH6 = ["serverplan_bypass", "serverplan_steps", "serverplan_state_tripwires",
 RESIDUE = [("serverplan_quality", "quality-contracts-1", "parse grammar `annotation`")]
 THREADS = "4"
 
-# The seeded mutants: (number, name, crate, site, what it breaks, the checks that run against it).
+# The generic mutants: (number, name, crate, site, what it breaks, the checks that run against it). They
+# target components, not rules: the delta generator, the classifier, the planner's audit. Rewrite mutants
+# come from docs/facts/REWRITES.md (`rewrite_mutants`), one per rewrite; until that registry exists, the
+# three A3 views stand for the three rewrite kinds (1-3).
 MUTANTS = [
-    (1, "view-dropped-filter", "facts-a", "subst.rs::edges", "the edges view keeps rows whose edge_parent is NULL", ["a3-check", "a-reference"]),
-    (2, "view-swapped-ties", "facts-a", "subst.rs::nodes", "row_number() ties broken in reverse union order", ["a3-check", "a-reference"]),
-    (3, "view-subtree-end", "facts-a", "ast.rs::has_end_memo", "descendant range ends at subtree_end - 1", ["a3-check", "a-reference"]),
-    (4, "delta-join-dd", "facts-b", "flow.rs::tag", "join drops the ΔR⋈ΔS term (same-worktree delta pairs)", ["b-exactness"]),
-    (5, "delta-count-retraction", "facts-b", "flow.rs::presence", "presence counts ignore retractions (negative deltas)", ["b-exactness"]),
-    (6, "delta-recursion-early", "facts-b", "flow.rs R3 iterate", "recursion stops one level early", ["b-exactness"]),
-    (7, "classifier-leak", "rerail-facts", "classify::file_source", "a per-file plan reading an exported relation is accepted", ["classifier-leak"]),
+    (4, "delta-cross-term", "facts-b", "delta generator: join", "the join drops the ΔR⋈ΔS cross term", ["b-exactness"]),
+    (5, "delta-count-retraction", "facts-b", "delta generator: count/presence", "counts ignore retractions (negative deltas)", ["b-exactness"]),
+    (6, "delta-fixpoint-early", "facts-b", "delta generator: recursion", "the fixpoint stops one round early", ["b-exactness"]),
+    (7, "classifier-membership", "rerail-facts", "classify::file_source", "a per-content plan reaching a membership/exported relation is accepted", ["classifier-leak"]),
 ]
+INTERIM_REWRITES = [
+    (1, "rewrite-dropped-side-condition", "facts-a", "subst.rs::edges (A3 view)", "dropped side condition: edges keeps rows whose edge_parent is NULL", ["a3-check", "a-reference"]),
+    (2, "rewrite-lost-union-arm", "facts-a", "subst.rs::nodes (A3 view)", "lost union arm: nodes drops the last arm of its source union", ["a3-check", "a-reference"]),
+    (3, "rewrite-interval-bound", "facts-a", "ast.rs::has_end_memo (A3 memo)", "wrong interval bound: the descendant range ends at subtree_end + 1", ["a3-check", "a-reference"]),
+]
+REWRITES = ROOT / "docs/facts/REWRITES.md"
+REWRITE_KINDS = ("dropped side condition", "wrong interval bound", "lost union arm")
+
+
+def rewrite_mutants() -> tuple[list[tuple], list[str]]:
+    """One mutant per rewrite row of REWRITES.md: the first markdown table whose header has `rewrite`
+    and `mutant` columns; a mutant cell reads `<n> <kind>`. Returns (mutants, problems); a rewrite with no
+    mutant is a problem, so the gate fails until every rewrite has one."""
+    if not REWRITES.exists():
+        return INTERIM_REWRITES, []
+    rows = [l.strip().strip("|").split("|") for l in REWRITES.read_text().splitlines() if l.strip().startswith("|")]
+    header = next((i for i, r in enumerate(rows) if any("mutant" in c.lower() for c in r) and any("rewrite" in c.lower() for c in r)), None)
+    if header is None:
+        return [], ["REWRITES.md has no table with `rewrite` and `mutant` columns"]
+    cols = [c.strip().lower() for c in rows[header]]
+    ri, mi = next(i for i, c in enumerate(cols) if "rewrite" in c), next(i for i, c in enumerate(cols) if "mutant" in c)
+    out, problems = [], []
+    for r in rows[header + 2:]:
+        if len(r) <= max(ri, mi):
+            break
+        name, cell = r[ri].strip().strip("`"), r[mi].strip()
+        words = cell.split(maxsplit=1)
+        if not words or not words[0].isdigit() or len(words) < 2 or words[1].strip().lower() not in REWRITE_KINDS:
+            problems.append(f"rewrite {name}: mutant cell {cell!r} is not `<n> <kind>`")
+            continue
+        out.append((int(words[0]), f"rewrite-{name}", "rerail-facts", f"rewrite {name}", words[1].strip(), ["a3-check", "a-reference"]))
+    return out, problems
+
+
 LANES = {"a": ["a-replay", "a-repo", "a-subset", "a3-check", "a-reference"], "b": ["b-exactness"], "c": ["classifier-leak"]}
 PACKAGES = ["facts-a", "facts-b", "rerail-facts"]
 
@@ -440,8 +474,13 @@ def main() -> int:
             say(f"mutant {n} {name} {'killed' if killed else 'SURVIVED'} {secs:.0f}s "
                 + " ".join(f"{c}={v}" for c, v in cells.items()))
 
-    family = {"a": [m for m in MUTANTS if m[2] == "facts-a"], "b": [m for m in MUTANTS if m[2] == "facts-b"],
-              "c": [m for m in MUTANTS if m[2] == "rerail-facts"]}
+    # A mutant runs the selected checks of its family; with none selected, it does not run.
+    rewrites, registry_problems = rewrite_mutants()
+    report["registry_problems"] = registry_problems if args.mutants else []
+    for p in report["registry_problems"]:
+        say(f"registry FAIL {p}")
+    family = {k: [(n, name, crate, site, what, [t for t in tests if t in only]) for (n, name, crate, site, what, tests) in rewrites + MUTANTS
+                  if any(t in LANES[k] for t in tests) and any(t in only for t in tests)] for k in LANES}
     threads = [threading.Thread(target=lane, args=(LANES[k], family[k] if args.mutants else [])) for k in LANES]
     for t in threads:
         t.start()
@@ -449,7 +488,8 @@ def main() -> int:
         t.join()
     secs = time.monotonic() - started
     checks_ok = [c for c, v in report["checks"].items() if v["ok"]]
-    failing = [c for c, v in report["checks"].items() if not v["ok"]] + [f"mutant {m['n']}" for m in report["mutants"] if not m["killed"]]
+    failing = ([c for c, v in report["checks"].items() if not v["ok"]] + [f"mutant {m['n']}" for m in report["mutants"] if not m["killed"]]
+               + (["rewrite registry"] if report["registry_problems"] else []))
     killed = sum(1 for m in report["mutants"] if m["killed"])
     passed = not failing
     report.update({"passed": passed, "seconds": round(secs, 1), "load_after": load1()})

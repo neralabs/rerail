@@ -1,4 +1,4 @@
-/** Replay the unchanged data-layer tests' recorded inputs through the native addon, its AST clauses matched by the selected engine. */
+/** Replay the unchanged data-layer tests' recorded inputs through the native addon, its AST clauses matched by the selected engine, or through the facts engine's binary (`--engine facts`). */
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createHash } from "node:crypto";
@@ -6,6 +6,7 @@ import { parseArgs } from "node:util";
 import { z } from "zod";
 import { codeRuleSchema, loadNativeBinding, resolveNativeBindingPath, RESULT_PAGE_BYTES, type CodeRuleDslEngine, type NativeCompiledCodeRuleDsl } from "../../src/engine/index.js";
 import { capabilitiesJson } from "../engine.js";
+import { factsBinarySha256, runFactsCalls, type FactsCall, type HarnessEngine } from "./facts-engine.js";
 import { escapeHatchSignatureFailure } from "./signed-allowlist.js";
 
 const findingSchema = z.object({ path: z.string(), line: z.number(), column: z.number().nullable(), code: z.string(), message: z.string(), tag: z.string().nullable().optional() });
@@ -39,7 +40,7 @@ const configurableSchema = z.object({ clauses: z.array(z.object({
 type Event = z.infer<typeof eventSchema>;
 type Result = z.infer<typeof resultSchema>;
 interface ReplayRow {
-  execution: "native" | "host-signature-guard";
+  execution: "native" | "facts" | "host-signature-guard";
   test: string; call: number; check: string; expected: number; actual: number; positive: boolean;
   falsePositives: string[]; falseNegatives: string[]; executionPathDifferences: string[];
   engineFailures: Result["failures"]; statelessFailures: Result["failures"];
@@ -55,6 +56,36 @@ function subtract(left: string[], right: string[]): string[] {
     counts.set(key, count - 1);
     return false;
   });
+}
+
+type ReplayedEvent = Event & { files: NonNullable<Event["files"]>; findings: NonNullable<Event["findings"]> };
+
+/** One call's comparison row: findings as multisets of [path, line, code, (column), (category)]. */
+function replayRow(event: ReplayedEvent, execution: ReplayRow["execution"], result: Result, stateless: Result, statelessMs: number, workspaceMs: number, facts: boolean): ReplayRow {
+  const columns = event.check === "backend_type_strings";
+  const expected = event.findings.map(finding => {
+    if (event.compare_clause && finding.tag == null) throw new Error(`Missing diagnostic tag: ${event.test}`);
+    return JSON.stringify([finding.path, finding.line, finding.code, ...(columns ? [finding.column] : []), ...(event.compare_clause ? [finding.tag] : [])]);
+  });
+  // The facts engine reports lines, not byte spans: a call compared by column is refused, never guessed.
+  const failures = facts && columns
+    ? [...result.failures, { code: "facts-unsupported", message: "facts engine: findings carry no column; backend_type_strings compares columns" }]
+    : result.failures;
+  const actual = (result: Result): string[] => result.violations.map(finding => {
+    const file = event.files.find(file => file.path === finding.path)!;
+    const bytes = Buffer.from(file?.source ?? "");
+    const prefix = bytes.subarray(finding.span.startByte - finding.span.startColumn, finding.span.startByte).toString("utf8");
+    const category = event.check === "connection_caches" ? finding.clauseId.replace(/-file-\d+$/, "") : finding.clauseId;
+    return JSON.stringify([finding.path, finding.span.startLine + 1, finding.code, ...(columns ? [facts ? null : [...prefix].length + 1] : []), ...(event.compare_clause ? [category] : [])]);
+  });
+  const observed = actual(result);
+  return { execution, test: event.test, call: event.call, check: event.check,
+    expected: expected.length, actual: observed.length, positive: expected.length > 0,
+    falsePositives: subtract(observed, expected), falseNegatives: subtract(expected, observed),
+    engineFailures: failures, statelessFailures: stateless.failures,
+    executionPathDifferences: [...subtract(actual(stateless), observed), ...subtract(observed, actual(stateless))],
+    statelessMs, workspaceMs, oracleMs: event.oracle_ms,
+  };
 }
 
 async function workspaceEvaluation(compiled: NativeCompiledCodeRuleDsl, event: Event, engine: CodeRuleDslEngine): Promise<Result> {
@@ -74,7 +105,7 @@ async function workspaceEvaluation(compiled: NativeCompiledCodeRuleDsl, event: E
   } finally { workspace.close(); }
 }
 
-export async function replay(recordingPath: string | string[], outputPath: string, policies = "packs/data-layer/candidates/rules", engine: CodeRuleDslEngine = "native"): Promise<boolean> {
+export async function replay(recordingPath: string | string[], outputPath: string, policies = "packs/data-layer/candidates/rules", engine: HarnessEngine = "native"): Promise<boolean> {
   const paths = typeof recordingPath === "string" ? [recordingPath] : recordingPath;
   if (paths.length === 0) throw new Error("At least one recording is required");
   const inputs = paths.map(path => recordingSchema.parse(JSON.parse(readFileSync(path, "utf8"))));
@@ -93,8 +124,11 @@ export async function replay(recordingPath: string | string[], outputPath: strin
   const validated = new Map<string, z.infer<typeof codeRuleSchema>>();
   const rows: ReplayRow[] = [];
   const started = performance.now();
-  loadNativeBinding();
-  const nativeSha256 = createHash("sha256").update(readFileSync(resolveNativeBindingPath())).digest("hex");
+  // The facts engine runs as one CLI call over every replayed event (`facts-engine.ts`); it never loads the addon.
+  if (engine !== "facts") loadNativeBinding();
+  const nativeSha256 = engine === "facts" ? null : createHash("sha256").update(readFileSync(resolveNativeBindingPath())).digest("hex");
+  const factsSha256 = engine === "facts" ? factsBinarySha256() : null;
+  const pending: { event: ReplayedEvent; call: FactsCall | undefined; signatureFailure: Result | undefined }[] = [];
   let compilationMs = 0;
   for (const event of recording.events) {
     if (event.retained_reason !== undefined || !event.upstream_passed) continue;
@@ -156,6 +190,14 @@ export async function replay(recordingPath: string | string[], outputPath: strin
     if (event.path_skip_override) {
       for (const clause of policy.clauses) if (clause.forbid !== undefined && "regex" in clause.forbid) delete clause.forbid.regex.paths;
     }
+    const signatureFailure = event.check === "sql_grammar_escape_hatches" && event.entry === "plugin.reporter"
+      ? escapeHatchSignatureFailure(policy, event.oracle_config?.allowlist_signature) : undefined;
+    if (engine === "facts") {
+      // Evaluated after the loop, in one facts-engine process; the row is built from its result below.
+      pending.push({ event: event as ReplayedEvent, signatureFailure,
+        call: signatureFailure === undefined ? { id: pending.length, policy, files: event.files } : undefined });
+      continue;
+    }
     const key = JSON.stringify(policy);
     let rule = compiled.get(key);
     if (rule === undefined) {
@@ -166,33 +208,21 @@ export async function replay(recordingPath: string | string[], outputPath: strin
     }
     const input = JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, facts: [], files: event.files.map(file => ({ ...file, language: file.path.endsWith(".rs") ? "rust" : "python" })) });
     const before = performance.now();
-    const signatureFailure = event.check === "sql_grammar_escape_hatches" && event.entry === "plugin.reporter"
-      ? escapeHatchSignatureFailure(policy, event.oracle_config?.allowlist_signature) : undefined;
     const stateless = signatureFailure ?? resultSchema.parse(JSON.parse(rule.evaluate(input, "report", engine)));
     const statelessMs = performance.now() - before;
     const workspaceStarted = performance.now();
     const result = signatureFailure ?? await workspaceEvaluation(rule, event, engine);
     const workspaceMs = performance.now() - workspaceStarted;
-    const columns = event.check === "backend_type_strings";
-    const expected = event.findings.map(finding => {
-      if (event.compare_clause && finding.tag == null) throw new Error(`Missing diagnostic tag: ${event.test}`);
-      return JSON.stringify([finding.path, finding.line, finding.code, ...(columns ? [finding.column] : []), ...(event.compare_clause ? [finding.tag] : [])]);
-    });
-    const actual = (result: Result): string[] => result.violations.map(finding => {
-      const file = event.files!.find(file => file.path === finding.path)!;
-      const bytes = Buffer.from(file?.source ?? "");
-      const prefix = bytes.subarray(finding.span.startByte - finding.span.startColumn, finding.span.startByte).toString("utf8");
-      const category = event.check === "connection_caches" ? finding.clauseId.replace(/-file-\d+$/, "") : finding.clauseId;
-      return JSON.stringify([finding.path, finding.span.startLine + 1, finding.code, ...(columns ? [[...prefix].length + 1] : []), ...(event.compare_clause ? [category] : [])]);
-    });
-    const observed = actual(result);
-    rows.push({ execution: signatureFailure === undefined ? "native" : "host-signature-guard", test: event.test, call: event.call, check: event.check,
-      expected: expected.length, actual: observed.length, positive: expected.length > 0,
-      falsePositives: subtract(observed, expected), falseNegatives: subtract(expected, observed),
-      engineFailures: result.failures, statelessFailures: stateless.failures,
-      executionPathDifferences: [...subtract(actual(stateless), observed), ...subtract(observed, actual(stateless))],
-      statelessMs, workspaceMs, oracleMs: event.oracle_ms,
-    });
+    rows.push(replayRow(event as ReplayedEvent, signatureFailure === undefined ? "native" : "host-signature-guard", result, stateless, statelessMs, workspaceMs, false));
+  }
+  if (engine === "facts") {
+    const results = runFactsCalls(pending.flatMap(entry => entry.call === undefined ? [] : [entry.call]));
+    for (const { event, call, signatureFailure } of pending) {
+      const evaluated = call === undefined ? undefined : results.get(call.id)!;
+      const result = signatureFailure ?? evaluated!.result;
+      // One execution path: the facts engine has no separate stateless and workspace evaluations.
+      rows.push(replayRow(event, signatureFailure === undefined ? "facts" : "host-signature-guard", result, { violations: result.violations, failures: [] }, evaluated?.ms ?? 0, evaluated?.ms ?? 0, true));
+    }
   }
   const coverage = recording.checks.map(check => ({ check,
     positive: rows.filter(row => row.check === check && row.positive).length,
@@ -212,12 +242,13 @@ export async function replay(recordingPath: string | string[], outputPath: strin
   const sqlUnsupported = [...refusals].map(([key, failures]) => { const [check, message] = key.split("\u0000"); return { check, message, failures }; });
   const report = { coverage, missingCoverage,
     nativeCalls: rows.filter(row => row.execution === "native").length,
+    factsCalls: rows.filter(row => row.execution === "facts").length,
     hostGuardCalls: rows.filter(row => row.execution === "host-signature-guard").length,
     nativeCoverage: recording.checks.map(check => ({ check,
-      positive: rows.filter(row => row.check === check && row.execution === "native" && row.positive).length,
-      clean: rows.filter(row => row.check === check && row.execution === "native" && !row.positive).length,
+      positive: rows.filter(row => row.check === check && row.execution !== "host-signature-guard" && row.positive).length,
+      clean: rows.filter(row => row.check === check && row.execution !== "host-signature-guard" && !row.positive).length,
     })),
-    nativeSha256, engine, sqlUnsupported, dimensions: ["multiplicity", "relative path", "line", "diagnostic code", "backend comparison column", "diagnostic category where recorded"],
+    nativeSha256, factsSha256, engine, sqlUnsupported, dimensions: ["multiplicity", "relative path", "line", "diagnostic code", "backend comparison column", "diagnostic category where recorded"],
     format: "rerail.data-layer-parity/v1", commit: recording.commit, recordings: paths,
     collectedTests: recording.collected_tests, replayedCalls: rows.length,
     positiveCalls: rows.filter(row => row.positive).length, cleanCalls: rows.filter(row => !row.positive).length,
@@ -235,7 +266,7 @@ export async function replay(recordingPath: string | string[], outputPath: strin
 
 if (process.argv[1]?.endsWith("/replay.ts")) {
   const { values } = parseArgs({ options: { recording: { type: "string", multiple: true }, output: { type: "string" }, policies: { type: "string" }, engine: { type: "string", default: "native" } } });
-  if (values.recording === undefined || values.output === undefined) throw new Error("Usage: replay.ts --recording <json> --output <json> [--policies <directory>] [--engine native|sql]");
-  if (values.engine !== "native" && values.engine !== "sql") throw new Error("--engine must be native or sql");
+  if (values.recording === undefined || values.output === undefined) throw new Error("Usage: replay.ts --recording <json> --output <json> [--policies <directory>] [--engine native|sql|facts]");
+  if (values.engine !== "native" && values.engine !== "sql" && values.engine !== "facts") throw new Error("--engine must be native, sql or facts");
   if (!await replay(values.recording, values.output, values.policies, values.engine)) process.exitCode = 1;
 }

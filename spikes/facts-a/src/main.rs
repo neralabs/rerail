@@ -6,6 +6,7 @@ mod fstring;
 mod policy;
 mod pyvalue;
 mod rel;
+mod mutant;
 mod repo;
 mod spill;
 mod sql;
@@ -46,6 +47,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("replay") => replay(&args),
+        Some("calls") => calls(&args),
         Some("repo") => repo::repo(&args),
         Some("repo-compare") => repo::compare(&args),
         Some("store") => factfile::store(&args),
@@ -58,8 +60,48 @@ fn main() {
                 facts::Built::Unparsed => println!("unparsed"),
             }
         }
-        _ => eprintln!("usage: facts-a replay|repo|repo-compare|store|inspect ..."),
+        _ => eprintln!("usage: facts-a replay|repo|repo-compare|calls|store|inspect ..."),
     }
+}
+
+/// The harness bridge (`conformance/data-layer/*.ts --engine facts`): evaluates one call per line of
+/// `--input` (JSONL `{id, policy, files: [{path, source}]}`, `policy` the document the harness
+/// resolved for the call: options in `define.config`, its final scope and clauses) and writes one
+/// line per call to `--output`: `{id, findings: [{check, clause, path, line, code}], failures:
+/// [{check, clause, path, message}]}`, or `{id, compile_error}` when the policy does not compile
+/// (the harness reports it as a failure, never as an answer). Compiled policies are cached by text.
+fn calls(args: &[String]) {
+    use std::io::{BufRead, Write};
+    let input = arg(args, "--input").expect("--input");
+    let output = arg(args, "--output").expect("--output");
+    let reader = std::io::BufReader::new(std::fs::File::open(&input).unwrap_or_else(|e| panic!("{input}: {e}")));
+    let mut out = std::io::BufWriter::new(std::fs::File::create(&output).unwrap_or_else(|e| panic!("{output}: {e}")));
+    let mut compiled: HashMap<String, Result<Rc<Vec<eval::Rule>>, String>> = HashMap::new();
+    for line in reader.lines() {
+        let line = line.unwrap();
+        if line.trim().is_empty() {
+            continue;
+        }
+        let call: Json = serde_json::from_str(&line).unwrap();
+        let policy = &call["policy"];
+        let key = serde_json::to_string(policy).unwrap();
+        let rules = compiled
+            .entry(key)
+            .or_insert_with(|| eval::Rule::compile(policy, &Map::new(), None, &facts::GRAMMAR).map(|r| Rc::new(vec![r])))
+            .clone();
+        let result = match rules {
+            Err(e) => json!({"id": call["id"], "compile_error": e}),
+            Ok(rules) => {
+                let files: Vec<(String, Arc<String>)> = call["files"].as_array().expect("files").iter().map(|f| (f["path"].as_str().unwrap().to_owned(), Arc::new(f["source"].as_str().unwrap().to_owned()))).collect();
+                let t = Instant::now();
+                let o = evaluate(&rules, &files);
+                json!({"id": call["id"], "ms": t.elapsed().as_secs_f64() * 1e3, "findings": o.findings, "failures": o.failures})
+            }
+        };
+        serde_json::to_writer(&mut out, &result).unwrap();
+        out.write_all(b"\n").unwrap();
+    }
+    out.flush().unwrap();
 }
 
 /// Evaluates the given files under compiled rules: findings and failures.
