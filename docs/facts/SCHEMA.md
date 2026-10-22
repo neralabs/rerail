@@ -235,4 +235,10 @@ Namespace `x.<rule>.<clause>.<relation>`, stored under the key `(content hash, p
 
 ## 5. Fact files v1
 
-Layout as v0 (`RRFACTS\0`, `u32` version, 32-byte hash, strings, relations, typed columns, 4-byte padding after `u16`/`u8` columns), version **1**. The anonymous-node and compression decisions are recorded in the report with measurements; readers accept versions 0 and 1 (`facts-a inspect`).
+`<store>/<hash[0..2]>/<hash>.facts`, little-endian (`factfile.rs`):
+
+- Header: magic `RRFACTS\0`, `u32` schema version (**1**), 32-byte blake3 content hash, `u32` flags (bit 0: zstd body; other bits must be 0). With bit 0: `u32` raw body length, then one zstd frame (level 3). Version 0 files (no flags word, raw body) stay readable.
+- Body (as v0): `u32` string count, strings (`u32` length, UTF-8), `u32` relation count; per relation `u32` name index, `u32` rows, `u32` columns, per column (`u32` name index, `u8` type: 0 `u32`, 1 `u16`, 2 `u8`, 3 `sym`, 4 `opt_u32`, 5 `opt_sym`), then each column at native width; after a `u16`/`u8` column, zero bytes to a 4-byte offset from the body start (a 4-byte file offset in both versions' raw images).
+- Relations: `node` (row = node id; **every node, named and anonymous**): `kind:u16` (string index), `start:u32`, `end:u32`, `subtree_end:u32`, `flags:u8`, `field:u8` (string index + 1, 0 none; field names are the first strings); `identifier`: `id:u32`, `name:sym`; `syntax_error` (0 or 1 row). Derived on read: `parent` (innermost open subtree in preorder), `start_line`/`end_line` and `line` (from the source's `LineTable`), the children CSR and kind postings.
+- Decisions, measured (report § 5.2): anonymous nodes are **stored** (dropping them saves 5.3% after compression and makes every read a re-parse, p50 0.70 ms instead of 0.08 ms; `field` ranks need them); bodies are **zstd level 3** (186.4 MB for the corpus, 1.35× source, against v0's 1,048 MB).
+- Readers: `facts-a inspect` reads v0 and v1 `.facts` and Spike B's v0 `.xfacts`; `.xfacts` stay v0 until S3 moves the exported relations to v1.

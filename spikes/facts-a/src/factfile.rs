@@ -76,8 +76,9 @@ pub struct Layout {
     pub zstd: Option<i32>,
 }
 pub const V0: Layout = Layout { version: 0, named_only: false, zstd: None };
-/// The layout `store` writes (decided in the report, § 5).
-pub const V1: Layout = Layout { version: 1, named_only: false, zstd: None };
+/// The layout `store` writes (report § 5.2: every node stored, zstd level 3; 186 MB for the
+/// corpus against v0's 1,048 MB, read p50 0.08 ms).
+pub const V1: Layout = Layout { version: 1, named_only: false, zstd: Some(3) };
 
 /// A file's facts in the default layout (`V1`).
 pub fn encode(hash: &[u8; 32], f: &Facts) -> Vec<u8> {
