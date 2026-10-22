@@ -1,6 +1,7 @@
 // scripts/release/packs.mjs: what a pack release run publishes and under which dist-tag, what a promotion moves to
-// `latest`, the lockfile sync after `changeset version`, the publish gate's reading of the pack validation, and the
-// patch-only bumps of packs below 1.0.0.
+// `latest`, the lockfile sync after `changeset version`, the publish gate's reading of the pack validation, the
+// patch-only bumps of packs below 1.0.0, and the changeset a pull request owes each pack whose published files it
+// changes.
 
 import { describe, expect, it } from "vitest";
 import {
@@ -8,6 +9,7 @@ import {
   gateFailures,
   heldPacks,
   listPacks,
+  missingChangesets,
   packIds,
   planPacks,
   planPromotions,
@@ -146,6 +148,37 @@ describe("changesetBumpFailures", () => {
 
   it("passes the repository's pending changesets", () => {
     expect(changesetBumpFailures(readChangesets(), listPacks())).toEqual([]);
+  });
+});
+
+describe("missingChangesets", () => {
+  const files = ["pack.json", "rules", "licenses", "LICENSE", "NOTICE", "README.md"];
+  const packs = [
+    { id: "php", name: "@neralabs/rerail-pack-php", files },
+    { id: "vue", name: "@neralabs/rerail-pack-vue", files },
+  ];
+  const changeset = (...ids) => ({ file: ".changeset/x.md", text: `---\n${ids.map((id) => `"@neralabs/rerail-pack-${id}": patch`).join("\n")}\n---\n\nSummary.\n` });
+
+  it("fails each pack whose published files changed with no changeset naming it, naming up to three of its paths", () => {
+    const changed = [
+      "packs/php/rules/a.json",
+      "packs/php/rules/b.json",
+      "packs/php/README.md",
+      "packs/php/package.json",
+      "packs/vue/rules/c.json",
+    ];
+    expect(missingChangesets(changed, [changeset("vue")], packs)).toEqual([
+      "@neralabs/rerail-pack-php: packs/php/rules/a.json, packs/php/rules/b.json, packs/php/README.md and 1 more changed, and no changeset names it",
+    ]);
+  });
+
+  it("passes changes to what a pack does not publish, a file that only starts like a published one, and other paths", () => {
+    const changed = ["packs/php/upstream/gates.yaml", "packs/php/candidates/rules/x.json", "packs/php/CHANGELOG.md", "packs/php/rules.md", "packs/README.md", "src/a.ts"];
+    expect(missingChangesets(changed, [], packs)).toEqual([]);
+  });
+
+  it("passes a published change once any changeset of the pull request names the pack", () => {
+    expect(missingChangesets(["packs/php/pack.json", "packs/vue/LICENSE"], [changeset("php", "vue")], packs)).toEqual([]);
   });
 });
 
