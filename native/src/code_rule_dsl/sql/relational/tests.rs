@@ -111,6 +111,7 @@ pub(in crate::code_rule_dsl::sql) fn measure(
             let patterns = super::leaves::register(db, batch).unwrap();
             let started = Started::now();
             let counter_start = profiling::frame_snapshot();
+            let value_start = super::leaves::VALUE_REQUESTS.get();
             let equality_start = super::leaves::EQUALITY_REQUESTS.get();
             let mut statement = db.prepare(&compiled.sql).unwrap();
             let prepare = started.elapsed();
@@ -139,6 +140,7 @@ pub(in crate::code_rule_dsl::sql) fn measure(
             let memory = statement.get_status(rusqlite::StatementStatus::MemUsed);
             let elapsed = started.elapsed();
             let cold = kernel_started.elapsed().plus(generation);
+            let value_calls = super::leaves::VALUE_REQUESTS.get() - value_start;
             let equality_calls = super::leaves::EQUALITY_REQUESTS.get() - equality_start;
             let pattern_calls = patterns.load(std::sync::atomic::Ordering::Relaxed);
             let counter_end = profiling::frame_snapshot();
@@ -258,6 +260,7 @@ pub(in crate::code_rule_dsl::sql) fn measure(
                 executions,
                 outcomes,
                 equality_calls,
+                value_calls,
             )
         })
     });
@@ -297,7 +300,7 @@ pub(in crate::code_rule_dsl::sql) fn measure(
       "coldKernelCpuNs":result.11.cpu,"diagnosticCpuNs":elapsed.cpu,"generationCpuNs":generation.cpu,"prepareCpuNs":result.5.cpu,
       "prepareAndExecuteCpuNs":result.6.cpu,"explain":result.7,
       "diagnosticRelationRows":result.8,
-      "patternRequests":result.9,"captureEqualityRequests":result.14,
+      "patternRequests":result.9,"captureEqualityRequests":result.14,"valueRequests":result.15,
       "timingScope":"Counters enabled. diagnosticCpuNs includes EXPLAIN; prepareAndExecuteCpuNs excludes EXPLAIN, connection setup, and generation. No speedup claim.",
       "baseline":{"diagnosticKernelCpuNs":baseline_time.cpu,"framePublications":baseline_counters[4],"frameAdvances":baseline_counters[2],"matchingStatements":baseline_session.stats().statements},
       "vmSteps":result.1,"automaticIndexRows":result.2,"fullscanSteps":result.3,"statementMemoryBytes":result.4,
@@ -490,12 +493,12 @@ fn relational_key_demand_retains_recursive_dependencies_and_shared_answers() {
 }
 
 /// Count the matching interval only. Keep the counter at a stable address until callbacks stop.
-struct ExecutionTrace<'a> {
+pub(super) struct ExecutionTrace<'a> {
     db: &'a rusqlite::Connection,
     count: Box<std::sync::atomic::AtomicUsize>,
 }
 impl<'a> ExecutionTrace<'a> {
-    fn start(db: &'a rusqlite::Connection) -> Self {
+    pub(super) fn start(db: &'a rusqlite::Connection) -> Self {
         unsafe extern "C" fn trace(
             mask: u32,
             context: *mut std::ffi::c_void,
@@ -524,7 +527,7 @@ impl<'a> ExecutionTrace<'a> {
         assert_eq!(result, rusqlite::ffi::SQLITE_OK);
         Self { db, count }
     }
-    fn count(&self) -> usize {
+    pub(super) fn count(&self) -> usize {
         self.count.load(std::sync::atomic::Ordering::Relaxed)
     }
 }

@@ -42,7 +42,11 @@ def main():
                            and a["target"]["name"] == "rerail_engine"))
     binary = binary.resolve()
     sources = sorted((root / "native/src/code_rule_dsl/sql/relational").rglob("*.rs"))
-    sources += [root / "native/src/code_rule_dsl/sql/spikes/whole_call/b023.rs",
+    sources += [root / "native/src/code_rule_dsl/matcher/mod.rs",
+                root / "native/src/code_rule_dsl/matcher/value.rs",
+                root / "native/src/code_rule_dsl/matcher/value_probe.rs",
+                root / "native/src/code_rule_dsl/sql/terminals/mod.rs",
+                root / "native/src/code_rule_dsl/sql/spikes/whole_call/b023.rs",
                 root / "native/src/code_rule_dsl/sql/spikes/whole_call/b023.sql",
                 root / "native/src/code_rule_dsl/sql/spikes/whole_call/run.rs",
                 root / "native/src/code_rule_dsl/sql/mod.rs",

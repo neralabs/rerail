@@ -25,6 +25,8 @@ mod tests;
 mod transform;
 mod util;
 mod value;
+#[cfg(test)]
+pub(super) mod value_probe;
 
 use super::budget;
 use crate::code_rule_dsl::language::GrammarDialect;

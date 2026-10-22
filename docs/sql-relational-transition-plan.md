@@ -1,6 +1,6 @@
 # Transition to direct relational SQL
 
-Status: Milestone 1 complete; Milestone 2 structural components and explicit outcomes implemented; remaining gates pending, 2026-10-22.
+Status: Milestone 1 complete; Milestone 2 structural components, explicit outcomes, and reached value/stop kernels implemented; remaining gates pending, 2026-10-22.
 Baseline: `a0051ae8`, including the complete B023 reference query.
 This document changes no production behavior.
 
@@ -40,7 +40,9 @@ It preserves withheld captures, ordered search, alternative commits, and count i
 Whole-node captures use native structural equality, including composite nodes, without native rule composition.
 The [outcome evidence](../benchmark/sql-relational-outcomes-evidence.json) records exact roots, captures, unknown outcomes, EXPLAIN, and scaling.
 
-Real semantic leaves, reached failures, enumeration, parameterized witnesses, and general recursive components remain pending.
+Non-following value leaves and node-local rule-based stops now have an ordered SQL kernel.
+It preserves reached atomic failures through sequencing barriers and early traversal termination.
+Capture-bearing ordered walks, nested fallible traversal bodies, full-file failure publication, enumeration, and general recursive components remain pending.
 Native work and stack/depth budgets also remain unresolved.
 The compiler remains test-only until the semantic coverage and production cutover gates pass.
 The complete-job 100-execution gate remains a separate requirement.
@@ -252,10 +254,27 @@ All-unknown counts take 378, 618, and 1,578 instructions.
 Independent conjunctions take 37,092, 146,676, and 585,012 instructions at sizes 16, 64, and 256.
 The conjunction shape still creates automatic indexes across sequencing relations; the profile flags that remaining cost.
 
-The unknown leaf is currently synthetic and test-only.
-Semantic leaves need explicit contracts before admission.
-Eager candidate evaluation is valid only for the admitted total, effect-free operations.
-Rule-based traversal stops, reached failures, and native resource limits remain outside this proof.
+The kernel admits non-following `value` predicates as atomic semantic leaves.
+Total structural walks can still evaluate candidates eagerly.
+Rule-based stops and fallible node-local traversal bodies instead use a narrow recursive relation.
+Its local phases preserve stop-before-candidate order for ancestor and sibling walks, and candidate-before-stop order for descendant walks.
+Counts stop at decisive bounds; exact exports continue until their value is known.
+Unknown stops leave an open frontier, which makes a count's upper bound unbounded.
+
+Fault injection occurs at the same native value leaf in both engines.
+The tests compare calls through the first failure and internal failure codes.
+Choices, stop boundaries, and withheld captures suppress unreached failures.
+Native attempts after its first recorded failure appear separately in the trace.
+Native work budgets and full-file failure publication remain separate gates.
+The ordered traversal currently requires capture-free, node-local candidate and stop rules.
+It rejects wider contracts before SQL preparation.
+
+The [reached-kernel evidence](../benchmark/sql-relational-reached-evidence.json) contains 14 failure traces and six scaling profiles.
+The [generated SQL](../benchmark/sql-relational-reached.sql) shows the local traversal phases and guarded scalar operands.
+Known-first searches take 856 VM instructions and one value call at widths 16, 64, and 256.
+All-unknown searches take 9,706, 37,114, and 146,746 instructions, with one value call per identifier.
+Each profile uses one matching execution, zero frame publications, and zero automatic-index entries.
+The recursive relation emits three logical states per visited candidate; those diagnostic counts are not physical writes.
 Milestone 2 remains incomplete until every semantic gate above passes.
 
 Structural recursion uses narrow closure relations like those in B023.
@@ -407,13 +426,13 @@ Missed targets require a documented cost attribution and another focused shape e
 
 ## Next implementation action
 
-Extend explicit outcomes to reached semantic leaves and rule-based traversal stops.
-Start with differential fixtures where an earlier choice hides a failing leaf, and where an unknown stop changes the reachable candidates.
-Define each leaf's outcome, failure, capture, and work-budget contract before SQL lowering.
-Only reached demands may invoke fallible leaves.
-Keep total indexed existence probes where the contract permits them.
+Extend the ordered traversal to capture-bearing candidate rules.
+Start with a descendant walk whose stop is unknown before a later candidate binds a capture.
+The native matcher tests that next candidate before it processes the pending unknown stop.
+A successful next candidate can therefore decide the result even in a strict search.
+Preserve that boundary and the exact capture witness in a narrow typed state.
 
-The next evidence must include exact native outcomes and failures, generated SQL, EXPLAIN, and scaling.
-It must identify every materialization boundary and show that unreached leaves do no work.
-General recursion, enumeration, resource parity, catalog coverage, and the complete-job execution gate remain later requirements.
+Then admit nested fallible traversal bodies and define failure publication across files and clauses.
+The current kernel proves atomic reached failures, not full-job diagnostic ordering or partial-result handling.
+Keep native work-budget parity, general recursion, enumeration, catalog coverage, and the complete-job execution gate explicit.
 The journal records each accepted or rejected rewrite and its measurement artifact.

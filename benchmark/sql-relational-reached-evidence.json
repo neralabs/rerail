@@ -1,0 +1,2988 @@
+{
+  "reachedFailureTraces": [
+    {
+      "fault": "2",
+      "matchingStatements": 1,
+      "nativeCalls": [
+        "1"
+      ],
+      "nativeCallsAfterFailure": [],
+      "nativeFailureCode": null,
+      "source": "f(1,2,3);",
+      "sqlCalls": [
+        "1"
+      ],
+      "sqlFailureCode": null
+    },
+    {
+      "fault": "2",
+      "matchingStatements": 1,
+      "nativeCalls": [
+        "1",
+        "2",
+        "3"
+      ],
+      "nativeCallsAfterFailure": [
+        "3"
+      ],
+      "nativeFailureCode": "Value",
+      "source": "f(1,2,3);",
+      "sqlCalls": [
+        "1",
+        "2"
+      ],
+      "sqlFailureCode": "Value"
+    },
+    {
+      "fault": "2",
+      "matchingStatements": 1,
+      "nativeCalls": [
+        "1"
+      ],
+      "nativeCallsAfterFailure": [],
+      "nativeFailureCode": null,
+      "source": "f(1,2,3);",
+      "sqlCalls": [
+        "1"
+      ],
+      "sqlFailureCode": null
+    },
+    {
+      "fault": "2",
+      "matchingStatements": 1,
+      "nativeCalls": [
+        "1"
+      ],
+      "nativeCallsAfterFailure": [],
+      "nativeFailureCode": null,
+      "source": "f(1,2,3);",
+      "sqlCalls": [
+        "1"
+      ],
+      "sqlFailureCode": null
+    },
+    {
+      "fault": "2",
+      "matchingStatements": 1,
+      "nativeCalls": [
+        "1",
+        "2"
+      ],
+      "nativeCallsAfterFailure": [],
+      "nativeFailureCode": "Value",
+      "source": "f(1,2,3);",
+      "sqlCalls": [
+        "1",
+        "2"
+      ],
+      "sqlFailureCode": "Value"
+    },
+    {
+      "fault": "1",
+      "matchingStatements": 1,
+      "nativeCalls": [
+        "("
+      ],
+      "nativeCallsAfterFailure": [],
+      "nativeFailureCode": null,
+      "source": "f(1,2);",
+      "sqlCalls": [
+        "("
+      ],
+      "sqlFailureCode": null
+    },
+    {
+      "fault": "1",
+      "matchingStatements": 1,
+      "nativeCalls": [
+        ",",
+        "1"
+      ],
+      "nativeCallsAfterFailure": [],
+      "nativeFailureCode": "Value",
+      "source": "f(0,1,2);",
+      "sqlCalls": [
+        ",",
+        "1"
+      ],
+      "sqlFailureCode": "Value"
+    },
+    {
+      "fault": "1",
+      "matchingStatements": 1,
+      "nativeCalls": [
+        "2"
+      ],
+      "nativeCallsAfterFailure": [],
+      "nativeFailureCode": null,
+      "source": "f([1],2);",
+      "sqlCalls": [
+        "2"
+      ],
+      "sqlFailureCode": null
+    },
+    {
+      "fault": "2",
+      "matchingStatements": 1,
+      "nativeCalls": [
+        "1"
+      ],
+      "nativeCallsAfterFailure": [],
+      "nativeFailureCode": null,
+      "source": "f(1,2);",
+      "sqlCalls": [
+        "1"
+      ],
+      "sqlFailureCode": null
+    },
+    {
+      "fault": "1",
+      "matchingStatements": 1,
+      "nativeCalls": [],
+      "nativeCallsAfterFailure": [],
+      "nativeFailureCode": null,
+      "source": "1;",
+      "sqlCalls": [],
+      "sqlFailureCode": null
+    },
+    {
+      "fault": "1",
+      "matchingStatements": 1,
+      "nativeCalls": [],
+      "nativeCallsAfterFailure": [],
+      "nativeFailureCode": null,
+      "source": "1;",
+      "sqlCalls": [],
+      "sqlFailureCode": null
+    },
+    {
+      "fault": "1",
+      "matchingStatements": 1,
+      "nativeCalls": [
+        "1;",
+        "1;",
+        "1"
+      ],
+      "nativeCallsAfterFailure": [],
+      "nativeFailureCode": "Value",
+      "source": "1;",
+      "sqlCalls": [
+        "1;",
+        "1;",
+        "1"
+      ],
+      "sqlFailureCode": "Value"
+    },
+    {
+      "fault": "1",
+      "matchingStatements": 1,
+      "nativeCalls": [
+        "1"
+      ],
+      "nativeCallsAfterFailure": [],
+      "nativeFailureCode": "Value",
+      "source": "1;",
+      "sqlCalls": [
+        "1"
+      ],
+      "sqlFailureCode": "Value"
+    },
+    {
+      "fault": "(x)",
+      "matchingStatements": 1,
+      "nativeCalls": [],
+      "nativeCallsAfterFailure": [],
+      "nativeFailureCode": null,
+      "source": "f(x);",
+      "sqlCalls": [],
+      "sqlFailureCode": null
+    }
+  ],
+  "scope": "Profile reached value leaves and rule-based traversal stops against native semantics.\n\nThe deterministic workloads live in outcomes/reached_tests.rs. These measurements cover matching\nkernels, not whole-job execution budgets or native work/stack/depth limits.",
+  "revision": "af14471525270b511f34a4a38cc3776b6c8f1c91",
+  "workingTree": " M benchmark/relational-complete-spike.py\n M docs/sql-relational-transition-plan.md\n M docs/sql-set-composition-compiler-spike.md\n M native/src/code_rule_dsl/matcher/mod.rs\n M native/src/code_rule_dsl/matcher/value.rs\n M native/src/code_rule_dsl/sql/relational/leaves.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/emit.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/lower.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/mod.rs\n M native/src/code_rule_dsl/sql/relational/outcomes/tests.rs\n M native/src/code_rule_dsl/sql/relational/tests.rs\n M native/src/code_rule_dsl/sql/terminals/mod.rs\n?? benchmark/relational-reached.py\n?? native/src/code_rule_dsl/matcher/value_probe.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/ordered.rs\n?? native/src/code_rule_dsl/sql/relational/outcomes/reached_tests.rs\n",
+  "sourceHashes": {
+    "native/src/code_rule_dsl/sql/relational/analysis.rs": "8a433680fb8fe678c358fa587dea5067991b675e990ac403e92c91ec8d6e5cdd",
+    "native/src/code_rule_dsl/sql/relational/answers.rs": "f14b0045aecb61c157bd81274e866e20fe385b49cae565c435dae7f85fb6e3ad",
+    "native/src/code_rule_dsl/sql/relational/demand.rs": "0d5b9fbf3c75890c9f1620c7340936d01bf314b6de37380e355416350eedb8fe",
+    "native/src/code_rule_dsl/sql/relational/emit.rs": "cd3390f98d6b66fe4b59138dc97905f253549d9bea45fe39e4f16cbb77c8182a",
+    "native/src/code_rule_dsl/sql/relational/ir.rs": "cfab2c44c949e5fe209952018a6297f1c7e95a5aac1dad9f94e22c36f9d2c98d",
+    "native/src/code_rule_dsl/sql/relational/leaves.rs": "714dd0de82006f0e5eadb3d2810485014951e6fbd643404af94d52d9accd34ae",
+    "native/src/code_rule_dsl/sql/relational/lower.rs": "e3dd3606a21bf8d360a53f0b6cbc73987dc5b8ae39ca7de63187c2ae8d89ba33",
+    "native/src/code_rule_dsl/sql/relational/mod.rs": "f5a5414e28c6f65f907b0c8236613c627874267f93360261844c706e3a19f54b",
+    "native/src/code_rule_dsl/sql/relational/outcomes/emit.rs": "ad48d6853a655d75f68fa611c533f69a3609ac2a324df7480c14c528560d5900",
+    "native/src/code_rule_dsl/sql/relational/outcomes/local.rs": "cc061fbf946853bb887679fe7946c64c108f047dc357d49fef054a87e032487b",
+    "native/src/code_rule_dsl/sql/relational/outcomes/lower.rs": "591efb5f1c1645ace7037da268535135fa6f694eb4e5670e2d4668b2e48f13aa",
+    "native/src/code_rule_dsl/sql/relational/outcomes/mod.rs": "c1fe86c720574daa4bbeb946834ff1c471231fec8f26b35bff077b8c9a382312",
+    "native/src/code_rule_dsl/sql/relational/outcomes/ordered.rs": "2a30b179c1d2e028a49fe0f1460fc6dc01bd8a70f48e813df1422a56dfe19562",
+    "native/src/code_rule_dsl/sql/relational/outcomes/reached_tests.rs": "a4a864e9f3700fb844dd00be8d57881d8c2933b8e13ae543ebdbba1a61151dde",
+    "native/src/code_rule_dsl/sql/relational/outcomes/tests.rs": "24ffc015deeb1248ffab1a083821c179e1221c88c992efd3e4526b2041402f8e",
+    "native/src/code_rule_dsl/sql/relational/physical.rs": "afe1fc81b5fccc45f22f69d8c6a9099679892407407b97210718b95d502588c4",
+    "native/src/code_rule_dsl/sql/relational/recursion.rs": "d4d1ff545d43d56f0574661e20ff94783bb1afdc97342982aa9abbe3ef2ec547",
+    "native/src/code_rule_dsl/sql/relational/recursion_tests.rs": "9824f54620c26fa4c883174513043c287f6ca0d89e282a4d8f0e1c82c02ad50b",
+    "native/src/code_rule_dsl/sql/relational/tests.rs": "f68d150442f51635125294d266abe442cfedfc78ad01e672ef47e1e250321a96",
+    "native/src/code_rule_dsl/sql/relational/witness.rs": "e8a31188818ce97cc2c9dbf458560b7a3c16b74cca3adc492104c2a667317159",
+    "native/src/code_rule_dsl/sql/relational/witness_tests.rs": "fcf7017772a97140b5dce95272815c1925527e786e79346801ee52252bcc0eca",
+    "native/src/code_rule_dsl/matcher/mod.rs": "6b2e6e1c1656308d897158a9f068c0a294fa24bfc2769059892b8b888bdf7765",
+    "native/src/code_rule_dsl/matcher/value.rs": "7c323eeeb044b02ae384b7a4ba4989cb14a400c3721b381e96b0eee0643db27e",
+    "native/src/code_rule_dsl/matcher/value_probe.rs": "81e2a1ce9b0b210c04e4f884eeb4c8a23e0097e8a33850b554f6098a5bbb6aa1",
+    "native/src/code_rule_dsl/sql/terminals/mod.rs": "2e7b9efbbadb23ebbce4562bb9235df8b17370030d30a96614b5192241d94329",
+    "benchmark/relational-reached.py": "af1e4868db882bcbdeb52719b1bdf3cfad4a3b3a33d9d637fbf5e8c3913bb27c"
+  },
+  "executableSha256": "ef087f6c8cb1f378a886737014b95b546892c72c035272c327d5023038f5aff9",
+  "result": {
+    "samples": [
+      {
+        "automaticIndexRows": 0,
+        "baseline": {
+          "diagnosticKernelCpuNs": 5995959,
+          "frameAdvances": 219,
+          "framePublications": 112,
+          "matchingStatements": 1
+        },
+        "captureEqualityRequests": 0,
+        "coldKernelCpuNs": 562833,
+        "diagnosticCpuNs": 2327624,
+        "diagnosticRelationRows": [
+          {
+            "diagnostic": true,
+            "relation": "outcome0",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome1",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome2",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome3",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome4",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome5",
+            "rows": 6
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome6",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome7",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome8",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome9",
+            "rows": 1
+          }
+        ],
+        "dimension": "known-first",
+        "explain": [
+          {
+            "detail": "MATERIALIZE outcome0",
+            "id": 3,
+            "parent": 0
+          },
+          {
+            "detail": "CO-ROUTINE (subquery-19)",
+            "id": 6,
+            "parent": 3
+          },
+          {
+            "detail": "SCAN n VIRTUAL TABLE INDEX 0:k=",
+            "id": 8,
+            "parent": 6
+          },
+          {
+            "detail": "SCAN (subquery-19)",
+            "id": 24,
+            "parent": 3
+          },
+          {
+            "detail": "MATERIALIZE outcome9",
+            "id": 65,
+            "parent": 0
+          },
+          {
+            "detail": "MATERIALIZE outcome8",
+            "id": 68,
+            "parent": 65
+          },
+          {
+            "detail": "MATERIALIZE outcome3",
+            "id": 71,
+            "parent": 68
+          },
+          {
+            "detail": "MATERIALIZE outcome2",
+            "id": 74,
+            "parent": 71
+          },
+          {
+            "detail": "MATERIALIZE outcome1",
+            "id": 77,
+            "parent": 74
+          },
+          {
+            "detail": "SCAN d",
+            "id": 81,
+            "parent": 77
+          },
+          {
+            "detail": "SCAN d",
+            "id": 96,
+            "parent": 74
+          },
+          {
+            "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+            "id": 98,
+            "parent": 74
+          },
+          {
+            "detail": "CORRELATED SCALAR SUBQUERY 3",
+            "id": 111,
+            "parent": 74
+          },
+          {
+            "detail": "SCAN CONSTANT ROW",
+            "id": 114,
+            "parent": 111
+          },
+          {
+            "detail": "SCAN d",
+            "id": 135,
+            "parent": 71
+          },
+          {
+            "detail": "MATERIALIZE outcome7",
+            "id": 160,
+            "parent": 68
+          },
+          {
+            "detail": "MATERIALIZE outcome4",
+            "id": 163,
+            "parent": 160
+          },
+          {
+            "detail": "SCAN d",
+            "id": 167,
+            "parent": 163
+          },
+          {
+            "detail": "MATERIALIZE outcome6",
+            "id": 181,
+            "parent": 160
+          },
+          {
+            "detail": "MATERIALIZE outcome5",
+            "id": 184,
+            "parent": 181
+          },
+          {
+            "detail": "SETUP",
+            "id": 188,
+            "parent": 184
+          },
+          {
+            "detail": "SCAN d",
+            "id": 192,
+            "parent": 188
+          },
+          {
+            "detail": "SCAN origin VIRTUAL TABLE INDEX 0:f=i=",
+            "id": 194,
+            "parent": 188
+          },
+          {
+            "detail": "RECURSIVE STEP",
+            "id": 246,
+            "parent": 184
+          },
+          {
+            "detail": "SCAN w",
+            "id": 248,
+            "parent": 246
+          },
+          {
+            "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+            "id": 249,
+            "parent": 246
+          },
+          {
+            "detail": "CORRELATED SCALAR SUBQUERY 11",
+            "id": 309,
+            "parent": 246
+          },
+          {
+            "detail": "MATERIALIZE prior",
+            "id": 312,
+            "parent": 309
+          },
+          {
+            "detail": "SCAN CONSTANT ROW",
+            "id": 314,
+            "parent": 312
+          },
+          {
+            "detail": "SCAN prior",
+            "id": 328,
+            "parent": 309
+          },
+          {
+            "detail": "CORRELATED SCALAR SUBQUERY 10",
+            "id": 335,
+            "parent": 309
+          },
+          {
+            "detail": "MATERIALIZE following",
+            "id": 338,
+            "parent": 335
+          },
+          {
+            "detail": "SCAN CONSTANT ROW",
+            "id": 340,
+            "parent": 338
+          },
+          {
+            "detail": "SCAN following",
+            "id": 350,
+            "parent": 335
+          },
+          {
+            "detail": "CORRELATED SCALAR SUBQUERY 12",
+            "id": 380,
+            "parent": 246
+          },
+          {
+            "detail": "SCAN CONSTANT ROW",
+            "id": 383,
+            "parent": 380
+          },
+          {
+            "detail": "SCAN w",
+            "id": 437,
+            "parent": 181
+          },
+          {
+            "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+            "id": 441,
+            "parent": 181
+          },
+          {
+            "detail": "SCAN d",
+            "id": 496,
+            "parent": 160
+          },
+          {
+            "detail": "BLOOM FILTER ON t (k=?)",
+            "id": 502,
+            "parent": 160
+          },
+          {
+            "detail": "SEARCH t USING AUTOMATIC COVERING INDEX (k=?) LEFT-JOIN",
+            "id": 514,
+            "parent": 160
+          },
+          {
+            "detail": "SCAN d",
+            "id": 552,
+            "parent": 68
+          },
+          {
+            "detail": "BLOOM FILTER ON o (k=?)",
+            "id": 558,
+            "parent": 68
+          },
+          {
+            "detail": "SEARCH o USING AUTOMATIC COVERING INDEX (k=?) LEFT-JOIN",
+            "id": 568,
+            "parent": 68
+          },
+          {
+            "detail": "SCAN s",
+            "id": 604,
+            "parent": 65
+          },
+          {
+            "detail": "SCAN d",
+            "id": 616,
+            "parent": 0
+          },
+          {
+            "detail": "BLOOM FILTER ON o (truth=? AND k=?)",
+            "id": 622,
+            "parent": 0
+          },
+          {
+            "detail": "SEARCH o USING AUTOMATIC PARTIAL COVERING INDEX (truth=? AND k=?)",
+            "id": 634,
+            "parent": 0
+          },
+          {
+            "detail": "USE TEMP B-TREE FOR ORDER BY",
+            "id": 651,
+            "parent": 0
+          }
+        ],
+        "files": 1,
+        "framePublications": 0,
+        "fullscanSteps": 5,
+        "generationCpuNs": 139916,
+        "matches": 1,
+        "matchingStatements": 1,
+        "nodeAdvances": 11,
+        "nodeFilters": 11,
+        "outcomes": [[0,4,1]],
+        "output": [[[4,[]]]],
+        "parity": true,
+        "patternRequests": 0,
+        "prepareAndExecuteCpuNs": 394250,
+        "prepareCpuNs": 328792,
+        "regexRequests": 1,
+        "relations": {
+          "captures": [],
+          "flags": [
+            "Candidate outcomes precede ordered reduction only because all admitted operations are total and effect-free.",
+            "Counts may evaluate candidates after a native early threshold; resource-limit parity remains pending."
+          ],
+          "limitations": [
+            "Native work and stack/depth budgets remain unproved.",
+            "Following values, nested ordered traversal bodies, capture-bearing stops, recursion, and enumeration remain unproved."
+          ],
+          "nativeComposition": false,
+          "outcomeDemand": "outcome0",
+          "outcomeOutput": "outcome9",
+          "outcomePayload": "",
+          "outcomes": {
+            "false": 0,
+            "true": 1,
+            "unknown": 2
+          },
+          "relations": [
+            {
+              "columns": "k,file,node",
+              "operator": "root demand",
+              "relation": "outcome0",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,truth,live bindings,withheld flags",
+              "operator": "conjunction input",
+              "relation": "outcome1",
+              "storage": "materialized"
+            },
+            {
+              "columns": "input columns,tested outcome (NULL means unreached)",
+              "operator": "guarded node-local outcome",
+              "relation": "outcome2",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,truth,live bindings,withheld flags",
+              "operator": "conjunction scalar barrier",
+              "relation": "outcome3",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,required bindings",
+              "operator": "reached demand",
+              "relation": "outcome4",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,bound,phase,own,stopped,low,uncertain,open",
+              "operator": "ordered reached traversal",
+              "relation": "outcome5",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,low,uncertain,open",
+              "operator": "completed ordered traversal",
+              "relation": "outcome6",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,truth,exact count export",
+              "operator": "ordered traversal outcome",
+              "relation": "outcome7",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,truth,live bindings,withheld flags",
+              "operator": "conjunction sequencing barrier",
+              "relation": "outcome8",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,truth,observable bindings",
+              "operator": "conjunction commit",
+              "relation": "outcome9",
+              "storage": "materialized"
+            }
+          ],
+          "scope": "Explicit outcomes with reached node-local value leaves and traversal stops"
+        },
+        "size": 16,
+        "sql": "WITH RECURSIVE\noutcome0 AS MATERIALIZED (\nSELECT ROW_NUMBER() OVER () AS k,n.file,n.id AS node FROM node n WHERE 1 AND n.kind IN (256)\n),\noutcome1 AS MATERIALIZED (\nSELECT d.k,d.file,d.node,1 AS truth FROM outcome0 d\n),\noutcome2 AS MATERIALIZED (\nSELECT d.*,CASE WHEN d.truth<>0 AND NOT (0) THEN CASE WHEN NOT (NOT EXISTS (SELECT 1 WHERE n.kind IN (256))) THEN 1 ELSE 0 END ELSE NULL END AS tested FROM outcome1 d CROSS JOIN node n ON n.file=d.file AND n.id=d.node\n),\noutcome3 AS MATERIALIZED (\nSELECT d.k,d.file,d.node,CASE WHEN d.truth=0 OR d.tested=0 THEN 0 WHEN d.truth=2 OR d.tested=2 THEN 2 ELSE 1 END AS truth FROM outcome2 d\n),\noutcome4 AS MATERIALIZED (\nSELECT d.k,d.file,d.node FROM outcome3 d WHERE d.truth<>0 AND NOT (0)\n),\noutcome5 AS MATERIALIZED (\nSELECT d.k,d.file,CASE WHEN origin.id<origin.\"last\" THEN origin.id+1 END AS node,origin.\"last\" AS bound,0 AS phase,0 AS own,0 AS stopped,0 AS low,0 AS uncertain,0 AS open FROM outcome4 d CROSS JOIN node origin ON origin.file=d.file AND origin.id=d.node WHERE (CASE WHEN origin.id<origin.\"last\" THEN origin.id+1 END) IS NOT NULL\nUNION ALL\nSELECT w.k,w.file,CASE WHEN w.phase=2 THEN CASE WHEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END)<=w.bound THEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END) END ELSE w.node END,w.bound,(w.phase+1)%3,CASE WHEN w.phase=0 THEN (WITH prior AS MATERIALIZED (SELECT CASE WHEN (n.kind IN (110)) OR (n.kind IN (1)) THEN 1 ELSE 0 END AS t) SELECT CASE WHEN t=0 THEN 0 ELSE (WITH following AS MATERIALIZED (SELECT relation_value(1,n.file,n.id) AS v) SELECT CASE WHEN v=0 THEN 0 WHEN v=2 OR prior.t=2 THEN 2 ELSE v END FROM following) END FROM prior) ELSE w.own END, CASE WHEN w.phase=1 THEN CASE WHEN w.own=1 THEN 0 ELSE CASE WHEN NOT (NOT EXISTS (SELECT 1 WHERE node_regex(0,n.file,n.id))) THEN 1 ELSE 0 END END ELSE w.stopped END,CASE WHEN w.phase=2 THEN (w.low+(w.own=1)) ELSE w.low END,CASE WHEN w.phase=2 THEN (w.uncertain+(w.own=2)) ELSE w.uncertain END,CASE WHEN w.phase=2 THEN (w.open OR w.stopped=2) ELSE w.open END FROM outcome5 w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE w.phase<2 OR (NOT (w.own=1) AND (CASE WHEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END)<=w.bound THEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END) END) IS NOT NULL)\n),\noutcome6 AS MATERIALIZED (\nSELECT w.k,(w.low+(w.own=1)) AS low,(w.uncertain+(w.own=2)) AS uncertain,(w.open OR w.stopped=2) AS open FROM outcome5 w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE w.phase=2 AND ((w.own=1) OR (CASE WHEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END)<=w.bound THEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END) END) IS NULL)\n),\noutcome7 AS MATERIALIZED (\nSELECT d.k,CASE WHEN COALESCE(t.low,0)>0 THEN 1 WHEN COALESCE(t.open,0) OR COALESCE(t.uncertain,0)>0 THEN 2 ELSE 0 END AS truth FROM outcome4 d LEFT JOIN outcome6 t ON t.k=d.k\n),\noutcome8 AS MATERIALIZED (\nSELECT d.k,d.file,d.node,CASE WHEN d.truth=0 OR o.truth=0 THEN 0 WHEN d.truth=2 OR o.truth=2 THEN 2 ELSE 1 END AS truth FROM outcome3 d LEFT JOIN outcome7 o ON o.k=d.k\n),\noutcome9 AS MATERIALIZED (\nSELECT s.k,s.truth FROM outcome8 s\n)\n-- final matches\nSELECT 0,d.file,d.node,json_array() FROM outcome0 d JOIN outcome9 o ON o.k=d.k WHERE o.truth=1 ORDER BY d.file,d.node",
+        "statementMemoryBytes": 36720,
+        "timingScope": "Counters enabled. diagnosticCpuNs includes EXPLAIN; prepareAndExecuteCpuNs excludes EXPLAIN, connection setup, and generation. No speedup claim.",
+        "valueRequests": 1,
+        "vmSteps": 856,
+        "summary": {
+          "rootDemands": 1,
+          "relationCount": 10,
+          "sqlBytes": 3290,
+          "executionCpuNs": 65458,
+          "largestDiagnosticRelationRows": 6,
+          "orderedTraversalRows": 6,
+          "visitedCandidatesDerived": 2,
+          "derivation": "Three logical states per visited candidate in a completed ordered traversal; not physical write counts.",
+          "candidateRows": 0,
+          "diagnosticRowsAcrossRelations": 15,
+          "cardinalityScope": "Logical outputs from separate diagnostic queries; not physical writes or memory usage.",
+          "flags": [],
+          "admissionNotes": [
+            "Candidate outcomes precede ordered reduction only because all admitted operations are total and effect-free.",
+            "Counts may evaluate candidates after a native early threshold; resource-limit parity remains pending."
+          ]
+        }
+      },
+      {
+        "automaticIndexRows": 0,
+        "baseline": {
+          "diagnosticKernelCpuNs": 2326375,
+          "frameAdvances": 555,
+          "framePublications": 304,
+          "matchingStatements": 1
+        },
+        "captureEqualityRequests": 0,
+        "coldKernelCpuNs": 454542,
+        "diagnosticCpuNs": 2213167,
+        "diagnosticRelationRows": [
+          {
+            "diagnostic": true,
+            "relation": "outcome0",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome1",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome2",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome3",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome4",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome5",
+            "rows": 6
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome6",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome7",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome8",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome9",
+            "rows": 1
+          }
+        ],
+        "dimension": "known-first",
+        "explain": [
+          {
+            "detail": "MATERIALIZE outcome0",
+            "id": 3,
+            "parent": 0
+          },
+          {
+            "detail": "CO-ROUTINE (subquery-19)",
+            "id": 6,
+            "parent": 3
+          },
+          {
+            "detail": "SCAN n VIRTUAL TABLE INDEX 0:k=",
+            "id": 8,
+            "parent": 6
+          },
+          {
+            "detail": "SCAN (subquery-19)",
+            "id": 24,
+            "parent": 3
+          },
+          {
+            "detail": "MATERIALIZE outcome9",
+            "id": 65,
+            "parent": 0
+          },
+          {
+            "detail": "MATERIALIZE outcome8",
+            "id": 68,
+            "parent": 65
+          },
+          {
+            "detail": "MATERIALIZE outcome3",
+            "id": 71,
+            "parent": 68
+          },
+          {
+            "detail": "MATERIALIZE outcome2",
+            "id": 74,
+            "parent": 71
+          },
+          {
+            "detail": "MATERIALIZE outcome1",
+            "id": 77,
+            "parent": 74
+          },
+          {
+            "detail": "SCAN d",
+            "id": 81,
+            "parent": 77
+          },
+          {
+            "detail": "SCAN d",
+            "id": 96,
+            "parent": 74
+          },
+          {
+            "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+            "id": 98,
+            "parent": 74
+          },
+          {
+            "detail": "CORRELATED SCALAR SUBQUERY 3",
+            "id": 111,
+            "parent": 74
+          },
+          {
+            "detail": "SCAN CONSTANT ROW",
+            "id": 114,
+            "parent": 111
+          },
+          {
+            "detail": "SCAN d",
+            "id": 135,
+            "parent": 71
+          },
+          {
+            "detail": "MATERIALIZE outcome7",
+            "id": 160,
+            "parent": 68
+          },
+          {
+            "detail": "MATERIALIZE outcome4",
+            "id": 163,
+            "parent": 160
+          },
+          {
+            "detail": "SCAN d",
+            "id": 167,
+            "parent": 163
+          },
+          {
+            "detail": "MATERIALIZE outcome6",
+            "id": 181,
+            "parent": 160
+          },
+          {
+            "detail": "MATERIALIZE outcome5",
+            "id": 184,
+            "parent": 181
+          },
+          {
+            "detail": "SETUP",
+            "id": 188,
+            "parent": 184
+          },
+          {
+            "detail": "SCAN d",
+            "id": 192,
+            "parent": 188
+          },
+          {
+            "detail": "SCAN origin VIRTUAL TABLE INDEX 0:f=i=",
+            "id": 194,
+            "parent": 188
+          },
+          {
+            "detail": "RECURSIVE STEP",
+            "id": 246,
+            "parent": 184
+          },
+          {
+            "detail": "SCAN w",
+            "id": 248,
+            "parent": 246
+          },
+          {
+            "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+            "id": 249,
+            "parent": 246
+          },
+          {
+            "detail": "CORRELATED SCALAR SUBQUERY 11",
+            "id": 309,
+            "parent": 246
+          },
+          {
+            "detail": "MATERIALIZE prior",
+            "id": 312,
+            "parent": 309
+          },
+          {
+            "detail": "SCAN CONSTANT ROW",
+            "id": 314,
+            "parent": 312
+          },
+          {
+            "detail": "SCAN prior",
+            "id": 328,
+            "parent": 309
+          },
+          {
+            "detail": "CORRELATED SCALAR SUBQUERY 10",
+            "id": 335,
+            "parent": 309
+          },
+          {
+            "detail": "MATERIALIZE following",
+            "id": 338,
+            "parent": 335
+          },
+          {
+            "detail": "SCAN CONSTANT ROW",
+            "id": 340,
+            "parent": 338
+          },
+          {
+            "detail": "SCAN following",
+            "id": 350,
+            "parent": 335
+          },
+          {
+            "detail": "CORRELATED SCALAR SUBQUERY 12",
+            "id": 380,
+            "parent": 246
+          },
+          {
+            "detail": "SCAN CONSTANT ROW",
+            "id": 383,
+            "parent": 380
+          },
+          {
+            "detail": "SCAN w",
+            "id": 437,
+            "parent": 181
+          },
+          {
+            "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+            "id": 441,
+            "parent": 181
+          },
+          {
+            "detail": "SCAN d",
+            "id": 496,
+            "parent": 160
+          },
+          {
+            "detail": "BLOOM FILTER ON t (k=?)",
+            "id": 502,
+            "parent": 160
+          },
+          {
+            "detail": "SEARCH t USING AUTOMATIC COVERING INDEX (k=?) LEFT-JOIN",
+            "id": 514,
+            "parent": 160
+          },
+          {
+            "detail": "SCAN d",
+            "id": 552,
+            "parent": 68
+          },
+          {
+            "detail": "BLOOM FILTER ON o (k=?)",
+            "id": 558,
+            "parent": 68
+          },
+          {
+            "detail": "SEARCH o USING AUTOMATIC COVERING INDEX (k=?) LEFT-JOIN",
+            "id": 568,
+            "parent": 68
+          },
+          {
+            "detail": "SCAN s",
+            "id": 604,
+            "parent": 65
+          },
+          {
+            "detail": "SCAN d",
+            "id": 616,
+            "parent": 0
+          },
+          {
+            "detail": "BLOOM FILTER ON o (truth=? AND k=?)",
+            "id": 622,
+            "parent": 0
+          },
+          {
+            "detail": "SEARCH o USING AUTOMATIC PARTIAL COVERING INDEX (truth=? AND k=?)",
+            "id": 634,
+            "parent": 0
+          },
+          {
+            "detail": "USE TEMP B-TREE FOR ORDER BY",
+            "id": 651,
+            "parent": 0
+          }
+        ],
+        "files": 1,
+        "framePublications": 0,
+        "fullscanSteps": 5,
+        "generationCpuNs": 59167,
+        "matches": 1,
+        "matchingStatements": 1,
+        "nodeAdvances": 11,
+        "nodeFilters": 11,
+        "outcomes": [[0,4,1]],
+        "output": [[[4,[]]]],
+        "parity": true,
+        "patternRequests": 0,
+        "prepareAndExecuteCpuNs": 367167,
+        "prepareCpuNs": 303542,
+        "regexRequests": 1,
+        "relations": {
+          "captures": [],
+          "flags": [
+            "Candidate outcomes precede ordered reduction only because all admitted operations are total and effect-free.",
+            "Counts may evaluate candidates after a native early threshold; resource-limit parity remains pending."
+          ],
+          "limitations": [
+            "Native work and stack/depth budgets remain unproved.",
+            "Following values, nested ordered traversal bodies, capture-bearing stops, recursion, and enumeration remain unproved."
+          ],
+          "nativeComposition": false,
+          "outcomeDemand": "outcome0",
+          "outcomeOutput": "outcome9",
+          "outcomePayload": "",
+          "outcomes": {
+            "false": 0,
+            "true": 1,
+            "unknown": 2
+          },
+          "relations": [
+            {
+              "columns": "k,file,node",
+              "operator": "root demand",
+              "relation": "outcome0",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,truth,live bindings,withheld flags",
+              "operator": "conjunction input",
+              "relation": "outcome1",
+              "storage": "materialized"
+            },
+            {
+              "columns": "input columns,tested outcome (NULL means unreached)",
+              "operator": "guarded node-local outcome",
+              "relation": "outcome2",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,truth,live bindings,withheld flags",
+              "operator": "conjunction scalar barrier",
+              "relation": "outcome3",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,required bindings",
+              "operator": "reached demand",
+              "relation": "outcome4",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,bound,phase,own,stopped,low,uncertain,open",
+              "operator": "ordered reached traversal",
+              "relation": "outcome5",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,low,uncertain,open",
+              "operator": "completed ordered traversal",
+              "relation": "outcome6",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,truth,exact count export",
+              "operator": "ordered traversal outcome",
+              "relation": "outcome7",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,truth,live bindings,withheld flags",
+              "operator": "conjunction sequencing barrier",
+              "relation": "outcome8",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,truth,observable bindings",
+              "operator": "conjunction commit",
+              "relation": "outcome9",
+              "storage": "materialized"
+            }
+          ],
+          "scope": "Explicit outcomes with reached node-local value leaves and traversal stops"
+        },
+        "size": 64,
+        "sql": "WITH RECURSIVE\noutcome0 AS MATERIALIZED (\nSELECT ROW_NUMBER() OVER () AS k,n.file,n.id AS node FROM node n WHERE 1 AND n.kind IN (256)\n),\noutcome1 AS MATERIALIZED (\nSELECT d.k,d.file,d.node,1 AS truth FROM outcome0 d\n),\noutcome2 AS MATERIALIZED (\nSELECT d.*,CASE WHEN d.truth<>0 AND NOT (0) THEN CASE WHEN NOT (NOT EXISTS (SELECT 1 WHERE n.kind IN (256))) THEN 1 ELSE 0 END ELSE NULL END AS tested FROM outcome1 d CROSS JOIN node n ON n.file=d.file AND n.id=d.node\n),\noutcome3 AS MATERIALIZED (\nSELECT d.k,d.file,d.node,CASE WHEN d.truth=0 OR d.tested=0 THEN 0 WHEN d.truth=2 OR d.tested=2 THEN 2 ELSE 1 END AS truth FROM outcome2 d\n),\noutcome4 AS MATERIALIZED (\nSELECT d.k,d.file,d.node FROM outcome3 d WHERE d.truth<>0 AND NOT (0)\n),\noutcome5 AS MATERIALIZED (\nSELECT d.k,d.file,CASE WHEN origin.id<origin.\"last\" THEN origin.id+1 END AS node,origin.\"last\" AS bound,0 AS phase,0 AS own,0 AS stopped,0 AS low,0 AS uncertain,0 AS open FROM outcome4 d CROSS JOIN node origin ON origin.file=d.file AND origin.id=d.node WHERE (CASE WHEN origin.id<origin.\"last\" THEN origin.id+1 END) IS NOT NULL\nUNION ALL\nSELECT w.k,w.file,CASE WHEN w.phase=2 THEN CASE WHEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END)<=w.bound THEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END) END ELSE w.node END,w.bound,(w.phase+1)%3,CASE WHEN w.phase=0 THEN (WITH prior AS MATERIALIZED (SELECT CASE WHEN (n.kind IN (110)) OR (n.kind IN (1)) THEN 1 ELSE 0 END AS t) SELECT CASE WHEN t=0 THEN 0 ELSE (WITH following AS MATERIALIZED (SELECT relation_value(1,n.file,n.id) AS v) SELECT CASE WHEN v=0 THEN 0 WHEN v=2 OR prior.t=2 THEN 2 ELSE v END FROM following) END FROM prior) ELSE w.own END, CASE WHEN w.phase=1 THEN CASE WHEN w.own=1 THEN 0 ELSE CASE WHEN NOT (NOT EXISTS (SELECT 1 WHERE node_regex(0,n.file,n.id))) THEN 1 ELSE 0 END END ELSE w.stopped END,CASE WHEN w.phase=2 THEN (w.low+(w.own=1)) ELSE w.low END,CASE WHEN w.phase=2 THEN (w.uncertain+(w.own=2)) ELSE w.uncertain END,CASE WHEN w.phase=2 THEN (w.open OR w.stopped=2) ELSE w.open END FROM outcome5 w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE w.phase<2 OR (NOT (w.own=1) AND (CASE WHEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END)<=w.bound THEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END) END) IS NOT NULL)\n),\noutcome6 AS MATERIALIZED (\nSELECT w.k,(w.low+(w.own=1)) AS low,(w.uncertain+(w.own=2)) AS uncertain,(w.open OR w.stopped=2) AS open FROM outcome5 w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE w.phase=2 AND ((w.own=1) OR (CASE WHEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END)<=w.bound THEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END) END) IS NULL)\n),\noutcome7 AS MATERIALIZED (\nSELECT d.k,CASE WHEN COALESCE(t.low,0)>0 THEN 1 WHEN COALESCE(t.open,0) OR COALESCE(t.uncertain,0)>0 THEN 2 ELSE 0 END AS truth FROM outcome4 d LEFT JOIN outcome6 t ON t.k=d.k\n),\noutcome8 AS MATERIALIZED (\nSELECT d.k,d.file,d.node,CASE WHEN d.truth=0 OR o.truth=0 THEN 0 WHEN d.truth=2 OR o.truth=2 THEN 2 ELSE 1 END AS truth FROM outcome3 d LEFT JOIN outcome7 o ON o.k=d.k\n),\noutcome9 AS MATERIALIZED (\nSELECT s.k,s.truth FROM outcome8 s\n)\n-- final matches\nSELECT 0,d.file,d.node,json_array() FROM outcome0 d JOIN outcome9 o ON o.k=d.k WHERE o.truth=1 ORDER BY d.file,d.node",
+        "statementMemoryBytes": 36720,
+        "timingScope": "Counters enabled. diagnosticCpuNs includes EXPLAIN; prepareAndExecuteCpuNs excludes EXPLAIN, connection setup, and generation. No speedup claim.",
+        "valueRequests": 1,
+        "vmSteps": 856,
+        "summary": {
+          "rootDemands": 1,
+          "relationCount": 10,
+          "sqlBytes": 3290,
+          "executionCpuNs": 63625,
+          "largestDiagnosticRelationRows": 6,
+          "orderedTraversalRows": 6,
+          "visitedCandidatesDerived": 2,
+          "derivation": "Three logical states per visited candidate in a completed ordered traversal; not physical write counts.",
+          "candidateRows": 0,
+          "diagnosticRowsAcrossRelations": 15,
+          "cardinalityScope": "Logical outputs from separate diagnostic queries; not physical writes or memory usage.",
+          "flags": [],
+          "admissionNotes": [
+            "Candidate outcomes precede ordered reduction only because all admitted operations are total and effect-free.",
+            "Counts may evaluate candidates after a native early threshold; resource-limit parity remains pending."
+          ]
+        }
+      },
+      {
+        "automaticIndexRows": 0,
+        "baseline": {
+          "diagnosticKernelCpuNs": 3100625,
+          "frameAdvances": 1899,
+          "framePublications": 1072,
+          "matchingStatements": 1
+        },
+        "captureEqualityRequests": 0,
+        "coldKernelCpuNs": 482417,
+        "diagnosticCpuNs": 2892917,
+        "diagnosticRelationRows": [
+          {
+            "diagnostic": true,
+            "relation": "outcome0",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome1",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome2",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome3",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome4",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome5",
+            "rows": 6
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome6",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome7",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome8",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome9",
+            "rows": 1
+          }
+        ],
+        "dimension": "known-first",
+        "explain": [
+          {
+            "detail": "MATERIALIZE outcome0",
+            "id": 3,
+            "parent": 0
+          },
+          {
+            "detail": "CO-ROUTINE (subquery-19)",
+            "id": 6,
+            "parent": 3
+          },
+          {
+            "detail": "SCAN n VIRTUAL TABLE INDEX 0:k=",
+            "id": 8,
+            "parent": 6
+          },
+          {
+            "detail": "SCAN (subquery-19)",
+            "id": 24,
+            "parent": 3
+          },
+          {
+            "detail": "MATERIALIZE outcome9",
+            "id": 65,
+            "parent": 0
+          },
+          {
+            "detail": "MATERIALIZE outcome8",
+            "id": 68,
+            "parent": 65
+          },
+          {
+            "detail": "MATERIALIZE outcome3",
+            "id": 71,
+            "parent": 68
+          },
+          {
+            "detail": "MATERIALIZE outcome2",
+            "id": 74,
+            "parent": 71
+          },
+          {
+            "detail": "MATERIALIZE outcome1",
+            "id": 77,
+            "parent": 74
+          },
+          {
+            "detail": "SCAN d",
+            "id": 81,
+            "parent": 77
+          },
+          {
+            "detail": "SCAN d",
+            "id": 96,
+            "parent": 74
+          },
+          {
+            "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+            "id": 98,
+            "parent": 74
+          },
+          {
+            "detail": "CORRELATED SCALAR SUBQUERY 3",
+            "id": 111,
+            "parent": 74
+          },
+          {
+            "detail": "SCAN CONSTANT ROW",
+            "id": 114,
+            "parent": 111
+          },
+          {
+            "detail": "SCAN d",
+            "id": 135,
+            "parent": 71
+          },
+          {
+            "detail": "MATERIALIZE outcome7",
+            "id": 160,
+            "parent": 68
+          },
+          {
+            "detail": "MATERIALIZE outcome4",
+            "id": 163,
+            "parent": 160
+          },
+          {
+            "detail": "SCAN d",
+            "id": 167,
+            "parent": 163
+          },
+          {
+            "detail": "MATERIALIZE outcome6",
+            "id": 181,
+            "parent": 160
+          },
+          {
+            "detail": "MATERIALIZE outcome5",
+            "id": 184,
+            "parent": 181
+          },
+          {
+            "detail": "SETUP",
+            "id": 188,
+            "parent": 184
+          },
+          {
+            "detail": "SCAN d",
+            "id": 192,
+            "parent": 188
+          },
+          {
+            "detail": "SCAN origin VIRTUAL TABLE INDEX 0:f=i=",
+            "id": 194,
+            "parent": 188
+          },
+          {
+            "detail": "RECURSIVE STEP",
+            "id": 246,
+            "parent": 184
+          },
+          {
+            "detail": "SCAN w",
+            "id": 248,
+            "parent": 246
+          },
+          {
+            "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+            "id": 249,
+            "parent": 246
+          },
+          {
+            "detail": "CORRELATED SCALAR SUBQUERY 11",
+            "id": 309,
+            "parent": 246
+          },
+          {
+            "detail": "MATERIALIZE prior",
+            "id": 312,
+            "parent": 309
+          },
+          {
+            "detail": "SCAN CONSTANT ROW",
+            "id": 314,
+            "parent": 312
+          },
+          {
+            "detail": "SCAN prior",
+            "id": 328,
+            "parent": 309
+          },
+          {
+            "detail": "CORRELATED SCALAR SUBQUERY 10",
+            "id": 335,
+            "parent": 309
+          },
+          {
+            "detail": "MATERIALIZE following",
+            "id": 338,
+            "parent": 335
+          },
+          {
+            "detail": "SCAN CONSTANT ROW",
+            "id": 340,
+            "parent": 338
+          },
+          {
+            "detail": "SCAN following",
+            "id": 350,
+            "parent": 335
+          },
+          {
+            "detail": "CORRELATED SCALAR SUBQUERY 12",
+            "id": 380,
+            "parent": 246
+          },
+          {
+            "detail": "SCAN CONSTANT ROW",
+            "id": 383,
+            "parent": 380
+          },
+          {
+            "detail": "SCAN w",
+            "id": 437,
+            "parent": 181
+          },
+          {
+            "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+            "id": 441,
+            "parent": 181
+          },
+          {
+            "detail": "SCAN d",
+            "id": 496,
+            "parent": 160
+          },
+          {
+            "detail": "BLOOM FILTER ON t (k=?)",
+            "id": 502,
+            "parent": 160
+          },
+          {
+            "detail": "SEARCH t USING AUTOMATIC COVERING INDEX (k=?) LEFT-JOIN",
+            "id": 514,
+            "parent": 160
+          },
+          {
+            "detail": "SCAN d",
+            "id": 552,
+            "parent": 68
+          },
+          {
+            "detail": "BLOOM FILTER ON o (k=?)",
+            "id": 558,
+            "parent": 68
+          },
+          {
+            "detail": "SEARCH o USING AUTOMATIC COVERING INDEX (k=?) LEFT-JOIN",
+            "id": 568,
+            "parent": 68
+          },
+          {
+            "detail": "SCAN s",
+            "id": 604,
+            "parent": 65
+          },
+          {
+            "detail": "SCAN d",
+            "id": 616,
+            "parent": 0
+          },
+          {
+            "detail": "BLOOM FILTER ON o (truth=? AND k=?)",
+            "id": 622,
+            "parent": 0
+          },
+          {
+            "detail": "SEARCH o USING AUTOMATIC PARTIAL COVERING INDEX (truth=? AND k=?)",
+            "id": 634,
+            "parent": 0
+          },
+          {
+            "detail": "USE TEMP B-TREE FOR ORDER BY",
+            "id": 651,
+            "parent": 0
+          }
+        ],
+        "files": 1,
+        "framePublications": 0,
+        "fullscanSteps": 5,
+        "generationCpuNs": 57917,
+        "matches": 1,
+        "matchingStatements": 1,
+        "nodeAdvances": 11,
+        "nodeFilters": 11,
+        "outcomes": [[0,4,1]],
+        "output": [[[4,[]]]],
+        "parity": true,
+        "patternRequests": 0,
+        "prepareAndExecuteCpuNs": 395125,
+        "prepareCpuNs": 318125,
+        "regexRequests": 1,
+        "relations": {
+          "captures": [],
+          "flags": [
+            "Candidate outcomes precede ordered reduction only because all admitted operations are total and effect-free.",
+            "Counts may evaluate candidates after a native early threshold; resource-limit parity remains pending."
+          ],
+          "limitations": [
+            "Native work and stack/depth budgets remain unproved.",
+            "Following values, nested ordered traversal bodies, capture-bearing stops, recursion, and enumeration remain unproved."
+          ],
+          "nativeComposition": false,
+          "outcomeDemand": "outcome0",
+          "outcomeOutput": "outcome9",
+          "outcomePayload": "",
+          "outcomes": {
+            "false": 0,
+            "true": 1,
+            "unknown": 2
+          },
+          "relations": [
+            {
+              "columns": "k,file,node",
+              "operator": "root demand",
+              "relation": "outcome0",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,truth,live bindings,withheld flags",
+              "operator": "conjunction input",
+              "relation": "outcome1",
+              "storage": "materialized"
+            },
+            {
+              "columns": "input columns,tested outcome (NULL means unreached)",
+              "operator": "guarded node-local outcome",
+              "relation": "outcome2",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,truth,live bindings,withheld flags",
+              "operator": "conjunction scalar barrier",
+              "relation": "outcome3",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,required bindings",
+              "operator": "reached demand",
+              "relation": "outcome4",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,bound,phase,own,stopped,low,uncertain,open",
+              "operator": "ordered reached traversal",
+              "relation": "outcome5",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,low,uncertain,open",
+              "operator": "completed ordered traversal",
+              "relation": "outcome6",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,truth,exact count export",
+              "operator": "ordered traversal outcome",
+              "relation": "outcome7",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,truth,live bindings,withheld flags",
+              "operator": "conjunction sequencing barrier",
+              "relation": "outcome8",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,truth,observable bindings",
+              "operator": "conjunction commit",
+              "relation": "outcome9",
+              "storage": "materialized"
+            }
+          ],
+          "scope": "Explicit outcomes with reached node-local value leaves and traversal stops"
+        },
+        "size": 256,
+        "sql": "WITH RECURSIVE\noutcome0 AS MATERIALIZED (\nSELECT ROW_NUMBER() OVER () AS k,n.file,n.id AS node FROM node n WHERE 1 AND n.kind IN (256)\n),\noutcome1 AS MATERIALIZED (\nSELECT d.k,d.file,d.node,1 AS truth FROM outcome0 d\n),\noutcome2 AS MATERIALIZED (\nSELECT d.*,CASE WHEN d.truth<>0 AND NOT (0) THEN CASE WHEN NOT (NOT EXISTS (SELECT 1 WHERE n.kind IN (256))) THEN 1 ELSE 0 END ELSE NULL END AS tested FROM outcome1 d CROSS JOIN node n ON n.file=d.file AND n.id=d.node\n),\noutcome3 AS MATERIALIZED (\nSELECT d.k,d.file,d.node,CASE WHEN d.truth=0 OR d.tested=0 THEN 0 WHEN d.truth=2 OR d.tested=2 THEN 2 ELSE 1 END AS truth FROM outcome2 d\n),\noutcome4 AS MATERIALIZED (\nSELECT d.k,d.file,d.node FROM outcome3 d WHERE d.truth<>0 AND NOT (0)\n),\noutcome5 AS MATERIALIZED (\nSELECT d.k,d.file,CASE WHEN origin.id<origin.\"last\" THEN origin.id+1 END AS node,origin.\"last\" AS bound,0 AS phase,0 AS own,0 AS stopped,0 AS low,0 AS uncertain,0 AS open FROM outcome4 d CROSS JOIN node origin ON origin.file=d.file AND origin.id=d.node WHERE (CASE WHEN origin.id<origin.\"last\" THEN origin.id+1 END) IS NOT NULL\nUNION ALL\nSELECT w.k,w.file,CASE WHEN w.phase=2 THEN CASE WHEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END)<=w.bound THEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END) END ELSE w.node END,w.bound,(w.phase+1)%3,CASE WHEN w.phase=0 THEN (WITH prior AS MATERIALIZED (SELECT CASE WHEN (n.kind IN (110)) OR (n.kind IN (1)) THEN 1 ELSE 0 END AS t) SELECT CASE WHEN t=0 THEN 0 ELSE (WITH following AS MATERIALIZED (SELECT relation_value(1,n.file,n.id) AS v) SELECT CASE WHEN v=0 THEN 0 WHEN v=2 OR prior.t=2 THEN 2 ELSE v END FROM following) END FROM prior) ELSE w.own END, CASE WHEN w.phase=1 THEN CASE WHEN w.own=1 THEN 0 ELSE CASE WHEN NOT (NOT EXISTS (SELECT 1 WHERE node_regex(0,n.file,n.id))) THEN 1 ELSE 0 END END ELSE w.stopped END,CASE WHEN w.phase=2 THEN (w.low+(w.own=1)) ELSE w.low END,CASE WHEN w.phase=2 THEN (w.uncertain+(w.own=2)) ELSE w.uncertain END,CASE WHEN w.phase=2 THEN (w.open OR w.stopped=2) ELSE w.open END FROM outcome5 w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE w.phase<2 OR (NOT (w.own=1) AND (CASE WHEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END)<=w.bound THEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END) END) IS NOT NULL)\n),\noutcome6 AS MATERIALIZED (\nSELECT w.k,(w.low+(w.own=1)) AS low,(w.uncertain+(w.own=2)) AS uncertain,(w.open OR w.stopped=2) AS open FROM outcome5 w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE w.phase=2 AND ((w.own=1) OR (CASE WHEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END)<=w.bound THEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END) END) IS NULL)\n),\noutcome7 AS MATERIALIZED (\nSELECT d.k,CASE WHEN COALESCE(t.low,0)>0 THEN 1 WHEN COALESCE(t.open,0) OR COALESCE(t.uncertain,0)>0 THEN 2 ELSE 0 END AS truth FROM outcome4 d LEFT JOIN outcome6 t ON t.k=d.k\n),\noutcome8 AS MATERIALIZED (\nSELECT d.k,d.file,d.node,CASE WHEN d.truth=0 OR o.truth=0 THEN 0 WHEN d.truth=2 OR o.truth=2 THEN 2 ELSE 1 END AS truth FROM outcome3 d LEFT JOIN outcome7 o ON o.k=d.k\n),\noutcome9 AS MATERIALIZED (\nSELECT s.k,s.truth FROM outcome8 s\n)\n-- final matches\nSELECT 0,d.file,d.node,json_array() FROM outcome0 d JOIN outcome9 o ON o.k=d.k WHERE o.truth=1 ORDER BY d.file,d.node",
+        "statementMemoryBytes": 36720,
+        "timingScope": "Counters enabled. diagnosticCpuNs includes EXPLAIN; prepareAndExecuteCpuNs excludes EXPLAIN, connection setup, and generation. No speedup claim.",
+        "valueRequests": 1,
+        "vmSteps": 856,
+        "summary": {
+          "rootDemands": 1,
+          "relationCount": 10,
+          "sqlBytes": 3290,
+          "executionCpuNs": 77000,
+          "largestDiagnosticRelationRows": 6,
+          "orderedTraversalRows": 6,
+          "visitedCandidatesDerived": 2,
+          "derivation": "Three logical states per visited candidate in a completed ordered traversal; not physical write counts.",
+          "candidateRows": 0,
+          "diagnosticRowsAcrossRelations": 15,
+          "cardinalityScope": "Logical outputs from separate diagnostic queries; not physical writes or memory usage.",
+          "flags": [],
+          "admissionNotes": [
+            "Candidate outcomes precede ordered reduction only because all admitted operations are total and effect-free.",
+            "Counts may evaluate candidates after a native early threshold; resource-limit parity remains pending."
+          ]
+        }
+      },
+      {
+        "automaticIndexRows": 0,
+        "baseline": {
+          "diagnosticKernelCpuNs": 2157541,
+          "frameAdvances": 340,
+          "framePublications": 205,
+          "matchingStatements": 1
+        },
+        "captureEqualityRequests": 0,
+        "coldKernelCpuNs": 503207,
+        "diagnosticCpuNs": 2705291,
+        "diagnosticRelationRows": [
+          {
+            "diagnostic": true,
+            "relation": "outcome0",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome1",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome2",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome3",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome4",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome5",
+            "rows": 99
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome6",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome7",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome8",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome9",
+            "rows": 1
+          }
+        ],
+        "dimension": "unknown-width",
+        "explain": [
+          {
+            "detail": "MATERIALIZE outcome0",
+            "id": 3,
+            "parent": 0
+          },
+          {
+            "detail": "CO-ROUTINE (subquery-19)",
+            "id": 6,
+            "parent": 3
+          },
+          {
+            "detail": "SCAN n VIRTUAL TABLE INDEX 0:k=",
+            "id": 8,
+            "parent": 6
+          },
+          {
+            "detail": "SCAN (subquery-19)",
+            "id": 24,
+            "parent": 3
+          },
+          {
+            "detail": "MATERIALIZE outcome9",
+            "id": 65,
+            "parent": 0
+          },
+          {
+            "detail": "MATERIALIZE outcome8",
+            "id": 68,
+            "parent": 65
+          },
+          {
+            "detail": "MATERIALIZE outcome3",
+            "id": 71,
+            "parent": 68
+          },
+          {
+            "detail": "MATERIALIZE outcome2",
+            "id": 74,
+            "parent": 71
+          },
+          {
+            "detail": "MATERIALIZE outcome1",
+            "id": 77,
+            "parent": 74
+          },
+          {
+            "detail": "SCAN d",
+            "id": 81,
+            "parent": 77
+          },
+          {
+            "detail": "SCAN d",
+            "id": 96,
+            "parent": 74
+          },
+          {
+            "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+            "id": 98,
+            "parent": 74
+          },
+          {
+            "detail": "CORRELATED SCALAR SUBQUERY 3",
+            "id": 111,
+            "parent": 74
+          },
+          {
+            "detail": "SCAN CONSTANT ROW",
+            "id": 114,
+            "parent": 111
+          },
+          {
+            "detail": "SCAN d",
+            "id": 135,
+            "parent": 71
+          },
+          {
+            "detail": "MATERIALIZE outcome7",
+            "id": 160,
+            "parent": 68
+          },
+          {
+            "detail": "MATERIALIZE outcome4",
+            "id": 163,
+            "parent": 160
+          },
+          {
+            "detail": "SCAN d",
+            "id": 167,
+            "parent": 163
+          },
+          {
+            "detail": "MATERIALIZE outcome6",
+            "id": 181,
+            "parent": 160
+          },
+          {
+            "detail": "MATERIALIZE outcome5",
+            "id": 184,
+            "parent": 181
+          },
+          {
+            "detail": "SETUP",
+            "id": 188,
+            "parent": 184
+          },
+          {
+            "detail": "SCAN d",
+            "id": 192,
+            "parent": 188
+          },
+          {
+            "detail": "SCAN origin VIRTUAL TABLE INDEX 0:f=i=",
+            "id": 194,
+            "parent": 188
+          },
+          {
+            "detail": "RECURSIVE STEP",
+            "id": 246,
+            "parent": 184
+          },
+          {
+            "detail": "SCAN w",
+            "id": 248,
+            "parent": 246
+          },
+          {
+            "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+            "id": 249,
+            "parent": 246
+          },
+          {
+            "detail": "CORRELATED SCALAR SUBQUERY 11",
+            "id": 309,
+            "parent": 246
+          },
+          {
+            "detail": "MATERIALIZE prior",
+            "id": 312,
+            "parent": 309
+          },
+          {
+            "detail": "SCAN CONSTANT ROW",
+            "id": 314,
+            "parent": 312
+          },
+          {
+            "detail": "SCAN prior",
+            "id": 328,
+            "parent": 309
+          },
+          {
+            "detail": "CORRELATED SCALAR SUBQUERY 10",
+            "id": 335,
+            "parent": 309
+          },
+          {
+            "detail": "MATERIALIZE following",
+            "id": 338,
+            "parent": 335
+          },
+          {
+            "detail": "SCAN CONSTANT ROW",
+            "id": 340,
+            "parent": 338
+          },
+          {
+            "detail": "SCAN following",
+            "id": 350,
+            "parent": 335
+          },
+          {
+            "detail": "CORRELATED SCALAR SUBQUERY 12",
+            "id": 380,
+            "parent": 246
+          },
+          {
+            "detail": "SCAN CONSTANT ROW",
+            "id": 383,
+            "parent": 380
+          },
+          {
+            "detail": "SCAN w",
+            "id": 437,
+            "parent": 181
+          },
+          {
+            "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+            "id": 441,
+            "parent": 181
+          },
+          {
+            "detail": "SCAN d",
+            "id": 496,
+            "parent": 160
+          },
+          {
+            "detail": "BLOOM FILTER ON t (k=?)",
+            "id": 502,
+            "parent": 160
+          },
+          {
+            "detail": "SEARCH t USING AUTOMATIC COVERING INDEX (k=?) LEFT-JOIN",
+            "id": 514,
+            "parent": 160
+          },
+          {
+            "detail": "SCAN d",
+            "id": 552,
+            "parent": 68
+          },
+          {
+            "detail": "BLOOM FILTER ON o (k=?)",
+            "id": 558,
+            "parent": 68
+          },
+          {
+            "detail": "SEARCH o USING AUTOMATIC COVERING INDEX (k=?) LEFT-JOIN",
+            "id": 568,
+            "parent": 68
+          },
+          {
+            "detail": "SCAN s",
+            "id": 604,
+            "parent": 65
+          },
+          {
+            "detail": "SCAN d",
+            "id": 616,
+            "parent": 0
+          },
+          {
+            "detail": "BLOOM FILTER ON o (truth=? AND k=?)",
+            "id": 622,
+            "parent": 0
+          },
+          {
+            "detail": "SEARCH o USING AUTOMATIC PARTIAL COVERING INDEX (truth=? AND k=?)",
+            "id": 634,
+            "parent": 0
+          },
+          {
+            "detail": "USE TEMP B-TREE FOR ORDER BY",
+            "id": 651,
+            "parent": 0
+          }
+        ],
+        "files": 1,
+        "framePublications": 0,
+        "fullscanSteps": 98,
+        "generationCpuNs": 52666,
+        "matches": 0,
+        "matchingStatements": 1,
+        "nodeAdvances": 135,
+        "nodeFilters": 135,
+        "outcomes": [[0,4,2]],
+        "output": [[]],
+        "parity": true,
+        "patternRequests": 0,
+        "prepareAndExecuteCpuNs": 422375,
+        "prepareCpuNs": 289959,
+        "regexRequests": 33,
+        "relations": {
+          "captures": [],
+          "flags": [
+            "Candidate outcomes precede ordered reduction only because all admitted operations are total and effect-free.",
+            "Counts may evaluate candidates after a native early threshold; resource-limit parity remains pending."
+          ],
+          "limitations": [
+            "Native work and stack/depth budgets remain unproved.",
+            "Following values, nested ordered traversal bodies, capture-bearing stops, recursion, and enumeration remain unproved."
+          ],
+          "nativeComposition": false,
+          "outcomeDemand": "outcome0",
+          "outcomeOutput": "outcome9",
+          "outcomePayload": "",
+          "outcomes": {
+            "false": 0,
+            "true": 1,
+            "unknown": 2
+          },
+          "relations": [
+            {
+              "columns": "k,file,node",
+              "operator": "root demand",
+              "relation": "outcome0",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,truth,live bindings,withheld flags",
+              "operator": "conjunction input",
+              "relation": "outcome1",
+              "storage": "materialized"
+            },
+            {
+              "columns": "input columns,tested outcome (NULL means unreached)",
+              "operator": "guarded node-local outcome",
+              "relation": "outcome2",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,truth,live bindings,withheld flags",
+              "operator": "conjunction scalar barrier",
+              "relation": "outcome3",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,required bindings",
+              "operator": "reached demand",
+              "relation": "outcome4",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,bound,phase,own,stopped,low,uncertain,open",
+              "operator": "ordered reached traversal",
+              "relation": "outcome5",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,low,uncertain,open",
+              "operator": "completed ordered traversal",
+              "relation": "outcome6",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,truth,exact count export",
+              "operator": "ordered traversal outcome",
+              "relation": "outcome7",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,truth,live bindings,withheld flags",
+              "operator": "conjunction sequencing barrier",
+              "relation": "outcome8",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,truth,observable bindings",
+              "operator": "conjunction commit",
+              "relation": "outcome9",
+              "storage": "materialized"
+            }
+          ],
+          "scope": "Explicit outcomes with reached node-local value leaves and traversal stops"
+        },
+        "size": 16,
+        "sql": "WITH RECURSIVE\noutcome0 AS MATERIALIZED (\nSELECT ROW_NUMBER() OVER () AS k,n.file,n.id AS node FROM node n WHERE 1 AND n.kind IN (256)\n),\noutcome1 AS MATERIALIZED (\nSELECT d.k,d.file,d.node,1 AS truth FROM outcome0 d\n),\noutcome2 AS MATERIALIZED (\nSELECT d.*,CASE WHEN d.truth<>0 AND NOT (0) THEN CASE WHEN NOT (NOT EXISTS (SELECT 1 WHERE n.kind IN (256))) THEN 1 ELSE 0 END ELSE NULL END AS tested FROM outcome1 d CROSS JOIN node n ON n.file=d.file AND n.id=d.node\n),\noutcome3 AS MATERIALIZED (\nSELECT d.k,d.file,d.node,CASE WHEN d.truth=0 OR d.tested=0 THEN 0 WHEN d.truth=2 OR d.tested=2 THEN 2 ELSE 1 END AS truth FROM outcome2 d\n),\noutcome4 AS MATERIALIZED (\nSELECT d.k,d.file,d.node FROM outcome3 d WHERE d.truth<>0 AND NOT (0)\n),\noutcome5 AS MATERIALIZED (\nSELECT d.k,d.file,CASE WHEN origin.id<origin.\"last\" THEN origin.id+1 END AS node,origin.\"last\" AS bound,0 AS phase,0 AS own,0 AS stopped,0 AS low,0 AS uncertain,0 AS open FROM outcome4 d CROSS JOIN node origin ON origin.file=d.file AND origin.id=d.node WHERE (CASE WHEN origin.id<origin.\"last\" THEN origin.id+1 END) IS NOT NULL\nUNION ALL\nSELECT w.k,w.file,CASE WHEN w.phase=2 THEN CASE WHEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END)<=w.bound THEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END) END ELSE w.node END,w.bound,(w.phase+1)%3,CASE WHEN w.phase=0 THEN (WITH prior AS MATERIALIZED (SELECT CASE WHEN (n.kind IN (110)) OR (n.kind IN (1)) THEN 1 ELSE 0 END AS t) SELECT CASE WHEN t=0 THEN 0 ELSE (WITH following AS MATERIALIZED (SELECT relation_value(1,n.file,n.id) AS v) SELECT CASE WHEN v=0 THEN 0 WHEN v=2 OR prior.t=2 THEN 2 ELSE v END FROM following) END FROM prior) ELSE w.own END, CASE WHEN w.phase=1 THEN CASE WHEN w.own=1 THEN 0 ELSE CASE WHEN NOT (NOT EXISTS (SELECT 1 WHERE node_regex(0,n.file,n.id))) THEN 1 ELSE 0 END END ELSE w.stopped END,CASE WHEN w.phase=2 THEN (w.low+(w.own=1)) ELSE w.low END,CASE WHEN w.phase=2 THEN (w.uncertain+(w.own=2)) ELSE w.uncertain END,CASE WHEN w.phase=2 THEN (w.open OR w.stopped=2) ELSE w.open END FROM outcome5 w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE w.phase<2 OR (NOT (w.own=1) AND (CASE WHEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END)<=w.bound THEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END) END) IS NOT NULL)\n),\noutcome6 AS MATERIALIZED (\nSELECT w.k,(w.low+(w.own=1)) AS low,(w.uncertain+(w.own=2)) AS uncertain,(w.open OR w.stopped=2) AS open FROM outcome5 w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE w.phase=2 AND ((w.own=1) OR (CASE WHEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END)<=w.bound THEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END) END) IS NULL)\n),\noutcome7 AS MATERIALIZED (\nSELECT d.k,CASE WHEN COALESCE(t.low,0)>0 THEN 1 WHEN COALESCE(t.open,0) OR COALESCE(t.uncertain,0)>0 THEN 2 ELSE 0 END AS truth FROM outcome4 d LEFT JOIN outcome6 t ON t.k=d.k\n),\noutcome8 AS MATERIALIZED (\nSELECT d.k,d.file,d.node,CASE WHEN d.truth=0 OR o.truth=0 THEN 0 WHEN d.truth=2 OR o.truth=2 THEN 2 ELSE 1 END AS truth FROM outcome3 d LEFT JOIN outcome7 o ON o.k=d.k\n),\noutcome9 AS MATERIALIZED (\nSELECT s.k,s.truth FROM outcome8 s\n)\n-- final matches\nSELECT 0,d.file,d.node,json_array() FROM outcome0 d JOIN outcome9 o ON o.k=d.k WHERE o.truth=1 ORDER BY d.file,d.node",
+        "statementMemoryBytes": 36720,
+        "timingScope": "Counters enabled. diagnosticCpuNs includes EXPLAIN; prepareAndExecuteCpuNs excludes EXPLAIN, connection setup, and generation. No speedup claim.",
+        "valueRequests": 16,
+        "vmSteps": 9706,
+        "summary": {
+          "rootDemands": 1,
+          "relationCount": 10,
+          "sqlBytes": 3290,
+          "executionCpuNs": 132416,
+          "largestDiagnosticRelationRows": 99,
+          "orderedTraversalRows": 99,
+          "visitedCandidatesDerived": 33,
+          "derivation": "Three logical states per visited candidate in a completed ordered traversal; not physical write counts.",
+          "candidateRows": 0,
+          "diagnosticRowsAcrossRelations": 108,
+          "cardinalityScope": "Logical outputs from separate diagnostic queries; not physical writes or memory usage.",
+          "flags": [],
+          "admissionNotes": [
+            "Candidate outcomes precede ordered reduction only because all admitted operations are total and effect-free.",
+            "Counts may evaluate candidates after a native early threshold; resource-limit parity remains pending."
+          ]
+        }
+      },
+      {
+        "automaticIndexRows": 0,
+        "baseline": {
+          "diagnosticKernelCpuNs": 2265625,
+          "frameAdvances": 1224,
+          "framePublications": 749,
+          "matchingStatements": 1
+        },
+        "captureEqualityRequests": 0,
+        "coldKernelCpuNs": 672042,
+        "diagnosticCpuNs": 3959874,
+        "diagnosticRelationRows": [
+          {
+            "diagnostic": true,
+            "relation": "outcome0",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome1",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome2",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome3",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome4",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome5",
+            "rows": 387
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome6",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome7",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome8",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome9",
+            "rows": 1
+          }
+        ],
+        "dimension": "unknown-width",
+        "explain": [
+          {
+            "detail": "MATERIALIZE outcome0",
+            "id": 3,
+            "parent": 0
+          },
+          {
+            "detail": "CO-ROUTINE (subquery-19)",
+            "id": 6,
+            "parent": 3
+          },
+          {
+            "detail": "SCAN n VIRTUAL TABLE INDEX 0:k=",
+            "id": 8,
+            "parent": 6
+          },
+          {
+            "detail": "SCAN (subquery-19)",
+            "id": 24,
+            "parent": 3
+          },
+          {
+            "detail": "MATERIALIZE outcome9",
+            "id": 65,
+            "parent": 0
+          },
+          {
+            "detail": "MATERIALIZE outcome8",
+            "id": 68,
+            "parent": 65
+          },
+          {
+            "detail": "MATERIALIZE outcome3",
+            "id": 71,
+            "parent": 68
+          },
+          {
+            "detail": "MATERIALIZE outcome2",
+            "id": 74,
+            "parent": 71
+          },
+          {
+            "detail": "MATERIALIZE outcome1",
+            "id": 77,
+            "parent": 74
+          },
+          {
+            "detail": "SCAN d",
+            "id": 81,
+            "parent": 77
+          },
+          {
+            "detail": "SCAN d",
+            "id": 96,
+            "parent": 74
+          },
+          {
+            "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+            "id": 98,
+            "parent": 74
+          },
+          {
+            "detail": "CORRELATED SCALAR SUBQUERY 3",
+            "id": 111,
+            "parent": 74
+          },
+          {
+            "detail": "SCAN CONSTANT ROW",
+            "id": 114,
+            "parent": 111
+          },
+          {
+            "detail": "SCAN d",
+            "id": 135,
+            "parent": 71
+          },
+          {
+            "detail": "MATERIALIZE outcome7",
+            "id": 160,
+            "parent": 68
+          },
+          {
+            "detail": "MATERIALIZE outcome4",
+            "id": 163,
+            "parent": 160
+          },
+          {
+            "detail": "SCAN d",
+            "id": 167,
+            "parent": 163
+          },
+          {
+            "detail": "MATERIALIZE outcome6",
+            "id": 181,
+            "parent": 160
+          },
+          {
+            "detail": "MATERIALIZE outcome5",
+            "id": 184,
+            "parent": 181
+          },
+          {
+            "detail": "SETUP",
+            "id": 188,
+            "parent": 184
+          },
+          {
+            "detail": "SCAN d",
+            "id": 192,
+            "parent": 188
+          },
+          {
+            "detail": "SCAN origin VIRTUAL TABLE INDEX 0:f=i=",
+            "id": 194,
+            "parent": 188
+          },
+          {
+            "detail": "RECURSIVE STEP",
+            "id": 246,
+            "parent": 184
+          },
+          {
+            "detail": "SCAN w",
+            "id": 248,
+            "parent": 246
+          },
+          {
+            "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+            "id": 249,
+            "parent": 246
+          },
+          {
+            "detail": "CORRELATED SCALAR SUBQUERY 11",
+            "id": 309,
+            "parent": 246
+          },
+          {
+            "detail": "MATERIALIZE prior",
+            "id": 312,
+            "parent": 309
+          },
+          {
+            "detail": "SCAN CONSTANT ROW",
+            "id": 314,
+            "parent": 312
+          },
+          {
+            "detail": "SCAN prior",
+            "id": 328,
+            "parent": 309
+          },
+          {
+            "detail": "CORRELATED SCALAR SUBQUERY 10",
+            "id": 335,
+            "parent": 309
+          },
+          {
+            "detail": "MATERIALIZE following",
+            "id": 338,
+            "parent": 335
+          },
+          {
+            "detail": "SCAN CONSTANT ROW",
+            "id": 340,
+            "parent": 338
+          },
+          {
+            "detail": "SCAN following",
+            "id": 350,
+            "parent": 335
+          },
+          {
+            "detail": "CORRELATED SCALAR SUBQUERY 12",
+            "id": 380,
+            "parent": 246
+          },
+          {
+            "detail": "SCAN CONSTANT ROW",
+            "id": 383,
+            "parent": 380
+          },
+          {
+            "detail": "SCAN w",
+            "id": 437,
+            "parent": 181
+          },
+          {
+            "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+            "id": 441,
+            "parent": 181
+          },
+          {
+            "detail": "SCAN d",
+            "id": 496,
+            "parent": 160
+          },
+          {
+            "detail": "BLOOM FILTER ON t (k=?)",
+            "id": 502,
+            "parent": 160
+          },
+          {
+            "detail": "SEARCH t USING AUTOMATIC COVERING INDEX (k=?) LEFT-JOIN",
+            "id": 514,
+            "parent": 160
+          },
+          {
+            "detail": "SCAN d",
+            "id": 552,
+            "parent": 68
+          },
+          {
+            "detail": "BLOOM FILTER ON o (k=?)",
+            "id": 558,
+            "parent": 68
+          },
+          {
+            "detail": "SEARCH o USING AUTOMATIC COVERING INDEX (k=?) LEFT-JOIN",
+            "id": 568,
+            "parent": 68
+          },
+          {
+            "detail": "SCAN s",
+            "id": 604,
+            "parent": 65
+          },
+          {
+            "detail": "SCAN d",
+            "id": 616,
+            "parent": 0
+          },
+          {
+            "detail": "BLOOM FILTER ON o (truth=? AND k=?)",
+            "id": 622,
+            "parent": 0
+          },
+          {
+            "detail": "SEARCH o USING AUTOMATIC PARTIAL COVERING INDEX (truth=? AND k=?)",
+            "id": 634,
+            "parent": 0
+          },
+          {
+            "detail": "USE TEMP B-TREE FOR ORDER BY",
+            "id": 651,
+            "parent": 0
+          }
+        ],
+        "files": 1,
+        "framePublications": 0,
+        "fullscanSteps": 386,
+        "generationCpuNs": 46083,
+        "matches": 0,
+        "matchingStatements": 1,
+        "nodeAdvances": 519,
+        "nodeFilters": 519,
+        "outcomes": [[0,4,2]],
+        "output": [[]],
+        "parity": true,
+        "patternRequests": 0,
+        "prepareAndExecuteCpuNs": 606583,
+        "prepareCpuNs": 260291,
+        "regexRequests": 129,
+        "relations": {
+          "captures": [],
+          "flags": [
+            "Candidate outcomes precede ordered reduction only because all admitted operations are total and effect-free.",
+            "Counts may evaluate candidates after a native early threshold; resource-limit parity remains pending."
+          ],
+          "limitations": [
+            "Native work and stack/depth budgets remain unproved.",
+            "Following values, nested ordered traversal bodies, capture-bearing stops, recursion, and enumeration remain unproved."
+          ],
+          "nativeComposition": false,
+          "outcomeDemand": "outcome0",
+          "outcomeOutput": "outcome9",
+          "outcomePayload": "",
+          "outcomes": {
+            "false": 0,
+            "true": 1,
+            "unknown": 2
+          },
+          "relations": [
+            {
+              "columns": "k,file,node",
+              "operator": "root demand",
+              "relation": "outcome0",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,truth,live bindings,withheld flags",
+              "operator": "conjunction input",
+              "relation": "outcome1",
+              "storage": "materialized"
+            },
+            {
+              "columns": "input columns,tested outcome (NULL means unreached)",
+              "operator": "guarded node-local outcome",
+              "relation": "outcome2",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,truth,live bindings,withheld flags",
+              "operator": "conjunction scalar barrier",
+              "relation": "outcome3",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,required bindings",
+              "operator": "reached demand",
+              "relation": "outcome4",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,bound,phase,own,stopped,low,uncertain,open",
+              "operator": "ordered reached traversal",
+              "relation": "outcome5",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,low,uncertain,open",
+              "operator": "completed ordered traversal",
+              "relation": "outcome6",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,truth,exact count export",
+              "operator": "ordered traversal outcome",
+              "relation": "outcome7",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,truth,live bindings,withheld flags",
+              "operator": "conjunction sequencing barrier",
+              "relation": "outcome8",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,truth,observable bindings",
+              "operator": "conjunction commit",
+              "relation": "outcome9",
+              "storage": "materialized"
+            }
+          ],
+          "scope": "Explicit outcomes with reached node-local value leaves and traversal stops"
+        },
+        "size": 64,
+        "sql": "WITH RECURSIVE\noutcome0 AS MATERIALIZED (\nSELECT ROW_NUMBER() OVER () AS k,n.file,n.id AS node FROM node n WHERE 1 AND n.kind IN (256)\n),\noutcome1 AS MATERIALIZED (\nSELECT d.k,d.file,d.node,1 AS truth FROM outcome0 d\n),\noutcome2 AS MATERIALIZED (\nSELECT d.*,CASE WHEN d.truth<>0 AND NOT (0) THEN CASE WHEN NOT (NOT EXISTS (SELECT 1 WHERE n.kind IN (256))) THEN 1 ELSE 0 END ELSE NULL END AS tested FROM outcome1 d CROSS JOIN node n ON n.file=d.file AND n.id=d.node\n),\noutcome3 AS MATERIALIZED (\nSELECT d.k,d.file,d.node,CASE WHEN d.truth=0 OR d.tested=0 THEN 0 WHEN d.truth=2 OR d.tested=2 THEN 2 ELSE 1 END AS truth FROM outcome2 d\n),\noutcome4 AS MATERIALIZED (\nSELECT d.k,d.file,d.node FROM outcome3 d WHERE d.truth<>0 AND NOT (0)\n),\noutcome5 AS MATERIALIZED (\nSELECT d.k,d.file,CASE WHEN origin.id<origin.\"last\" THEN origin.id+1 END AS node,origin.\"last\" AS bound,0 AS phase,0 AS own,0 AS stopped,0 AS low,0 AS uncertain,0 AS open FROM outcome4 d CROSS JOIN node origin ON origin.file=d.file AND origin.id=d.node WHERE (CASE WHEN origin.id<origin.\"last\" THEN origin.id+1 END) IS NOT NULL\nUNION ALL\nSELECT w.k,w.file,CASE WHEN w.phase=2 THEN CASE WHEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END)<=w.bound THEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END) END ELSE w.node END,w.bound,(w.phase+1)%3,CASE WHEN w.phase=0 THEN (WITH prior AS MATERIALIZED (SELECT CASE WHEN (n.kind IN (110)) OR (n.kind IN (1)) THEN 1 ELSE 0 END AS t) SELECT CASE WHEN t=0 THEN 0 ELSE (WITH following AS MATERIALIZED (SELECT relation_value(1,n.file,n.id) AS v) SELECT CASE WHEN v=0 THEN 0 WHEN v=2 OR prior.t=2 THEN 2 ELSE v END FROM following) END FROM prior) ELSE w.own END, CASE WHEN w.phase=1 THEN CASE WHEN w.own=1 THEN 0 ELSE CASE WHEN NOT (NOT EXISTS (SELECT 1 WHERE node_regex(0,n.file,n.id))) THEN 1 ELSE 0 END END ELSE w.stopped END,CASE WHEN w.phase=2 THEN (w.low+(w.own=1)) ELSE w.low END,CASE WHEN w.phase=2 THEN (w.uncertain+(w.own=2)) ELSE w.uncertain END,CASE WHEN w.phase=2 THEN (w.open OR w.stopped=2) ELSE w.open END FROM outcome5 w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE w.phase<2 OR (NOT (w.own=1) AND (CASE WHEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END)<=w.bound THEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END) END) IS NOT NULL)\n),\noutcome6 AS MATERIALIZED (\nSELECT w.k,(w.low+(w.own=1)) AS low,(w.uncertain+(w.own=2)) AS uncertain,(w.open OR w.stopped=2) AS open FROM outcome5 w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE w.phase=2 AND ((w.own=1) OR (CASE WHEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END)<=w.bound THEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END) END) IS NULL)\n),\noutcome7 AS MATERIALIZED (\nSELECT d.k,CASE WHEN COALESCE(t.low,0)>0 THEN 1 WHEN COALESCE(t.open,0) OR COALESCE(t.uncertain,0)>0 THEN 2 ELSE 0 END AS truth FROM outcome4 d LEFT JOIN outcome6 t ON t.k=d.k\n),\noutcome8 AS MATERIALIZED (\nSELECT d.k,d.file,d.node,CASE WHEN d.truth=0 OR o.truth=0 THEN 0 WHEN d.truth=2 OR o.truth=2 THEN 2 ELSE 1 END AS truth FROM outcome3 d LEFT JOIN outcome7 o ON o.k=d.k\n),\noutcome9 AS MATERIALIZED (\nSELECT s.k,s.truth FROM outcome8 s\n)\n-- final matches\nSELECT 0,d.file,d.node,json_array() FROM outcome0 d JOIN outcome9 o ON o.k=d.k WHERE o.truth=1 ORDER BY d.file,d.node",
+        "statementMemoryBytes": 36720,
+        "timingScope": "Counters enabled. diagnosticCpuNs includes EXPLAIN; prepareAndExecuteCpuNs excludes EXPLAIN, connection setup, and generation. No speedup claim.",
+        "valueRequests": 64,
+        "vmSteps": 37114,
+        "summary": {
+          "rootDemands": 1,
+          "relationCount": 10,
+          "sqlBytes": 3290,
+          "executionCpuNs": 346292,
+          "largestDiagnosticRelationRows": 387,
+          "orderedTraversalRows": 387,
+          "visitedCandidatesDerived": 129,
+          "derivation": "Three logical states per visited candidate in a completed ordered traversal; not physical write counts.",
+          "candidateRows": 0,
+          "diagnosticRowsAcrossRelations": 396,
+          "cardinalityScope": "Logical outputs from separate diagnostic queries; not physical writes or memory usage.",
+          "flags": [],
+          "admissionNotes": [
+            "Candidate outcomes precede ordered reduction only because all admitted operations are total and effect-free.",
+            "Counts may evaluate candidates after a native early threshold; resource-limit parity remains pending."
+          ]
+        }
+      },
+      {
+        "automaticIndexRows": 0,
+        "baseline": {
+          "diagnosticKernelCpuNs": 2969875,
+          "frameAdvances": 4976,
+          "framePublications": 3053,
+          "matchingStatements": 1
+        },
+        "captureEqualityRequests": 0,
+        "coldKernelCpuNs": 1531249,
+        "diagnosticCpuNs": 11457541,
+        "diagnosticRelationRows": [
+          {
+            "diagnostic": true,
+            "relation": "outcome0",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome1",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome2",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome3",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome4",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome5",
+            "rows": 1539
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome6",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome7",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome8",
+            "rows": 1
+          },
+          {
+            "diagnostic": true,
+            "relation": "outcome9",
+            "rows": 1
+          }
+        ],
+        "dimension": "unknown-width",
+        "explain": [
+          {
+            "detail": "MATERIALIZE outcome0",
+            "id": 3,
+            "parent": 0
+          },
+          {
+            "detail": "CO-ROUTINE (subquery-19)",
+            "id": 6,
+            "parent": 3
+          },
+          {
+            "detail": "SCAN n VIRTUAL TABLE INDEX 0:k=",
+            "id": 8,
+            "parent": 6
+          },
+          {
+            "detail": "SCAN (subquery-19)",
+            "id": 24,
+            "parent": 3
+          },
+          {
+            "detail": "MATERIALIZE outcome9",
+            "id": 65,
+            "parent": 0
+          },
+          {
+            "detail": "MATERIALIZE outcome8",
+            "id": 68,
+            "parent": 65
+          },
+          {
+            "detail": "MATERIALIZE outcome3",
+            "id": 71,
+            "parent": 68
+          },
+          {
+            "detail": "MATERIALIZE outcome2",
+            "id": 74,
+            "parent": 71
+          },
+          {
+            "detail": "MATERIALIZE outcome1",
+            "id": 77,
+            "parent": 74
+          },
+          {
+            "detail": "SCAN d",
+            "id": 81,
+            "parent": 77
+          },
+          {
+            "detail": "SCAN d",
+            "id": 96,
+            "parent": 74
+          },
+          {
+            "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+            "id": 98,
+            "parent": 74
+          },
+          {
+            "detail": "CORRELATED SCALAR SUBQUERY 3",
+            "id": 111,
+            "parent": 74
+          },
+          {
+            "detail": "SCAN CONSTANT ROW",
+            "id": 114,
+            "parent": 111
+          },
+          {
+            "detail": "SCAN d",
+            "id": 135,
+            "parent": 71
+          },
+          {
+            "detail": "MATERIALIZE outcome7",
+            "id": 160,
+            "parent": 68
+          },
+          {
+            "detail": "MATERIALIZE outcome4",
+            "id": 163,
+            "parent": 160
+          },
+          {
+            "detail": "SCAN d",
+            "id": 167,
+            "parent": 163
+          },
+          {
+            "detail": "MATERIALIZE outcome6",
+            "id": 181,
+            "parent": 160
+          },
+          {
+            "detail": "MATERIALIZE outcome5",
+            "id": 184,
+            "parent": 181
+          },
+          {
+            "detail": "SETUP",
+            "id": 188,
+            "parent": 184
+          },
+          {
+            "detail": "SCAN d",
+            "id": 192,
+            "parent": 188
+          },
+          {
+            "detail": "SCAN origin VIRTUAL TABLE INDEX 0:f=i=",
+            "id": 194,
+            "parent": 188
+          },
+          {
+            "detail": "RECURSIVE STEP",
+            "id": 246,
+            "parent": 184
+          },
+          {
+            "detail": "SCAN w",
+            "id": 248,
+            "parent": 246
+          },
+          {
+            "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+            "id": 249,
+            "parent": 246
+          },
+          {
+            "detail": "CORRELATED SCALAR SUBQUERY 11",
+            "id": 309,
+            "parent": 246
+          },
+          {
+            "detail": "MATERIALIZE prior",
+            "id": 312,
+            "parent": 309
+          },
+          {
+            "detail": "SCAN CONSTANT ROW",
+            "id": 314,
+            "parent": 312
+          },
+          {
+            "detail": "SCAN prior",
+            "id": 328,
+            "parent": 309
+          },
+          {
+            "detail": "CORRELATED SCALAR SUBQUERY 10",
+            "id": 335,
+            "parent": 309
+          },
+          {
+            "detail": "MATERIALIZE following",
+            "id": 338,
+            "parent": 335
+          },
+          {
+            "detail": "SCAN CONSTANT ROW",
+            "id": 340,
+            "parent": 338
+          },
+          {
+            "detail": "SCAN following",
+            "id": 350,
+            "parent": 335
+          },
+          {
+            "detail": "CORRELATED SCALAR SUBQUERY 12",
+            "id": 380,
+            "parent": 246
+          },
+          {
+            "detail": "SCAN CONSTANT ROW",
+            "id": 383,
+            "parent": 380
+          },
+          {
+            "detail": "SCAN w",
+            "id": 437,
+            "parent": 181
+          },
+          {
+            "detail": "SCAN n VIRTUAL TABLE INDEX 0:f=i=",
+            "id": 441,
+            "parent": 181
+          },
+          {
+            "detail": "SCAN d",
+            "id": 496,
+            "parent": 160
+          },
+          {
+            "detail": "BLOOM FILTER ON t (k=?)",
+            "id": 502,
+            "parent": 160
+          },
+          {
+            "detail": "SEARCH t USING AUTOMATIC COVERING INDEX (k=?) LEFT-JOIN",
+            "id": 514,
+            "parent": 160
+          },
+          {
+            "detail": "SCAN d",
+            "id": 552,
+            "parent": 68
+          },
+          {
+            "detail": "BLOOM FILTER ON o (k=?)",
+            "id": 558,
+            "parent": 68
+          },
+          {
+            "detail": "SEARCH o USING AUTOMATIC COVERING INDEX (k=?) LEFT-JOIN",
+            "id": 568,
+            "parent": 68
+          },
+          {
+            "detail": "SCAN s",
+            "id": 604,
+            "parent": 65
+          },
+          {
+            "detail": "SCAN d",
+            "id": 616,
+            "parent": 0
+          },
+          {
+            "detail": "BLOOM FILTER ON o (truth=? AND k=?)",
+            "id": 622,
+            "parent": 0
+          },
+          {
+            "detail": "SEARCH o USING AUTOMATIC PARTIAL COVERING INDEX (truth=? AND k=?)",
+            "id": 634,
+            "parent": 0
+          },
+          {
+            "detail": "USE TEMP B-TREE FOR ORDER BY",
+            "id": 651,
+            "parent": 0
+          }
+        ],
+        "files": 1,
+        "framePublications": 0,
+        "fullscanSteps": 1538,
+        "generationCpuNs": 46833,
+        "matches": 0,
+        "matchingStatements": 1,
+        "nodeAdvances": 2055,
+        "nodeFilters": 2055,
+        "outcomes": [[0,4,2]],
+        "output": [[]],
+        "parity": true,
+        "patternRequests": 0,
+        "prepareAndExecuteCpuNs": 1464375,
+        "prepareCpuNs": 241666,
+        "regexRequests": 513,
+        "relations": {
+          "captures": [],
+          "flags": [
+            "Candidate outcomes precede ordered reduction only because all admitted operations are total and effect-free.",
+            "Counts may evaluate candidates after a native early threshold; resource-limit parity remains pending."
+          ],
+          "limitations": [
+            "Native work and stack/depth budgets remain unproved.",
+            "Following values, nested ordered traversal bodies, capture-bearing stops, recursion, and enumeration remain unproved."
+          ],
+          "nativeComposition": false,
+          "outcomeDemand": "outcome0",
+          "outcomeOutput": "outcome9",
+          "outcomePayload": "",
+          "outcomes": {
+            "false": 0,
+            "true": 1,
+            "unknown": 2
+          },
+          "relations": [
+            {
+              "columns": "k,file,node",
+              "operator": "root demand",
+              "relation": "outcome0",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,truth,live bindings,withheld flags",
+              "operator": "conjunction input",
+              "relation": "outcome1",
+              "storage": "materialized"
+            },
+            {
+              "columns": "input columns,tested outcome (NULL means unreached)",
+              "operator": "guarded node-local outcome",
+              "relation": "outcome2",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,truth,live bindings,withheld flags",
+              "operator": "conjunction scalar barrier",
+              "relation": "outcome3",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,required bindings",
+              "operator": "reached demand",
+              "relation": "outcome4",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,bound,phase,own,stopped,low,uncertain,open",
+              "operator": "ordered reached traversal",
+              "relation": "outcome5",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,low,uncertain,open",
+              "operator": "completed ordered traversal",
+              "relation": "outcome6",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,truth,exact count export",
+              "operator": "ordered traversal outcome",
+              "relation": "outcome7",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,file,node,truth,live bindings,withheld flags",
+              "operator": "conjunction sequencing barrier",
+              "relation": "outcome8",
+              "storage": "materialized"
+            },
+            {
+              "columns": "k,truth,observable bindings",
+              "operator": "conjunction commit",
+              "relation": "outcome9",
+              "storage": "materialized"
+            }
+          ],
+          "scope": "Explicit outcomes with reached node-local value leaves and traversal stops"
+        },
+        "size": 256,
+        "sql": "WITH RECURSIVE\noutcome0 AS MATERIALIZED (\nSELECT ROW_NUMBER() OVER () AS k,n.file,n.id AS node FROM node n WHERE 1 AND n.kind IN (256)\n),\noutcome1 AS MATERIALIZED (\nSELECT d.k,d.file,d.node,1 AS truth FROM outcome0 d\n),\noutcome2 AS MATERIALIZED (\nSELECT d.*,CASE WHEN d.truth<>0 AND NOT (0) THEN CASE WHEN NOT (NOT EXISTS (SELECT 1 WHERE n.kind IN (256))) THEN 1 ELSE 0 END ELSE NULL END AS tested FROM outcome1 d CROSS JOIN node n ON n.file=d.file AND n.id=d.node\n),\noutcome3 AS MATERIALIZED (\nSELECT d.k,d.file,d.node,CASE WHEN d.truth=0 OR d.tested=0 THEN 0 WHEN d.truth=2 OR d.tested=2 THEN 2 ELSE 1 END AS truth FROM outcome2 d\n),\noutcome4 AS MATERIALIZED (\nSELECT d.k,d.file,d.node FROM outcome3 d WHERE d.truth<>0 AND NOT (0)\n),\noutcome5 AS MATERIALIZED (\nSELECT d.k,d.file,CASE WHEN origin.id<origin.\"last\" THEN origin.id+1 END AS node,origin.\"last\" AS bound,0 AS phase,0 AS own,0 AS stopped,0 AS low,0 AS uncertain,0 AS open FROM outcome4 d CROSS JOIN node origin ON origin.file=d.file AND origin.id=d.node WHERE (CASE WHEN origin.id<origin.\"last\" THEN origin.id+1 END) IS NOT NULL\nUNION ALL\nSELECT w.k,w.file,CASE WHEN w.phase=2 THEN CASE WHEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END)<=w.bound THEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END) END ELSE w.node END,w.bound,(w.phase+1)%3,CASE WHEN w.phase=0 THEN (WITH prior AS MATERIALIZED (SELECT CASE WHEN (n.kind IN (110)) OR (n.kind IN (1)) THEN 1 ELSE 0 END AS t) SELECT CASE WHEN t=0 THEN 0 ELSE (WITH following AS MATERIALIZED (SELECT relation_value(1,n.file,n.id) AS v) SELECT CASE WHEN v=0 THEN 0 WHEN v=2 OR prior.t=2 THEN 2 ELSE v END FROM following) END FROM prior) ELSE w.own END, CASE WHEN w.phase=1 THEN CASE WHEN w.own=1 THEN 0 ELSE CASE WHEN NOT (NOT EXISTS (SELECT 1 WHERE node_regex(0,n.file,n.id))) THEN 1 ELSE 0 END END ELSE w.stopped END,CASE WHEN w.phase=2 THEN (w.low+(w.own=1)) ELSE w.low END,CASE WHEN w.phase=2 THEN (w.uncertain+(w.own=2)) ELSE w.uncertain END,CASE WHEN w.phase=2 THEN (w.open OR w.stopped=2) ELSE w.open END FROM outcome5 w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE w.phase<2 OR (NOT (w.own=1) AND (CASE WHEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END)<=w.bound THEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END) END) IS NOT NULL)\n),\noutcome6 AS MATERIALIZED (\nSELECT w.k,(w.low+(w.own=1)) AS low,(w.uncertain+(w.own=2)) AS uncertain,(w.open OR w.stopped=2) AS open FROM outcome5 w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE w.phase=2 AND ((w.own=1) OR (CASE WHEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END)<=w.bound THEN (CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END) END) IS NULL)\n),\noutcome7 AS MATERIALIZED (\nSELECT d.k,CASE WHEN COALESCE(t.low,0)>0 THEN 1 WHEN COALESCE(t.open,0) OR COALESCE(t.uncertain,0)>0 THEN 2 ELSE 0 END AS truth FROM outcome4 d LEFT JOIN outcome6 t ON t.k=d.k\n),\noutcome8 AS MATERIALIZED (\nSELECT d.k,d.file,d.node,CASE WHEN d.truth=0 OR o.truth=0 THEN 0 WHEN d.truth=2 OR o.truth=2 THEN 2 ELSE 1 END AS truth FROM outcome3 d LEFT JOIN outcome7 o ON o.k=d.k\n),\noutcome9 AS MATERIALIZED (\nSELECT s.k,s.truth FROM outcome8 s\n)\n-- final matches\nSELECT 0,d.file,d.node,json_array() FROM outcome0 d JOIN outcome9 o ON o.k=d.k WHERE o.truth=1 ORDER BY d.file,d.node",
+        "statementMemoryBytes": 36720,
+        "timingScope": "Counters enabled. diagnosticCpuNs includes EXPLAIN; prepareAndExecuteCpuNs excludes EXPLAIN, connection setup, and generation. No speedup claim.",
+        "valueRequests": 256,
+        "vmSteps": 146746,
+        "summary": {
+          "rootDemands": 1,
+          "relationCount": 10,
+          "sqlBytes": 3290,
+          "executionCpuNs": 1222709,
+          "largestDiagnosticRelationRows": 1539,
+          "orderedTraversalRows": 1539,
+          "visitedCandidatesDerived": 513,
+          "derivation": "Three logical states per visited candidate in a completed ordered traversal; not physical write counts.",
+          "candidateRows": 0,
+          "diagnosticRowsAcrossRelations": 1548,
+          "cardinalityScope": "Logical outputs from separate diagnostic queries; not physical writes or memory usage.",
+          "flags": [],
+          "admissionNotes": [
+            "Candidate outcomes precede ordered reduction only because all admitted operations are total and effect-free.",
+            "Counts may evaluate candidates after a native early threshold; resource-limit parity remains pending."
+          ]
+        }
+      }
+    ]
+  },
+  "notes": [
+    "SQL owns all composition; native helpers evaluate atomic value, pattern, or capture-equality leaves.",
+    "Diagnostic CTE cardinalities run separately from matching and can change query plans.",
+    "Fallible node-local walks use ordered recursive traversal; total structural walks retain set-based plans."
+  ],
+  "firstDraft": {
+    "rawResultsSha256": "461824702d8e412b93c17e53d20fd05de087cbf3413c2d3a38813f873dcdebe9",
+    "validation": "Three tests passed and three oracle assertions failed. Draft measurements before scalar simplification; not accepted parity evidence.",
+    "samples": [
+      {
+        "dimension": "known-first",
+        "size": 16,
+        "vmSteps": 1067,
+        "valueRequests": 1,
+        "prepareCpuNs": 491208,
+        "automaticIndexRows": 0,
+        "nodeAdvances": 11
+      },
+      {
+        "dimension": "known-first",
+        "size": 64,
+        "vmSteps": 1067,
+        "valueRequests": 1,
+        "prepareCpuNs": 309917,
+        "automaticIndexRows": 0,
+        "nodeAdvances": 11
+      },
+      {
+        "dimension": "known-first",
+        "size": 256,
+        "vmSteps": 1067,
+        "valueRequests": 1,
+        "prepareCpuNs": 290500,
+        "automaticIndexRows": 0,
+        "nodeAdvances": 11
+      },
+      {
+        "dimension": "unknown-width",
+        "size": 16,
+        "vmSteps": 13351,
+        "valueRequests": 16,
+        "prepareCpuNs": 312959,
+        "automaticIndexRows": 0,
+        "nodeAdvances": 135
+      },
+      {
+        "dimension": "unknown-width",
+        "size": 64,
+        "vmSteps": 51319,
+        "valueRequests": 64,
+        "prepareCpuNs": 301750,
+        "automaticIndexRows": 0,
+        "nodeAdvances": 519
+      },
+      {
+        "dimension": "unknown-width",
+        "size": 256,
+        "vmSteps": 203191,
+        "valueRequests": 256,
+        "prepareCpuNs": 291125,
+        "automaticIndexRows": 0,
+        "nodeAdvances": 2055
+      }
+    ]
+  },
+  "validation": {
+    "relationalTests": 40,
+    "totalUniqueTests": 51,
+    "faultTraces": 14,
+    "nativeChecks": "cargo fmt plus default and code-rule-profile Clippy passed"
+  },
+  "b023Regression": {
+    "rawEvidenceSha256": "253ac22cb2accb9b62a5fb66c7bb3a74aee306deac0d5c9e2bd8c8b7d80749ff",
+    "querySha256": "84116309b7048f44b706bb74955b99a1bcb5b512d5b365b30a73f78992026aa1",
+    "sourceHashes": {
+      "native/src/code_rule_dsl/sql/relational/analysis.rs": "8a433680fb8fe678c358fa587dea5067991b675e990ac403e92c91ec8d6e5cdd",
+      "native/src/code_rule_dsl/sql/relational/answers.rs": "f14b0045aecb61c157bd81274e866e20fe385b49cae565c435dae7f85fb6e3ad",
+      "native/src/code_rule_dsl/sql/relational/demand.rs": "0d5b9fbf3c75890c9f1620c7340936d01bf314b6de37380e355416350eedb8fe",
+      "native/src/code_rule_dsl/sql/relational/emit.rs": "cd3390f98d6b66fe4b59138dc97905f253549d9bea45fe39e4f16cbb77c8182a",
+      "native/src/code_rule_dsl/sql/relational/ir.rs": "cfab2c44c949e5fe209952018a6297f1c7e95a5aac1dad9f94e22c36f9d2c98d",
+      "native/src/code_rule_dsl/sql/relational/leaves.rs": "714dd0de82006f0e5eadb3d2810485014951e6fbd643404af94d52d9accd34ae",
+      "native/src/code_rule_dsl/sql/relational/lower.rs": "e3dd3606a21bf8d360a53f0b6cbc73987dc5b8ae39ca7de63187c2ae8d89ba33",
+      "native/src/code_rule_dsl/sql/relational/mod.rs": "f5a5414e28c6f65f907b0c8236613c627874267f93360261844c706e3a19f54b",
+      "native/src/code_rule_dsl/sql/relational/outcomes/emit.rs": "ad48d6853a655d75f68fa611c533f69a3609ac2a324df7480c14c528560d5900",
+      "native/src/code_rule_dsl/sql/relational/outcomes/local.rs": "cc061fbf946853bb887679fe7946c64c108f047dc357d49fef054a87e032487b",
+      "native/src/code_rule_dsl/sql/relational/outcomes/lower.rs": "591efb5f1c1645ace7037da268535135fa6f694eb4e5670e2d4668b2e48f13aa",
+      "native/src/code_rule_dsl/sql/relational/outcomes/mod.rs": "c1fe86c720574daa4bbeb946834ff1c471231fec8f26b35bff077b8c9a382312",
+      "native/src/code_rule_dsl/sql/relational/outcomes/ordered.rs": "2a30b179c1d2e028a49fe0f1460fc6dc01bd8a70f48e813df1422a56dfe19562",
+      "native/src/code_rule_dsl/sql/relational/outcomes/reached_tests.rs": "a4a864e9f3700fb844dd00be8d57881d8c2933b8e13ae543ebdbba1a61151dde",
+      "native/src/code_rule_dsl/sql/relational/outcomes/tests.rs": "24ffc015deeb1248ffab1a083821c179e1221c88c992efd3e4526b2041402f8e",
+      "native/src/code_rule_dsl/sql/relational/physical.rs": "afe1fc81b5fccc45f22f69d8c6a9099679892407407b97210718b95d502588c4",
+      "native/src/code_rule_dsl/sql/relational/recursion.rs": "d4d1ff545d43d56f0574661e20ff94783bb1afdc97342982aa9abbe3ef2ec547",
+      "native/src/code_rule_dsl/sql/relational/recursion_tests.rs": "9824f54620c26fa4c883174513043c287f6ca0d89e282a4d8f0e1c82c02ad50b",
+      "native/src/code_rule_dsl/sql/relational/tests.rs": "f68d150442f51635125294d266abe442cfedfc78ad01e672ef47e1e250321a96",
+      "native/src/code_rule_dsl/sql/relational/witness.rs": "e8a31188818ce97cc2c9dbf458560b7a3c16b74cca3adc492104c2a667317159",
+      "native/src/code_rule_dsl/sql/relational/witness_tests.rs": "fcf7017772a97140b5dce95272815c1925527e786e79346801ee52252bcc0eca",
+      "native/src/code_rule_dsl/matcher/mod.rs": "6b2e6e1c1656308d897158a9f068c0a294fa24bfc2769059892b8b888bdf7765",
+      "native/src/code_rule_dsl/matcher/value.rs": "7c323eeeb044b02ae384b7a4ba4989cb14a400c3721b381e96b0eee0643db27e",
+      "native/src/code_rule_dsl/matcher/value_probe.rs": "81e2a1ce9b0b210c04e4f884eeb4c8a23e0097e8a33850b554f6098a5bbb6aa1",
+      "native/src/code_rule_dsl/sql/terminals/mod.rs": "2e7b9efbbadb23ebbce4562bb9235df8b17370030d30a96614b5192241d94329",
+      "native/src/code_rule_dsl/sql/spikes/whole_call/b023.rs": "33251c373c6c4391ab630b93a70b27ad53c155e8b9e954f1badaf2f26f4b40af",
+      "native/src/code_rule_dsl/sql/spikes/whole_call/b023.sql": "cc8df01875dc99d3afc75b2efceb4cbe47732647267d973ec85be2f410784eba",
+      "native/src/code_rule_dsl/sql/spikes/whole_call/run.rs": "86d63dd59abd83c2ea0b70c39b12febca6b60d6c289ccaefc3a9c7f853c1bf83",
+      "native/src/code_rule_dsl/sql/mod.rs": "abdaa15b5c97a7351091a3b924d886d092d2457cf507b3e04d9d9a3a31efaceb",
+      "packs/python/rules/ruff-b023-function-uses-loop-variable.json": "41e4455ffd4fdf3b37d9651340fef371704ba4896321dfa656b2dbd43ca38eff",
+      "benchmark/relational-complete-spike.py": "b0bb5a27eeadb90bc0a7089fedbe5a5b60f270dc07c4fb4d51687e0ae0396bba"
+    },
+    "executableSha256": "ef087f6c8cb1f378a886737014b95b546892c72c035272c327d5023038f5aff9",
+    "files": 138,
+    "matches": 2,
+    "parity": true,
+    "output": [[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[[11886,[11792]],[11898,[11792]]],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]],
+    "vmSteps": 2812255,
+    "matchingStatements": 1,
+    "framePublications": 0,
+    "gates": {
+      "maxVmSteps": 4649592,
+      "generatedVmSteps": [
+        2812255,
+        2812255,
+        2812255
+      ],
+      "generatedMedianColdKernelCpuNs": 146943417,
+      "referenceMedianColdKernelCpuNs": 130211624,
+      "cpuRatio": 1.1284969228246473,
+      "vmPassed": true,
+      "cpuPassed": true
+    },
+    "pairedColdKernelCpuNs": [
+      {
+        "generated": 120578166,
+        "reference": 65064249
+      },
+      {
+        "generated": 307392417,
+        "reference": 130211624
+      },
+      {
+        "generated": 146943417,
+        "reference": 150016458
+      }
+    ]
+  },
+  "rawArtifacts": {
+    "reached": "/tmp/rerail-reached-20261022-final",
+    "b023": "/tmp/rerail-reached-b023-20261022-final"
+  }
+}

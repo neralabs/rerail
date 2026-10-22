@@ -1,0 +1,185 @@
+//! Reached node-local tests along a structural walk. Three phases preserve native stop/test order.
+use super::{Axis, Demand, Op, Output, Plan, Sql};
+
+type Bounds = (i64, Option<i64>, Option<(usize, i64)>);
+
+fn boolean(plan: &Plan) -> Result<Option<String>, String> {
+    use super::super::super::ir::Set;
+    Ok(Some(match &plan.op {
+        Op::Predicate(Set::Kinds(kinds)) => format!(
+            "n.kind IN ({})",
+            kinds
+                .iter()
+                .map(u16::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        Op::Predicate(set) => super::super::super::emit::condition(set, "n")?,
+        Op::Not(child) => {
+            let Some(test) = boolean(child)? else {
+                return Ok(None);
+            };
+            format!("NOT ({test})")
+        }
+        Op::All(items) | Op::Any(items) => {
+            let mut terms = vec![];
+            for child in items {
+                let Some(test) = boolean(child)? else {
+                    return Ok(None);
+                };
+                terms.push(format!("({test})"));
+            }
+            let all = matches!(plan.op, Op::All(_));
+            if terms.is_empty() {
+                usize::from(all).to_string()
+            } else {
+                terms.join(if all { " AND " } else { " OR " })
+            }
+        }
+        _ => return Ok(None),
+    }))
+}
+
+fn truth(plan: &Plan, depth: usize) -> Result<String, String> {
+    if depth > 16 || !plan.mentions.is_empty() || !plan.writes.is_empty() {
+        return Err(
+            "ordered outcomes: node-local capture-free tests of depth at most 16 required".into(),
+        );
+    }
+    if let Some(test) = boolean(plan)? {
+        return Ok(format!("CASE WHEN {test} THEN 1 ELSE 0 END"));
+    }
+    Ok(match &plan.op {
+        Op::Predicate(set) => format!(
+            "CASE WHEN {} THEN 1 ELSE 0 END",
+            super::super::super::emit::condition(set, "n")?
+        ),
+        Op::Unknown(term) => format!("CASE WHEN node_regex({term},n.file,n.id) THEN 2 ELSE 1 END"),
+        Op::Value(term) => format!("relation_value({term},n.file,n.id)"),
+        Op::Not(child) => format!(
+            "CASE ({}) WHEN 0 THEN 1 WHEN 1 THEN 0 ELSE 2 END",
+            truth(child, depth + 1)?
+        ),
+        Op::All(items) | Op::Any(items) => {
+            let all = matches!(plan.op, Op::All(_));
+            let decisive = if all { 0 } else { 1 };
+            let mut expression = if all { "1" } else { "0" }.to_string();
+            for (index, child) in items.iter().enumerate() {
+                // Each operand has one physical evaluation, and CASE prevents unreached calls.
+                let next = truth(child, depth + 1)?;
+                if index == 0 {
+                    expression = next;
+                    continue;
+                }
+                expression = format!(
+                    "(WITH prior AS MATERIALIZED (SELECT {expression} AS t) SELECT CASE WHEN t={decisive} THEN {decisive} ELSE (WITH following AS MATERIALIZED (SELECT {next} AS v) SELECT CASE WHEN v={decisive} THEN {decisive} WHEN v=2 OR prior.t=2 THEN 2 ELSE v END FROM following) END FROM prior)"
+                );
+            }
+            expression
+        }
+        _ => return Err("ordered outcomes: traversal bodies and stops must be node-local".into()),
+    })
+}
+
+impl Sql {
+    pub(super) fn ordered(
+        &mut self,
+        axis: Axis,
+        end: bool,
+        rule: &Plan,
+        stop: Option<&Plan>,
+        bounds: Option<Bounds>,
+        input: &Demand,
+    ) -> Result<Output, String> {
+        let body = truth(rule, 0)?;
+        let stop_test = stop.map(|s| truth(s, 0)).transpose()?.unwrap_or("0".into());
+        let child = matches!(axis, Axis::Child);
+        let first = match axis {
+            Axis::Child => "CASE WHEN origin.id<origin.\"last\" THEN origin.id+1 END",
+            Axis::Parent => "origin.parent",
+            Axis::Previous => "origin.prev",
+            Axis::Next => "origin.next",
+        };
+        let next = match (axis, end) {
+            (Axis::Child, false) => "n.next".to_string(),
+            (Axis::Child, true) => {
+                "CASE WHEN w.stopped=0 THEN n.id+1 ELSE n.\"last\"+1 END".to_string()
+            }
+            (_, false) => "NULL".to_string(),
+            (axis, true) => format!(
+                "CASE WHEN w.stopped=0 THEN n.{} END",
+                match axis {
+                    Axis::Parent => "parent",
+                    Axis::Previous => "prev",
+                    Axis::Next => "next",
+                    _ => unreachable!(),
+                }
+            ),
+        };
+        let next = if child {
+            format!("CASE WHEN ({next})<=w.bound THEN ({next}) END")
+        } else {
+            next
+        };
+        let low = "(w.low+(w.own=1))";
+        let uncertain = "(w.uncertain+(w.own=2))";
+        let open = "(w.open OR w.stopped=2)";
+        let decisive = if let Some((min, max, binding)) = bounds {
+            max.map(|m| format!("{low}>{m}")).unwrap_or_else(|| {
+                if binding.is_none() {
+                    format!("{low}>={min}")
+                } else {
+                    "0".into()
+                }
+            })
+        } else {
+            "w.own=1".into()
+        };
+        let first_test = if child {
+            body.as_str()
+        } else {
+            stop_test.as_str()
+        };
+        let second_test = if child {
+            format!("CASE WHEN {decisive} THEN 0 ELSE {stop_test} END")
+        } else {
+            body.clone()
+        };
+        let walk = format!("outcome{}", self.definitions.len());
+        self.relation("ordered reached traversal",format!(
+            "SELECT d.k,d.file,{first} AS node,origin.\"last\" AS bound,0 AS phase,0 AS own,0 AS stopped,0 AS low,0 AS uncertain,0 AS open FROM {} d CROSS JOIN node origin ON origin.file=d.file AND origin.id=d.node WHERE ({first}) IS NOT NULL\nUNION ALL\nSELECT w.k,w.file,CASE WHEN w.phase=2 THEN {next} ELSE w.node END,w.bound,(w.phase+1)%3,{}, {},CASE WHEN w.phase=2 THEN {low} ELSE w.low END,CASE WHEN w.phase=2 THEN {uncertain} ELSE w.uncertain END,CASE WHEN w.phase=2 THEN {open} ELSE w.open END FROM {walk} w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE w.phase<2 OR (NOT ({decisive}) AND ({next}) IS NOT NULL)",
+            input.name,
+            if child {format!("CASE WHEN w.phase=0 THEN {first_test} ELSE w.own END")}else{format!("CASE WHEN w.phase=1 THEN {second_test} ELSE w.own END")},
+            if child {format!("CASE WHEN w.phase=1 THEN {second_test} ELSE w.stopped END")}else{format!("CASE WHEN w.phase=0 THEN {first_test} ELSE w.stopped END")}
+        ),true,"k,file,node,bound,phase,own,stopped,low,uncertain,open");
+        let terminal=self.relation("completed ordered traversal",format!("SELECT w.k,{low} AS low,{uncertain} AS uncertain,{open} AS open FROM {walk} w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE w.phase=2 AND (({decisive}) OR ({next}) IS NULL)"),true,"k,low,uncertain,open");
+        let low = "COALESCE(t.low,0)";
+        let high = "(COALESCE(t.low,0)+COALESCE(t.uncertain,0))";
+        let closed = "NOT COALESCE(t.open,0)";
+        let (verdict, columns) = if let Some((min, max, binding)) = bounds {
+            let too_many = max.map_or("0".into(), |m| format!("{low}>{m}"));
+            let within = max.map_or("1".into(), |m| format!("{closed} AND {high}<={m}"));
+            let exact = if binding.is_some() {
+                format!("{closed} AND {low}={high}")
+            } else {
+                "1".into()
+            };
+            (
+                format!(
+                    "CASE WHEN ({closed} AND {high}<{min}) OR {too_many} THEN 0 WHEN {low}>={min} AND ({within}) AND ({exact}) THEN 1 ELSE 2 END"
+                ),
+                binding.map_or(String::new(), |(slot, offset)| {
+                    format!(",{low}+({offset}) AS c{slot}")
+                }),
+            )
+        } else {
+            (
+                format!(
+                    "CASE WHEN {low}>0 THEN 1 WHEN COALESCE(t.open,0) OR COALESCE(t.uncertain,0)>0 THEN 2 ELSE 0 END"
+                ),
+                String::new(),
+            )
+        };
+        Ok(Output{name:self.relation("ordered traversal outcome",format!("SELECT d.k,{verdict} AS truth{columns} FROM {} d LEFT JOIN {terminal} t ON t.k=d.k",input.name),true,"k,truth,exact count export")})
+    }
+}

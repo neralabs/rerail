@@ -8,7 +8,7 @@ use crate::code_rule_dsl::{
 use ast_grep_core::AstGrep;
 use serde_json::{Value, json};
 
-fn policy(rule: Value, utils: Value) -> crate::code_rule_dsl::CompiledCodeRuleDsl {
+pub(super) fn policy(rule: Value, utils: Value) -> crate::code_rule_dsl::CompiledCodeRuleDsl {
     CodeRuleDslRuntime::compile(json!({"format":"rerail.policy/v1","id":"outcome-semantics","revision":1,"mode":"steer",
         "scope":{"include":["**/*"],"exclude":[]},"clauses":[{"id":"rule","forbid":{"ast":{"language":"typescript","rule":rule,"utils":utils}},
         "violation":{"code":"O","message":"match","anchor":"witness.span"}}]}).to_string(),"json".into(),CAPABILITIES.into()).unwrap()
@@ -253,9 +253,9 @@ fn outcomes_reached_demands_skip_decided_and_withheld_terms() {
 fn outcomes_reject_unproved_effects_and_recursive_outcomes() {
     for (rule, utils, expected) in [
         (
-            json!({"has":{"testUnknown":"u","stopBy":{"testUnknown":"s"}}}),
+            json!({"has":{"testUnknown":"u","stopBy":{"has":{"testUnknown":"s"}}}}),
             json!({}),
-            "traversal stops",
+            "node-local",
         ),
         (
             json!({"matches":"r"}),

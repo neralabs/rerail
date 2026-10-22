@@ -1,7 +1,7 @@
 use super::{Axis, Op, Plan, Slot, Slots};
 use crate::code_rule_dsl::{
     language::GrammarDialect,
-    matcher::{AstMatcher, StopBy},
+    matcher::{AstMatcher, Semantic, StopBy},
 };
 use ast_grep_core::{matcher::PatternNode, meta_var::MetaVariable};
 use std::collections::HashSet;
@@ -42,7 +42,10 @@ impl Lower {
         Ok(id)
     }
 
-    fn walk<'a>(&self, matcher: &'a AstMatcher) -> Result<(Axis, bool, &'a AstMatcher), String> {
+    fn walk<'a>(
+        &self,
+        matcher: &'a AstMatcher,
+    ) -> Result<(Axis, &'a StopBy, &'a AstMatcher), String> {
         let (axis, rule, stop) = match matcher {
             AstMatcher::Inside(r, s) => (Axis::Parent, r, s),
             AstMatcher::Has(r, s) => (Axis::Child, r, s),
@@ -50,14 +53,14 @@ impl Lower {
             AstMatcher::Precedes(r, s) => (Axis::Next, r, s),
             _ => return Err("outcome relations: count requires a structural walk".into()),
         };
-        let end = match stop {
-            StopBy::Neighbor => false,
-            StopBy::End => true,
-            StopBy::Rule(_) => {
-                return Err("outcome relations: traversal stops need reached stop outcomes".into());
-            }
-        };
-        Ok((axis, end, rule.rule()))
+        Ok((axis, stop, rule.rule()))
+    }
+
+    fn stop(&mut self, by: &StopBy) -> Result<Option<Box<Plan>>, String> {
+        match by {
+            StopBy::Rule(rule) => Ok(Some(Box::new(self.plan(rule)?))),
+            _ => Ok(None),
+        }
     }
 
     pub fn plan(&mut self, matcher: &AstMatcher) -> Result<Plan, String> {
@@ -90,6 +93,17 @@ impl Lower {
                 } else {
                     Op::Predicate(self.pure.set(matcher)?)
                 }
+            }
+            AstMatcher::Semantic(Semantic::Value(test))
+                if !test.reading.follow && !test.reading.literal =>
+            {
+                use crate::code_rule_dsl::sql::terminals::{FactTerm, Leaf, Terminal};
+                let id = self.pure.program.terminals.len();
+                self.pure.program.terminals.push(Terminal::Fact(FactTerm {
+                    verdicts: Box::new(Leaf(matcher.clone())),
+                    reads: vec![],
+                }));
+                Op::Value(id)
             }
             AstMatcher::TestUnknown(regex) => {
                 let super::super::ir::Set::Regex(term) =
@@ -124,15 +138,19 @@ impl Lower {
             | AstMatcher::Has(..)
             | AstMatcher::Follows(..)
             | AstMatcher::Precedes(..) => {
-                let (axis, end, rule) = self.walk(matcher)?;
+                let (axis, by, rule) = self.walk(matcher)?;
+                let end = !matches!(by, StopBy::Neighbor);
+                let stop = self.stop(by)?;
                 let child = self.plan(rule)?;
                 mentions = child.mentions.clone();
                 writes = child.writes.clone();
                 node_writes = child.node_writes.clone();
-                Op::Search(axis, end, Box::new(child))
+                Op::Search(axis, end, Box::new(child), stop)
             }
             AstMatcher::Count(count) => {
-                let (axis, end, rule) = self.walk(&count.relation)?;
+                let (axis, by, rule) = self.walk(&count.relation)?;
+                let end = !matches!(by, StopBy::Neighbor);
+                let stop = self.stop(by)?;
                 let child = self.plan(rule)?;
                 mentions = child.mentions.clone();
                 let binding = if let Some(binding) = &count.binding {
@@ -149,6 +167,7 @@ impl Lower {
                     axis,
                     end,
                     rule: Box::new(child),
+                    stop,
                     min: i64::try_from(count.min).map_err(
                         |_| "outcome relations: count minimum exceeds signed integer storage",
                     )?,

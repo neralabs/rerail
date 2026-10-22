@@ -1,8 +1,9 @@
-//! Explicit outcomes for total, effect-free three-valued operators.
+//! Explicit outcomes with sequencing barriers for reached atomic value leaves.
 //! SQL owns composition. Bindings are typed columns; unknown is never SQL NULL.
 mod emit;
 mod local;
 mod lower;
+mod reached_tests;
 mod tests;
 
 use super::{Compiled, ir::Set};
@@ -22,15 +23,17 @@ enum Axis {
 enum Op {
     Predicate(Set),
     Unknown(usize),
+    Value(usize),
     Bind(usize),
     All(Vec<Plan>),
     Any(Vec<Plan>),
     Not(Box<Plan>),
-    Search(Axis, bool, Box<Plan>),
+    Search(Axis, bool, Box<Plan>, Option<Box<Plan>>),
     Count {
         axis: Axis,
         end: bool,
         rule: Box<Plan>,
+        stop: Option<Box<Plan>>,
         min: i64,
         max: Option<i64>,
         binding: Option<(usize, i64)>,
@@ -63,4 +66,19 @@ pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
         relations,
         terminals: lower.pure.program.terminals,
     })
+}
+
+impl Plan {
+    fn fallible(&self) -> bool {
+        match &self.op {
+            Op::Value(_) => true,
+            Op::All(items) | Op::Any(items) => items.iter().any(Self::fallible),
+            Op::Not(child) => child.fallible(),
+            Op::Search(_, _, child, stop)
+            | Op::Count {
+                rule: child, stop, ..
+            } => child.fallible() || stop.as_ref().is_some_and(|s| s.fallible()),
+            _ => false,
+        }
+    }
 }

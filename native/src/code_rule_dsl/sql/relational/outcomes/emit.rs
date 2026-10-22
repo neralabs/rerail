@@ -1,15 +1,17 @@
 use super::super::ir::Set;
+#[path = "ordered.rs"]
+mod ordered;
 use super::{Axis, Op, Plan, Slot, Slots};
 use serde_json::{Value, json};
 
-struct Demand {
+pub(super) struct Demand {
     name: String,
     slots: Slots,
 }
-struct Output {
+pub(super) struct Output {
     name: String,
 }
-struct Sql {
+pub(super) struct Sql {
     definitions: Vec<String>,
     profile: Vec<Value>,
 }
@@ -35,12 +37,29 @@ fn needed(plan: &Plan) -> Slots {
 
 /// Necessary kinds for every nonfalse answer. Unknown never permits a false kind test.
 fn kinds(plan: &Plan) -> Option<std::collections::BTreeSet<u16>> {
+    if plan.fallible() {
+        // Only a total conjunction prefix can reject a root before its first effect.
+        return if let Op::All(items) = &plan.op {
+            items
+                .iter()
+                .take_while(|p| !p.fallible())
+                .enumerate()
+                .filter(|(i, p)| *i == 0 || p.mentions.is_empty())
+                .filter_map(|(_, p)| kinds(p))
+                .reduce(|a, b| a.intersection(&b).copied().collect())
+        } else {
+            None
+        };
+    }
     match &plan.op {
         Op::Predicate(Set::Kinds(k)) => Some(k.iter().copied().collect()),
         Op::Predicate(Set::Empty) => Some(Default::default()),
         Op::All(items) => items
             .iter()
-            .filter_map(kinds)
+            .enumerate()
+            // An earlier unknown can withhold this whole term, including its kind tests.
+            .filter(|(i, p)| *i == 0 || p.mentions.is_empty())
+            .filter_map(|(_, p)| kinds(p))
             .reduce(|a, b| a.intersection(&b).copied().collect()),
         Op::Any(items) => {
             let mut result = std::collections::BTreeSet::new();
@@ -73,6 +92,7 @@ impl Sql {
                 ),
                 true,
             ),
+            Op::Value(term) => (format!("relation_value({term},d.file,d.node)"), false),
             Op::Unknown(term) => (
                 format!("CASE WHEN node_regex({term},d.file,d.node) THEN 2 ELSE 1 END"),
                 false,
@@ -146,6 +166,7 @@ impl Sql {
         let operator = match &plan.op {
             Op::Predicate(_) => "total predicate",
             Op::Unknown(_) => "unknown leaf",
+            Op::Value(_) => "reached value leaf",
             Op::Bind(_) => "capture equality",
             Op::Not(_) => "negation",
             Op::Count { .. } => "count outcome",
@@ -155,6 +176,10 @@ impl Sql {
             Op::Predicate(set) => format!(
                 "SELECT d.k,CASE WHEN {} THEN 1 ELSE 0 END AS truth FROM {} d CROSS JOIN node n ON n.file=d.file AND n.id=d.node",
                 super::super::emit::condition(set, "n")?,
+                input.name
+            ),
+            Op::Value(term) => format!(
+                "SELECT d.k,relation_value({term},d.file,d.node) AS truth FROM {} d",
                 input.name
             ),
             Op::Unknown(term) => format!(
@@ -177,15 +202,31 @@ impl Sql {
             }
             Op::All(items) => return self.all(plan, items, input),
             Op::Any(items) => return self.any(plan, items, input),
-            Op::Search(axis, end, child) => return self.search(*axis, *end, child, input),
+            Op::Search(axis, end, child, stop) => {
+                if stop.is_some() || child.fallible() {
+                    return self.ordered(*axis, *end, child, stop.as_deref(), None, input);
+                }
+                return self.search(*axis, *end, child, input);
+            }
             Op::Count {
                 axis,
                 end,
                 rule,
+                stop,
                 min,
                 max,
                 binding,
             } => {
+                if stop.is_some() || rule.fallible() {
+                    return self.ordered(
+                        *axis,
+                        *end,
+                        rule,
+                        stop.as_deref(),
+                        Some((*min, *max, *binding)),
+                        input,
+                    );
+                }
                 if *min == 1
                     && max.is_none()
                     && binding.is_none()
@@ -479,12 +520,12 @@ pub(super) fn compile(
     Ok((
         query,
         json!({
-            "scope":"Explicit outcomes for total, effect-free three-valued operators",
+            "scope":"Explicit outcomes with reached node-local value leaves and traversal stops",
             "outcomeOutput":output.name,"outcomeDemand":roots.name,"outcomePayload":payload,
             "outcomes":{"false":0,"true":1,"unknown":2},"nativeComposition":false,
             "captures":observed.iter().map(|&id|json!({"name":slots[id].name,"slot":id,"kind":if slots[id].count {"count"} else {"node"}})).collect::<Vec<_>>(),
             "relations":sql.profile,
-            "limitations":["Native work and stack/depth budgets remain unproved.","Semantic leaves, recursion, enumeration, and rule-based traversal stops need outcome/effect contracts."],
+            "limitations":["Native work and stack/depth budgets remain unproved.","Following values, nested ordered traversal bodies, capture-bearing stops, recursion, and enumeration remain unproved."],
             "flags":["Candidate outcomes precede ordered reduction only because all admitted operations are total and effect-free.","Counts may evaluate candidates after a native early threshold; resource-limit parity remains pending."]
         }),
     ))

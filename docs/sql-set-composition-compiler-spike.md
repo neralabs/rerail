@@ -3251,3 +3251,129 @@ Milestone 2 remains incomplete, and the replacement stays test-only.
 The next phase must define reached semantic-leaf failures and rule-based traversal stops before lowering them.
 Unknown-aware recursion, enumeration, native resource limits, full catalog coverage, and the complete-job 100-execution gate remain pending.
 No production switch or fallback was added.
+
+### Milestone 2: reached value leaves and traversal stops — started 2026-10-22
+
+The native traversal order determines which failures are visible.
+Ancestor and sibling walks test the stop before the candidate.
+Descendant walks test the candidate first and omit the stop after a decisive result.
+An unknown stop prevents traversal beyond that boundary.
+For descendant walks, later sibling subtrees remain reachable.
+For counts, an unknown stop makes the upper bound unbounded.
+
+The next kernel uses a narrow recursive traversal relation for ordered, node-local tests.
+It carries no capture environment or global instruction program.
+The first semantic admission is a non-following `value` leaf, evaluated through the existing atomic leaf primitive.
+The kernel must preserve reached failures and early count thresholds.
+It does not claim native resource-budget parity or file-level failure publication across the full job.
+
+The ordered traversal uses three local phases per visited node: first test, second test, then advance.
+For descendants, the first test is the candidate; for other axes, it is the stop.
+A materialized scalar subquery evaluates each Boolean operand once.
+`CASE` guards every later operand and the descendant stop after a decisive candidate.
+The recursive row contains ten columns: demand key, file, node, bound, phase, candidate verdict, stop verdict, lower count, uncertain count, and open frontier.
+
+Whole-node captures and nested relational bodies do not yet enter this ordered traversal.
+Those forms require a wider observable-state contract.
+The existing total structural plans retain their set-based SQL.
+Eligible total minimum-one counts retain indexed existence probes.
+Only rule-based stops or fallible traversal bodies require the new ordered relation.
+
+Root-kind pruning also needs an effect boundary.
+A total prefix of a conjunction can restrict root demand before its first fallible term.
+A later kind cannot suppress an earlier value failure.
+The fault fixtures check this order, early search success, count thresholds, exact count exports, and withheld inputs.
+
+The first differential run passed three tests and failed three oracle assertions.
+The failures exposed two details in the existing error contract.
+Native traversal can attempt more value leaves after it records the first failure.
+The SQL leaf adapter returns the internal limit code, such as `Value`, rather than its rendered diagnostic message.
+The corrected oracle compares calls through the first failure and the exact failure code.
+It records later native attempts separately; SQL aborts at the first failing leaf.
+Full-file diagnostic ordering and partial-result handling remain unproved.
+
+The first scaling profile used one matching statement and zero automatic-index entries in every case.
+Known-first searches used 1,067 VM instructions and one value call at widths 16, 64, and 256.
+All-unknown searches used 13,351, 51,319, and 203,191 instructions, with one value call per identifier.
+The SQL preserved short-circuiting but materialized constant Boolean identities and nested kind alternatives per candidate.
+The next rewrite folds total Boolean kind tests into one scalar predicate and removes identity projections.
+Fallible operands retain guarded materialization and one physical evaluation.
+Raw first-draft results are in `/tmp/rerail-reached-first-results.json`; this draft did not pass the complete differential suite.
+
+Review found a second root-pruning hazard in the previous outcome kernel.
+A later composite can contain a kind check and read a capture withheld by an earlier unknown.
+Native evaluation skips that whole composite, including its kind check.
+Its kind therefore cannot restrict the root demand.
+The fix limits conjunction pruning to the first term and later terms without capture dependencies.
+A regression fixture must preserve unknown outcomes on roots outside the skipped kind.
+
+### Reached value and stop kernel accepted — 2026-10-22
+
+All 40 relational tests pass, including seven new reached-evaluation tests.
+The evidence records 14 fault fixtures with exact calls through the first failure and matching internal error codes.
+Each fixture traces one SQL matching execution, including failed executions.
+The extra root-pruning fixture preserves three unknown outcomes outside a withheld number-kind test.
+Formatting and both `check:native` Clippy configurations pass.
+
+| Case | Widths | VM instructions | Value calls | Traversal states |
+| --- | --- | --- | --- | --- |
+| Known first match | 16 / 64 / 256 | 856 / 856 / 856 | 1 / 1 / 1 | 6 / 6 / 6 |
+| All identifiers unknown | 16 / 64 / 256 | 9,706 / 37,114 / 146,746 | 16 / 64 / 256 | 99 / 387 / 1,539 |
+
+Each profile uses one traced matching execution, zero frame publications, and zero automatic-index entries.
+The recursive relation has three states per visited candidate.
+Known-first search visits the opening parenthesis and the first value, then stops.
+The unknown case visits every identifier and punctuation node in the arguments.
+The profile reports traversal-state cardinality and derives visited candidates separately from physical storage counters.
+
+The scalar rewrite reduces known-first VM work by 19.8 percent and the largest unknown case by 27.8 percent.
+Both comparisons use this phase's initial draft, not the production engine or whole-job runtime.
+The final query has ten top-level relations and 3,290 SQL bytes.
+Preparation takes 0.242–0.329 ms across the six samples.
+The width-256 unknown sample uses 1.531 ms of cold kernel CPU with counters enabled.
+This excludes parsing, diagnostic cardinality queries, and complete-job setup.
+
+The remaining work is bounded but visible: every visited candidate emits three recursive states and uses point probes to advance.
+Total bodies should continue to use direct set predicates or indexed existence probes where their contracts permit that rewrite.
+Ordered effects require a sequencing proof before any phase or probe disappears.
+
+The frozen B023 regression passes, for 51 unique passing tests in total.
+All 138 file hashes match the reference corpus, with exact roots and capture witnesses.
+The query retains SHA-256 `84116309b7048f44b706bb74955b99a1bcb5b512d5b365b30a73f78992026aa1`.
+Every generated sample uses 2,812,255 VM instructions, one matching execution, and zero frame publications.
+
+The timing gate passes at a median CPU ratio of 1.128, but the samples vary substantially:
+
+| Pair | Generated cold kernel CPU | Reference cold kernel CPU |
+| --- | --- | --- |
+| 1 | 120.578 ms | 65.064 ms |
+| 2 | 307.392 ms | 130.212 ms |
+| 3 | 146.943 ms | 150.016 ms |
+
+The medians are 146.943 ms and 130.212 ms.
+These timings do not support a B023 speed improvement claim.
+The stable regression evidence is unchanged SQL, unchanged VM work, and exact results.
+
+Artifacts:
+
+- `benchmark/sql-relational-reached-evidence.json`: six profiles, 14 fault traces, source hashes, draft comparisons, and frozen regression results.
+- `benchmark/sql-relational-reached.sql`: generated ordered traversal with scalar sequencing barriers.
+- `/tmp/rerail-reached-20261022-final`: full profiles, generated SQL, and differential logs.
+- `/tmp/rerail-reached-b023-20261022-final`: full frozen regression evidence and logs.
+
+Reproduce this phase with:
+
+```sh
+JEMALLOC_OVERRIDE=/tmp/librerail_jemalloc_check_shim.dylib \
+python3 benchmark/relational-reached.py /tmp/rerail-reached-reproduction
+```
+
+The driver builds the test binary unless `--binary` supplies one.
+It pins the relational sources, atomic value code, fault hook, terminal scope adapter, and executable hash.
+The complete-query regression driver now pins those external atomic-leaf files too.
+
+Milestone 2 remains incomplete, and this compiler remains test-only.
+The next phase adds capture-bearing ordered traversal, including the pending-unknown-stop boundary described in the transition plan.
+Nested fallible traversal bodies and full-file failure publication follow that contract.
+Native resource budgets, enumeration, general recursion, catalog coverage, and the complete-job 100-execution gate remain pending.
+No production switch or fallback was added.

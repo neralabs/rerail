@@ -1,4 +1,4 @@
-//! Capture-free pattern leaves only. SQL owns all relation and Boolean composition.
+//! Atomic pattern, value, and capture-equality leaves. SQL owns all relation and Boolean composition.
 use super::super::{exec::Batch, terminals::Terminal};
 use crate::code_rule_dsl::matcher::node_at;
 use ast_grep_core::matcher::MatcherExt;
@@ -12,6 +12,7 @@ use std::{
 };
 
 thread_local! {
+    pub(super) static VALUE_REQUESTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static EQUALITY_REQUESTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -43,7 +44,31 @@ pub(in crate::code_rule_dsl::sql) fn register(
     let calls = Arc::new(AtomicUsize::new(0));
     let count = Arc::clone(&calls);
     let keys = Leaves(AssertUnwindSafe(Arc::clone(batch)));
+    let values = Leaves(AssertUnwindSafe(Arc::clone(batch)));
     let equality = Leaves(AssertUnwindSafe(Arc::clone(batch)));
+    db.create_scalar_function(
+        "relation_value",
+        3,
+        FunctionFlags::SQLITE_UTF8,
+        move |ctx| {
+            VALUE_REQUESTS.set(VALUE_REQUESTS.get() + 1);
+            let term = ctx.get::<u32>(0)? as usize;
+            let file = ctx.get::<u32>(1)? as usize;
+            let node = ctx.get::<u32>(2)?;
+            let Some(Terminal::Fact(term)) = values.0.program.terminals.get(term) else {
+                return Err(Error::ModuleError(
+                    "relational value: invalid terminal".into(),
+                ));
+            };
+            let file_data = &values.0.files[file];
+            let rows = super::super::terminals::with_scopes(file, file_data, || {
+                term.verdicts
+                    .rows(node_at(&file_data.root, node), &Default::default())
+            })
+            .map_err(Error::ModuleError)?;
+            Ok(rows.first().map_or(0, |r| if r.unknown { 2 } else { 1 }))
+        },
+    )?;
     // Atomic structural equality, with native capture semantics. No rule composition runs here.
     db.create_scalar_function(
         "relation_capture_equal",
