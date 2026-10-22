@@ -54,14 +54,6 @@ describe("the gate code a rule's key covers", () => {
     for (const path of excluded) assert.ok(!graph.has(path), `${path} is out of the key, but run.ts imports it`);
   });
 
-  // The lists are JSON, which no import reaches: a gate that read one by path would be judging with an unkeyed file.
-  test("no gate code run.ts reaches names the not-gated or pending list", () => {
-    for (const path of [...graph].filter((path) => path.startsWith("conformance/port-readiness/"))) {
-      const lines = readFileSync(join(PACKAGE_ROOT, path), "utf8").split("\n").filter((line) => !line.includes(":(exclude)"));
-      for (const name of ["ungated-rules.json", "pending.json"]) assert.ok(!lines.some((line) => line.includes(name)), `${path} names ${name}`);
-    }
-  });
-
   test("the run's options and the files run.ts reads by path stay in the key", () => {
     for (const path of ["conformance/port-readiness/cli.ts", "conformance/port-readiness/corpus-tasks.json"]) assert.ok(keyed.has(path), `${path} is out of the key`);
   });

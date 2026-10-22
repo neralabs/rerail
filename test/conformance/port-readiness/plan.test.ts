@@ -108,8 +108,6 @@ describe("the legs a changed path selects", () => {
     ["package-lock.json", EVERY_LEG],
     ["conformance/recorders/port-readiness/runtimes/ruff-0.16.9/pyproject.toml", EVERY_LEG],
     ["conformance/languages/runner.ts", EVERY_LEG],
-    ["conformance/port-readiness/ungated-rules.json", []],
-    ["conformance/port-readiness/ungated.ts", []],
     ["conformance/port-readiness/conformance-gates.ts", []],
     ["packs/complexity/rules/complexity-cyclomatic-python.json", []],
     // Out of the key, but the report job's merge and summary should run on real reports.
@@ -127,7 +125,7 @@ describe("the legs a changed path selects", () => {
     for (const path of ["packs/complexity/rules/complexity-cyclomatic-python.json", "packs/node/README.md", "conformance/port-readiness/conformance-gates.ts", "native/src/x.rs"]) {
       assert.equal(movesConformance(path), true, path);
     }
-    for (const path of ["packs/README.md", "docs/port-readiness.md", "README.md", "conformance/port-readiness/ungated.ts", "conformance/port-readiness/README.md"]) assert.equal(movesConformance(path), false, path);
+    for (const path of ["packs/README.md", "docs/port-readiness.md", "README.md", "conformance/port-readiness/recording/diff.ts", "conformance/port-readiness/README.md"]) assert.equal(movesConformance(path), false, path);
     assert.equal(plan(TOOL_PACKS, ["docs/port-readiness.md"]).conformance, false);
     assert.equal(plan(TOOL_PACKS, ["docs/port-readiness.md", "packs/complexity/rules/x.json"]).conformance, true);
     assert.equal(plan(TOOL_PACKS).conformance, true);

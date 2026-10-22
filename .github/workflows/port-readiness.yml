@@ -28,7 +28,7 @@ on:
   workflow_call:
     inputs:
       base:
-        description: The commit the change is judged against (the pull request's base, or the push's previous head); the not-gated list may only shrink against it.
+        description: The commit the change is judged against (the pull request's base, or the push's previous head); a recording made here is compared with it.
         type: string
         default: ""
       no-cache:
@@ -464,21 +464,9 @@ jobs:
           path: ${{ runner.temp }}/gates
           merge-multiple: true
 
-      # The not-gated list may only shrink against the base. The checkout keeps no credentials, so the base commit is
-      # fetched here with the token, as the lfs action fetches; if it is still missing the summary fails closed.
-      - name: Fetch the base commit
-        if: inputs.base != '' && inputs.base != '0000000000000000000000000000000000000000'
-        env:
-          BASE: ${{ inputs.base }}
-          TOKEN: ${{ github.token }}
-        run: |
-          auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
-          git -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic ${auth}" fetch --no-tags --depth=1 origin "$BASE" || true
-
       - id: summary
-        name: Summarize, and check the packs without an upstream adapter
+        name: Summarize
         env:
-          BASE: ${{ inputs.base }}
           # The tool-packs the plan judged; the rest are listed as not judged. Without a plan the summary expects every
           # gated tool-pack's report, so a failed plan fails closed.
           PLANNED: ${{ needs.plan.result == 'success' && needs.plan.outputs.tool-packs || '' }}
@@ -486,15 +474,13 @@ jobs:
           PORT_READINESS_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set +e
-          # A push that creates a branch has no previous head.
-          if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then BASE=""; fi
           # No report was downloaded when no leg ran.
           mkdir -p "$RUNNER_TEMP/gates"
           # A sharded tool-pack's legs each wrote shard-<i>of<n>/<pack>--<tool>.json: merge them into its report first.
           # Shards that are missing or disagree leave the tool-pack without a report, which the summary fails.
           npm run port-readiness -- merge "$RUNNER_TEMP/gates"
           if [ "$?" = 2 ]; then echo "::error::A sharded tool-pack's shards are missing or disagree (gates merge says which); it has no report."; fi
-          npm run port-readiness -- summary "$RUNNER_TEMP/gates" ${BASE:+--base "$BASE"} ${PLANNED:+--planned "$PLANNED"}
+          npm run port-readiness -- summary "$RUNNER_TEMP/gates" ${PLANNED:+--planned "$PLANNED"}
           echo "status=$?" >> "$GITHUB_OUTPUT"
 
       # One results comment per run, its conformance and port readiness sections together: the earlier ones are

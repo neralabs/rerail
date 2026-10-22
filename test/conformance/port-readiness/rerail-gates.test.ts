@@ -8,11 +8,10 @@ import { afterEach, describe, it } from "vitest";
 import { CACHE_FORMAT, readCached, resultPath, ruleKey, toolPackKey, writeCached, type SharedKeyInputs } from "../../../conformance/port-readiness/cache.js";
 import { engineReadsGoldensCheck } from "../../../conformance/port-readiness/checks/matches-upstream-tests.js";
 import { sparseDirectoryPattern } from "../../../conformance/port-readiness/recorded-adapter.js";
-import type { CommandOptions, CommandResult, CommandRunner } from "../../../conformance/port-readiness/process.js";
 import { renderMarkdown } from "../../../conformance/port-readiness/report.js";
 import { blockingFailures, isCachedPack, isCachedRule, packDocuments, type CachedRule, type GatesReport, type RuleReport } from "../../../conformance/port-readiness/run.js";
-import { bySource, funnel, isRuleDocument, parsePlanned, renderSummary, stepTitle, summarize, verdictText } from "../../../conformance/port-readiness/summary.js";
-import { ungatedChecks } from "../../../conformance/port-readiness/ungated.js";
+import { renderJobSummary } from "../../../conformance/port-readiness/comment.js";
+import { parsePlanned, stepLabel, summarize } from "../../../conformance/port-readiness/summary.js";
 import { CONFORMANCE_REPORT_FORMAT, conformanceBlockingFailures, runConformanceGates, type ConformanceReport, type ConformanceRuleReport } from "../../../conformance/port-readiness/conformance-gates.js";
 import { loadEngine } from "../../../conformance/port-readiness/engine.js";
 import { BLOCKING_GATES, type BlockingGateId } from "../../../conformance/port-readiness/types.js";
@@ -32,18 +31,6 @@ function tempRoot(): string {
 function write(root: string, path: string, value: unknown): void {
   mkdirSync(join(root, path, ".."), { recursive: true });
   writeFileSync(join(root, path), typeof value === "string" ? value : `${JSON.stringify(value, null, 2)}\n`);
-}
-
-/** A runner answering git commands from a table; anything else fails. */
-class FakeRunner implements CommandRunner {
-  readonly calls: string[] = [];
-  constructor(private readonly answers: Record<string, Partial<CommandResult>>) {}
-  async run(argv: readonly string[], _options?: CommandOptions): Promise<CommandResult> {
-    const command = argv.join(" ");
-    this.calls.push(command);
-    const answer = Object.entries(this.answers).find(([prefix]) => command.startsWith(prefix))?.[1];
-    return { exitCode: answer?.exitCode ?? 1, stdout: answer?.stdout ?? "", stderr: answer?.stderr ?? "no answer" };
-  }
 }
 
 function passingGates(): RuleReport["gates"] {
@@ -87,7 +74,8 @@ function report(rules: RuleReport[], unmapped: GatesReport["unmapped"] = []): Ga
   };
 }
 
-const noUngated = { checks: [], notGated: [], pending: [] };
+const bandit = { pack: "python", tool: "bandit" };
+const gated = [bandit, { pack: "python", tool: "ruff" }];
 
 describe("location-based blocking", () => {
   it("a failing shipped rule blocks; a failing candidate does not", () => {
@@ -100,49 +88,41 @@ describe("location-based blocking", () => {
     assert.equal(blockingFailures(report([], [{ file: "packs/python/rules/x.json", location: "shipped" }])), 1);
   });
 
-  it("an unmapped document of a gated pack stops at the mapping step, counted once; a shipped one blocks", () => {
-    const summary = summarize([report([rule("a", "candidate")])], noUngated, [{ pack: "python", tool: "bandit" }], undefined, {
-      conformance: conformanceReport([unported("x", "python", "candidate"), unported("y", "python", "shipped")], [pythonPack]),
-    });
-    assert.deepEqual(summary.rules.map((entry) => [entry.id, entry.source, entry.stoppedAt]), [
-      ["a", "python/bandit", null],
-      ["x", "python (no conformance.json entry)", "mapping"],
-      ["y", "python (no conformance.json entry)", "mapping"],
-    ]);
-    assert.deepEqual(summary.blocking.map((row) => [row.rule, row.stoppedAt]), [["y", "Mapped to an upstream rule"]]);
+  it("an unmapped document of a pack with a conformance.json is a port that stops at the mapping step; a shipped one blocks", () => {
+    const summary = summarize([report([rule("a", "candidate")])], [bandit], undefined, conformanceReport([unported("x", "python", "candidate"), unported("y", "python", "shipped")], [pythonPack]));
+    assert.deepEqual(summary.rules.map((entry) => [entry.id, entry.port, entry.stoppedAt]), [["a", true, null], ["x", true, "mapping"], ["y", true, "mapping"]]);
+    assert.deepEqual(summary.failing.map((entry) => entry.id), ["y"]);
     assert.equal(summary.pass, false);
   });
 
-  it("the summary lists shipped failures as blocking, and fails on a missing report", () => {
-    const summary = summarize([report([rule("a", "shipped", { loads: "schema" }), rule("b", "candidate"), rule("c", "candidate", { loads: "json" })])], noUngated, [{ pack: "python", tool: "bandit" }, { pack: "python", tool: "ruff" }]);
-    assert.deepEqual(summary.blocking.map((row) => [row.source, row.rule, row.check]), [["python/bandit", "a", "schema"], ["python/ruff", "(every rule)", "report"]]);
-    assert.deepEqual(summary.promotable.map(({ toolPack, rule }) => ({ toolPack, rule })), [{ toolPack: "python/bandit", rule: "b" }]);
+  it("the summary lists failing shipped rules, and fails on a missing report", () => {
+    const summary = summarize([report([rule("a", "shipped", { loads: "schema" }), rule("b", "candidate"), rule("c", "candidate", { loads: "json" })])], gated);
+    assert.deepEqual(summary.failing.map((entry) => [entry.id, entry.stoppedAt, entry.check]), [["a", "loads", "schema"]]);
+    assert.deepEqual(summary.otherFailures.map((entry) => [entry.what, entry.check]), [["python/ruff", "report"]]);
+    assert.deepEqual(summary.promotable.map((entry) => [entry.id, entry.upstream, entry.onByDefault]), [["b", { tool: "bandit", rule: "X1" }, true]]);
     assert.deepEqual(summary.notJudged, []);
     assert.equal(summary.pass, false);
   });
 
-  const gated = [{ pack: "python", tool: "bandit" }, { pack: "python", tool: "ruff" }];
-
-  it("a tool-pack the plan left out is listed as not judged and blocks nothing", () => {
-    const summary = summarize([report([rule("a", "shipped")])], noUngated, gated, [{ pack: "python", tool: "bandit" }]);
-    assert.deepEqual(summary.missingReports, []);
+  it("an upstream linter the plan left out is listed as not re-run and blocks nothing", () => {
+    const summary = summarize([report([rule("a", "shipped")])], gated, [bandit]);
     assert.deepEqual(summary.notJudged, ["python/ruff"]);
-    assert.deepEqual(summary.blocking, []);
+    assert.deepEqual([summary.failing, summary.otherFailures], [[], []]);
     assert.equal(summary.pass, true);
-    assert.match(renderSummary(summary), /^Not judged on this change: python\/ruff \(nothing they read changed against the base, so main's verdict stands\)\.$/mu);
-    assert.doesNotMatch(renderSummary(summarize([report([rule("a", "shipped")])], noUngated, [gated[0]!])), /Not judged on this change/u);
+    assert.match(renderJobSummary(summary), /^Not re-run on this change, since nothing their ports read changed: python\/ruff\. Main's results stand for them, and the counts leave them out\.$/mu);
+    assert.doesNotMatch(renderJobSummary(summarize([report([rule("a", "shipped")])], [bandit])), /Not re-run/u);
   });
 
-  it("a planned tool-pack with no report blocks", () => {
-    const summary = summarize([], noUngated, gated, [{ pack: "python", tool: "ruff" }]);
-    assert.deepEqual(summary.blocking.map((row) => [row.source, row.rule, row.check]), [["python/ruff", "(every rule)", "report"]]);
+  it("a planned upstream linter with no report blocks", () => {
+    const summary = summarize([], gated, [{ pack: "python", tool: "ruff" }]);
+    assert.deepEqual(summary.otherFailures.map((entry) => [entry.what, entry.check]), [["python/ruff", "report"]]);
     assert.deepEqual(summary.notJudged, ["python/bandit"]);
     assert.equal(summary.pass, false);
   });
 
-  it("a planned tool-pack that is not gated blocks: the plan is wrong", () => {
-    const summary = summarize([report([rule("a", "shipped")])], noUngated, gated, [...gated.slice(0, 1), { pack: "python", tool: "flake8" }]);
-    assert.deepEqual(summary.blocking.map((row) => [row.source, row.check]), [["python/flake8", "plan"]]);
+  it("a planned upstream linter with no gates.yaml blocks: the plan is wrong", () => {
+    const summary = summarize([report([rule("a", "shipped")])], gated, [bandit, { pack: "python", tool: "flake8" }]);
+    assert.deepEqual(summary.otherFailures.map((entry) => [entry.what, entry.check]), [["python/flake8", "plan"]]);
     assert.deepEqual(summary.notJudged, ["python/ruff"]);
     assert.equal(summary.pass, false);
   });
@@ -155,11 +135,11 @@ describe("location-based blocking", () => {
     }
   });
 
-  it("a candidate a failing tool-pack check blocks is not ready to promote, and says why", () => {
+  it("a candidate a failing upstream linter check blocks is not ready to promote, and says why", () => {
     const blocked = { ...rule("b", "candidate"), pass: false, blockedBy: "bundled-load: Duplicate bundled rule id: x" };
-    const summary = summarize([report([blocked])], noUngated, []);
+    const summary = summarize([report([blocked])], []);
     assert.deepEqual(summary.promotable, []);
-    assert.deepEqual(summary.rules.map((entry) => [entry.id, entry.stoppedAt, entry.why]), [["b", "tool-pack", "bundled-load: Duplicate bundled rule id: x"]]);
+    assert.deepEqual(summary.rules.map((entry) => [entry.id, entry.stoppedAt, entry.why]), [["b", "linter-checks", "bundled-load: Duplicate bundled rule id: x"]]);
   });
 
   it("a listed known gap that does not hold, or excused nothing, blocks", () => {
@@ -168,13 +148,13 @@ describe("location-based blocking", () => {
       { id: "unused", proven: true, kind: "valid-source", excused: 0 },
       { id: "not-source", proven: false, kind: "invalid-source", excused: 0 },
     ];
-    const summary = summarize([{ ...report([rule("a", "shipped")]), knownGaps }], noUngated, []);
-    assert.deepEqual(summary.blocking.map((row) => [row.source, row.stoppedAt, row.check, row.why]), [
-      ["python/bandit", "Known gaps", "known-gap", "known gap unused excused no mismatch; remove it or correct its fixtures"],
-      ["python/bandit", "Known gaps", "known-gap", "known gap not-source does not hold (the report's run integrity says why); remove it or correct it"],
+    const summary = summarize([{ ...report([rule("a", "shipped")]), knownGaps }], []);
+    assert.deepEqual(summary.otherFailures.map((entry) => [entry.what, entry.check, entry.why]), [
+      ["python/bandit", "known-gap", "known gap unused excused no mismatch; remove it or correct its fixtures"],
+      ["python/bandit", "known-gap", "known gap not-source does not hold (the report's run integrity says why); remove it or correct it"],
     ]);
     assert.equal(summary.pass, false);
-    assert.equal(summarize([{ ...report([rule("a", "shipped")]), knownGaps: knownGaps.slice(0, 1) }], noUngated, []).pass, true);
+    assert.equal(summarize([{ ...report([rule("a", "shipped")]), knownGaps: knownGaps.slice(0, 1) }], []).pass, true);
   });
 
   it("documents come from rules/ (shipped) and candidates/** without probes or conformance manifests (candidate)", () => {
@@ -187,7 +167,7 @@ describe("location-based blocking", () => {
   });
 });
 
-/** A rule of the conformance report: one no gated tool-pack judges, of `tool` when conformance.json maps it. */
+/** A rule of the conformance report: one no gated upstream linter judges, of `tool` when conformance.json maps it. */
 function unported(id: string, pack: string, location: RuleReport["location"], failing: Partial<Record<"loads" | "compact", string>> = {}, tool?: string): ConformanceRuleReport {
   const ok = { pass: true, checks: [] };
   const failed = (check: string) => ({ pass: false, checks: [{ id: check, ok: false, detail: `${check} failed` }] });
@@ -204,89 +184,64 @@ function conformanceReport(rules: ConformanceRuleReport[], packs: ConformanceRep
   return { format: CONFORMANCE_REPORT_FORMAT, engine: { sha256: "" }, packs, rules };
 }
 
-const pythonPack = { pack: "python", checks: { pass: true, checks: [] }, judgedByToolPacks: 1, hasConformanceJson: true };
+const packEntry = (pack: string, hasConformanceJson: boolean): ConformanceReport["packs"][number] => ({ pack, checks: { pass: true, checks: [] }, judgedByToolPacks: 0, hasConformanceJson });
+const pythonPack = packEntry("python", true);
 
 describe("one verdict per rule", () => {
-  it("a rule is counted once, at the first step it fails: the conformance gates come before the port gates", () => {
-    const summary = summarize([report([rule("a", "shipped", { "not-overfit": "fixture-literals", compact: "expansion" })])], noUngated, []);
+  it("a rule is counted once, at the first step it fails: the conformance gates come before the port readiness gates", () => {
+    const summary = summarize([report([rule("a", "shipped", { "not-overfit": "fixture-literals", compact: "expansion" })])], []);
     assert.deepEqual(summary.rules.map((entry) => [entry.id, entry.stoppedAt, entry.check]), [["a", "compact", "expansion"]]);
-    assert.deepEqual(summary.blocking.map((row) => [row.rule, row.stoppedAt]), [["a", "Compact (no written-out expansion)"]]);
+    assert.equal(stepLabel("compact"), "Conformance > Compact (no written-out expansion)");
     assert.deepEqual(summary.shipped, { rules: 1, pass: 0 });
     assert.equal(summary.pass, false);
   });
 
-  it("a port that passes the conformance gates stops at the first port gate it fails", () => {
-    const summary = summarize([report([rule("a", "shipped", { "not-overfit": "fixture-literals" })])], noUngated, []);
-    assert.deepEqual(summary.blocking.map((row) => [row.source, row.rule, row.stoppedAt]), [["python/bandit", "a", "Not overfit to upstream's tests"]]);
+  it("a port that passes conformance stops at the first port readiness gate it fails", () => {
+    const summary = summarize([report([rule("a", "shipped", { "not-overfit": "fixture-literals" })])], []);
+    assert.deepEqual(summary.failing.map((entry) => [entry.id, entry.stoppedAt]), [["a", "not-overfit"]]);
+    assert.equal(stepLabel("not-overfit"), "Port readiness > Not overfit to upstream's tests");
   });
 
-  it("a port whose only failing loads check is in-scope stops at the in-scope port step, not at loads", () => {
+  it("a port whose only failing loads check is in-scope stops at the in-scope port readiness step, not at loads", () => {
     const outOfScope = rule("a", "shipped");
     outOfScope.gates.loads = { pass: false, checks: [{ id: "schema", ok: true, detail: "" }, { id: "in-scope", ok: false, detail: "does not apply to src/example.pyi" }] };
     Object.assign(outOfScope, { pass: false, stoppedAt: "loads" });
-    const summary = summarize([report([outOfScope, { ...structuredClone(outOfScope), id: "b", location: "candidate", on: null }])], noUngated, []);
-    assert.deepEqual(summary.blocking.map((row) => [row.rule, row.stoppedAt, row.check]), [["a", stepTitle("in-scope"), "in-scope"]]);
-    assert.equal(funnel(summary).gated["in-scope"], 1);
+    const summary = summarize([report([outOfScope, { ...structuredClone(outOfScope), id: "b", location: "candidate", on: null }])], []);
+    assert.deepEqual(summary.rules.map((entry) => [entry.id, entry.stoppedAt, entry.check]), [["a", "in-scope", "in-scope"], ["b", "in-scope", "in-scope"]]);
   });
 
-  it("the funnel counts every candidate once, gated tool-packs apart from the rest, and the per-source rows add up", () => {
-    const summary = summarize(
-      [report([rule("a", "shipped"), rule("b", "candidate", { compact: "expansion" }), rule("c", "candidate"), rule("d", "candidate", { "matches-upstream-tests": "identical-results" })])],
-      noUngated,
-      [{ pack: "python", tool: "bandit" }],
-      undefined,
-      { conformance: conformanceReport([unported("complexity-x", "complexity", "shipped"), unported("y", "sql", "candidate", { loads: "schema" }, "sqlfluff"), unported("z", "sql", "candidate", {}, "sqlfluff")]) },
-    );
-    const counts = funnel(summary);
-    assert.equal(counts.gatedTotal, 3);
-    assert.equal(counts.restTotal, 2);
-    assert.deepEqual([counts.gated.compact, counts.gated["matches-upstream-tests"], counts.gated.passes], [1, 1, 1]);
-    assert.deepEqual([counts.rest.loads, counts.rest.passes], [1, 1]);
-    assert.deepEqual(bySource(summary).map((row) => [row.source, row.gated, `${row.shipped.pass}/${row.shipped.rules}`, row.total]), [
-      ["python/bandit", true, "1/1", 3],
-      ["complexity", false, "1/1", 0],
-      ["sql/sqlfluff", false, "0/0", 2],
+  it("a rule that is not a port is done after conformance; a port of a linter with no gates.yaml stops at set-up", () => {
+    const summary = summarize([report([rule("a", "shipped"), rule("c", "candidate")])], [bandit], undefined, conformanceReport([
+      unported("complexity-x", "complexity", "shipped"),
+      unported("complexity-y", "complexity", "candidate"),
+      unported("complexity-z", "complexity", "candidate", { compact: "expansion" }),
+      unported("n1", "node", "candidate", {}, "eslint-plugin-n"),
+      unported("n2", "node", "shipped", {}, "eslint-plugin-n"),
+      unported("n3", "node", "candidate", { loads: "schema" }, "eslint-plugin-n"),
+    ], [packEntry("complexity", false), packEntry("node", true)]));
+    assert.deepEqual(summary.rules.filter((entry) => !entry.file.startsWith("packs/python/")).map((entry) => [entry.id, entry.port, entry.stoppedAt]), [
+      ["complexity-y", false, null],
+      ["complexity-z", false, "compact"],
+      ["complexity-x", false, null],
+      ["n1", true, "set-up"],
+      ["n3", true, "loads"],
+      ["n2", true, "set-up"],
     ]);
-    assert.deepEqual(summary.shipped, { rules: 2, pass: 2 });
-    assert.deepEqual(summary.notApplicable.map((entry) => entry.file), ["packs/complexity/rules/complexity-x.json"]);
-    assert.deepEqual(summary.promotable.map((entry) => entry.rule), ["c"]);
-    // A rule no gated tool-pack judges passes the conformance gates; it is never ready to promote.
-    assert.equal(verdictText(summary.rules.find((entry) => entry.id === "z")!), "✅ passes the conformance gates; no port gate runs on it");
-    assert.equal(summary.pass, true);
+    assert.deepEqual(summary.promotable.map((entry) => entry.id), ["complexity-y", "c"]);
+    assert.deepEqual(summary.failing.map((entry) => entry.id), ["n2"]);
+    assert.match(summary.failing[0]!.why, /^eslint-plugin-n has no packs\/node\/upstream\/eslint-plugin-n\/gates\.yaml yet/u);
+    assert.deepEqual(summary.shipped, { rules: 3, pass: 2 });
+    assert.equal(summary.pass, false);
   });
 
-  it("a shipped rule no tool-pack judges that fails, a failing pack check, and a missing conformance report each block", () => {
-    const failing = summarize([], noUngated, [], [], { conformance: conformanceReport([unported("complexity-x", "complexity", "shipped", { compact: "expansion" })], [{ pack: "complexity", checks: { pass: false, checks: [{ id: "bundled-load", ok: false, detail: "duplicate id" }] }, judgedByToolPacks: 0, hasConformanceJson: false }]) });
-    assert.deepEqual(failing.blocking.map((row) => [row.source, row.rule, row.check]), [["complexity", "complexity-x", "expansion"], ["complexity", "-", "bundled-load"]]);
+  it("a shipped rule that fails conformance, a failing pack check, and a missing conformance report each block", () => {
+    const failing = summarize([], [], [], conformanceReport([unported("complexity-x", "complexity", "shipped", { compact: "expansion" })], [{ ...packEntry("complexity", false), checks: { pass: false, checks: [{ id: "bundled-load", ok: false, detail: "duplicate id" }] } }]));
+    assert.deepEqual(failing.failing.map((entry) => [entry.id, entry.check]), [["complexity-x", "expansion"]]);
+    assert.deepEqual(failing.otherFailures.map((entry) => [entry.what, entry.check]), [["complexity", "bundled-load"]]);
     assert.equal(failing.pass, false);
-    const missing = summarize([], noUngated, [], [], { conformance: null });
-    assert.deepEqual(missing.blocking.map((row) => [row.stoppedAt, row.check]), [["Run", "report"]]);
+    const missing = summarize([], [], [], null);
+    assert.deepEqual(missing.otherFailures.map((entry) => [entry.what, entry.check]), [["(every pack)", "report"]]);
     assert.equal(missing.pass, false);
-  });
-});
-
-describe("the rules a change touches", () => {
-  it("are the rule documents among the changed paths, with their verdicts; the others are not judged or removed", () => {
-    const summary = summarize([report([rule("a", "shipped"), rule("b", "candidate", { "not-overfit": "fixture-literals" })])], noUngated, [], [], {
-      changed: {
-        paths: ["packs/python/rules/a.json", "packs/python/candidates/rules/b.json", "packs/python/candidates/rules/gone.json", "packs/python/candidates/rules/new.json", "packs/python/candidates/probes/p.json", "packs/python/conformance.json", "docs/x.md"],
-        exists: (path) => !path.endsWith("gone.json"),
-      },
-    });
-    assert.ok(summary.changed !== null && !("error" in summary.changed));
-    assert.deepEqual(summary.changed.verdicts.map((entry) => [entry.id, entry.stoppedAt]), [["b", "not-overfit"], ["a", null]]);
-    assert.deepEqual(summary.changed.notJudged, ["packs/python/candidates/rules/new.json"]);
-    assert.deepEqual(summary.changed.removed, ["packs/python/candidates/rules/gone.json"]);
-  });
-
-  it("say why when the diff failed, and are null with no base", () => {
-    assert.deepEqual(summarize([], noUngated, [], [], { changed: { error: "bad object" } }).changed, { error: "bad object" });
-    assert.equal(summarize([], noUngated, []).changed, null);
-  });
-
-  it("only rule documents count: rules/*.json and candidates/** but probes and manifests", () => {
-    for (const path of ["packs/p/rules/a.json", "packs/p/candidates/rules/b.json", "packs/p/candidates/x/c.json"]) assert.equal(isRuleDocument(path), true, path);
-    for (const path of ["packs/p/rules/nested/a.json", "packs/p/candidates/probes/c.json", "packs/p/candidates/conformance.json", "packs/p/pack.json", "packs/p/rules/a.md"]) assert.equal(isRuleDocument(path), false, path);
   });
 });
 
@@ -330,12 +285,6 @@ describe("engine-reads-goldens", () => {
   it("passes when the engine read every golden, and on a rule without goldens", () => {
     assert.equal(engineReadsGoldensCheck([{ task: "t", path: "a.py", status: "mismatch" }]).ok, true);
     assert.equal(engineReadsGoldensCheck([]).ok, true);
-  });
-
-  it("a shipped rule whose only failure is engine-reads-goldens is listed as blocked by an engine gap", () => {
-    const summary = summarize([report([rule("a", "shipped", { "matches-upstream-tests": "engine-reads-goldens" })])], noUngated, []);
-    assert.deepEqual(summary.engineGaps.map((row) => row.rule), ["a"]);
-    assert.equal(summary.pass, false);
   });
 });
 
@@ -421,106 +370,6 @@ describe("cached results", () => {
     const { corpusComplete: _complete, ...older } = pack;
     assert.equal(isCachedPack(older), false);
     assert.equal(isCachedPack({ ...pack, corpusComplete: { ...complete, ok: false } }), false);
-  });
-});
-
-describe("not gated and pending", () => {
-  function fixture(frozen: Record<string, string[]>, shipped: string[] = ["n1", "n2"]): string {
-    const root = tempRoot();
-    write(root, "packs/node/pack.json", { rules: shipped.map((id) => ({ id })) });
-    write(root, "packs/node/conformance.json", { tools: [{ name: "eslint-plugin-n" }] });
-    write(root, "packs/javascript/pack.json", { rules: [{ id: "j1" }] });
-    write(root, "packs/javascript/conformance.json", { tools: [{ name: "eslint" }] });
-    write(root, "packs/python/pack.json", { rules: [{ id: "p1" }] });
-    write(root, "packs/python/conformance.json", { tools: [{ name: "bandit" }] });
-    write(root, "packs/python/upstream/bandit/gates.yaml", "adapter: bandit\n");
-    write(root, "conformance/port-readiness/ungated-rules.json", frozen);
-    write(root, "conformance/port-readiness/pending.json", { "javascript/eslint": "still validated in nera-rule-validation" });
-    return root;
-  }
-  const failing = (checks: { id: string; ok: boolean }[]) => checks.filter((check) => !check.ok).map((check) => check.id);
-  const noGit = new FakeRunner({});
-
-  it("passes when every shipped rule of a not-gated pack is listed; gated and pending packs are not frozen", async () => {
-    const result = await ungatedChecks(fixture({ node: ["n1", "n2"] }), { runner: noGit });
-    assert.deepEqual(failing(result.checks), []);
-    assert.deepEqual(result.notGated, [{ pack: "node", rules: 2 }]);
-    assert.deepEqual(result.pending.map((entry) => entry.toolPack), ["javascript/eslint"]);
-  });
-
-  it("a new shipped rule in a not-gated pack fails", async () => {
-    const result = await ungatedChecks(fixture({ node: ["n1"] }), { runner: noGit });
-    assert.deepEqual(failing(result.checks), ["not-gated:node"]);
-    assert.match(result.checks.find((check) => !check.ok)!.detail, /keep it in candidates\//u);
-  });
-
-  it("a listed rule no longer shipped is stale", async () => {
-    const result = await ungatedChecks(fixture({ node: ["n1", "n2", "n3"] }), { runner: noGit });
-    assert.deepEqual(failing(result.checks), ["frozen-list:node"]);
-    assert.match(result.checks.find((check) => !check.ok)!.detail, /remove it from the list/u);
-  });
-
-  it("gating is decided per tool: a gated pack's rule of a tool with no gates.yaml must be frozen", async () => {
-    const root = fixture({ node: ["n1", "n2"] });
-    write(root, "packs/python/pack.json", { rules: [{ id: "p1" }, { id: "p2" }] });
-    write(root, "packs/python/conformance.json", { tools: [{ name: "bandit" }, { name: "flake8" }], rules: [{ id: "p1", upstream: { tool: "bandit" } }, { id: "p2", upstream: { tool: "flake8" } }] });
-    const blocked = await ungatedChecks(root, { runner: noGit });
-    assert.deepEqual(failing(blocked.checks), ["not-gated:python"]);
-    assert.match(blocked.checks.find((check) => !check.ok)!.detail, /p2 of flake8/u);
-    write(root, "conformance/port-readiness/ungated-rules.json", { node: ["n1", "n2"], python: ["p2"] });
-    const frozen = await ungatedChecks(root, { runner: noGit });
-    assert.deepEqual(failing(frozen.checks), []);
-    assert.deepEqual(frozen.notGated, [{ pack: "node", rules: 2 }, { pack: "python", rules: 1 }]);
-  });
-
-  it("a pending tool covers only its own rules: another tool's rule in the same pack must be frozen", async () => {
-    const root = fixture({ node: ["n1", "n2"] });
-    write(root, "packs/javascript/pack.json", { rules: [{ id: "j1" }, { id: "j2" }] });
-    write(root, "packs/javascript/conformance.json", { tools: [{ name: "eslint" }, { name: "eslint-plugin-unicorn" }], rules: [{ id: "j1", upstream: { tool: "eslint" } }, { id: "j2", upstream: { tool: "eslint-plugin-unicorn" } }] });
-    const result = await ungatedChecks(root, { runner: noGit });
-    assert.deepEqual(failing(result.checks), ["not-gated:javascript"]);
-    assert.deepEqual(result.pending, [{ toolPack: "javascript/eslint", reason: "still validated in nera-rule-validation", rules: 1 }]);
-  });
-
-  it("a frozen rule whose tool is gated now is stale", async () => {
-    const root = fixture({ node: ["n1", "n2"], python: ["p1"] });
-    write(root, "packs/python/conformance.json", { tools: [{ name: "bandit" }], rules: [{ id: "p1", upstream: { tool: "bandit" } }] });
-    const result = await ungatedChecks(root, { runner: noGit });
-    assert.deepEqual(failing(result.checks), ["frozen-list:python"]);
-  });
-
-  const base = "a".repeat(40);
-  const present = { "git cat-file": { exitCode: 0 } };
-
-  it("the shrink guard is skipped when the base has no list", async () => {
-    const runner = new FakeRunner({ ...present, "git ls-tree": { exitCode: 0, stdout: "" } });
-    const result = await ungatedChecks(fixture({ node: ["n1", "n2"] }), { base, runner });
-    assert.deepEqual(failing(result.checks), []);
-  });
-
-  it("the shrink guard fails an entry the base lacks", async () => {
-    const runner = new FakeRunner({
-      ...present,
-      "git ls-tree": { exitCode: 0, stdout: "x\n" },
-      [`git show ${base}:conformance/port-readiness/ungated-rules.json`]: { exitCode: 0, stdout: JSON.stringify({ node: ["n1"] }) },
-      [`git show ${base}:conformance/port-readiness/pending.json`]: { exitCode: 0, stdout: JSON.stringify({ "javascript/eslint": "r" }) },
-    });
-    const result = await ungatedChecks(fixture({ node: ["n1", "n2"] }), { base, runner });
-    assert.deepEqual(failing(result.checks), ["shrinks:conformance/port-readiness/ungated-rules.json"]);
-  });
-
-  it("the shrink guard fetches a missing base and fails closed when the fetch fails", async () => {
-    const runner = new FakeRunner({ "git cat-file": { exitCode: 1 }, "git fetch": { exitCode: 128, stderr: "fatal: no network" } });
-    const result = await ungatedChecks(fixture({ node: ["n1", "n2"] }), { base, runner });
-    assert.ok(runner.calls.includes(`git fetch --depth=1 origin ${base}`));
-    assert.deepEqual(failing(result.checks), ["shrinks:conformance/port-readiness/ungated-rules.json", "shrinks:conformance/port-readiness/pending.json"]);
-  });
-
-  it("the shrink guard fails closed when the base's list cannot be parsed", async () => {
-    const runner = new FakeRunner({ ...present, "git ls-tree": { exitCode: 0, stdout: "x\n" }, "git show": { exitCode: 0, stdout: "{not json" } });
-    const result = await ungatedChecks(fixture({ node: ["n1", "n2"] }), { base, runner });
-    assert.equal(failing(result.checks).length, 2);
-    assert.match(result.checks.find((check) => !check.ok)!.detail, /fails closed/u);
   });
 });
 

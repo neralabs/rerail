@@ -21,27 +21,27 @@ named for the gates, as they should be.
 
 ## The gates
 
-The gates come in two sections. The **conformance** gates (`loads`, `compact`, `passes-conformance`) hold for every rule
-document of every pack, ported or not: a gated tool-pack's run judges its own rules on them, and the conformance job
-(`conformance/port-readiness/conformance-gates.ts`) judges every other rule, such as complexity's and those of the
-packs whose tools have no `gates.yaml` yet. The **port** gates (`not-overfit`, `matches-upstream-tests`, and
-`upstream-status`, which decides only `on`) judge a port against the upstream linter it ports, so only a gated
-tool-pack's rules meet them.
+The gates come in two stages. **Conformance** (`loads`, `compact`, `passes-conformance`) checks every rule document of
+every pack. **Port readiness** checks ports, once they pass conformance. A port is a rule that comes from an upstream
+linter, such as Ruff or ESLint: every rule of a pack with a `conformance.json`, which maps each one to the upstream rule
+it comes from. Port readiness (`not-overfit`, `matches-upstream-tests`, and `upstream-status`, which decides only `on`)
+makes sure a port is true to that rule. A rule that is not a port (complexity's: the pack has no `conformance.json`)
+is done after conformance, and a candidate that passes it is ready to promote.
 
-A rule's verdict is the first blocking gate it fails, in this order: the conformance gates first, then the port gates.
-Every gate still runs on every rule it applies to, so the report shows every failure, not only the first.
+A gated tool-pack's run judges its own rules on both stages; the conformance job
+(`conformance/port-readiness/conformance-gates.ts`) judges every other rule on conformance. A rule's verdict is the first
+step it fails, conformance first, so a port that fails conformance stops there, whatever port readiness would say.
+Every gate still runs on every rule it applies to, so the report shows every failure, not only the first. The summary
+holds one verdict per rule document (`STEPS` in `conformance/port-readiness/summary.ts`), so each rule is counted once.
+Besides the gates, port readiness has these steps, in this order:
 
-The summary and the pull request comment hold one verdict per rule document, the first step of this funnel it fails
-(`STEPS` in `conformance/port-readiness/summary.ts`), so each rule is counted once:
+1. **Mapped to an upstream rule:** no `conformance.json` entry maps the port, so no port readiness gate can run on it.
+2. **Set up for its upstream linter:** its upstream tool has no `gates.yaml` yet (node's `eslint-plugin-n`), so no port
+   readiness gate can run on it. A shipped one fails: keep it in `candidates/` until the tool has a `gates.yaml`.
+3. **Upstream linter checks:** the tool-pack checks below.
+4. **Applies to the files upstream lints:** `loads`'s `in-scope` check, which judges the port, not the document.
 
-1. The conformance gates, on every rule: `loads` (but its `in-scope` check), `compact`, `passes-conformance`.
-2. For a document of a pack with a gated tool-pack, being mapped to an upstream rule: a document no `conformance.json`
-   entry maps is judged on the conformance gates alone and stops here, since no port gate can run on it.
-3. The port steps, on a gated tool-pack's rules: the tool-pack checks (below), `in-scope`, `not-overfit`,
-   `matches-upstream-tests`.
-
-A rule no gated tool-pack judges (complexity's, those of a tool with no `gates.yaml` yet) meets the conformance gates
-only: passing them is its whole verdict, and it is never ready to promote.
+Then `not-overfit` and `matches-upstream-tests`.
 
 | Gate | Section | What it checks | Blocks |
 | --- | --- | --- | --- |
@@ -53,8 +53,8 @@ only: passing them is its whole verdict, and it is never ready to promote.
 | `upstream-status` | port | The rule exists upstream with an implementation and tests, is not deprecated, and one of upstream's recommended configurations turns it on. It decides only whether a shipped rule starts on; the report flags a pack.json `on` that disagrees. | no |
 
 Tool-pack checks judge the tool-pack, not a rule. When one fails, every rule of the tool-pack fails with it: a shipped
-rule blocks and a candidate is not ready to promote. In a verdict they come after the conformance gates and before the
-port gates. They fail when the recording is stale (`corpus-pins` and the recording checks),
+rule blocks and a candidate is not ready to promote. In a verdict they come after conformance and before the other
+port readiness gates. They fail when the recording is stale (`corpus-pins` and the recording checks),
 when a committed case source is not the bytes upstream's answers were recorded on (`case-sources`), when a task or
 corpus a golden names could not be fetched (`corpus-complete`, usually a failed download: run again), or when the pack's shipped rules do not load together through rerail's bundled-rule
 loader (`bundled-load`, for example two documents with one id).
@@ -134,14 +134,9 @@ A **tool-pack** is one upstream tool in one pack, such as `python/ruff`. It is g
   `blade/bladestan`, `blade/tlint`, `blade/blade-parser`, `sql/sqlfluff`, `rust/clippy` and `vue/eslint-plugin-vue`.
   The slowest run in shards: `SHARDS` in `conformance/port-readiness/plan.mjs` says which and how many (see
   "Sharding" below).
-- **Pending:** none. A tool-pack listed in `conformance/port-readiness/pending.json` is still validated in
-  nera-rule-validation until its recording lands, and the gates report it as pending without blocking.
-- **Not gated:** packs with no upstream adapter (complexity ships rules; node ships only candidates). The conformance
-  gates judge their rules; the port gates do not. Their current shipped rules are frozen in
-  `conformance/port-readiness/ungated-rules.json`. A new shipped rule in such a pack fails: keep it in `candidates/` until the
-  pack has an adapter. This is decided per tool, not per pack: in a gated pack, a shipped rule whose upstream tool has no
-  `gates.yaml` and is not pending is frozen the same way. Both lists may only shrink: CI compares them with the pull
-  request's base.
+- **Not gated:** node's `eslint-plugin-n`, whose ports ship only as candidates. Conformance judges them; port readiness
+  cannot run until the tool has a `gates.yaml`, so they stop at "Set up for its upstream linter", and a shipped one
+  fails. complexity has no `conformance.json`: its rules are not ports, and conformance is all they need.
 
 Each rule's upstream rule comes from the pack's `conformance.json`. A shipped rule missing from it fails.
 
@@ -173,8 +168,7 @@ golden or case source therefore moves every shard's key. Otherwise one shard wou
 would compute new ones, and the merge would refuse them.
 
 The gate code is `conformance/port-readiness/` without what no cached verdict depends on: what only the report job or
-the recorder runs (the summary, the pull request comment, the shard merge, the not-gated and pending lists, the
-recording diff), report rendering (a leg renders `report.md` from a finished report), the leg plan and the README:
+the recorder runs (the summary, the pull request comment, the shard merge, the recording diff), report rendering (a leg renders `report.md` from a finished report), the leg plan and the README:
 `GATE_CODE` in `cache.ts`, and `cache.test.ts` fails if `run.ts`'s imports reach an excluded file.
 The npm packages are the locked closure (`package-lock.json`) of `GATE_PACKAGES` (apache-arrow, better-sqlite3, diff,
 drizzle-orm, tsx, yaml, zod), plus `package.json`'s `type`, the `port-readiness` script with its pre and post
@@ -221,35 +215,27 @@ hand itself verdicts its own code computed, which it could already do by editing
 
 ## Read the report
 
-On a pull request, CI posts the results as one comment, decisions first:
+On a pull request, CI posts the results as one comment. It says only what a merge or a promotion needs:
 
-1. **The verdict**, in the heading: every shipped rule passes, or how many blocking failures there are, and how many
-   candidates are ready to promote. Under it, the gate order the counts follow.
-2. **Blocking failures**, only when there are any: each shipped rule that fails, the step it stopped at, the check and
-   why, then the failures no rule owns (a known parser gap that does not hold or excuses nothing, a pack check, a
-   missing report). Shipped rules blocked only by engine gaps are listed apart, collapsed.
-3. **Rules this pull request changes:** every rule document the diff against the base touches, with its verdict, and
-   the ones no report judged or the pull request removed.
-4. **Ready to promote**, only when some candidate is: the candidates that pass every gate, conformance and port, the
-   signal to move them into `rules/`, with the `on` that upstream-status sets. Passing the gates is necessary to ship,
-   not sufficient; a reviewer still decides.
-5. **Where all the candidates stand**, collapsed: the funnel as one table, its steps as rows and two columns that add
-   up to every candidate, those of gated tool-packs (which can be ready to promote) and those no gated tool-pack
-   judges (which pass at most the conformance gates); then the same counts per tool-pack and per pack, the rules
-   `passes-conformance` does not apply to, and each candidate that stops, grouped by source and step.
+1. **The heading:** `[PASS]` or `[FAIL]`, how many shipped rules pass the gates they must (conformance, and port
+   readiness for a port), and how many candidates are ready to promote. Under it, one line on each stage.
+2. **Shipped rules that fail**, only when there are any: one line per rule, with the pack and upstream rule it comes
+   from, the stage and gate it stopped at, and why. **Other blocking failures** follow, only when there are any: a
+   known parser gap that does not hold or excuses nothing, a pack check, a missing report.
+3. **Ready to promote:** each candidate that passes every gate it must, the signal to move it into `rules/` (a reviewer
+   still decides); for a port, whether upstream recommends it on by default. Under it, collapsed, the shipped rules
+   passing per pack.
+4. **Candidates that fail a gate**, collapsed: one collapsed list per gate, in the order a rule meets them, one line per
+   candidate with why.
 
-A new run collapses the earlier comments as outdated, so the pull request keeps its history. The comment stays under
-GitHub's size limit by shortening long lists, the per-candidate lists first; the job summary and the uploaded reports
-have everything. When the pull request judged only some tool-packs, a line names the rest: "Not judged on this
-change", with main's verdict standing for them; the counts leave them out. A pull request that judged no tool-pack and
-touched nothing the conformance gates read gets no new comment unless a check fails, but its earlier comments are still
-collapsed as outdated.
-
-The job summary has the comment's sections in the same order, every list in full and each candidate's verdict, then:
-
-- **Not gated and pending** packs, and any new or stale entry.
-- **On or off:** shipped rules whose `on` in pack.json disagrees with `upstream-status`.
-- Per tool-pack details: each gate on its own, run integrity notes.
+There are no wide tables: every line wraps to the page. A new run collapses the earlier comments as outdated, so the
+pull request keeps its history. The comment stays under GitHub's size limit by shortening the candidate lists first;
+the job summary is the same page with every list in full, and `summary.json` and the uploaded reports have everything
+else (each tool-pack's `report.md` has each gate on its own, `on` against upstream-status, and run integrity notes).
+When the pull request judged only some tool-packs, a line names the rest: "Not re-run on this change", with main's
+results standing for them; the counts leave them out. A pull request that judged no tool-pack and touched nothing the
+conformance gates read gets no new comment unless a check fails, but its earlier comments are still collapsed as
+outdated.
 
 A rule that fails: fix the rule (the check's detail names the first difference), or move it to `candidates/` (out of
 `pack.json`, its `conformance.json` path updated).
@@ -473,9 +459,8 @@ whatever it touches, so a failing shipped rule, or a change whose queued run was
 
 The plan (`conformance/port-readiness/plan.mjs`) gives each gated tool-pack one leg, or one per shard. A pull request
 judges only the tool-packs of the packs it touches: a change under `packs/<pack>/` plans that pack's tool-packs, while
-a change to the engine, the gate code, the root package files or the workflows still plans every leg, and the
-not-gated and pending lists, which the report job checks on every run, plan none. A tool-pack left out keeps main's
-verdict. Pushes to main and the nightly judge every leg.
+a change to the engine, the gate code, the root package files or the workflows still plans every leg. A tool-pack left
+out keeps main's verdict. Pushes to main and the nightly judge every leg.
 
 ```sh
 node conformance/port-readiness/plan.mjs                                                  # every leg

@@ -1,7 +1,0 @@
-{
-  "complexity": [
-    "complexity-cyclomatic-javascript",
-    "complexity-cyclomatic-python",
-    "complexity-cyclomatic-typescript"
-  ]
-}

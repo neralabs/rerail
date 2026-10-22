@@ -10,8 +10,8 @@ import { shardName, type Shard } from "./shard.js";
  * The gate layer's own code, hashed from the working tree: part of every rule's key, except the files below, which
  * decide no cached verdict. The key covers what a cached result can depend on: run.ts's import graph, the files that
  * graph reads by path (corpus-tasks.json), and cli.ts, which chooses the run's options. Left out is what no cached
- * verdict depends on: what only the report job runs or reads (the summary, the pull request comment, the shard merge,
- * the not-gated and pending lists), the conformance gates of the rules no tool-pack judges (conformance-gates.ts, run
+ * verdict depends on: what only the report job runs or reads (the summary, the pull request comment, the shard merge),
+ * the conformance gates of the rules no tool-pack judges (conformance-gates.ts, run
  * uncached in its own job), report rendering (a leg renders report.md from a finished report), what only the
  * recorder runs (recording/diff.ts), the leg plan (plan.mjs, which picks the legs, not what they find) and the README,
  * so changing them re-judges nothing;
@@ -24,9 +24,6 @@ export const GATE_CODE = [
   ":(exclude)conformance/port-readiness/comment.ts",
   ":(exclude)conformance/port-readiness/conformance-gates.ts",
   ":(exclude)conformance/port-readiness/README.md",
-  ":(exclude)conformance/port-readiness/ungated.ts",
-  ":(exclude)conformance/port-readiness/ungated-rules.json",
-  ":(exclude)conformance/port-readiness/pending.json",
   ":(exclude)conformance/port-readiness/report.ts",
   ":(exclude)conformance/port-readiness/merge.ts",
   ":(exclude)conformance/port-readiness/recording/diff.ts",

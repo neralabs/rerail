@@ -45,17 +45,13 @@ export const ROOTS = Object.freeze([
 ]);
 
 /**
- * What no leg reads and the report job reads whatever the plan: the not-gated and pending lists and their checks run on
- * the tree in every report job, the recording diff only in the recorder, and the conformance gates of the rules no
- * tool-pack judges in their own job on every run. A change to one plans no leg. The shard merge,
+ * What no leg reads: the recording diff runs only in the recorder, and the conformance gates of the rules no tool-pack
+ * judges in their own job on every run. A change to one plans no leg. The shard merge,
  * the summary and the comment move no leg's verdict either, but a change to them should run on real reports, so it
  * plans every leg; each replays main's results, since they are out of the key.
  */
 export const REPORT_ONLY = Object.freeze([
   "conformance/port-readiness/README.md",
-  "conformance/port-readiness/ungated.ts",
-  "conformance/port-readiness/ungated-rules.json",
-  "conformance/port-readiness/pending.json",
   "conformance/port-readiness/recording/diff.ts",
   "conformance/port-readiness/conformance-gates.ts",
 ]);

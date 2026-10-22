@@ -10,7 +10,7 @@
  * the rule; it does not apply to a rule it does not map (complexity has no conformance.json at all). The run is cheap,
  * so nothing is cached.
  */
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 import { compactGate, type SizeMetrics } from "./checks/compact.js";
@@ -20,13 +20,26 @@ import { DEFAULT_CACHE_ROOT } from "./corpus.js";
 import { loadEngine, type Engine, type EngineIdentity } from "./engine.js";
 import { conformanceEntries, gatedToolPacks, packDocuments, readRule, type GateReport, type Location } from "./run.js";
 import { CONFORMANCE_GATES, type Check, type ConformanceGateId } from "./types.js";
-import { packStates } from "./ungated.js";
 
 export const CONFORMANCE_REPORT_FORMAT = "rerail.conformance-gates/v1" as const;
 /** The report's file name beside the tool-pack reports; readReports never takes it for one (`<pack>--<tool>.json`). */
 export const CONFORMANCE_REPORT_FILE = "conformance-gates.json";
 
 const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+/** Every pack under `root` (a directory with a pack.json), sorted, with the upstream tools its conformance.json names. */
+function packsOf(root: string): { pack: string; tools: string[] }[] {
+  const packs = join(root, "packs");
+  return readdirSync(packs, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && existsSync(join(packs, entry.name, "pack.json")))
+    .map((entry) => entry.name)
+    .sort(byText)
+    .map((pack) => {
+      const manifest = join(packs, pack, "conformance.json");
+      const tools = existsSync(manifest) ? ((JSON.parse(readFileSync(manifest, "utf8")) as { tools?: { name: string }[] }).tools ?? []).map((tool) => tool.name) : [];
+      return { pack, tools };
+    });
+}
 
 export interface ConformanceRuleReport {
   id: string;
@@ -93,7 +106,7 @@ export async function runConformanceGates(root: string, options: { cacheRoot?: s
   const packs: ConformanceReport["packs"] = [];
   const rules: ConformanceRuleReport[] = [];
   try {
-    for (const { pack, tools } of packStates(root)) {
+    for (const { pack, tools } of packsOf(root)) {
       const entries = new Map(conformanceEntries(root, pack).map((entry) => [entry.path, entry]));
       const documents = packDocuments(root, pack);
       const mine = documents.filter((document) => {

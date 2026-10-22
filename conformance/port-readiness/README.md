@@ -8,11 +8,12 @@ conformance check, and a superset of the check: its verdict is the `passes-confo
 a failing one fails CI. Documents under `packs/<pack>/candidates/**` (except `candidates/probes/**`) go through the same
 gates and are only reported.
 
-Each gate has a section (`GATES` in types.ts). The conformance gates hold for every rule document of every pack: a
-tool-pack's run judges its own rules on them, and `conformance-gates.ts` (`npm run port-readiness -- conformance`, its
-own CI job) judges every rule no gated tool-pack does, with no recording and no cache. The port gates judge a port
-against its upstream, so only a gated tool-pack's rules meet them. The gates run in `GATES` order, the conformance gates
-first:
+Each gate has a stage (`section` in types.ts `GATES`). Conformance checks every rule document of every pack: a
+tool-pack's run judges its own rules on it, and `conformance-gates.ts` (`npm run port-readiness -- conformance`, its
+own CI job) judges every rule no gated tool-pack does, with no recording and no cache. Port readiness checks ports (the
+rules of a pack with a conformance.json, each mapped to the upstream rule it comes from), once they pass conformance:
+that each is true to that rule. A rule that is not a port (complexity's) is done after conformance. The gates run in
+`GATES` order, conformance first:
 
 | V1 gate | Gate id | Section | Blocking |
 | --- | --- | --- | --- |
@@ -25,11 +26,11 @@ first:
 | 6 | none: real code runs in NRV only; `matches-upstream-tests` judges the goldens imported from it | — | — |
 
 A rule's verdict is the first blocking gate it fails. The summary (summary.ts) holds one verdict per rule document, the
-first step of its funnel (`STEPS`) the rule fails, and every count it and the pull request comment (comment.ts) show
-comes from those verdicts, so each rule is counted once. The funnel is the conformance gates, then, for a gated
-tool-pack's rules, the port steps: the tool-pack checks, `loads`'s `in-scope` check (it compares a rule with the files
-upstream lints, so it judges the port), `not-overfit` and `matches-upstream-tests`. A document of a pack with a gated
-tool-pack that no conformance.json entry maps stops at `mapping`, after the conformance gates. `matches-upstream-tests` includes `engine-reads-goldens`: a golden
+first step of `STEPS` the rule fails, and every count it and the pull request comment (comment.ts) show comes from
+those verdicts, so each rule is counted once. The steps are the conformance gates, then, for a port: `mapping` (a
+conformance.json entry maps it), `set-up` (its tool has a gates.yaml; a shipped port of a tool without one fails), the
+tool-pack checks, `loads`'s `in-scope` check (it compares a rule with the files upstream lints, so it judges the port),
+`not-overfit` and `matches-upstream-tests`. `matches-upstream-tests` includes `engine-reads-goldens`: a golden
 that differs where the engine reported `source-partial`, `source-incomplete` or `budget-exceeded` fails the rule; the
 fix belongs in the engine (NER-1764). It also includes `no-real-code-gap`: a rule `gates.yaml` lists under
 `real_code_gaps` fails. The goldens and real-code gaps are reviewed data, imported from NRV's goldens or, where NRV pins no tool, found by
@@ -78,8 +79,8 @@ npm run port-readiness -- --refresh-cache                # judge every rule agai
 npm run port-readiness -- --pack javascript --tool eslint --shard 2/4   # one shard: rules with sha256(id) mod 4 = 1
 npm run port-readiness -- conformance                     # the conformance gates on every rule no tool-pack judges
 npm run port-readiness -- merge .rerail/reports/port-readiness    # join each tool-pack's shard-<i>of<n>/ reports (shard.ts, merge.ts)
-npm run port-readiness -- summary .rerail/reports/port-readiness --base <sha>
-npm run port-readiness -- summary .rerail/reports/port-readiness --planned '["python/ruff"]'   # the others: not judged
+npm run port-readiness -- summary .rerail/reports/port-readiness
+npm run port-readiness -- summary .rerail/reports/port-readiness --planned '["python/ruff"]'   # the others: not re-run
 node conformance/port-readiness/plan.mjs [--diff <from> <to>]   # CI's legs: every one, or the ones a diff selects
 ```
 
@@ -125,21 +126,8 @@ duplicate id) fails it.
 Offline, `not-overfit` runs regexes over the committed case sources only, not every upstream test file; test words stay
 complete. The report's method text says so.
 
-## Packs that are not gated
+## Ports that port readiness cannot run on yet
 
-`pending.json` lists the ESLint-family tool-packs not gated yet. It is empty now that every one is recorded; a
-tool-pack listed there is still validated in nera-rule-validation until its recordings land, is reported as pending
-and is not frozen.
-
-`ungated-rules.json` freezes the shipped rules of every pack that has no gated or pending tool-pack (complexity): the
-port gates cannot judge them. The conformance gates still do (`conformance-gates.ts`).
-It was derived once, on branch `ggiangi/ner-1699-rule-gates-in-ci` from main `d81f2749`, as the sorted `rules[].id` of
-each of those packs' `pack.json`; php and blade left it when main moved all their rules to `candidates/`, node when its
-22 rules moved there too (NER-1897), and sql, rust and vue shipped none before their tool-packs were gated. Gating is
-decided per (pack, tool), by each shipped rule's
-`conformance.json` entry: a rule of a tool with a `gates.yaml` is judged, a rule of a pending tool is pending, and any
-other shipped rule, in a gated pack too, must be on the frozen list. A shipped rule that must be and is not listed fails
-("keep it in candidates/ until the tool has a gates.yaml"); a listed rule no longer shipped, or whose tool is gated or
-pending now, fails ("remove it from the list"). With
-`--base <sha>`, both files may only shrink against the base commit's (a base without the file skips the guard; a base
-that cannot be fetched or read fails closed).
+A port of a tool with no gates.yaml (node's eslint-plugin-n) meets conformance only and stops at `set-up`: a candidate
+is reported, and a shipped one fails ("keep it in candidates/ until the tool has a gates.yaml"). There is no list of
+exempt rules: a rule ships when it passes every gate it must.
