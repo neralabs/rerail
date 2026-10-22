@@ -26,7 +26,7 @@ report shows every failure, not only the first.
 
 | Gate | What it checks | Blocks |
 | --- | --- | --- |
-| `loads` | The document is written for the current rule contract (`rerail.policy/v1`, one `mode`, no severity), passes the duplicate-key check, the policy schema and the engine compile (as written and as stable JSON), loads through the bundled-rule loader, has no `llm` clause, and its scope covers every file type upstream lints, or the ones the tool-pack's `gates.yaml` narrows it to (`rerail.in_scope`: typescript-eslint's ports cover TypeScript files only, since JavaScript files are the javascript pack's). | yes |
+| `loads` | The document is written for the current rule contract (`rerail.policy/v1`, one `mode`, no severity), passes the duplicate-key check, the policy schema and the engine compile (as written and as stable JSON), loads through the bundled-rule loader, has no `llm` clause, and its scope covers every file type upstream lints, or the ones the tool-pack's `gates.yaml` narrows it to (`rerail.in_scope`: typescript-eslint's ports cover TypeScript files only, since JavaScript files are the javascript pack's, and eslint-plugin-vue's cover `.vue` files only). The narrowing holds for the other gates too: `matches-upstream-tests` does not score an upstream test case of a type `in_scope` leaves out (eslint-plugin-vue's `.js` cases), reports it as not scored, "outside the tool-pack's rerail.in_scope (.js)", counts it in the identical-results detail and lists it under the rule's `outOfScope`, and `fires` and `stays-silent` must be met by in-scope cases alone. | yes |
 | `not-overfit` | No word the rule hardcodes (patterns, fixes, regexes, names, static values) appears in upstream's tests unless upstream's own code explains it (the rule's implementation, its imports and helpers, the names upstream's regexes match) or it is a language keyword. Catches ports that pass upstream's tests by naming their fixtures. The regexes are not run over stress tests of upstream's own engine (a test text over 20,000 characters with fewer than one identifier per 1,000, such as ESLint's 1,000,000-backslash strings), which Rerail does not run. | yes |
 | `compact` | A document over 15 KiB is inspected: it fails when a third or more of its clauses is the same structure written out over and over, or one node kind nests three or more times along one path. Catches rules that list cases instead of expressing the logic. | yes |
 | `matches-upstream-tests` | Upstream, configured as upstream recommends, is the expected answer on its own tests for the rule. The rule must report the same findings at the same start and end positions, in both directions (`identical-results`), leaving out only an end part upstream does not report on every finding of the rule (when any finding of an ESLint rule on its own tests has no end, the rule is compared on starts alone; the report lists every rule compared without an end); reproduce at least one upstream finding (`fires`); agree on at least one case where upstream reports nothing, in its tests or its goldens (`stays-silent`); agree with upstream on every golden (`identical-on-goldens`, `engine-reads-goldens`); and not be listed as a real-code gap (`no-real-code-gap`). See "Goldens" below. | yes |
@@ -48,15 +48,25 @@ Each check's detail says why it failed, in a sentence: the first differing upstr
 `not-overfit` found, the size metrics.
 
 From V1's numbers: Gate 1 is `upstream-status`, 2 `loads`, 3 `not-overfit`, 4 `compact`, 5 `matches-upstream-tests`.
-Gate 6, real code, runs in NRV only; rerail judges the goldens it found, in `matches-upstream-tests`.
+Gate 6, real code, does not run in rerail's CI; rerail judges the goldens a real-code run found, in `matches-upstream-tests`.
 
 ### Goldens
 
 A golden is a real-code file a rule must agree with upstream on. `packs/<id>/upstream/<tool>/goldens.tsv` lists each
 by rule, task or corpus, path and the file's sha256; its expected answer is upstream's findings on that file in
-`corpus.json`. Rerail does not run the rules over the corpus to find goldens, and never writes `goldens.tsv`. Finding
-them is V1's Gate 6, which stays in nera-rule-validation (NRV): NRV writes every file where a rule and upstream differ
-to its `validation/goldens/<pack>.tsv`, and a tool-pack's `goldens.tsv` is a reviewed list imported from there.
+`corpus.json`. Rerail's CI does not run the rules over the corpus to find goldens, and the gates never write
+`goldens.tsv`. Finding them is V1's Gate 6, and each `goldens.tsv` names the run that found its goldens on its second
+line (`# Source: ...`, which the gates require):
+
+- **NRV's Gate 6** for the tool-packs nera-rule-validation pins (python, javascript, react, typescript, next): NRV writes
+  every file where a rule and upstream differ to its `validation/goldens/<pack>.tsv`, and the tool-pack's `goldens.tsv`
+  is a reviewed list imported from there.
+- **Rerail's own Gate 6** for sql, rust and vue, which NRV pins no tool of: #141 ran #85's `matches-real-code` (at
+  `f7d18209`, before #85 moved Gate 6 to NRV) over each pack's pinned corpora and the SWE tasks' solutions, with
+  `--write`. Nothing finds new real-code disagreements for these three until real-code discovery runs again: in rerail,
+  as a nightly job, is the follow-up the expected-answers plan lists.
+
+For the NRV-imported tool-packs:
 
 - **Every rule's goldens are imported, candidates' too,** filed under NRV's id for the rule (the document id at NRV's
   pinned rerail commit, or `<tool>:<upstream rule>`) and mapped to the rerail document by its upstream rule. A
@@ -99,11 +109,12 @@ A **tool-pack** is one upstream tool in one pack, such as `python/ruff`. It is g
 - **Gated:** `python/ruff`, `python/bandit`, `javascript/eslint`, `javascript/eslint-plugin-unicorn`,
   `react/eslint-plugin-react`, `react/eslint-plugin-react-hooks`, `typescript/typescript-eslint`,
   `typescript/eslint-plugin-vitest`, `next/eslint-plugin-next`, `php/phpcs`, `php/phpstan`, `php/psalm`,
-  `blade/bladestan`, `blade/tlint`, `blade/blade-parser`. The slowest run in shards: `SHARDS` in
-  `conformance/port-readiness/plan.mjs` says which and how many (see "Sharding" below).
+  `blade/bladestan`, `blade/tlint`, `blade/blade-parser`, `sql/sqlfluff`, `rust/clippy` and `vue/eslint-plugin-vue`.
+  The slowest run in shards: `SHARDS` in `conformance/port-readiness/plan.mjs` says which and how many (see
+  "Sharding" below).
 - **Pending:** none. A tool-pack listed in `conformance/port-readiness/pending.json` is still validated in
   nera-rule-validation until its recording lands, and the gates report it as pending without blocking.
-- **Not gated:** packs with no upstream adapter (complexity ships rules; node, sql and vue ship only
+- **Not gated:** packs with no upstream adapter (complexity ships rules; node ships only
   candidates, which run nowhere yet). Their current shipped rules are frozen in
   `conformance/port-readiness/ungated-rules.json`. A new shipped rule in such a pack fails: keep it in `candidates/` until the
   pack has an adapter. This is decided per tool, not per pack: in a gated pack, a shipped rule whose upstream tool has no
@@ -149,16 +160,16 @@ scripts, and `build:native`. Any other script, field or locked package is out, s
 
 That part of the engine is its shared code plus the files of the rule's own **language family** (`languages/*.json`'s
 `family`: `ecma` for JavaScript and TypeScript, `python` for Python, `rust` for Rust, `php` for PHP, `blade` for
-Blade). `conformance/port-readiness/engine.ts`
-lists each family's files explicitly: its vendored grammars and registry entries, the scope and value modules named for
-it, its builtin tables, and the suppression readers only it honours. Rust is listed though no Rust tool-pack is gated,
-so that its files leave the key of every ecma and python rule. A family whose files embed another language's program
-keys on that family too (the registry's `embeds`): a Blade template's semantics are the PHP of its compiled view, so a
-Blade rule keys on Blade's files and PHP's, while a PHP rule never reaches Blade's parser and keys on PHP's alone.
-Everything else is shared and so part of every rule's
-key: `matcher/`, `compile/`, `workspace/` and `language/adapter/` (apart from three Rust files: the adapter
-`language/adapter/rust.rs`, and `matcher/arguments/rust.rs` and `matcher/format_args/rust.rs`, which only that adapter
-and style `rust` call), the lockfile, the host's TypeScript engine, and any engine file nobody listed. That last one is the direction the list fails in: a
+Blade, `sql` for SQL). `conformance/port-readiness/engine.ts` lists each gated family's files explicitly: its vendored
+grammars and registry entries, the scope and value modules named for it, its builtin tables, and the suppression
+readers only it honours. A family whose files embed another language's program keys on that family too (the
+registry's `embeds`): a Blade template's semantics are the PHP of its compiled view, so a Blade rule keys on Blade's
+files and PHP's, while a PHP rule never reaches Blade's parser and keys on PHP's alone. Vue has no list, so a Vue rule
+keys on the whole engine. Everything else is shared and so part of every rule's key: `matcher/`, `compile/`,
+`workspace/` and `language/adapter/` (apart from five files: Rust's adapter `language/adapter/rust.rs`, and
+`matcher/arguments/rust.rs` and `matcher/format_args/rust.rs`, which only that adapter and style `rust` call; SQL's
+adapter `language/adapter/sql.rs` and `matcher/arguments_sql.rs`, the call binding only it reads), the lockfile, the
+host's TypeScript engine, and any engine file nobody listed. That last one is the direction the list fails in: a
 missing entry costs one cold re-judge of everything, never a stale verdict. A rule whose document names no language, or
 one the language registry does not know, keys on the whole engine for the same reason.
 
@@ -219,7 +230,7 @@ pinned test files:
 packs/<id>/upstream/<tool>/
 ├── gates.yaml          upstream pins, recommended configurations, known parser gaps, real-code gaps, and the team's decisions for the tool
 ├── recording.lock      the manifest: which recording this commit's rules are judged against (conformance/port-readiness/recording/store.ts)
-├── goldens.tsv         the rules' goldens, imported from NRV
+├── goldens.tsv         the rules' goldens, and on its second line the real-code run that found them
 └── fixtures/           upstream's test files, copied (listed in licenses/<project>/UPSTREAM.md)
 ```
 
@@ -312,6 +323,11 @@ conformance/recorders/port-readiness/runtimes/php/build.sh "$PWD/.rerail/php/8.5
 PATH="$PWD/.rerail/php/8.5.11/bin:$PATH" npm run port-readiness:record -- --pack php --tool phpcs
 ```
 
+`rust/clippy`'s corpus answers depend on the host: Clippy lints only the code rustc compiles, and a `#[cfg(target_os =
+"linux")]` item is compiled on Linux alone. Its recordings are CI's, recorded on `x86_64-unknown-linux-gnu`; recorded on
+macOS, `corpus.json` lacks the findings in Linux-only code (tokio's `examples/prewarm-fd-table.rs`), so record it on
+Linux or take the lock CI's leg writes (its report artifact holds the recording).
+
 Locally that is all: the lock names what was just recorded and the gates read it out of the cache, so iterating on a
 port needs no release and no network. In CI, a gate leg records a tool-pack whose recording the release does not hold
 (above), and `port-readiness-record.yml` is the only workflow that uploads, so later runs fetch instead of recording.
@@ -401,8 +417,12 @@ case source or text comes from an upstream path a pack's `licenses/<project>/UPS
 recording that would hold such a file's text inline.
 
 Independent parsers (two TypeScript versions and Babel for the ESLint family; CPython and libcst for Python; `php -l` on
-the pinned PHP and nikic/php-parser for PHP) read every
-case source and every corpus file, so a file the engine cannot parse can be told from a file that is not valid source.
+the pinned PHP and nikic/php-parser for PHP; libpg_query for SQL; the pinned rustc for Rust) read every case source and
+every corpus file, so a file the engine cannot parse can be told from a file that is not valid source. A `.sql` file is
+a psql script, so libpg_query reads the SQL psql would send for it: psql's meta-commands (`\echo`, `\gset`, `\if`, ...)
+and the rows of `COPY ... FROM STDIN` become whitespace, a meta-command that sends the query buffer becomes `;`, and a
+variable psql has defined becomes a stand-in of the same length (`sqlfluff_driver.py`'s `psql_sent_sql`), so the error
+positions are the file's.
 Nine of ten corpus files are source every parser accepts, and writing the same silent verdict list on each of them was
 most of both recordings, so a recording names its parsers once in `parsers` and leaves `verdicts` off an entry no
 parser objected to. The entry itself stays, with its path and its sha256: an entry with no `verdicts` means every

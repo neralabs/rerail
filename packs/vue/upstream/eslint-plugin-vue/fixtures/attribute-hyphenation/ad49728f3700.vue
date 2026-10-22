@@ -1,0 +1,1 @@
+<template><div><custom :my-custom_prop="prop"></custom></div></template>

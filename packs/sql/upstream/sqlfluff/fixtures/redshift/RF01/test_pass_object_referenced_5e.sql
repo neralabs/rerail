@@ -1,0 +1,1 @@
+SELECT col1.field, col2 FROM example_table

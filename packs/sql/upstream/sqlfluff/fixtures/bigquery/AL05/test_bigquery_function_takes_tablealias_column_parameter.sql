@@ -1,0 +1,2 @@
+SELECT TO_JSON_STRING(t.c)
+FROM my_table AS t

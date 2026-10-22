@@ -1630,6 +1630,18 @@
   {
    "rule": "precedence_bits",
    "path": "rerail/precedence_bits.rs",
+   "line": 40,
+   "column": 13
+  },
+  {
+   "rule": "precedence_bits",
+   "path": "rerail/precedence_bits.rs",
+   "line": 43,
+   "column": 13
+  },
+  {
+   "rule": "precedence_bits",
+   "path": "rerail/precedence_bits.rs",
    "line": 43,
    "column": 13
   },

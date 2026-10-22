@@ -1,10 +1,16 @@
 # Rerail rule pack: Vue
 
-Ports of 24 eslint-plugin-vue 10.11.1 rules for Vue single-file components, with their default options. All 24 are
-candidates under `candidates/rules/`: they have not passed the V1 rule validation gates
-([nera-rule-validation](https://github.com/neralabs/nera-rule-validation)), so `pack.json` lists no rules, the pack
-ships none and is never recommended, and a candidate is scored and reported but never gates a check. A port moves to
-`rules/` and `pack.json` once it passes the gates. Each
+Ports of 24 eslint-plugin-vue 10.11.1 rules for Vue single-file components, with their default options. 19 ship, each
+passing every blocking port readiness gate ([docs/port-readiness.md](../../docs/port-readiness.md)), judged against
+`upstream/eslint-plugin-vue/gates.yaml`'s recording of eslint-plugin-vue's own RuleTester cases and of the pinned
+corpora: 18 on, as `flat/recommended` turns them on, and `no-setup-props-reactivity-loss` off until turned on (no
+recommended configuration of eslint-plugin-vue turns it on). The ports cover `.vue` files only (`rerail.in_scope`), so
+each upstream case it lints as a bare script is recorded as the component that holds it, wrapped in `<script>` as
+`generate.mjs` writes its fixtures, and scored on upstream's answer there. The other 5 are candidates under `candidates/rules/`,
+scored and reported but never gating a check, until they pass the gates: 3 stop at `matches-upstream-tests` on cases
+no single-file, type-free read can answer as upstream does (a prop type imported from another file, a switch the
+TypeScript checker finds exhaustive, a type the checker infers, a TypeScript `<script setup>` without `lang`), 1 at
+`compact` (`no-dupe-v-else-if`) and 1 at `not-overfit` (`no-unused-refs`). Each
 reads the component's two documents: its tree-sitter-vue tree, and the ECMAScript program its scripts and template
 expressions make (the `script-block` program a clause reads with `ast.embedded`, or reaches from a template node with
 `embedded`; `host` leads back from a program node to the template node it stands for). Each port
@@ -20,17 +26,19 @@ It is checked by:
 ```sh
 node --import tsx conformance/languages/cli.ts --pack vue
 npx vitest run test/engine/catalog/packs.test.ts -t "pack vue"
+npm run port-readiness -- --pack vue --tool eslint-plugin-vue
 ```
 
 ([pack structure and validation contract](../../docs/pack-format.md)).
 
 | Path | What |
 |---|---|
-| `pack.json` | The pack (`rerail.rule-pack/v1`): its match definition, and no rules until a port passes |
-| `candidates/rules/` | The 24 candidate code-rule documents (`rerail.policy/v1`), scored but never shipped |
+| `pack.json` | The pack (`rerail.rule-pack/v1`): its match definition and its 19 shipped rules, 18 on and 1 off |
+| `rules/` | The 19 shipped code-rule documents (`rerail.policy/v1`) |
+| `candidates/rules/` | The 5 candidate code-rule documents (`rerail.policy/v1`), scored but never shipped |
 | `conformance.json` | Each port's upstream rule, how findings compare, and the capabilities it exercises; the pinned parser stack and the pinned corpora |
 | `divergences.json` | Declared disagreements with eslint-plugin-vue (none) |
-| `upstream/eslint-plugin-vue/` | The copied RuleTester cases (`fixtures/`), the cases Rerail wrote (`authored.mjs`, written as `fixtures/<rule>/rerail-*.vue` and listed in `UPSTREAM.md`), each case's fate (`cases.json`) and the recordings (`fixtures.expected.json`, `corpus-<name>.expected.json`) |
+| `upstream/eslint-plugin-vue/` | The copied RuleTester cases (`fixtures/`: `generate.mjs`'s `<valid\|invalid>-<n>.vue`, and the port readiness recorder's `<sha256 prefix>.<ext>`), the cases Rerail wrote (`authored.mjs`, written as `fixtures/<rule>/rerail-*.vue` and listed in `UPSTREAM.md`), each case's fate (`cases.json`), the conformance recordings (`fixtures.expected.json`, `corpus-<name>.expected.json`), and the port readiness manifest, lock and goldens (`gates.yaml`, `recording.lock`, `goldens.tsv`) |
 | `licenses/eslint-plugin-vue/` | eslint-plugin-vue's licence and `UPSTREAM.md`, listing every copied file |
 
 ## Rule details
@@ -47,7 +55,7 @@ Ports eslint-plugin-vue 10.11.1 `vue/no-async-in-computed-properties` (default o
 
 ### `eslint-plugin-vue-no-child-content`
 
-Ports eslint-plugin-vue 10.11.1 `vue/no-child-content` with default options (directives html and text, one clause each): a paired (non self-closing) element whose start tag has `v-html`/`v-text` and whose children (between start and end tag) hold anything but whitespace-only text (text, interpolation, element, comment; the scanner keeps character references in the text, and one that decodes to a character `String.prototype.trim` strips, such as `&#32;` or `&nbsp;`, is whitespace as it is to the plugin). Reported where the child content starts: the end of the start tag.
+Ports eslint-plugin-vue 10.11.1 `vue/no-child-content` with default options (directives html and text, one clause each): a paired (non self-closing) element whose start tag has `v-html`/`v-text` and whose children (between start and end tag) hold anything but whitespace-only text (text, interpolation, element, comment; the scanner keeps character references in the text, and one that decodes to a character `String.prototype.trim` strips, such as `&#32;` or `&nbsp;`, is whitespace as it is to the plugin). Reported at the child content, from the end of the start tag to the start of the end tag, as upstream reports getLocationRange of the element's children and comments (the start tag's own `>` found as HTML tokenizes it, past quoted attribute values).
 
 ### `eslint-plugin-vue-no-deprecated-v-on-native-modifier`
 
@@ -67,7 +75,7 @@ Ports eslint-plugin-vue 10.11.1 `vue/no-duplicate-attributes` with default optio
 
 ### `eslint-plugin-vue-no-export-in-script-setup`
 
-Ports eslint-plugin-vue 10.11.1 vue/no-export-in-script-setup (default options): every export_statement of the <script setup> block (a top-level statement of the script-block program whose nearest earlier script marker, the empty statement written before each script, has the setup block's start tag as its host) is reported at the statement's start, except type exports (`export type {..}`, `export type`/`interface` declarations, and `export { type A }` lists whose every specifier is type-only). Reads only syntax and the script markers' host start tags.
+Ports eslint-plugin-vue 10.11.1 vue/no-export-in-script-setup (default options): every export_statement of the <script setup> block (a top-level statement of the script-block program whose nearest earlier script marker, the empty statement written before each script, has the setup block's start tag as its host), except type exports (`export type {..}`, `export type`/`interface` declarations, and `export { type A }` lists whose every specifier is type-only). A named export with a declaration (`export const a`, `export function f`) is reported at its first token, `export`, as upstream reports an ExportNamedDeclaration with a `declaration` at `getFirstToken(node).loc`; every other export (`export { a }`, `export * from`, `export default ...`) at the whole statement, as upstream reports at `node.loc`. Reads only syntax and the script markers' host start tags.
 
 ### `eslint-plugin-vue-no-mutating-props`
 
@@ -95,7 +103,7 @@ Ports eslint-plugin-vue 10.11.1 vue/no-unused-refs (no options): a static templa
 
 ### `eslint-plugin-vue-no-unused-vars`
 
-Ports eslint-plugin-vue 10.11.1 `vue/no-unused-vars` with default options (no ignorePattern): a template variable that nothing reads: a v-for alias or a slot parameter (`v-slot`, `#name`, Vue 2 `slot-scope`/`scope`). Reads the script-block program (`ast.embedded`): the parameters of the arrow that stands for a v-for (`expression_statement > sequence_expression > arrow_function`) or a slot (`expression_statement > arrow_function`) inside the template block, resolved by the engine's per-binding occurrences (a reference that is neither the definition nor the bare `Tag;` read the view writes for a component tag, which vue-eslint-parser does not make a reference). A variable that is unreferenced is still exempt when a descendant element's raw tag name is the variable's (upstream's isUsedAsComponentTag: through `host`, the start tag of any element below the one whose `v-for` or slot directive declares the variable, a native tag included, compared by its tag name; a dotted tag's raw name is never an identifier). Parameters before a referenced one in the same arrow are exempt (after-used) unless destructured (an object-pattern property or an array-pattern element; a rest element of an object pattern is not). A v-for alias that a v-if/v-else-if condition of the same element reads (the v-for statement's host element holds that directive) is used (upstream resolves that condition in the element's scope; Vue 3 compiles it outside the v-for). Reported at the parameter identifier.
+Ports eslint-plugin-vue 10.11.1 `vue/no-unused-vars` with default options (no ignorePattern): a template variable that nothing reads: a v-for alias or a slot parameter (`v-slot`, `#name`, Vue 2 `slot-scope`/`scope`). Reads the script-block program (`ast.embedded`): the parameters of the arrow that stands for a v-for (`expression_statement > sequence_expression > arrow_function`) or a slot (`expression_statement > arrow_function`) inside the template block, resolved by the engine's per-binding occurrences (a reference that is neither the definition nor the bare `Tag;` read the view writes for a component tag, which vue-eslint-parser does not make a reference). A Vue 2 filter's name is no reference either: vue-eslint-parser 10.4.1 splits an interpolation's or a `v-bind`'s expression at its top-level `|` into the expression and its filters (`{{ value | x }}`, `:a="v | f(y)"`) and references a filter's arguments, not its name (filter-callee: the right operand, or the callee of a call that is the right operand, of a chain of `|` that is the whole parenthesized statement whose host is an interpolation or a `v-bind`). A variable that is unreferenced is still exempt when a descendant element's raw tag name is the variable's (upstream's isUsedAsComponentTag: through `host`, the start tag of any element below the one whose `v-for` or slot directive declares the variable, a native tag included, compared by its tag name; a dotted tag's raw name is never an identifier). Parameters before a referenced one in the same arrow are exempt (after-used) unless destructured (an object-pattern property or an array-pattern element; a rest element of an object pattern is not). A v-for alias that a v-if/v-else-if condition of the same element reads (the v-for statement's host element holds that directive) is used (upstream resolves that condition in the element's scope; Vue 3 compiles it outside the v-for). Reported at the parameter identifier.
 
 ### `eslint-plugin-vue-no-use-v-if-with-v-for`
 
@@ -131,4 +139,4 @@ Ports eslint-plugin-vue 10.11.1 `vue/v-on-event-hyphenation` with default option
 
 ### `eslint-plugin-vue-valid-v-for`
 
-Ports eslint-plugin-vue 10.11.1 `vue/valid-v-for` with default options (allowEmptyAlias: false). Syntax checks on every `v-for` attribute inside the template (the SFC's root `<template>` itself is never visited): an argument or modifiers (reported at the first one, after its dot), a missing or empty value, and the alias list of `(value, key, index) in source` read from the attribute text like vue-eslint-parser's `for (let [aliases] in source)` parse: an empty value, key or index position (reported at the start of the value) and a key or index that is not a plain identifier (a pattern, default or rest; reported at it). Key checks, per checkKey from each `v-for` (own element, or through keyless `<template>` children whose own `v-for` source does not read a name the outer `v-for` declares): a custom component (the `custom-tag` family shared with `no-v-text-v-html-on-component`) without a key is reported at its start tag, and a `v-bind:key` that reads none of the `v-for`'s alias names at the key directive. The name comparisons reach the script-block program through `embedded` from the inner `v-for` or the key directive: a read there is compared with a parameter of the v-for arrow `(SRC), (ALIAS) => { <element> }` whose host is the owning element's `v-for` directive (`host`, node identity with the owner); names compare as text, as upstream compares `references` to `variables` by name. Unreachable upstream: `unexpectedExpression` (vue-eslint-parser yields no expression for a value it cannot parse as `<alias> in <expression>`).
+Ports eslint-plugin-vue 10.11.1 `vue/valid-v-for` with default options (allowEmptyAlias: false). Syntax checks on every `v-for` attribute inside the template (the SFC's root `<template>` itself is never visited): an argument (reported at it), modifiers (reported from the first modifier's name to the last one's end, as upstream's loc), a missing or empty value (reported at the directive), and the alias list of `(value, key, index) in source` read from the attribute text like vue-eslint-parser's `for (let [aliases] in source)` parse: an empty value, key or index position (reported at the VForExpression: the value's text from the alias list's `(` to the end of the source, blanks and quotes left out) and a key or index that is not a plain identifier (a pattern, default or rest; reported at it). Key checks, per checkKey from each `v-for` (own element, or through keyless `<template>` children whose own `v-for` source does not read a name the outer `v-for` declares): a custom component (the `custom-tag` family shared with `no-v-text-v-html-on-component`) without a key is reported at its start tag, and a `v-bind:key` that reads none of the `v-for`'s alias names at the key directive. The name comparisons reach the script-block program through `embedded` from the inner `v-for` or the key directive: a read there is compared with a parameter of the v-for arrow `(SRC), (ALIAS) => { <element> }` whose host is the owning element's `v-for` directive (`host`, node identity with the owner); names compare as text, as upstream compares `references` to `variables` by name. Unreachable upstream: `unexpectedExpression` (vue-eslint-parser yields no expression for a value it cannot parse as `<alias> in <expression>`).
