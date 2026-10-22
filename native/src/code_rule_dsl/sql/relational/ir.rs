@@ -37,6 +37,12 @@ pub(super) enum Set {
     /// Strict descendants of roots. The emitter collapses nested root intervals.
     Within(RelationId),
     /// Inverse of capture-free `has`: ancestors of matching descendants, with inclusive stops.
+    /// Ancestor keys plus a retained (file, origin, ancestor, distance) search relation.
+    SearchRoots {
+        origins: RelationId,
+        filter: RelationId,
+        stop: Option<RelationId>,
+    },
     Ancestors {
         seeds: RelationId,
         stop: Option<RelationId>,
@@ -67,6 +73,14 @@ pub(super) struct Program {
 pub(super) fn references(set: &Set, out: &mut Vec<RelationId>) {
     match set {
         Set::Reference(id) | Set::Within(id) => out.push(*id),
+        Set::SearchRoots {
+            origins,
+            filter,
+            stop,
+        } => {
+            out.extend([*origins, *filter]);
+            out.extend(stop);
+        }
         Set::Ancestors { seeds, stop } => {
             out.push(*seeds);
             out.extend(stop);
@@ -92,4 +106,12 @@ pub(super) fn reachable(program: &Program) -> std::collections::BTreeSet<Relatio
         todo.extend(program.relations[id].domain);
     }
     found
+}
+
+/// An ordered binding frontier. Both choices precede every downstream predicate.
+pub(super) struct CaptureDemand {
+    pub roots: RelationId,
+    pub targets: RelationId,
+    pub leaf_stop: Option<RelationId>,
+    pub named: bool,
 }

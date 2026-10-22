@@ -35,6 +35,25 @@ pub(super) fn register(db: &Connection, batch: &Arc<Batch>) -> Result<Arc<Atomic
     let leaves = Leaves(AssertUnwindSafe(Arc::clone(batch)));
     let calls = Arc::new(AtomicUsize::new(0));
     let count = Arc::clone(&calls);
+    let keys = Leaves(AssertUnwindSafe(Arc::clone(batch)));
+    db.create_scalar_function(
+        "relation_leaf_atom",
+        3,
+        FunctionFlags::SQLITE_UTF8,
+        move |ctx| {
+            let file = ctx.get::<u32>(0)? as usize;
+            let node = ctx.get::<u32>(1)?;
+            let Some(file) = keys.0.files.get(file) else {
+                return Err(Error::ModuleError("capture demand: missing file".into()));
+            };
+            if node >= file.facts.len() || !node_at(&file.root, node).is_named_leaf() {
+                return Err(Error::ModuleError(
+                    "capture demand: composite capture requires structural equality keys".into(),
+                ));
+            }
+            ctx.get::<u32>(2)
+        },
+    )?;
     db.create_scalar_function(
         "relation_pattern",
         3,

@@ -4,16 +4,18 @@ Status: proposed implementation plan, 2026-10-22.
 Baseline: `a0051ae8`, including the complete B023 reference query.
 This document changes no production behavior.
 
-Implementation progress: target-slot compilation and structural demand now pass their corpus and scaling checks.
+Implementation progress: target-slot compilation, structural demand, and ordered capture demand now pass their corpus and scaling checks.
 The [target-slot evidence](../benchmark/sql-relational-target-slot-evidence.json) records compiler-generated SQL, EXPLAIN, source hashes, and native/current-engine parity.
 The [region-demand evidence](../benchmark/sql-relational-region-demand-evidence.json) adds ancestor closure, subtree restriction, and recursive consumer-key demand.
-Its harness supplies a capture-free demand view using B023's unchanged utilities.
-The compiler derives the regions and required keys from that view without recognizing the policy.
+That earlier harness supplies a capture-free demand view using B023's unchanged utilities.
+The new [capture-demand evidence](../benchmark/sql-relational-capture-demand-evidence.json) uses the original full `GrammarMatcher` directly.
+The compiler extracts the admitted search, preserves function identity, and selects assignment witnesses and nearest successful ancestors per value.
+All 1,029 intermediate demand rows agree with native evaluation and the handwritten reference on the frozen corpus.
 The compiler remains test-only.
-Automatic view extraction, complete B023 generation, ordered captures, and Milestone 1's full-query performance gates remain outstanding.
+Complete B023 generation, remaining capture choices, and Milestone 1's full-query performance gates remain outstanding.
 
-The next concrete step is to retain function identity through ancestor closure and derive target demand from the complete rule.
-That graph must then connect target atoms to reads, with capture unification and ordered witness selection at the original boundaries.
+The next concrete step is to lower capture-dependent parameter and store exclusions against the generated demand relation.
+Then the compiler must connect surviving function/name demand to body and load probes, preserving the final witness choice.
 The existing reference query supplies the exact two-result capture oracle on the frozen corpus.
 
 The next implementation milestone is a compiler-generated B023 query with the reference query's work bounds.

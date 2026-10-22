@@ -8,6 +8,8 @@ mod leaves;
 mod lower;
 mod physical;
 pub(super) mod tests;
+pub(super) mod witness;
+pub(super) mod witness_tests;
 
 use super::terminals::Terminal;
 use crate::code_rule_dsl::matcher::GrammarMatcher;

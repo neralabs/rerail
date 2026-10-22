@@ -9,6 +9,8 @@ fn kinds(set: &Set, program: &Program, visiting: &mut BTreeSet<usize>) -> Option
     match set {
         Set::Kinds(kinds) => Some(kinds.iter().copied().collect()),
         Set::Empty => Some(BTreeSet::new()),
+        // Projected search roots satisfy the ancestor predicate even though origins remain distinct.
+        Set::SearchRoots { filter, .. } => kinds(&Set::Reference(*filter), program, visiting),
         Set::Reference(id) if visiting.insert(*id) => {
             let result = kinds(&program.relations[*id].expression, program, visiting);
             visiting.remove(id);

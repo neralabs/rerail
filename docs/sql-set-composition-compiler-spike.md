@@ -2737,3 +2737,160 @@ The harness supplies the capture-free demand view; the compiler does not yet der
 The next step must preserve function identity, join target atoms to reads, and implement ordered capture selection.
 Native utility work and stack/depth budget semantics also remain outstanding.
 The full-rule performance gate and complete-job limit of 100 executions remain required before production cutover.
+
+## Transition phase 1: capture demand from the original rule — 2026-10-22
+
+The user requested the next phase after structural region demand.
+This phase removes the harness-supplied demand view and preserves origin and witness identity through the generated closures.
+The compiler reads the original `GrammarMatcher` and its utility graph and capture order.
+Its output is an intermediate capture-demand relation, not complete clause findings.
+
+The admitted operator sequence is an ordered ancestor search whose producer contains one descendant binding search and pure conjuncts.
+The caller must already bind the capture key.
+The discovery pass carries binding availability through conjunctions and utility calls.
+It does not move ordered alternatives or capture-bearing negative predicates across their boundaries.
+Necessary pure predicates define an origin domain that can include candidates rejected by later capture-dependent filters.
+No policy name, utility name, kind constant, or SQL template identifies this sequence.
+
+The origin closure retains `(file, origin, ancestor, distance)`.
+Its selected ancestor keys define the subtree regions that restrict the existing target producer.
+The binding closure retains `(file, atom, witness, ancestor)` and obeys the descendant search's separate inclusive stop condition.
+The first successful descendant wins per ancestor and value.
+The nearest successful ancestor then wins per origin and value.
+These reductions happen before later negative predicates or consumers can introduce backtracking.
+
+The value key and witness node remain separate columns.
+The current frontier admits leaf capture values, whose text atoms preserve native equality.
+A composite binding candidate raises an execution error instead of receiving an invalid equality key.
+Complete clause lowering must prove its caller's key contract before it can consume this intermediate relation.
+
+Implementation and validation are in progress.
+
+### Admission and oracle checks
+
+An initial semantic check exposed missing propagation through nested conjunctions.
+The analysis now computes definite bindings through conjunctions, alternatives, traversals, and utilities.
+Alternatives contribute only names bound on every successful branch.
+An unbound ordered search fails compilation.
+
+The native oracle enumerates origin nodes and candidate values from source trees independently of SQL output.
+It evaluates the original search with each bound value and compares the selected witness, ancestor, and distance.
+The corpus check also compares projected demand rows against the handwritten reference's demand relation.
+The reference still runs its complete native/current-engine/full-query parity check separately.
+
+### First profile: correctness passes, structural work gate fails
+
+The first corpus run returns 1,029 demand rows with exact native and reference parity.
+It retains 48 origin/ancestor pairs.
+These pairs select 16 loop roots and ten disjoint regions.
+The binding stage contains 361 leaf candidates and 312 ancestor/value answers.
+However, the matching statement uses 5,730,787 VM instructions and 65,428 regex requests.
+
+The unrelated-assignment scaling check fails: 32 assignments cost 5,989 instructions, while 512 assignments cost 65,509 instructions.
+The demand decision explains the cause: the new search-root relation has no inferred kind bound.
+The boundary proof therefore retains the unrestricted target-slot producer and filters its output afterward.
+
+The correction propagates the ancestor predicate's kind bound through the search-root projection.
+This permits the existing closed-boundary rewrite to restrict recursive target seeds to the selected regions.
+The scaling assertion remains unchanged.
+The initial query, EXPLAIN, counters, and oracle results are in `/tmp/rerail-capture-demand-20261022/initial-corpus.json`.
+
+The admitted producer reads only the input capture's leaf value.
+Its successful binding replaces the witness node, and its remaining predicates are capture-free.
+Thus `(file, origin, atom)` identifies its answer without retaining the caller's previous witness in intermediate joins.
+The output retains the chosen binding witness separately.
+
+### Final results and SQL shape
+
+The corrected compiler keeps exact parity on all 1,029 demand rows across 138 files.
+The native comparison includes origin, value, witness, selected ancestor, and ancestor distance.
+The independent reference comparison includes origin, value, and witness.
+The reference's complete rule still returns two findings with native/current-engine parity.
+Those two findings are not outputs of the new intermediate compiler stage.
+
+| Measurement | Initial origin-preserving query | With propagated kind bound |
+| --- | ---: | ---: |
+| VM instructions | 5,730,787 | 2,238,220 |
+| Regex requests | 65,428 | 1,148 |
+| Node advances | 205,618 | 67,386 |
+| Node filters | 186,044 | 39,045 |
+| Automatic-index entries | 70,664 | 40,330 |
+| Pattern requests | 9 | 9 |
+| Matching statements | 1 | 1 |
+| Frame publications | 0 | 0 |
+
+The final query contains 7,175 SQL bytes.
+Its instrumented prepare-and-execute sample costs 66.77 ms.
+Preparation accounts for 1.77 ms.
+These single samples do not establish a CPU speedup ratio or complete-job improvement.
+The earlier 704,585-instruction region query drops function identity and has no capture choices, so it measures a different stage.
+
+The generated CTE graph is:
+
+```text
+origin candidates -> origin/ancestor/distance closure -> selected origin/ancestor pairs
+selected ancestors -> disjoint regions -> restricted target recursion -> leaf binding candidates
+leaf candidates -> stopped binding closure -> first witness per ancestor/value
+origin/ancestor pairs + selected witnesses -> nearest successful ancestor per origin/value
+```
+
+The first closure contains 23,208 rows over 8,489 candidate functions.
+It retains 48 selected function/loop pairs, 16 distinct loops, and ten disjoint regions.
+The second closure contains 2,785 rows from 361 binding candidates.
+Its first-witness reduction produces 312 ancestor/value answers before the final 1,029 origin/value demand rows.
+The larger final relation reflects distinct functions that share a value, rather than duplicate copies of their environments.
+
+The compiler lowers these operators to typed relation references.
+The shared emitter constructs the SQL after physical planning.
+The search-root projection exposes its kind bound to the existing subtree safety proof.
+SQL contains immutable CTEs, atom keys, explicit witness columns, and ordered reductions.
+No SQL callback evaluates utility composition, and no intermediate frame is published.
+
+EXPLAIN still contains materialized origin and stop predicates, automatic covering indexes, and temporary B-trees for reductions and ordering.
+These costs remain visible in the profile.
+The next full-query profile must assess their combined cost with exclusions and read probes.
+
+### Final checks and remaining work
+
+| Scaling case | Size | Demand rows | VM instructions |
+| --- | ---: | ---: | ---: |
+| Assignments outside selected regions | 32 / 128 / 512 | 2 | 1,963 at every size |
+| Assignments inside selected regions | 32 | 34 | 19,371 |
+| Assignments inside selected regions | 128 | 130 | 71,595 |
+| Assignments inside selected regions | 512 | 514 | 280,491 |
+
+Unrelated growth adds no SQL VM work in this experiment.
+Sixteen times more demanded assignments costs about 14.5 times more VM work.
+These work counts exclude parsing and index construction.
+
+All ten compiler semantic tests pass.
+They include origin sharing, nested stops, repeated values with different witnesses, cross-file identity, unbound inputs, optional bindings, and composite-key refusal.
+The six compiler fixture and scaling tests pass.
+These tests include the previous target-slot and region stages.
+The complete-rule fixtures produce 64 demand rows, and utility/capture renaming preserves every row.
+Changing the loop kind produces 22 rows, and changing the pattern constant produces 71 rows.
+Every variant agrees with the native demand oracle.
+The three handwritten reference regression tests also pass.
+Clippy passes with only the existing `regex_creation_in_loops` warning permitted.
+Rust formatting, Python syntax, source and input hashes, and whitespace checks pass.
+
+The durable evidence is `benchmark/sql-relational-capture-demand-evidence.json`.
+It includes generated SQL, EXPLAIN, exact output rows, counters, cardinalities, scaling results, source hashes, and the initial failing physical shape.
+All 138 input hashes match the frozen reference.
+The raw final artifacts are in `/tmp/rerail-capture-demand-20261022/final`.
+
+```sh
+JEMALLOC_OVERRIDE=/tmp/librerail_jemalloc_check_shim.dylib \
+  python3 benchmark/relational-demand-spike.py \
+  /tmp/rerail-b023-relational-20261022/final/config.json /absolute/new/output
+```
+
+The driver builds the optimized test executable unless the caller supplies a matching binary with `--binary`.
+The matching counters exclude the subsequent EXPLAIN and cardinality queries.
+One matching statement here is not the complete cold-job execution count.
+
+The automatic demand-extraction and ordered binding stage is complete for the admitted operator sequence.
+This remains an intermediate test-only compiler stage, with no new production switch.
+The next stage must compile parameter/store exclusions, body discovery, and load matching from the original rule.
+It must preserve the selected assignment witness through final ordered capture selection.
+Complete B023 performance gates, native resource-budget semantics, and the complete-job limit of 100 executions remain pending.

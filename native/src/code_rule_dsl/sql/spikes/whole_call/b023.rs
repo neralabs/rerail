@@ -356,6 +356,150 @@ fn b023_compiler_target_slot_scaling() {
     }
 }
 
+#[test]
+fn b023_compiler_capture_demand_fixtures_and_mutations() {
+    let sources = [
+        "packs/python/upstream/ruff/fixtures/flake8_bugbear/B023.py",
+        "packs/python/upstream/ruff/fixtures/rerail/noqa/B023.py",
+    ]
+    .into_iter()
+    .map(|p| (p.into(), std::fs::read_to_string(root().join(p)).unwrap()))
+    .collect::<Vec<_>>();
+    let source = std::fs::read_to_string(
+        root().join("packs/python/rules/ruff-b023-function-uses-loop-variable.json"),
+    )
+    .unwrap();
+    let mut results = Vec::new();
+    for mutation in 0..4 {
+        let changed = match mutation {
+            0 => source.clone(),
+            1 => source
+                .replace("target-slot", "renamed-target")
+                .replace("loop-assigns-n", "renamed-producer")
+                .replace("unbound-in-function", "renamed-consumer")
+                .replace("$N", "$VALUE"),
+            2 => source.replace("\"for_statement\"", "\"while_statement\""),
+            3 => source.replace("functools.reduce", "other.reduce"),
+            _ => unreachable!(),
+        };
+        let p = CodeRuleDslRuntime::compile(changed, "json".into(), CAPABILITIES.into()).unwrap();
+        let result = sql::relational::witness_tests::measure(&grammar_matchers(&p)[0], &sources);
+        assert!(
+            result["profile"]["demandDecisions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|d| d.as_str().unwrap().contains("boundary is closed")),
+            "target recursion must use structural demand"
+        );
+        eprintln!(
+            "capture demand mutation {mutation}: {} rows, {} VM",
+            result["rows"], result["metrics"]["vmSteps"]
+        );
+        results.push(result["output"].clone());
+    }
+    assert_eq!(results[0], results[1]);
+    assert_ne!(results[0], results[2]);
+    assert_ne!(results[0], results[3]);
+}
+
+#[test]
+#[ignore = "set RERAIL_B023_CONFIG and RERAIL_CAPTURE_DEMAND_OUTPUT"]
+fn b023_compiler_capture_demand_corpus() {
+    let config: Value = serde_json::from_str(
+        &std::fs::read_to_string(std::env::var("RERAIL_B023_CONFIG").unwrap()).unwrap(),
+    )
+    .unwrap();
+    let sources = config["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            let p = p.as_str().unwrap();
+            (
+                p.to_owned(),
+                std::fs::read_to_string(Path::new(config["corpus"].as_str().unwrap()).join(p))
+                    .unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let p = policy();
+    let mut result = sql::relational::witness_tests::measure(&grammar_matchers(&p)[0], &sources);
+    let reference = check(&sources, None, true);
+    let projected: Vec<_> = result["output"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| json!([r[0], r[1], r[2], r[3]]))
+        .collect();
+    assert_eq!(
+        json!(projected),
+        reference["captureDemand"],
+        "generated/reference exact capture demand"
+    );
+    result["referenceDemandParity"] = json!(true);
+    result["referenceFullRuleMatches"] = reference["matches"].clone();
+    result["inputs"]=json!(sources.iter().map(|(path,source)|json!({"path":path,"sha256":format!("{:x}",Sha256::digest(source.as_bytes()))})).collect::<Vec<_>>());
+    eprintln!(
+        "capture demand corpus: {} files, {} rows, {} VM",
+        result["files"], result["rows"], result["metrics"]["vmSteps"]
+    );
+    std::fs::write(
+        std::env::var("RERAIL_CAPTURE_DEMAND_OUTPUT").unwrap(),
+        serde_json::to_string_pretty(&result).unwrap(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn b023_compiler_capture_demand_scaling() {
+    let p = policy();
+    let grammar = &grammar_matchers(&p)[0];
+    let mut records = Vec::new();
+    for outside in [true, false] {
+        for size in [32, 128, 512] {
+            let source = if outside {
+                format!(
+                    "{}for x in xs:\n    f = lambda: x\n",
+                    (0..size)
+                        .map(|i| format!("a{i} = value\n"))
+                        .collect::<String>()
+                )
+            } else {
+                format!(
+                    "for x in xs:\n{}    f = lambda: x\n",
+                    (0..size)
+                        .map(|i| format!("    a{i} = value\n"))
+                        .collect::<String>()
+                )
+            };
+            let mut result =
+                sql::relational::witness_tests::measure(grammar, &[("scale.py".into(), source)]);
+            result["size"] = json!(size);
+            result["case"] = json!(if outside {
+                "outside-region"
+            } else {
+                "inside-region"
+            });
+            for k in ["sql", "explain", "output"] {
+                result.as_object_mut().unwrap().remove(k);
+            }
+            records.push(result);
+        }
+    }
+    assert_eq!(
+        records[0]["metrics"]["vmSteps"],
+        records[2]["metrics"]["vmSteps"]
+    );
+    assert!(
+        records[5]["metrics"]["vmSteps"].as_u64().unwrap()
+            <= 17 * records[3]["metrics"]["vmSteps"].as_u64().unwrap()
+    );
+    if let Ok(path) = std::env::var("RERAIL_CAPTURE_DEMAND_SCALING") {
+        std::fs::write(path, serde_json::to_string_pretty(&records).unwrap()).unwrap();
+    }
+}
+
 fn counters(c: [u64; 14]) -> Value {
     json!({"frameAdvances":c[2],"frameColumns":c[3],"framePublications":c[4],"frameIndexedRows":c[6],
       "regexNodeRequests":c[10],"nodeAdvances":c[11],"nodeColumns":c[12],"nodeFilters":c[13]})
@@ -557,6 +701,24 @@ fn check(sources: &[(String, String)], out: Option<&Path>, diagnostic: bool) -> 
                 .collect::<Result<_, _>>()
                 .unwrap();
             report["diagnosticRelationRows"] = json!(counts);
+            let mut demand_rows = connection
+                .prepare(&format!(
+                    "{prefix}SELECT file,fn,spike_node_text(file,atom),capture FROM demand"
+                ))
+                .unwrap()
+                .query_map([], |r| {
+                    Ok((
+                        r.get::<_, u32>(0)?,
+                        r.get::<_, u32>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, u32>(3)?,
+                    ))
+                })
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap();
+            demand_rows.sort();
+            report["captureDemand"] = json!(demand_rows);
         }
     });
     report["parity"] = json!(true);

@@ -9,6 +9,13 @@ struct Emitter {
 }
 
 pub(super) fn emit(program: &Program, plan: &[RelationPlan]) -> Result<String, String> {
+    Ok(format!(
+        "WITH RECURSIVE\n{}\nSELECT 0,file,node,json_array() FROM r0 ORDER BY file,node",
+        definitions(program, plan)?.join(",\n")
+    ))
+}
+
+pub(super) fn definitions(program: &Program, plan: &[RelationPlan]) -> Result<Vec<String>, String> {
     let mut emitter = Emitter::default();
     let mut relations = Vec::new();
     let active = super::ir::reachable(program);
@@ -61,6 +68,16 @@ pub(super) fn emit(program: &Program, plan: &[RelationPlan]) -> Result<String, S
         .enumerate()
         .filter(|(id, _)| active.contains(id))
     {
+        if let RelationPlan::SearchRoots {
+            origins,
+            filter,
+            stop,
+        } = planned
+        {
+            let stopped=stop.map_or(String::new(),|stop|format!(" AND NOT EXISTS (SELECT 1 FROM r{stop} s WHERE s.file=w.file AND s.node=w.node)"));
+            relations.push(format!("walk{id}(file,origin,node,distance) AS MATERIALIZED (SELECT n.file,k.node,n.parent,1 FROM r{origins} k CROSS JOIN node n ON n.file=k.file AND n.id=k.node WHERE n.parent IS NOT NULL UNION ALL SELECT w.file,w.origin,n.parent,w.distance+1 FROM walk{id} w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE n.parent IS NOT NULL{stopped}),\npairs{id}(file,origin,node,distance) AS MATERIALIZED (SELECT w.* FROM walk{id} w JOIN r{filter} f ON f.file=w.file AND f.node=w.node),\nr{id}(file,node) AS MATERIALIZED (SELECT DISTINCT file,node FROM pairs{id})"));
+            continue;
+        }
         let RelationPlan::Joins(arms) = planned else {
             let RelationPlan::Ancestors { seeds, stop } = planned else {
                 unreachable!()
@@ -99,10 +116,7 @@ pub(super) fn emit(program: &Program, plan: &[RelationPlan]) -> Result<String, S
             program.relations[id].source
         ));
     }
-    Ok(format!(
-        "WITH RECURSIVE\n{}\nSELECT 0,file,node,json_array() FROM r0 ORDER BY file,node",
-        relations.join(",\n")
-    ))
+    Ok(relations)
 }
 
 impl Emitter {
@@ -297,4 +311,28 @@ impl Emitter {
         };
         Ok(format!("SELECT {projection}{from}{filter}"))
     }
+}
+
+pub(super) fn capture_demand(
+    program: &Program,
+    plan: &[RelationPlan],
+    demand: &super::ir::CaptureDemand,
+) -> Result<String, String> {
+    let (roots, targets, leaf_stop) = (demand.roots, demand.targets, demand.leaf_stop);
+    let mut definitions = definitions(program, plan)?;
+    let named = if demand.named { " AND n.named" } else { "" };
+    definitions.push(format!("binding_seeds(file,node,atom) AS MATERIALIZED (SELECT n.file,n.id,relation_leaf_atom(n.file,n.id,n.atom) FROM r{targets} t CROSS JOIN node n ON n.file=t.file AND n.id=t.node WHERE 1{named})"));
+    let stopped = leaf_stop.map_or(String::new(), |id| {
+        format!(" AND NOT EXISTS (SELECT 1 FROM r{id} s WHERE s.file=w.file AND s.node=w.node)")
+    });
+    definitions.push(format!("binding_walk(file,atom,witness,node) AS (SELECT n.file,t.atom,t.node,n.parent FROM binding_seeds t CROSS JOIN node n ON n.file=t.file AND n.id=t.node WHERE n.parent IS NOT NULL UNION ALL SELECT w.file,w.atom,w.witness,n.parent FROM binding_walk w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE n.parent IS NOT NULL{stopped})"));
+    // AST tape ordinals are preorder keys, which is precisely this admitted `has` traversal order.
+    definitions.push(format!("binding_choices(file,node,atom,witness) AS MATERIALIZED (SELECT w.file,w.node,w.atom,MIN(w.witness) FROM binding_walk w JOIN r{roots} k ON k.file=w.file AND k.node=w.node GROUP BY w.file,w.node,w.atom)"));
+    definitions.push(format!("origin_choices AS (SELECT p.file,p.origin,b.atom,b.witness,p.node AS ancestor,p.distance,ROW_NUMBER() OVER (PARTITION BY p.file,p.origin,b.atom ORDER BY p.distance) AS choice FROM pairs{roots} p JOIN binding_choices b ON b.file=p.file AND b.node=p.node)"));
+    definitions.push("capture_demand AS MATERIALIZED (SELECT file,origin,atom,witness,ancestor,distance FROM origin_choices WHERE choice=1)".into());
+    let sql = format!(
+        "WITH RECURSIVE\n{}\nSELECT file,origin,atom,witness,ancestor,distance FROM capture_demand ORDER BY file,origin,atom",
+        definitions.join(",\n")
+    );
+    Ok(sql)
 }

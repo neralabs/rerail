@@ -61,7 +61,9 @@ fn extend(set: &Set, node: usize, mut arms: Vec<Arm>) -> Result<Vec<Arm>, String
                 arm.predicates.push(Predicate::Region(node, *roots));
             }
         }
-        Set::Ancestors { .. } => return Err("ancestor closure is a relation boundary".into()),
+        Set::Ancestors { .. } | Set::SearchRoots { .. } => {
+            return Err("ancestor closure is a relation boundary".into());
+        }
         Set::Reference(id) => {
             for arm in &mut arms {
                 arm.references.push((node, *id));
@@ -111,6 +113,11 @@ fn refers(set: &Set, id: usize) -> bool {
     match set {
         Set::Reference(r) | Set::Within(r) => *r == id,
         Set::Ancestors { seeds, stop } => *seeds == id || *stop == Some(id),
+        Set::SearchRoots {
+            origins,
+            filter,
+            stop,
+        } => *origins == id || *filter == id || *stop == Some(id),
         Set::Intersect(s) | Set::Union(s) => s.iter().any(|s| refers(s, id)),
         Set::Complement(s) | Set::Preimage(_, s) => refers(s, id),
         _ => false,
@@ -119,7 +126,15 @@ fn refers(set: &Set, id: usize) -> bool {
 
 pub(super) enum RelationPlan {
     Joins(Vec<Arm>),
-    Ancestors { seeds: usize, stop: Option<usize> },
+    Ancestors {
+        seeds: usize,
+        stop: Option<usize>,
+    },
+    SearchRoots {
+        origins: usize,
+        filter: usize,
+        stop: Option<usize>,
+    },
 }
 
 fn dependencies(program: &Program) -> Result<(), String> {
@@ -152,6 +167,21 @@ pub(super) fn plan(program: &Program) -> Result<Vec<RelationPlan>, String> {
         .iter()
         .enumerate()
         .map(|(id, relation)| {
+            if let Set::SearchRoots {
+                origins,
+                filter,
+                stop,
+            } = relation.expression
+            {
+                if origins == id || filter == id || stop == Some(id) {
+                    return Err("origin search cannot depend on itself".into());
+                }
+                return Ok(RelationPlan::SearchRoots {
+                    origins,
+                    filter,
+                    stop,
+                });
+            }
             if let Set::Ancestors { seeds, stop } = relation.expression {
                 if seeds == id || stop == Some(id) {
                     return Err("recursive traversal needs a component plan".into());

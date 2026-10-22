@@ -8,8 +8,8 @@ use ast_grep_core::matcher::Matcher;
 use std::collections::HashMap;
 
 #[derive(Default)]
-struct Lowerer {
-    program: Program,
+pub(super) struct Lowerer {
+    pub program: Program,
     utilities: HashMap<(usize, usize), usize>,
     active: Vec<usize>,
     regexes: HashMap<String, usize>,
@@ -36,7 +36,14 @@ pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Program, String> {
 }
 
 impl Lowerer {
-    fn relation(&mut self, expression: Set, source: &str) -> usize {
+    pub(super) fn new(dialect: GrammarDialect) -> Self {
+        Self {
+            dialect: Some(dialect),
+            ..Self::default()
+        }
+    }
+
+    pub(super) fn relation(&mut self, expression: Set, source: &str) -> usize {
         if let Set::Reference(id) = expression {
             return id;
         }
@@ -50,7 +57,7 @@ impl Lowerer {
         id
     }
 
-    fn set(&mut self, rule: &AstMatcher) -> Result<Set, String> {
+    pub(super) fn set(&mut self, rule: &AstMatcher) -> Result<Set, String> {
         Ok(match rule {
             AstMatcher::Pattern(pattern) => {
                 let term = PatternTerm::new(pattern.clone(), self.dialect.unwrap());
