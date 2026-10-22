@@ -5,8 +5,10 @@
 pub mod census;
 pub mod classify;
 pub mod compile;
+pub mod explain;
 pub mod front;
 pub mod ir;
 pub mod mutant;
+pub mod phys;
 pub mod policy;
 pub mod sql;
