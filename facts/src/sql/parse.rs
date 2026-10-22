@@ -504,9 +504,10 @@ impl<'s> Parser<'s> {
                     break;
                 }
             }
-            if self.eat_kw("having") {
-                having = Some(self.expr()?);
-            }
+        }
+        // HAVING with or without GROUP BY (without: an aggregate select, one group; SQLite 3.39+).
+        if self.eat_kw("having") {
+            having = Some(self.expr()?);
         }
         Ok(Body::Select(Box::new(Select { distinct, items, from, where_, group_by, having })))
     }

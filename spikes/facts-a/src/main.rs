@@ -3,6 +3,7 @@ mod eval;
 mod facts;
 mod factfile;
 mod fstring;
+mod leaf;
 use rerail_facts::policy;
 mod pyvalue;
 mod rel;
@@ -52,6 +53,7 @@ fn main() {
         Some("repo-compare") => repo::compare(&args),
         Some("store") => factfile::store(&args),
         Some("inspect") => factfile::inspect(&args),
+        Some("census") => census(&args),
         Some("parse") => {
             let path = &args[2];
             let source = Arc::new(std::fs::read_to_string(path).unwrap());
@@ -60,7 +62,7 @@ fn main() {
                 facts::Built::Unparsed => println!("unparsed"),
             }
         }
-        _ => eprintln!("usage: facts-a replay|repo|repo-compare|calls|store|inspect ..."),
+        _ => eprintln!("usage: facts-a replay|repo|repo-compare|calls|store|inspect|census ..."),
     }
 }
 
@@ -257,4 +259,17 @@ fn multiset_minus(a: &[String], b: &[String]) -> Vec<String> {
         }
     }
     out
+}
+
+/// Phase 2 census: every policy in `--rules` compiled by `rerail-facts` with this crate's leaf
+/// executors (default option values), written as `census.json` and `census.md` in `--out`.
+fn census(args: &[String]) {
+    let rules = arg(args, "--rules").unwrap_or_else(|| "packs/data-layer/candidates/rules".into());
+    let out = std::path::PathBuf::from(arg(args, "--out").expect("--out"));
+    std::fs::create_dir_all(&out).unwrap();
+    let mut leaves = leaf::Leaves::new();
+    let c = rerail_facts::census::run(std::path::Path::new(&rules), &Map::new(), &mut leaves).expect("census");
+    std::fs::write(out.join("census.json"), serde_json::to_string_pretty(&c.json).unwrap()).unwrap();
+    std::fs::write(out.join("census.md"), &c.markdown).unwrap();
+    println!("{}", c.markdown);
 }
