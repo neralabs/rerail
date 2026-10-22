@@ -229,21 +229,22 @@ hand itself verdicts its own code computed, which it could already do by editing
 
 On a pull request, CI posts the results as one comment. It says only what a merge or a promotion needs:
 
-1. **The heading:** `[PASS]` or `[FAIL]`, how many shipped rules pass the gates they must (conformance, and port
-   readiness for a port), and how many candidates are ready to promote. Under it, one line on each stage.
-2. **Shipped rules that fail**, only when there are any: one line per rule, with the pack and upstream rule it comes
-   from, the stage and gate it stopped at, and why. **Other blocking failures** follow, only when there are any: a
-   known parser gap that does not hold or excuses nothing, a pack check, a missing report.
-3. **Ready to promote:** each candidate that passes every gate it must, the signal to move it into `rules/` (a reviewer
-   still decides); for a port, whether upstream recommends it on by default. Under it, collapsed, the shipped rules
-   passing per pack.
-4. **Candidates that fail a gate**, collapsed: one collapsed list per gate, in the order a rule meets them, one line per
-   candidate with why.
+1. **The heading:** ✅ or ❌, how many shipped rules pass the gates they must (conformance, and port readiness for a
+   port), and how many candidates are ready to promote. Under it, one line on each stage.
+2. **Shipped Rule Summary:** each blocker first, one line per shipped rule that fails (the pack and upstream rule it
+   comes from, the stage and gate it stopped at, and why), with any blocking failure no rule owns (a known parser gap
+   that does not hold or excuses nothing, a pack check, a missing report). Then one collapsed block per pack, `python:
+   136`, holding its shipped rules by their declared origin (the upstream linter for a port, `original`, or `not
+   declared` for a document that declares neither): passing, failing, total. A pack with a blocker opens by default.
+3. **Candidate Rule Summary:** each candidate ready to promote first, the signal to move it into `rules/` (a reviewer
+   still decides), with whether upstream recommends a port on by default. Then one collapsed block per pack, the same
+   shape: its candidates by origin (ready, failing conformance, failing port readiness, total), and the gates they fail
+   at, one row per gate and one column per origin.
 
-There are no wide tables: every line wraps to the page. A new run collapses the earlier comments as outdated, so the
-pull request keeps its history. The comment stays under GitHub's size limit by shortening the candidate lists first;
-the job summary is the same page with every list in full, and `summary.json` and the uploaded reports have everything
-else (each tool-pack's `report.md` has each gate on its own, `on` against upstream-status, and run integrity notes).
+No table is wider than its origins, so nothing scrolls sideways. A new run collapses the earlier comments as outdated,
+so the pull request keeps its history. The comment stays under GitHub's size limit by capping its lists; the job
+summary is the same page with every list in full and each failing candidate's gate and why, and `summary.json` and
+the uploaded reports have everything else (each tool-pack's `report.md` has each gate on its own, `on` against upstream-status, and run integrity notes).
 When the pull request judged only some tool-packs, a line names the rest: "Not re-run on this change", with main's
 results standing for them; the counts leave them out. A pull request that judged no tool-pack and touched nothing the
 conformance gates read gets no new comment unless a check fails, but its earlier comments are still collapsed as
