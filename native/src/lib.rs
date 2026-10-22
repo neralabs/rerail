@@ -6,7 +6,7 @@ mod build_identity;
 /// so `cargo test` checks how the build validates the language registry.
 #[cfg(test)]
 mod build_languages;
-mod code_rule_dsl;
+pub mod code_rule_dsl;
 pub mod content_store;
 pub mod git_workspace;
 mod main_instance;

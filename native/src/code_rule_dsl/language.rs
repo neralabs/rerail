@@ -118,7 +118,7 @@ const ERROR_ID: u16 = u16::MAX;
 /// holds one grammar: a file's embedded program is a document of its own (`embed`), its kinds its
 /// own grammar's. Rules and tapes read kinds and fields only here.
 #[derive(Clone, Copy)]
-pub(crate) struct KindCatalog {
+pub struct KindCatalog {
     own: OwnKinds,
 }
 
@@ -200,7 +200,7 @@ impl KindCatalog {
         }
     }
 
-    pub(crate) fn field_count(self) -> usize {
+    pub fn field_count(self) -> usize {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.field_count(),
             OwnKinds::Blade => blade_tree::FIELD_NAMES.len() - 1,
@@ -219,7 +219,7 @@ impl KindCatalog {
         }
     }
 
-    pub(crate) fn field_name(self, id: u16) -> Option<&'static str> {
+    pub fn field_name(self, id: u16) -> Option<&'static str> {
         match self.own {
             OwnKinds::Grammar(grammar) => grammar.field_name_for_id(id),
             OwnKinds::Blade => (id != 0)

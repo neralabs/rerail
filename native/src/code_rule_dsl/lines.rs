@@ -44,7 +44,7 @@ impl Terminators {
 
 /// Where each line of a file starts, and where its text ends before its terminator.
 #[derive(Debug)]
-pub(crate) struct LineTable {
+pub struct LineTable {
     /// Byte offset of each line's first byte; the first is 0.
     starts: Vec<usize>,
     /// Byte offset where each line's terminator starts, or the file's end on the last line.
@@ -100,12 +100,12 @@ impl LineTable {
     }
 
     /// The 0-based line holding `byte`; a terminator's bytes belong to the line they end.
-    pub(crate) fn line(&self, byte: usize) -> usize {
+    pub fn line(&self, byte: usize) -> usize {
         self.starts.partition_point(|start| *start <= byte) - 1
     }
 
     /// The 0-based line and byte column holding `byte`.
-    pub(crate) fn point(&self, byte: usize) -> (usize, usize) {
+    pub fn point(&self, byte: usize) -> (usize, usize) {
         let line = self.line(byte);
         (line, byte - self.start(line))
     }
