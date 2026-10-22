@@ -2454,3 +2454,48 @@ That code predates this spike and remains unchanged.
 The follow-up Clippy check passes with only `clippy::regex_creation_in_loops` permitted and all other warnings as errors.
 The targeted Rust suite passes three tests, and the corpus test passes the profile and all three timing samples.
 Python syntax, Rust formatting, evidence hashes, and whitespace checks also pass.
+
+## Direct relational compiler transition plan — 2026-10-22
+
+The user requested a transition plan after the complete B023 reference spike.
+The [transition plan](sql-relational-transition-plan.md) turns that result into five implementation milestones.
+This entry records design work only, with no production compiler change or new performance measurement.
+
+Source inspection identified three integration constraints.
+`ProgramCompiler::clause` currently emits frame SQL during clause registration.
+The fused graph stores SQL bodies, and its adapter reconstructs relations from emitted SQL.
+The replacement must introduce typed relations before either operation, rather than extend SQL reparsing.
+
+The execution path also partitions files before it runs the compiled program.
+Whole-job planning therefore needs caller changes in `workspace/sql.rs`, `eval/query.rs`, and `sql/exec.rs`.
+The existing execution-budget script explicitly enforces acceptance after the complete run.
+The plan adds admission and runtime accounting across workers, including reserved cleanup capacity.
+
+The chosen migration develops one replacement compiler through a test harness.
+Production cutover waits for complete supported semantics and removes the old compiler and scheduler.
+There is no proposed per-clause fallback or new user switch.
+This delays production gains until coverage passes, while intermediate compiler measurements remain executable.
+
+The first milestone generates the complete B023 shape directly from the DSL.
+It starts with the complete capture-free `target-slot` utility, then adds demand propagation, capture projection, and ordered choices.
+It uses the reference query as an independent performance target, not a production policy template.
+Renamed utility and changed-constant cases guard against policy recognition.
+
+The initial B023 gates permit at most twice the reference VM work and median kernel CPU.
+They also require exact roots and capture identities, one matching statement, zero frame publications, and the existing scaling bounds.
+These are proposed compiler acceptance thresholds, not new measurements.
+
+The second milestone proves unknowns, failures, enumeration, and general recursion before broad catalog migration.
+The continuation design remains unresolved for irreducible recursive components.
+The plan requires executable semantic and scaling evidence before it accepts that operator.
+It prohibits a global instruction interpreter or statements per recursive round.
+
+Later milestones cover selective sharing, physical planning, complete-job instrumentation, and production cutover.
+The final gate retains the 100-execution budget and all current workload coverage.
+Proposed whole-job targets require fourfold fewer VM instructions and twofold lower SQL apply CPU, plus improved cold time.
+Fresh comparative measurements must establish those results.
+The 94-fold B023 kernel improvement is not a whole-job prediction.
+
+The plan names implementation modules, relation contracts, cutover removal points, and the first three reviewable commits.
+Documentation checks cover local links, source references, evidence numbers, sentence length, and whitespace.
+No engine tests rerun because this change contains documentation only.
