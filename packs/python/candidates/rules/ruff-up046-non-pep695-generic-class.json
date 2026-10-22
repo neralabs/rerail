@@ -649,7 +649,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "UP046",
-        "message": "Replace the `Generic[...]` base with PEP 695 type parameters (`class Name[T, *Ts, **P]: ...`); leave it if the code must support Python below 3.12 or relies on a TypeVar's declared variance.",
+        "message": "Move the type variables from `Generic[...]` into brackets after the class name (`class Name[T: Bound, *Ts, **P]:`), keeping each bound and constraint; keep `Generic` if declared variance matters.",
         "suppress": {
           "noqa": {
             "codes": [

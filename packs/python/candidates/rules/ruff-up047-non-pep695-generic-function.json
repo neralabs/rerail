@@ -334,7 +334,10 @@
                 }
               },
               {
-                "matches": "anystr"
+                "matches": "anystr",
+                "not": {
+                  "matches": "str-shadowed"
+                }
               }
             ]
           },
@@ -342,6 +345,24 @@
             "inside": {
               "stopBy": "end",
               "matches": "annotation"
+            }
+          },
+          "str-shadowed": {
+            "inside": {
+              "stopBy": "end",
+              "follows": {
+                "stopBy": "end",
+                "has": {
+                  "stopBy": "end",
+                  "kind": "identifier",
+                  "regex": "^(?:str|bytes)$",
+                  "binds": {
+                    "scope": [
+                      "module"
+                    ]
+                  }
+                }
+              }
             }
           }
         }
@@ -359,7 +380,7 @@
           },
           "rule": {
             "kind": "function_definition",
-            "regex": "^(?:async\\s+)?def\\s+(?P<span>\\w+[ \\t]*\\([\\s\\S]*?\\))\\s*(?:->|:)",
+            "regex": "^(?:async(?:\\s|\\\\\\r?\\n)+)?def(?:\\s|\\\\\\r?\\n)+(?P<span>\\w+(?:[ \\t\\f]|\\\\\\r?\\n)*(?:\\((?:[^()'\"#\\\\]|\\\\[\\s\\S]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|#[^\\n]*\\n|\\((?:[^()'\"#\\\\]|\\\\[\\s\\S]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|#[^\\n]*\\n|\\((?:[^()'\"#\\\\]|\\\\[\\s\\S]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|#[^\\n]*\\n|\\((?:[^()'\"#\\\\]|\\\\[\\s\\S]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|#[^\\n]*\\n)*\\))*\\))*\\))*\\)|\\([\\s\\S]*?\\)))(?:\\s|\\\\\\r?\\n)*(?:->|:)",
             "all": [
               {
                 "has": {
@@ -426,7 +447,7 @@
       "violation": {
         "anchor": "capture.span",
         "code": "UP047",
-        "message": "Replace the module-level TypeVars with PEP 695 type parameters (`def name[T, *Ts, **P](...)`); leave it if the code must support Python below 3.12 or relies on a TypeVar's declared variance.",
+        "message": "Declare every TypeVar the signature uses in brackets after the function name (`def name[T: Bound, *Ts, **P](...)`), keeping each bound and constraint; never mix them with module-level TypeVars.",
         "suppress": {
           "noqa": {
             "codes": [
