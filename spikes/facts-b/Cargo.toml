@@ -16,6 +16,12 @@ serde_json = "1.0"
 rustc-hash = "2.1"
 parking_lot = "0.12"
 libc = "0.2"
+rerail-facts = { path = "../../facts" }
+regex = "=1.13.1"
+
+[features]
+# Seeded mutants for the gate (src/mutant.rs); off in normal builds.
+mutants = []
 
 [build-dependencies]
 cc = "=1.8.0"

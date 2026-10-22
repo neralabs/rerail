@@ -6,6 +6,9 @@ mod edits;
 mod extract;
 mod facts;
 mod flow;
+mod gen;
+mod membership;
+mod mutant;
 mod oracle;
 mod replay;
 mod rules;
@@ -38,6 +41,18 @@ fn main() {
                 only_r1: args.iter().any(|a| a == "--only-r1"),
                 naive: args.iter().any(|a| a == "--naive"),
                 plurality: args.iter().any(|a| a == "--plurality"),
+            },
+        ),
+        "greplay" => gen::drive::run(
+            &PathBuf::from(arg(&args, "--run-dir").expect("--run-dir")),
+            gen::drive::Opts {
+                events: arg(&args, "--events").map(PathBuf::from),
+                limit: arg(&args, "--limit").map(|x| x.parse().unwrap()),
+                oracle: !args.iter().any(|a| a == "--no-oracle"),
+                fail_fast: args.iter().any(|a| a == "--fail-fast"),
+                clusters: !args.iter().any(|a| a == "--flat"),
+                track: args.iter().any(|a| a == "--track"),
+                plans: arg(&args, "--plans").map(|s| s.split(',').map(str::to_owned).collect()).unwrap_or_default(),
             },
         ),
         "edits" => edits::run(
