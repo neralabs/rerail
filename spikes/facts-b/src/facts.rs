@@ -382,7 +382,7 @@ pub fn extract(src: &[u8], tree: &Tree) -> Exported {
 // magic b"RRFACTS\0", u32 schema_version, [u8;32] content hash, u32 n_strings, strings as
 // (u32 len, utf8), u32 n_relations, per relation: u32 name idx, u32 n_rows, u32 n_cols, per column
 // (u32 name idx, u8 type: 0=u32 1=u16 2=u8 3=sym 4=opt_u32 5=opt_sym), then each column at native
-// width, zero-padded to 4 bytes. All little-endian.
+// width; after a u16/u8 column only, zero-pad to the next 4-byte file offset. All little-endian.
 
 enum Col {
     U32(Vec<u32>),
