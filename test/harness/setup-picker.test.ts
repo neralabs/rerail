@@ -132,7 +132,7 @@ describe("/rerail-start in OMP and Pi", { timeout: SETUP_TIMEOUT_MS }, () => {
     const ui = fakeUi(["Skip, I’ll pick packs", "None for now"]);
     const last = await pickSetup(ui, steps(setup, fakeSetupEnvironment()));
     expect(last).toMatchObject({ step: "done" });
-    expect(last!.screen).toContain("Rerail is on in acme-api. No rule packs are on yet.");
+    expect(last!.screen).toContain("Rerail is on in acme-api · no rule packs on yet");
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");
     expect(selected(setup)).toEqual([]);
   });

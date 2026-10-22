@@ -332,7 +332,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     const picked = agentIo();
     expect(await runSetup(picked, request(setup, fakeSetupEnvironment(), { answer: "pick-myself", repo: setup.repo, packs: [] })))
       .toMatchObject({ status: "started", ruleCount: 0 });
-    expect(picked.text()).toContain("Rerail is on in acme-api. No rule packs are on yet.");
+    expect(picked.text()).toContain("Rerail is on in acme-api · no rule packs on yet");
     expect(selected(setup)).toEqual([]);
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");
   });
@@ -367,10 +367,22 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
 
     const skipped = agentIo();
     expect(await runSetup(skipped, request(setup, environment, { cwd: plain, answer: "skip" }))).toEqual({ status: "skipped" });
-    expect(skipped.text()).toContain("Rerail is installed. It is not on in any repo yet.");
+    expect(skipped.text()).toContain("Rerail is installed · not on in any repo yet");
     expect(environment.connections).toEqual([{ agents: ["claude-code", "cursor"], repoRoot: undefined }]);
     expect(existsSync(setup.databasePath)).toBe(false);
     expect(existsSync(join(plain, ".rerail"))).toBe(false);
+  });
+
+  it("asks which project again for a relayed pick-myself answer where there is no repo, connecting nothing", async () => {
+    const setup = await fixture();
+    const plain = join(setup.root, "downloads");
+    mkdirSync(plain);
+    const environment = fakeSetupEnvironment();
+    const asked = agentIo();
+    expect(await runSetup(asked, request(setup, environment, { cwd: plain, answer: "pick-myself" }))).toEqual({ status: "waiting" });
+    expect(asked.text()).toContain("Which project do you want to start with?");
+    expect(asked.text()).not.toContain("pick-myself");
+    expect(environment.connections).toEqual([]);
   });
 
   it("shows the link and says why when no browser can open", async () => {
@@ -679,7 +691,7 @@ describe("set-up in a terminal", { timeout: SETUP_TIMEOUT_MS }, () => {
     // "I'll pick rule packs myself", then "None for now" from every pack set-up fetched.
     const io = terminalIo(["3", "2"]);
     expect(await runSetup(io, request(setup, environment))).toMatchObject({ status: "started", ruleCount: 0 });
-    expect(io.text()).toContain("Rerail did not read any code.");
+    expect(stripAnsi(io.text())).toContain("Rerail is on in acme-api · no rule packs on yet");
     expect(selected(setup)).toEqual([]);
     expect(enabledRules(setup)).toBe(0);
     expect(environment.connections).toEqual([{ agents: ["claude-code", "cursor"], repoRoot: setup.repo }]);
@@ -693,6 +705,35 @@ describe("set-up in a terminal", { timeout: SETUP_TIMEOUT_MS }, () => {
     await runSetup(io, request(setup, fakeSetupEnvironment(), { cwd: plain }));
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");
     expect(existsSync(join(plain, ".rerail"))).toBe(false);
+  });
+
+  it("numbers the no-repo question as the scan step, and a folder typed there goes straight to the last step", async () => {
+    const setup = await fixture();
+    const plain = join(setup.root, "downloads");
+    mkdirSync(plain);
+    // A folder that is not there is asked for again, without changing the count.
+    const approved = terminalIo(["1", join(setup.root, "missing"), setup.repo, "1"]);
+    await runSetup(approved, request(setup, fakeSetupEnvironment(), { cwd: plain }));
+    const steps = (io: Recorded): string[] => stripAnsi(io.text()).match(/Step \d of \d · [^\n]+/gu) ?? [];
+    expect(steps(approved)).toEqual(["Step 1 of 2 · Which project do you want to start with?", "Step 2 of 2 · Start Rerail in acme-api with this rule pack?"]);
+    expect(approved.text()).toContain("There is no folder at");
+
+    const fresh = await fixture();
+    const elsewhere = join(fresh.root, "downloads");
+    mkdirSync(elsewhere);
+    const asked = terminalIo(["", "1", fresh.repo, "1"]);
+    await runSetup(asked, request(fresh, fakeSetupEnvironment({ sessionsApproved: false }), { cwd: elsewhere }));
+    expect(steps(asked)).toEqual([
+      "Step 1 of 3 · Can Rerail see your coding agent sessions?",
+      "Step 2 of 3 · Which project do you want to start with?",
+      "Step 3 of 3 · Start Rerail in acme-api with this rule pack?",
+    ]);
+
+    // A `--repo` folder that is not there asks which project, counted the same way.
+    const third = await fixture();
+    const named = terminalIo(["1", third.repo, "1"]);
+    await runSetup(named, request(third, fakeSetupEnvironment(), { cwd: third.root, repo: join(third.root, "missing") }));
+    expect(steps(named)).toEqual(["Step 1 of 2 · Which project do you want to start with?", "Step 2 of 2 · Start Rerail in acme-api with this rule pack?"]);
   });
 
   it("refuses the home folder typed at the folder prompt, from either question that offers one", async () => {
@@ -722,9 +763,9 @@ describe("set-up in a terminal", { timeout: SETUP_TIMEOUT_MS }, () => {
     const plain = join(setup.root, "downloads");
     mkdirSync(plain);
     const environment = fakeSetupEnvironment();
-    const io = terminalIo(["3"]);
+    const io = terminalIo(["2"]);
     expect(await runSetup(io, request(setup, environment, { cwd: plain }))).toEqual({ status: "skipped" });
-    expect(io.text()).toContain("Next: open a session in one of your repos and type /rerail-start.");
+    expect(io.text()).toContain("Open a session in one of your repos and type /rerail-start.");
     expect(environment.connections).toEqual([{ agents: ["claude-code", "cursor"], repoRoot: undefined }]);
     expect(existsSync(setup.databasePath)).toBe(false);
   });

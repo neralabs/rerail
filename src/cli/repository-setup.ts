@@ -57,7 +57,6 @@ import {
   renderFolderNotFound,
   renderFolderPrompt,
   renderNotNow,
-  renderPickedMyself,
   renderMenu,
   renderQuestion,
   renderQuestionHead,
@@ -278,7 +277,8 @@ function pickAnswer<K extends string>(line: string, keys: readonly K[]): K | und
 /** Say the question; in the terminal, wait for a valid answer (a menu at a real terminal). Undefined: the agent lane stops here, or input ended. */
 async function choose<K extends string>(run: Run, form: QuestionForm, keys: readonly K[]): Promise<K | undefined> {
   const { io } = run;
-  const index = run.steps.indexOf(form.id);
+  // The no-repo question stands where the read-repo question would: a folder typed there is read without asking.
+  const index = run.steps.indexOf(form.id === "no-repo" ? "read-repo" : form.id);
   const step: QuestionStep | undefined = index < 0 ? undefined : { index: index + 1, total: run.steps.length };
   if (io.lane === "terminal" && io.choose !== undefined) {
     say(io, renderQuestionHead(form, step));
@@ -540,11 +540,9 @@ async function start(run: Run, repository: Repository, startWith: StartWith): Pr
 
 /** E4 with no pack: on, without reading any code, and every rule pack off. */
 async function pickMyself(run: Run, repository: Repository): Promise<SetupOutcome> {
-  const connected = await connect(run, repository);
+  await connect(run, repository);
   if (turnOn(run, repository, chosenPacks([], false)) === undefined) return alreadySetUp(run, repository, true);
-  const dashboard = await run.request.environment.dashboard(dashboardScope(run, repository), "rules", true);
-  say(run.io, renderPickedMyself({ repoName: repository.name, connected: codingAgents(connected), dashboard }, run.io.lane));
-  return { status: "started", repositoryName: repository.name, ruleCount: 0 };
+  return summary(run, repository, true);
 }
 
 /**
@@ -620,8 +618,8 @@ function notNow(run: Run): SetupOutcome {
 
 /** E5: installed and connected, on in no repo. */
 async function skip(run: Run): Promise<SetupOutcome> {
-  const connected = await connect(run, undefined);
-  say(run.io, renderSkipped({ connected: codingAgents(connected) }, run.io.lane));
+  await connect(run, undefined);
+  say(run.io, renderSkipped(run.io.lane));
   return { status: "skipped" };
 }
 
@@ -814,8 +812,7 @@ async function askToRead(run: Run, repository: Repository): Promise<SetupOutcome
 async function noRepository(run: Run): Promise<SetupOutcome> {
   const picked = await choose(run, noRepoQuestion(run.request.setupCommand === undefined ? {} : { setupCommand: run.request.setupCommand }, run.io.lane), NO_REPO_ANSWERS);
   if (picked === undefined) return halted(run.io);
-  // With no repository to turn on in, "I'll pick rule packs myself" ends where skipping does.
-  if (picked !== "folder") return skip(run);
+  if (picked === "skip") return skip(run);
   const repository = await askFolder(run.io);
   return repository === undefined ? halted(run.io) : setUpOneRepository(run, repository, true, undefined);
 }
@@ -832,7 +829,8 @@ export async function runSetup(io: RepositorySetupIo, request: SetupRequest): Pr
     io,
     request,
     databasePath: request.databasePath ?? defaultRerailDatabasePath(),
-    steps: mainSteps(request.environment, request.repo === undefined),
+    // A `--repo` folder that is not there asks the no-repo question, which counts as the read-repo step.
+    steps: mainSteps(request.environment, request.repo === undefined || repositoryAt(request.repo) === undefined),
   };
   const approval = await approveSessions(run, checkSetupAnswer(request.answer), request.repo);
   if ("status" in approval) return approval;
@@ -849,7 +847,8 @@ export async function runSetup(io: RepositorySetupIo, request: SetupRequest): Pr
   }
   const here = repositoryHere(request.cwd);
   if (here !== undefined) return setUpOneRepository(run, here, false, answer);
-  return answer === "pick-myself" ? skip(run) : noRepository(run);
+  // "Skip, I'll pick packs" needs a repository to start in: without one, the question is which project.
+  return noRepository(run);
 }
 
 /**

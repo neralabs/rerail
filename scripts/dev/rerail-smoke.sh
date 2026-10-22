@@ -200,7 +200,7 @@ grep -qF "$PACKAGE@next is $FIRST_VERSION" "$SMOKE/setup.log" || fail "the insta
 [ -x "$LAUNCHER" ] || fail "setup did not write the launcher $LAUNCHER"
 CLAUDE_COMMAND="$SANDBOX_HOME/.claude/commands/rerail.md"
 [ -f "$CLAUDE_COMMAND" ] || fail "setup did not create $CLAUDE_COMMAND"
-grep -qF "It is not on in any repo yet." "$SMOKE/setup.log" || fail "setup did not end on the skip summary"
+grep -qF "Rerail is installed · not on in any repo yet" "$SMOKE/setup.log" || fail "setup did not end on the skip summary"
 if [ -e "$RERAIL_DIR/daemon.json" ]; then fail "setup started a daemon although Rerail is on nowhere"; fi
 
 info "rerail daemon start --port $DAEMON_PORT"
@@ -224,7 +224,7 @@ info "rerail start (the set-up's start answer, as a coding agent relays it)"
 start_output="$(sandbox "$LAUNCHER" start --answer start)"
 printf '%s\n' "$start_output"
 # The project is an empty folder: no rule pack fits it, so set-up starts Rerail with none.
-case "$start_output" in *"Rerail is on in proj. No rule packs are on yet."*"#rules"*) ;; *) fail "rerail start did not set up and start the project" ;; esac
+case "$start_output" in *"Rerail is on in proj · no rule packs on yet"*"#rules"*) ;; *) fail "rerail start did not set up and start the project" ;; esac
 
 info "Exercising the installed Claude hook, composed HUD, and exact-session command"
 sandbox "$NODE" -e 'process.stdout.write(JSON.stringify({hook_event_name:"SessionStart",session_id:"installer-smoke",cwd:process.cwd(),source:"startup"}))' \

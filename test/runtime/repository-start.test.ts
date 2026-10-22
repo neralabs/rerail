@@ -168,7 +168,7 @@ describe("repository start state", () => {
 
     const io = recorder();
     expect(await startRerail(main, io, answered(databasePath, "pick-myself"))).toMatchObject({ setUpRan: true, ruleCount: 0 });
-    expect(io.lines.join("\n")).toContain("Rerail is on in acme-web. No rule packs are on yet.");
+    expect(io.lines.join("\n")).toContain("Rerail is on in acme-web · no rule packs on yet");
     expect(workspaceStartState(main, databasePath)).toBe("started");
 
     stopRerail(main, recorder(), { databasePath });

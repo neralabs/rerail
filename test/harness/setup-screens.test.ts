@@ -10,6 +10,9 @@ import {
   renderOnPath,
   renderAnswerHint,
   renderMenu,
+  pickPacksQuestion,
+  recommendedPacksQuestion,
+  renderPacksPrompt,
   renderQuestion,
   renderQuestionHead,
   renderSessionsDeclined,
@@ -17,7 +20,6 @@ import {
   renderNoRepoQuestion,
   renderNodeTooOld,
   renderNotNow,
-  renderPickedMyself,
   renderReadRepoQuestion,
   renderRecommendedPacks,
   renderSkipped,
@@ -78,8 +80,7 @@ function everyScreen(lane: SetupLane): Record<string, string> {
     E1: renderCannotInstall({ installCommand: "npx rerail" }, lane),
     E2: renderNodeTooOld({ found: "20.11.1", requiredMajor: 24 }, lane),
     E3: renderNoRepoQuestion({}, lane),
-    E4: renderPickedMyself({ repoName: "acme-web", connected: [CLAUDE, CURSOR], dashboard: OPENED }, lane),
-    E5: renderSkipped({ connected: [CLAUDE, CURSOR] }, lane),
+    E5: renderSkipped(lane),
     E6: renderSummary({ ...SUMMARY, dashboard: NOT_OPENED }, lane),
   };
 }
@@ -227,6 +228,12 @@ describe("T3 / C3 ask before reading", () => {
 });
 
 describe("T4 / C4 recommended rule packs", () => {
+  it("keeps the blank line before what follows the question in --json, where the question goes out as data", () => {
+    const text = renderQuestion(recommendedPacksQuestion(PACKS, "json"), "json");
+    expect(text).toContain("Connecting is free.\n\nWhen your coding agent breaks a rule, Rerail tells it");
+    expect(renderQuestion(sessionsQuestion({ carriedArgs: [] }), "json")).not.toMatch(/^\n/u);
+  });
+
   it.each(LANES)("lists each rule pack first, then its rule count, then why it fits, then what a yes connects (%s)", lane => {
     const text = stripAnsi(renderRecommendedPacks(PACKS, lane));
     expect(text).toContain("Scanned acme-web. 2 rule packs fit:");
@@ -418,45 +425,47 @@ describe("E3 no repo here", () => {
     expect(text).toContain("Which project do you want to start with?");
     expect(text).toContain("Rerail reads it on this computer only, to recommend rule packs.");
     expect(text).toMatch(/1\. Type the folder… +for example “~\/code\/acme-web”/);
-    expect(text).toMatch(/2\. I’ll pick rule packs myself +Rerail won’t read any code/);
-    expect(text).toMatch(/3\. Skip for now +start Rerail later, in a session/);
+    expect(text).toMatch(/2\. Skip for now +start Rerail later, in a session/);
+    expect(text).not.toContain("pick rule packs");
   });
 
   it("tells the coding agent how to pass each answer", () => {
     const text = renderNoRepoQuestion({}, "agent");
-    expect(NO_REPO_ANSWERS).toEqual(["folder", "pick-myself", "skip"]);
+    expect(NO_REPO_ANSWERS).toEqual(["folder", "skip"]);
     expect(text).toContain("1. rerail setup --repo <the folder they name>");
-    expect(text).toContain("2. rerail setup --answer pick-myself");
-    expect(text).toContain("3. rerail setup --answer skip");
+    expect(text).toContain("2. rerail setup --answer skip");
+    expect(text).not.toContain("pick-myself");
   });
 });
 
-describe("E4 pick rule packs myself", () => {
-  it.each(LANES)("says no rule packs are on and points to the dashboard (%s)", lane => {
-    const text = stripAnsi(renderPickedMyself({ repoName: "acme-web", connected: [CLAUDE, CURSOR], dashboard: OPENED }, lane));
-    expect(text).toContain("● Rerail is on in acme-web. No rule packs are on yet.");
-    expect(text).not.toMatch(/rule packs? (is|are) on, with/);
-    expect(text).toContain("Connected      Claude Code and Cursor");
-    expect(text).toContain("Your own       /rerail-create  create a rule in your own words, in a session");
-    expect(text).toContain("Next           Turn on the rule packs you want.  then open a new session");
-    expect(text).toContain("Try it         /rerail-show-me  in a new session: see Rerail catch and fix a broken rule");
-    expect(text).toContain("Manage rules   http://127.0.0.1:7777/#rules  opening in your browser");
+describe("E4 skip, I’ll pick packs", () => {
+  const input = { repoName: "acme-web", repoPath: "/Users/me/code/acme-web", available: PACKS.available, unavailable: [] };
+
+  it("lists the packs once in the terminal, numbered at the prompt after “Choose rule packs…”", () => {
+    const question = stripAnsi(renderQuestion(pickPacksQuestion(input, "terminal"), "terminal"));
+    expect(question).not.toContain("python@0.1.2");
+    expect(question).toContain("Which rule packs should Rerail start with in acme-web?");
+    expect(stripAnsi(renderPacksPrompt({ available: PACKS.available }))).toContain("  3. python@0.1.2  Python");
   });
 
-  it("echoes the choice in the terminal only", () => {
-    const echo = "You chose to pick rule packs yourself. Rerail did not read any code.";
-    expect(stripAnsi(renderPickedMyself({ repoName: "acme-web", connected: [CLAUDE], dashboard: OPENED }, "terminal"))).toContain(echo);
-    expect(renderPickedMyself({ repoName: "acme-web", connected: [CLAUDE], dashboard: OPENED }, "agent")).not.toContain(echo);
+  it.each(["agent", "json"] as const)("lists them in the question where no prompt follows (%s)", lane => {
+    const text = renderQuestion(pickPacksQuestion(input, lane), lane);
+    expect(text).toContain("  Rerail’s rule packs, from npm:\n    typescript@0.1.1  TypeScript");
+    expect(text).toContain("    python@0.1.2  Python");
   });
 });
 
 describe("E5 skip for now", () => {
-  it.each(LANES)("says Rerail is on in no repo and how to start it later (%s)", lane => {
-    const text = stripAnsi(renderSkipped({ connected: [CLAUDE, CURSOR] }, lane));
-    expect(text).toContain("● Rerail is installed. It is not on in any repo yet.");
-    expect(text).toContain("Connected      Claude Code and Cursor");
-    expect(text).toContain("Next: open a session in one of your repos and type /rerail-start.");
-    expect(text).toContain("Rerail then sets itself up for that repo: it asks, shows the rule packs that look right, and starts.");
+  it.each(LANES)("says Rerail is on in no repo and how to start it later, as the summary is laid out (%s)", lane => {
+    const text = stripAnsi(renderSkipped(lane));
+    expect(text).toContain("● Rerail is installed · not on in any repo yet\n\n");
+    expect(text).toContain("  Start     Open a session in one of your repos and type /rerail-start.\n            Rerail asks, suggests rule packs that fit, and starts there.");
+    expect(text).toContain("  Type /rerail in any session for help and every command.");
+    expect(text).not.toMatch(/Connected|Next:/);
+  });
+
+  it("is handed to the person as the summary is, by a coding agent", () => {
+    expect(renderSkipped("agent")).toMatch(/^Rerail set-up is done\. Show the person this summary, as written:\n\n● Rerail is installed/u);
   });
 });
 
@@ -465,11 +474,5 @@ describe("E6 no browser", () => {
     const text = stripAnsi(renderSummary({ ...SUMMARY, dashboard: NOT_OPENED }, lane));
     expect(text).toContain("  Manage    http://127.0.0.1:7777/#rules\n            △ Couldn’t open your browser. Copy the link instead.");
     expect(text).not.toContain("Opening in your browser");
-  });
-
-  it("applies to the pick-myself summary too, and leaves out the reason when none is known", () => {
-    const text = renderPickedMyself({ repoName: "acme-web", connected: [CLAUDE], dashboard: { url: "http://x/#rules", browserOpened: false } }, "agent");
-    expect(text).toContain("Manage rules   http://x/#rules  open this link");
-    expect(text).toContain("△ Couldn’t open a browser from here.");
   });
 });

@@ -64,8 +64,9 @@ person says yes.
      pick-myself`, no coding agent) is not asked.
 2. **Ask before reading** — set-up names the Git repository it ran in and asks
    whether it may read it. Outside a repository (or in your home folder) it
-   asks which folder to start with instead; `--repo <folder>` names one, which
-   is the go-ahead to read it.
+   asks which folder to start with instead (type the folder, or skip for now),
+   numbered as this step; `--repo <folder>` names one, which is the go-ahead
+   to read it.
 3. **Recommend** — the repository's files and `package.json` dependencies are
    matched against the rule packs; each pack that fits is shown with its rule
    count, why it matched and the folder it would be added in, with the coding
@@ -233,7 +234,7 @@ Options that do not map, or that the document rejects, are left at the port's
 defaults with a note. Rules are never turned on, a file larger than 1 MiB or a
 symlink is not read, nor is a TOML file whose arrays or inline tables nest more
 than 64 deep, and a rule the person already set in the dashboard's
-review (in that folder) keeps that setting. "I'll pick rule packs myself" takes nothing from
+review (in that folder) keeps that setting. "Skip, I’ll pick packs" takes nothing from
 the lint config, even for the packs the person then picks.
 
 **In a terminal** (stdin and stdout are TTYs, no `--relay`), each question is
@@ -393,7 +394,7 @@ the repository. Two clones of one remote are one repository.
   slash-command name) starts Rerail in the current checkout and the checkouts
   inside it. In a repository that is not set up, it runs set-up's steps 2 to 6
   there first: it asks, recommends rule packs, and starts once you confirm
-  ("I'll pick rule packs myself" lists every rule pack set-up fetched, installs
+  ("Skip, I’ll pick packs" lists every rule pack set-up fetched, installs
   the ones you pick and adds each for the whole repository, without reading
   it; "None for now" sets it up with none). Until a repository is set up, its sessions are
   recorded but no rules run.
