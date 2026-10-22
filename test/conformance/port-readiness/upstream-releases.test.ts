@@ -228,7 +228,7 @@ test("a pin behind upstream's latest stable release fails and names the tool-pac
   const { code, stdout, summary } = await nightly(root, fakeFetch(upstreamPins(root), (pin) => (pin.toolPack === "demo/bandit" ? "1.10.0" : pin.version)));
   assert.equal(code, 1);
   assert.match(summary, /^\| `demo\/bandit` \| PyPI \| `bandit` \| 1\.9\.4 \| 1\.10\.0 \| behind \|$/mu);
-  assert.match(summary, /^- `demo\/bandit`: bandit 1\.9\.4 is pinned and PyPI's latest stable release is 1\.10\.0: npm run port-readiness:bump -- --pack demo --tool bandit, then record it again \(the nightly opens this as a pull request\)$/mu);
+  assert.match(summary, /^- `demo\/bandit`: bandit 1\.9\.4 is pinned and PyPI's latest stable release is 1\.10\.0: npm run port-readiness:bump -- --pack demo --tool bandit, then npm run fixtures:derive -- --pack demo --tool bandit --update and npm run port-readiness:record -- --pack demo --tool bandit \(the nightly opens this as a pull request\)$/mu);
   assert.match(stdout, /^::error title=Upstream release \(demo\/bandit\)::demo\/bandit behind: /mu);
   assert.doesNotMatch(stdout, /::error title=Upstream release \(rust\/clippy\)/u);
 });

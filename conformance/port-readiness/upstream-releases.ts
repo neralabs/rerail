@@ -129,7 +129,7 @@ export function gatedPin(root: string, pack: string, tool: string): UpstreamPin 
     package: name,
     version,
     disagreements,
-    bump: `npm run port-readiness:bump -- --pack ${pack} --tool ${tool}, then record it again (the nightly opens this as a pull request)`,
+    bump: `npm run port-readiness:bump -- --pack ${pack} --tool ${tool}, then npm run fixtures:derive -- --pack ${pack} --tool ${tool} --update and npm run port-readiness:record -- --pack ${pack} --tool ${tool} (the nightly opens this as a pull request)`,
   };
 }
 
@@ -154,7 +154,7 @@ export function clippyPin(root: string): UpstreamPin {
     package: "rust",
     version,
     disagreements: clippy === expected ? [] : [`${common} pins Rust ${version}, whose Clippy is ${expected}, but ${conformance} tools[clippy].version is ${clippy ?? "missing"}`],
-    bump: "npm run port-readiness:bump -- --pack rust --tool clippy (the nightly opens this as a pull request)",
+    bump: "npm run port-readiness:bump -- --pack rust --tool clippy, then npm run fixtures:derive -- --pack rust --tool clippy --update (the nightly opens this as a pull request)",
   };
 }
 
