@@ -10,7 +10,7 @@ import { notebookCodeCells, upstreamLicenseText } from "../../../port-readiness/
 import { diagnosticSpan, RUFF_SPAN_PARTS, ruffSpan } from "../../../port-readiness/span-units/ruff.js";
 import type { Check, FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamFile, UpstreamRule } from "../../../port-readiness/types.js";
 import { createPythonToolkit } from "../languages/python.js";
-import { closingIndex, lexRust, rustLiterals, rustRegex, withoutTestItems, type RustLiterals, type RustToken } from "../languages/rust.js";
+import { closingIndex, lexRust, literalWords, rustLiterals, rustRegex, withoutTestItems, type RustLiterals, type RustToken } from "../languages/rust.js";
 import { checkoutUpstream, filesUnder, uvRuntime, type PythonRuntime } from "../runtimes.js";
 import { enabledSelections, kebabCase, ruffTestLints, type RuleVariants } from "./ruff-tests.js";
 
@@ -39,6 +39,8 @@ const LINTER = "crates/ruff_linter";
 const LINTER_TEST_MODULES = ["src/linter.rs"];
 /** Ruff's parser-side semantic checks, which detect what some rules report; read from the pinned commit, outside the sparse checkout. */
 const PARSER_SEMANTIC_ERRORS = "crates/ruff_python_parser/src/semantic_errors.rs";
+/** crates/ruff_linter/src modules outside rules/ whose code decides what rules match (todo tags, docstring sections, comments). */
+const DOMAIN_MODULES = ["directives.rs", "docstrings/", "comments/"];
 const FIXTURES = "resources/test/fixtures";
 
 interface RuffRule {
@@ -189,9 +191,9 @@ export function violationStruct(source: string, line: number): string | undefine
 }
 
 /**
- * Where Rust code raises a violation, by token index: it builds the struct (`Struct { .. }`, `Struct::new(..)`, or a
- * unit struct passed on as `Struct,` or `Struct)`). Naming it in a `use` declaration or as `Rule::Struct` (an
- * enablement check) is not raising it.
+ * Where Rust code raises a violation, by token index: it builds the struct (`Struct { .. }`, `Struct(..)`,
+ * `Struct::new(..)`, or a unit struct passed on as `Struct,` or `Struct)`). Naming it in a `use` declaration, as
+ * `Rule::Struct` (an enablement check) or in its own `struct` declaration is not raising it.
  */
 export function raiseSites(tokens: readonly RustToken[], struct: string): number[] {
   const sites: number[] = [];
@@ -201,8 +203,8 @@ export function raiseSites(tokens: readonly RustToken[], struct: string): number
     if (token.kind === "ident" && token.text === "use") inUse = true;
     else if (token.kind === "punct" && token.text === ";") inUse = false;
     else if (!inUse && token.kind === "ident" && token.text === struct
-      && !(tokens[index - 1]?.text === "::" && tokens[index - 2]?.text === "Rule")
-      && (["{", ",", ")"].includes(tokens[index + 1]?.text ?? "")
+      && !(tokens[index - 1]?.text === "::" && tokens[index - 2]?.text === "Rule") && tokens[index - 1]?.text !== "struct"
+      && (["{", "(", ",", ")"].includes(tokens[index + 1]?.text ?? "")
         || (tokens[index + 1]?.text === "::" && tokens[index + 2]?.kind === "ident" && tokens[index + 3]?.text === "("))) sites.push(index);
   }
   return sites;
@@ -238,6 +240,62 @@ export function inSemanticErrorArm(tokens: readonly RustToken[], index: number):
     }
   }
   return false;
+}
+
+/**
+ * The string literals of the conditions that guard the token at `index`: the header of every block around it (`if`,
+ * `else if`, a match arm and its guard, `while`, `for`), out to the function it sits in. The checker runs a rule's check
+ * only when they hold (`if attr == "join"` around FLY002's call), so the words they spell are names the rule checks.
+ */
+export function guardStrings(tokens: readonly RustToken[], index: number): string[] {
+  const opens = (token: RustToken) => token.kind === "punct" && "([{".includes(token.text);
+  const closes = (token: RustToken) => token.kind === "punct" && ")]}".includes(token.text);
+  const strings: string[] = [];
+  let depth = 0;
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    const token = tokens[cursor]!;
+    if (closes(token)) depth += 1;
+    else if (opens(token) && depth > 0) depth -= 1;
+    else if (token.kind === "punct" && token.text === "{") {
+      // The header runs back to the `;`, `,`, `{` or `}` that ends the statement or match arm before it.
+      let start = cursor - 1;
+      let nested = 0;
+      for (; start >= 0; start -= 1) {
+        const part = tokens[start]!;
+        if (closes(part)) {
+          if (nested === 0 && part.text === "}") break;
+          nested += 1;
+        } else if (opens(part)) {
+          if (nested === 0) break;
+          nested -= 1;
+        } else if (nested === 0 && (part.text === ";" || part.text === ",")) break;
+      }
+      const header = tokens.slice(start + 1, cursor);
+      if (header.some((part) => part.kind === "ident" && part.text === "fn")) break;
+      for (const part of header) if (part.kind === "string" && part.value !== undefined) strings.push(part.value);
+    }
+  }
+  return strings;
+}
+
+/** Where Rust code calls one of `functions` by path (`flynt::rules::static_join_to_fstring(`), by token index. */
+export function pathCallSites(tokens: readonly RustToken[], functions: ReadonlySet<string>): number[] {
+  const sites: number[] = [];
+  tokens.forEach((token, index) => {
+    if (token.kind === "ident" && functions.has(token.text) && tokens[index - 1]?.text === "::" && tokens[index + 1]?.text === "(") sites.push(index);
+  });
+  return sites;
+}
+
+/** The functions a Rust file declares public to its crate or beyond (`pub fn`, `pub(crate) fn`). */
+export function publicFunctions(tokens: readonly RustToken[]): Set<string> {
+  const names = new Set<string>();
+  tokens.forEach((token, index) => {
+    if (token.text !== "fn" || tokens[index + 1]?.kind !== "ident") return;
+    const before = tokens[index - 1]?.text === ")" ? tokens.slice(Math.max(0, index - 4), index).map((part) => part.text).join("") : tokens[index - 1]?.text;
+    if (before === "pub" || /^pub\((?:crate|super)\)$/u.test(before ?? "")) names.add(tokens[index + 1]!.text);
+  });
+  return names;
 }
 
 /** The process environment without the variables Ruff reads its configuration from. */
@@ -402,6 +460,20 @@ export async function createRuffAdapter(pack: PackManifest, names: string[], cac
     const checkerTokens = new Map(checkerFiles.map((file) => [file, withoutTestItems(lexRust(readFileSync(file, "utf8")))]));
     const semanticErrorsFile = join(upstream.directory, PARSER_SEMANTIC_ERRORS);
     literalCache.set(semanticErrorsFile, rustLiterals(await runChecked(runner, ["git", "-C", upstream.directory, "show", `${pack.upstream.commit}:${PARSER_SEMANTIC_ERRORS}`])));
+    const tokenCache = new Map<string, RustToken[]>(checkerTokens);
+    const tokensOf = (file: string): RustToken[] => {
+      let found = tokenCache.get(file);
+      if (found === undefined) {
+        found = withoutTestItems(lexRust(readFileSync(file, "utf8")));
+        tokenCache.set(file, found);
+      }
+      return found;
+    };
+    /** The rule's linter module (rules/<linter>/), when its implementation lives in one. */
+    const linterModule = (file: string): string | undefined => {
+      const inRules = relative(rulesDirectory, file).split(sep);
+      return inRules.length > 1 && inRules[0] !== ".." ? join(rulesDirectory, inRules[0]!) : undefined;
+    };
     const implementationCache = new Map<string, string[]>();
     const implementationFiles = (code: string): string[] => {
       let files = implementationCache.get(code);
@@ -410,18 +482,47 @@ export async function createRuffAdapter(pack: PackManifest, names: string[], cac
         const struct = file === undefined ? undefined : violationStruct(readFileSync(file, "utf8"), ruleByCode.get(code)!.source_location!.line);
         const sites = struct === undefined ? [] : checkerFiles.map((checker) => ({ checker, at: raiseSites(checkerTokens.get(checker)!, struct) })).filter(({ at }) => at.length > 0);
         const parserDetected = sites.some(({ checker, at }) => at.some((index) => inSemanticErrorArm(checkerTokens.get(checker)!, index)));
-        files = file === undefined ? [] : [file, ...sites.map(({ checker }) => checker), ...(parserDetected ? [semanticErrorsFile] : [])];
+        // A linter that declares its violations in one file (violations.rs) raises them from its rule files, which are
+        // the implementation, as the checker files that raise one are.
+        const module = file === undefined ? undefined : linterModule(file);
+        const raisers = struct === undefined || module === undefined ? [] : filesUnder(module, (path) => path.endsWith(".rs") && path !== file)
+          .filter((candidate) => raiseSites(tokensOf(candidate), struct).length > 0);
+        files = file === undefined ? [] : [file, ...raisers, ...sites.map(({ checker }) => checker), ...(parserDetected ? [semanticErrorsFile] : [])];
         implementationCache.set(code, files);
       }
       return files;
     };
-    /** The ruff_linter rule modules the implementation imports (its linter's helpers, other rules' modules); plumbing is not delegation. */
+    /**
+     * The words of the conditions the checker tests before it runs the rule's check (`if attr == "join"` around FLY002's
+     * call): the guards of every call to the rule's functions, and of every `Rule::<Struct>` enablement check.
+     */
+    const guardWords = (code: string): string[] => {
+      const file = implementationFile(code);
+      if (file === undefined) return [];
+      const struct = violationStruct(readFileSync(file, "utf8"), ruleByCode.get(code)!.source_location!.line);
+      const functions = new Set(implementationFiles(code).filter((path) => path.startsWith(`${rulesDirectory}/`)).flatMap((path) => [...publicFunctions(tokensOf(path))]));
+      return checkerFiles.flatMap((checker) => {
+        const tokens = checkerTokens.get(checker)!;
+        const enabled = struct === undefined ? [] : tokens.flatMap((token, index) => (token.text === struct && tokens[index - 1]?.text === "::" && tokens[index - 2]?.text === "Rule" ? [index] : []));
+        return [...pathCallSites(tokens, functions), ...enabled].flatMap((index) => guardStrings(tokens, index)).flatMap(literalWords);
+      });
+    };
+    /**
+     * The ruff_linter modules the implementation imports that decide what a rule matches: its linter's helpers and other
+     * rules' modules, and the comment directives, docstring and comment readers outside rules/. The checker, fixes,
+     * registry and settings plumbing are not delegation. The linter's settings.rs holds its options' defaults.
+     */
     const importedRuleModules = (file: string): string[] => [...new Set(literalsOf(file).uses
       .map((path) => useTarget(path, file, crateRoots, join(linterDirectory, "src")))
-      .filter((target): target is string => target !== undefined && target !== file && target.startsWith(`${rulesDirectory}/`)))].sort();
+      .filter((target): target is string => target !== undefined && target !== file
+        && (target.startsWith(`${rulesDirectory}/`) || DOMAIN_MODULES.some((module) => relative(join(linterDirectory, "src"), target).startsWith(module)))))].sort();
     const sharedFiles = (code: string): string[] => {
       const file = implementationFile(code);
-      return file === undefined ? [] : [...importedRuleModules(file), ...sharedCrateFiles];
+      if (file === undefined) return [];
+      const module = linterModule(file);
+      const settings = module === undefined ? [] : [join(module, "settings.rs")].filter((path) => existsSync(path));
+      const own = implementationFiles(code).filter((path) => path.startsWith(`${rulesDirectory}/`));
+      return [...new Set([...own.flatMap(importedRuleModules), ...settings])].filter((path) => !own.includes(path)).sort().concat(sharedCrateFiles);
     };
     const regexesOf = (files: string[]) => files.flatMap((file) => literalsOf(file).regexes.flatMap((pattern) => rustRegex(pattern) ?? []));
 
@@ -478,7 +579,7 @@ export async function createRuffAdapter(pack: PackManifest, names: string[], cac
       rule,
 
       implementationNames(name: string): Set<string> {
-        return new Set(implementationFiles(name).flatMap((file) => literalsOf(file).names));
+        return new Set([...implementationFiles(name).flatMap((file) => literalsOf(file).names), ...guardWords(name)]);
       },
       sharedImplementationNames(name: string): Set<string> {
         return new Set(sharedFiles(name).flatMap((file) => literalsOf(file).names));

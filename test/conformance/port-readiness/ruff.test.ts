@@ -8,8 +8,11 @@ import {
   documentedOptions,
   enabledCodes,
   instability,
+  guardStrings,
   inSemanticErrorArm,
   parseShowSettings,
+  pathCallSites,
+  publicFunctions,
   raiseSites,
   ruffVersionMatches,
   runtimeVersionCheck,
@@ -379,6 +382,8 @@ test("raiseSites finds where code builds a violation, not where it imports it or
   assert.equal(raises("self.report_diagnostic(pyflakes::rules::ForwardAnnotationSyntaxError { parse_error }, range);"), true);
   assert.equal(raises("checker.report_diagnostic(pyflakes::rules::BreakOutsideLoop, stmt.range());", "BreakOutsideLoop"), true);
   assert.equal(raises("self.report_diagnostic(YieldOutsideFunction::new(kind), error.range);", "YieldOutsideFunction"), true);
+  assert.equal(raises("checker.report_diagnostic(LoggingExtraAttrClash(key.to_string()), range);", "LoggingExtraAttrClash"), true);
+  assert.equal(raises("pub(crate) struct LoggingExtraAttrClash(pub String);", "LoggingExtraAttrClash"), false);
   assert.equal(raises("if self.is_rule_enabled(Rule::ForwardAnnotationSyntaxError) { visit(); }"), false);
   assert.equal(raises("use crate::rules::pyflakes::rules::{ForwardAnnotationSyntaxError, Other};"), false);
   assert.equal(raises("// ForwardAnnotationSyntaxError { }\nlet s = \"ForwardAnnotationSyntaxError {\";"), false);
@@ -398,4 +403,32 @@ test("inSemanticErrorArm tells a violation raised for a parser-detected semantic
   assert.equal(arm("LateFutureImport"), true);
   assert.equal(arm("FutureFeatureNotDefined"), true);
   assert.equal(arm("ForwardAnnotationSyntaxError"), false);
+});
+
+test("guardStrings reads the strings of the conditions around a call, out to its function, and no others", () => {
+  const code = `pub(crate) fn expression(expr: &Expr, checker: &Checker) {
+    let label = "not a guard";
+    match expr {
+      Expr::Call(call) if call.name() != "skip" => {
+        if let Expr::StringLiteral(ast::ExprStringLiteral { value, .. }) = value.as_ref() {
+          if attr == "join" {
+            if checker.is_rule_enabled(Rule::StaticJoinToFString) { flynt::rules::static_join_to_fstring(checker, expr, value); }
+          } else if attr == "split" { flynt::rules::other(checker); }
+        }
+        if checker.semantic.match_typing_expr(annotation, "TypeAlias") { other_rule(checker); }
+      }
+      _ => {}
+    }
+  }`;
+  const tokens = lexRust(code);
+  const guards = (fn: string) => pathCallSites(tokens, new Set([fn])).flatMap((index) => guardStrings(tokens, index)).sort();
+  assert.deepEqual(guards("static_join_to_fstring"), ["join", "skip"]);
+  assert.deepEqual(guards("other"), ["skip", "split"]);
+  const enabled = tokens.findIndex((token, index) => token.text === "StaticJoinToFString" && tokens[index - 2]?.text === "Rule");
+  assert.deepEqual(guardStrings(tokens, enabled).sort(), ["join", "skip"]);
+});
+
+test("publicFunctions reads the functions a rule file exposes to the checker", () => {
+  const tokens = lexRust("pub(crate) fn logging_call(c: &Checker) {}\npub fn find() {}\nfn helper() {}\npub(super) fn near() {}\nimpl X { pub(crate) fn method(&self) {} }");
+  assert.deepEqual([...publicFunctions(tokens)].sort(), ["find", "logging_call", "method", "near"]);
 });
