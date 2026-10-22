@@ -7,5 +7,6 @@ pub mod classify;
 pub mod compile;
 pub mod front;
 pub mod ir;
+pub mod mutant;
 pub mod policy;
 pub mod sql;

@@ -60,7 +60,7 @@ impl LeafCheck for Leaves {
             return Err("`content` gate".into());
         }
         if let Some(l) = spec.get("lines") {
-            for k in ["include", "exclude", "state"] {
+            for k in ["include", "exclude", "state", "indentation"] {
                 if l.get(k).is_some() {
                     return Err(format!("`lines.{k}`"));
                 }

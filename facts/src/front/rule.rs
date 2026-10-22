@@ -142,6 +142,30 @@ fn mentions(v: &Json, key: &str, utils: &BTreeMap<String, Json>, seen: &mut Vec<
     }
 }
 
+/// Rewrite `file-path-gate` (docs/facts/REWRITES.md): an ast query's `file: { path: C }` gate
+/// becomes the rule `all: [{ filePath: C }, rule]`. Both are `TextCondition::holds(file.path)`
+/// (unanchored `regex` must match, `notRegex` must not), constant over a file's nodes and
+/// binding nothing, so every root's verdict is the gate's conjunction with the rule's.
+/// Side conditions: `file` holds `path` only (module keys read other contents), and the query
+/// sets `syntax` (without it a gated-out file still reports partial-source failures natively).
+fn file_path_gate(query: &mut Json) {
+    let Some(q) = query.as_object_mut() else { return };
+    let only_path = q.get("file").and_then(Json::as_object).is_some_and(|f| f.len() == 1 && f.contains_key("path"));
+    if !only_path || !q.contains_key("syntax") {
+        return;
+    }
+    let file = q.remove("file").unwrap();
+    let mut cond = file["path"].clone();
+    if crate::mutant::on(11) {
+        // Mutant 11 (dropped side condition): the gate loses its `notRegex`.
+        if let Some(o) = cond.as_object_mut() {
+            o.remove("notRegex");
+        }
+    }
+    let rule = q.remove("rule").unwrap_or(Json::Null);
+    q.insert("rule".into(), serde_json::json!({ "all": [{ "filePath": cond }, rule] }));
+}
+
 /// A `when` on a Python ast query (native `compile_python_when`): `option` conditions on the
 /// document's options and `pythonVersion` against Ruff's default 3.10.
 fn when_holds(when: &Json, options: &BTreeMap<String, Json>) -> Result<bool, String> {
@@ -306,6 +330,7 @@ impl Front {
                 }
             }
         }
+        file_path_gate(&mut query);
         let mut local_utils = ctx.utils.clone();
         if let Some(u) = query.get("utils").and_then(Json::as_object) {
             local_utils.extend(u.iter().map(|(k, v)| (k.clone(), v.clone())));
@@ -347,7 +372,7 @@ impl Front {
         }
         regex::Regex::new(o.get("pattern").and_then(Json::as_str).ok_or("forbid.regex.pattern")?).map_err(|e| format!("forbid.regex.pattern: {e}"))?;
         if let Some(l) = o.get("lines") {
-            check_keys(obj(l, "forbid.regex.lines")?, &["include", "exclude", "first", "terminators", "state"], "forbid.regex.lines")?;
+            check_keys(obj(l, "forbid.regex.lines")?, &["include", "exclude", "first", "terminators", "state", "indentation"], "forbid.regex.lines")?;
         }
         if let Some(c) = o.get("content") {
             check_keys(obj(c, "forbid.regex.content")?, &["include", "exclude"], "forbid.regex.content")?;
@@ -667,5 +692,7 @@ fn relational(f: &mut Front, ctx: &mut Ctx<'_>, id: &str, r: &Json, viol: Violat
 /// Maps `Col { depth: 0, col: i }` (an index into the stored columns) to `map[i]` (its index in
 /// the query's output).
 fn rebase_cols(e: Expr<AnySource>, map: &[u16]) -> Expr<AnySource> {
-    crate::ir::map_cols(e, &mut |depth, col| if depth == 0 { map[col as usize] } else { col })
+    // Mutant 12 (wrong column map): deferred expressions read the query's column at the stored
+    // position.
+    crate::ir::map_cols(e, &mut |depth, col| if depth == 0 && !crate::mutant::on(12) { map[col as usize] } else { col })
 }

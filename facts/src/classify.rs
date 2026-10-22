@@ -26,11 +26,14 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 pub fn file_source(src: AnySource, input_cross: &[Option<String>]) -> Result<FileSource, String> {
     match src {
         AnySource::Input(i) => match &input_cross[i as usize] {
+            // Mutant 7: a per-file plan accepts a cross-file input.
+            Some(_) if crate::mutant::on(7) => Ok(FileSource::Input(i)),
             Some(c) => Err(format!("cross-file read in a per-file plan: {c}")),
             None => Ok(FileSource::Input(i)),
         },
         AnySource::Syntax(t) => Ok(FileSource::Syntax(t)),
         AnySource::Stage(s) => Ok(FileSource::Stage(s)),
+        AnySource::ReferenceEdges if crate::mutant::on(7) => Ok(FileSource::Stage(u32::MAX)),
         AnySource::ReferenceEdges => Err("cross-file read in a per-file plan: `reference_edges` (the reference graph)".into()),
     }
 }
@@ -333,7 +336,9 @@ impl Env<'_> {
             Loc::Global
         } else {
             let root = uf.find(locals[0][0]);
-            if !locals.iter().all(|l| uf.find(l[0]) == root) {
+            // Mutant 15 (dropped side condition): a join of per-content relations without a path
+            // equality is taken as per content.
+            if !crate::mutant::on(15) && !locals.iter().all(|l| uf.find(l[0]) == root) {
                 Loc::Global
             } else {
                 let cols: Vec<u16> = (0..w).filter(|c| uf.find(*c) == root).map(|c| c as u16).collect();
@@ -652,13 +657,19 @@ impl Cut<'_> {
                 return Rel::Unit;
             }
         };
-        let keep: Vec<u16> = match needed {
+        let mut keep: Vec<u16> = match needed {
             Some(n) => n.iter().copied().collect(),
             None => (0..schema.len() as u16).collect(),
         };
+        if crate::mutant::on(13) && keep.len() > 1 {
+            // Mutant 13 (dropped side condition): a needed column is not exported.
+            keep.pop();
+        }
         let narrow: Vec<_> = keep.iter().map(|c| schema[*c as usize].clone()).collect();
         let mut def = if keep.len() == schema.len() { def } else { Rel::Project { input: Box::new(def), exprs: keep.iter().map(|c| Expr::Col { depth: 0, col: *c }).collect(), schema: narrow.clone() } };
-        if ctx.set {
+        // Mutant 14 (dropped side condition): distinct even where multiplicity is read.
+        let distinct = ctx.set || crate::mutant::on(14);
+        if distinct {
             def = Rel::Distinct { input: Box::new(def), prefix: narrow.len() as u16 };
         }
         let digest = format!("{def:?}");
@@ -668,7 +679,7 @@ impl Cut<'_> {
                 *id
             }
             None => {
-                self.exports.push((def, ctx.set, ctx.ordered));
+                self.exports.push((def, distinct, ctx.ordered));
                 let id = (self.exports.len() - 1) as ExportId;
                 self.digests.insert(digest, id);
                 id
@@ -1338,5 +1349,63 @@ mod tests {
         assert!(found.iter().all(|s| matches!(s, RepoSource::Exported(_) | RepoSource::Stage(_))), "{found:?}");
         assert!(p.exported.iter().any(|e| e.distinct), "the EXISTS side is read as a set");
         let _ = Partition::File;
+    }
+
+    /// Mutant 15: a join of two per-content relations without a path equality spans files.
+    #[test]
+    fn rewrite_cut_requires_path_equality() {
+        let doc = relational(json!(null), json!({}), "SELECT a.__path, a.__start, a.__end FROM names a JOIN names b ON b.name = a.name");
+        let p = compile(&doc, &Default::default(), &mut Accept).unwrap();
+        // The stage itself is not exported: two scans of the names export feed a repository join.
+        assert_eq!(p.repository[0].stages.len(), 1, "the join stays on the repository side");
+    }
+
+    /// Mutant 14: a count reads multiplicity, so its export is not distinct.
+    #[test]
+    fn rewrite_distinct_only_under_set_readers() {
+        let doc = relational(json!(null), json!({}), "SELECT n.__path, n.__start, n.__end FROM names n WHERE (SELECT count(*) FROM names m WHERE m.name = n.name) > 1");
+        let p = compile(&doc, &Default::default(), &mut Accept).unwrap();
+        assert!(!p.exported.is_empty() && p.exported.iter().all(|e| !e.distinct), "{:?}", p.exported.iter().map(|e| (&e.name, e.distinct)).collect::<Vec<_>>());
+    }
+
+    /// Mutant 13: an export keeps every column the repository side reads.
+    #[test]
+    fn rewrite_projection_keeps_read_columns() {
+        let doc = relational(json!(null), json!({}), "SELECT a.__path, a.__start, a.__end, a.name FROM names a JOIN names b ON b.name = a.name");
+        let p = compile(&doc, &Default::default(), &mut Accept).unwrap();
+        for e in &p.exported {
+            let cols: Vec<&str> = e.schema.iter().map(|c| c.name.as_str()).collect();
+            assert!(cols.contains(&"name"), "{cols:?}");
+        }
+    }
+
+    /// Mutant 12: a deferred column reads the stored column it names.
+    #[test]
+    fn rewrite_deferred_reads_stored_columns() {
+        let mut doc = relational(json!("file"), json!({}), "SELECT name, __path, __start, __end FROM names");
+        doc["clauses"][0]["relational"]["stages"][0]["deferred"] = json!({ "name": "__path || ':' " });
+        let p = compile(&doc, &Default::default(), &mut Accept).unwrap();
+        let StageDef::Query { rel: Rel::Project { exprs, .. } } = &p.per_file[0].stages[0].def else { panic!() };
+        // Stored columns: __path (query column 1), __start, __end; `name` (column 0) is replaced.
+        let crate::ir::Expr::Concat(l, _) = &exprs[0] else { panic!("{:?}", exprs[0]) };
+        assert!(matches!(**l, crate::ir::Expr::Col { depth: 0, col: 1 }), "{l:?}");
+    }
+
+    /// Mutant 11: `file: {path: C}` becomes a `filePath: C` conjunct, C whole; without `syntax`
+    /// the gate stays (and the leaf executor decides).
+    #[test]
+    fn rewrite_file_path_gate() {
+        let q = json!({ "language": "python", "syntax": "valid", "file": { "path": { "regex": "^impl/", "notRegex": "tests/" } }, "rule": { "kind": "identifier" } });
+        let doc = policy(json!({ "id": "c", "forbid": { "ast": q }, "violation": { "code": "X", "message": "m", "anchor": "witness.span" } }));
+        let p = compile(&doc, &Default::default(), &mut Accept).unwrap();
+        let crate::ir::InputKind::Pattern { query } = &p.inputs[0].kind else { panic!() };
+        assert_eq!(query["rule"], json!({ "all": [{ "filePath": { "regex": "^impl/", "notRegex": "tests/" } }, { "kind": "identifier" }] }));
+        assert!(query.get("file").is_none());
+        let mut q2 = q.clone();
+        q2.as_object_mut().unwrap().remove("syntax");
+        let doc = policy(json!({ "id": "c", "forbid": { "ast": q2 }, "violation": { "code": "X", "message": "m", "anchor": "witness.span" } }));
+        let p = compile(&doc, &Default::default(), &mut Accept).unwrap();
+        let crate::ir::InputKind::Pattern { query } = &p.inputs[0].kind else { panic!() };
+        assert!(query.get("file").is_some());
     }
 }
