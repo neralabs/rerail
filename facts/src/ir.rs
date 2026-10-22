@@ -77,8 +77,9 @@ pub enum AnySource {
     Input(InputId),
     Syntax(SyntaxTable),
     Stage(StageId),
-    /// The native reference graph `reference_edges(target_path, target_start, target_end,
-    /// source_name, target_name, target_class)` (relational `references`): cross-file.
+    /// The native reference graph `reference_edges(__path, __start, __end, target_path,
+    /// target_start, target_end, source_name, target_name, target_class)` (relational
+    /// `references`): cross-file.
     ReferenceEdges,
 }
 
@@ -130,11 +131,15 @@ pub enum Func {
     Char,
     Abs,
     Typeof,
+    /// `printf(format, ...)` (SQLite's `%` formats).
+    Printf,
     /// Scalar `max(a, b, ...)` / `min(a, b, ...)` (two or more arguments).
     Max,
     Min,
     JsonQuote,
     JsonExtract,
+    /// `json_array(a, ...)`.
+    JsonArray,
     /// `rx_matches(text, pattern)`: Rust `regex`, NULL text reads as `''`.
     RxMatches,
     /// `rx_extract(text, pattern, group)`.
@@ -294,6 +299,10 @@ pub enum Projection {
     StartByte(String),
     EndByte(String),
     StartLine(String),
+    /// `file.module` / `file.package`: the content's module path, derived from the package
+    /// markers (`__init__.py`) of the other contents of the snapshot: cross-file.
+    Module,
+    Package,
     Regex { source: Box<Projection>, regex: String, group: u32 },
 }
 
@@ -352,9 +361,10 @@ pub enum Graph {
 
 #[derive(Clone, Debug)]
 pub enum StageDef<S> {
-    /// A stage query; `deferred` columns are scalar expressions over the stored row (no
-    /// subqueries), replacing or appending columns, evaluated on read.
-    Query { rel: Rel<S>, deferred: Vec<(u16, Expr<S>)> },
+    /// A stage query. `deferred` columns are lowered into it: a `Project` over the query whose
+    /// replaced or appended columns are scalar expressions over the stored columns (deterministic,
+    /// so computing them on read or on write is the same relation; laziness is physical).
+    Query { rel: Rel<S> },
     /// Reachability `(__path, root, node)`, reflexive, set semantics, per path.
     Reach { roots: Rel<S>, edges: Option<Rel<S>>, graph: Graph },
 }
@@ -474,4 +484,162 @@ pub struct Program {
 fn program_is_shareable() {
     fn shareable<T: Send + Sync>() {}
     shareable::<Program>();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Traversal
+
+/// Rewrites the column references of a scalar expression outside its subqueries:
+/// `Col { depth, col }` becomes `Col { depth, col: f(depth, col) }`.
+pub fn map_cols<S>(e: Expr<S>, f: &mut dyn FnMut(u16, u16) -> u16) -> Expr<S> {
+    let b = |x: Box<Expr<S>>, f: &mut dyn FnMut(u16, u16) -> u16| Box::new(map_cols(*x, f));
+    match e {
+        Expr::Col { depth, col } => Expr::Col { depth, col: f(depth, col) },
+        Expr::Lit(l) => Expr::Lit(l),
+        Expr::Not(x) => Expr::Not(b(x, f)),
+        Expr::Neg(x) => Expr::Neg(b(x, f)),
+        Expr::Plus(x) => Expr::Plus(b(x, f)),
+        Expr::Cast(x, a) => Expr::Cast(b(x, f), a),
+        Expr::Arith(o, x, y) => Expr::Arith(o, b(x, f), b(y, f)),
+        Expr::Concat(x, y) => Expr::Concat(b(x, f), b(y, f)),
+        Expr::And(x, y) => Expr::And(b(x, f), b(y, f)),
+        Expr::Or(x, y) => Expr::Or(b(x, f), b(y, f)),
+        Expr::Cmp(o, x, y, a) => Expr::Cmp(o, b(x, f), b(y, f), a),
+        Expr::Is { left, right, negated } => Expr::Is { left: b(left, f), right: b(right, f), negated },
+        Expr::IsNull { e, negated } => Expr::IsNull { e: b(e, f), negated },
+        Expr::Like { text, pattern, negated } => Expr::Like { text: b(text, f), pattern: b(pattern, f), negated },
+        Expr::Func(fu, args) => Expr::Func(fu, args.into_iter().map(|a| map_cols(a, f)).collect()),
+        Expr::Case { operand, whens, else_ } => Expr::Case {
+            operand: operand.map(|o| b(o, f)),
+            whens: whens.into_iter().map(|(w, t, a)| (map_cols(w, f), map_cols(t, f), a)).collect(),
+            else_: else_.map(|x| b(x, f)),
+        },
+        Expr::InList { e, list, negated } => Expr::InList { e: b(e, f), list: list.into_iter().map(|(x, a)| (map_cols(x, f), a)).collect(), negated },
+        Expr::InRel { e, rel, negated, aff } => Expr::InRel { e: b(e, f), rel, negated, aff },
+        e @ (Expr::Exists { .. } | Expr::Scalar(_)) => e,
+    }
+}
+
+/// Maps every scanned source of a relation (including inside subquery expressions), or fails
+/// with the first error.
+pub fn map_rel<S, T, X>(r: Rel<S>, f: &mut dyn FnMut(S) -> Result<T, X>) -> Result<Rel<T>, X> {
+    let bx = |r: Box<Rel<S>>, f: &mut dyn FnMut(S) -> Result<T, X>| -> Result<Box<Rel<T>>, X> { Ok(Box::new(map_rel(*r, f)?)) };
+    Ok(match r {
+        Rel::Scan { src, schema } => Rel::Scan { src: f(src)?, schema },
+        Rel::Local { id, schema } => Rel::Local { id, schema },
+        Rel::Unit => Rel::Unit,
+        Rel::JsonEach { input, arg, on, outer } => Rel::JsonEach { input: bx(input, f)?, arg: map_expr(arg, f)?, on: on.map(|o| map_expr(o, f)).transpose()?, outer },
+        Rel::Join { kind, left, right, on } => Rel::Join { kind, left: bx(left, f)?, right: bx(right, f)?, on: on.map(|o| map_expr(o, f)).transpose()? },
+        Rel::Filter { input, pred } => Rel::Filter { input: bx(input, f)?, pred: map_expr(pred, f)? },
+        Rel::Project { input, exprs, schema } => Rel::Project { input: bx(input, f)?, exprs: exprs.into_iter().map(|e| map_expr(e, f)).collect::<Result<_, _>>()?, schema },
+        Rel::Aggregate { input, keys, aggs } => Rel::Aggregate {
+            input: bx(input, f)?,
+            keys: keys.into_iter().map(|e| map_expr(e, f)).collect::<Result<_, _>>()?,
+            aggs: aggs.into_iter().map(|a| Ok(AggCall { f: a.f, arg: a.arg.map(|e| map_expr(e, f)).transpose()?, sep: a.sep.map(|e| map_expr(e, f)).transpose()?, distinct: a.distinct })).collect::<Result<_, _>>()?,
+        },
+        Rel::Window { input, funcs } => Rel::Window {
+            input: bx(input, f)?,
+            funcs: funcs
+                .into_iter()
+                .map(|w| {
+                    Ok(WindowFn {
+                        kind: match w.kind {
+                            WindowKind::RowNumber => WindowKind::RowNumber,
+                            WindowKind::Min(e) => WindowKind::Min(map_expr(e, f)?),
+                            WindowKind::Max(e) => WindowKind::Max(map_expr(e, f)?),
+                        },
+                        partition: w.partition.into_iter().map(|e| map_expr(e, f)).collect::<Result<_, _>>()?,
+                        order: w.order.into_iter().map(|(e, d)| Ok((map_expr(e, f)?, d))).collect::<Result<_, _>>()?,
+                    })
+                })
+                .collect::<Result<_, _>>()?,
+        },
+        Rel::Distinct { input, prefix } => Rel::Distinct { input: bx(input, f)?, prefix },
+        Rel::Union { all, left, right } => Rel::Union { all, left: bx(left, f)?, right: bx(right, f)? },
+        Rel::Sort { input, keys, limit, offset } => Rel::Sort { input: bx(input, f)?, keys, limit: limit.map(|e| map_expr(e, f)).transpose()?, offset: offset.map(|e| map_expr(e, f)).transpose()? },
+        Rel::With { bindings, body } => Rel::With {
+            bindings: bindings
+                .into_iter()
+                .map(|(id, b)| {
+                    Ok((
+                        id,
+                        match b {
+                            Binding::Plain(r) => Binding::Plain(map_rel(r, f)?),
+                            Binding::Fix { init, step, set, schema } => Binding::Fix {
+                                init: init.into_iter().map(|r| map_rel(r, f)).collect::<Result<_, _>>()?,
+                                step: step.into_iter().map(|r| map_rel(r, f)).collect::<Result<_, _>>()?,
+                                set,
+                                schema,
+                            },
+                        },
+                    ))
+                })
+                .collect::<Result<_, _>>()?,
+            body: bx(body, f)?,
+        },
+    })
+}
+
+/// Maps the sources scanned inside an expression's subqueries.
+pub fn map_expr<S, T, X>(e: Expr<S>, f: &mut dyn FnMut(S) -> Result<T, X>) -> Result<Expr<T>, X> {
+    let bx = |x: Box<Expr<S>>, f: &mut dyn FnMut(S) -> Result<T, X>| -> Result<Box<Expr<T>>, X> { Ok(Box::new(map_expr(*x, f)?)) };
+    Ok(match e {
+        Expr::Lit(l) => Expr::Lit(l),
+        Expr::Col { depth, col } => Expr::Col { depth, col },
+        Expr::Not(x) => Expr::Not(bx(x, f)?),
+        Expr::Neg(x) => Expr::Neg(bx(x, f)?),
+        Expr::Plus(x) => Expr::Plus(bx(x, f)?),
+        Expr::Cast(x, a) => Expr::Cast(bx(x, f)?, a),
+        Expr::Arith(o, x, y) => Expr::Arith(o, bx(x, f)?, bx(y, f)?),
+        Expr::Concat(x, y) => Expr::Concat(bx(x, f)?, bx(y, f)?),
+        Expr::And(x, y) => Expr::And(bx(x, f)?, bx(y, f)?),
+        Expr::Or(x, y) => Expr::Or(bx(x, f)?, bx(y, f)?),
+        Expr::Cmp(o, x, y, a) => Expr::Cmp(o, bx(x, f)?, bx(y, f)?, a),
+        Expr::Is { left, right, negated } => Expr::Is { left: bx(left, f)?, right: bx(right, f)?, negated },
+        Expr::IsNull { e, negated } => Expr::IsNull { e: bx(e, f)?, negated },
+        Expr::Like { text, pattern, negated } => Expr::Like { text: bx(text, f)?, pattern: bx(pattern, f)?, negated },
+        Expr::Func(fu, args) => Expr::Func(fu, args.into_iter().map(|a| map_expr(a, f)).collect::<Result<_, _>>()?),
+        Expr::Case { operand, whens, else_ } => Expr::Case {
+            operand: operand.map(|o| bx(o, f)).transpose()?,
+            whens: whens.into_iter().map(|(w, t, a)| Ok((map_expr(w, f)?, map_expr(t, f)?, a))).collect::<Result<_, _>>()?,
+            else_: else_.map(|x| bx(x, f)).transpose()?,
+        },
+        Expr::InList { e, list, negated } => Expr::InList { e: bx(e, f)?, list: list.into_iter().map(|(x, a)| Ok((map_expr(x, f)?, a))).collect::<Result<_, _>>()?, negated },
+        Expr::InRel { e, rel, negated, aff } => Expr::InRel { e: bx(e, f)?, rel: Box::new(map_rel(*rel, f)?), negated, aff },
+        Expr::Exists { rel, negated } => Expr::Exists { rel: Box::new(map_rel(*rel, f)?), negated },
+        Expr::Scalar(rel) => Expr::Scalar(Box::new(map_rel(*rel, f)?)),
+    })
+}
+
+impl<S> Rel<S> {
+    /// The output schema (IR.md § 4).
+    pub fn schema(&self) -> Vec<Column> {
+        match self {
+            Rel::Scan { schema, .. } | Rel::Local { schema, .. } | Rel::Project { schema, .. } => schema.clone(),
+            Rel::Unit => vec![],
+            Rel::JsonEach { input, .. } => {
+                let mut s = input.schema();
+                s.extend(["key", "value", "type", "atom", "id", "parent", "fullkey", "path"].iter().map(|c| Column::new(c, Aff::None)));
+                s
+            }
+            Rel::Join { left, right, .. } => {
+                let mut s = left.schema();
+                s.extend(right.schema());
+                s
+            }
+            Rel::Filter { input, .. } | Rel::Distinct { input, .. } | Rel::Sort { input, .. } => input.schema(),
+            Rel::Aggregate { input, aggs, .. } => {
+                let mut s = input.schema();
+                s.extend((0..aggs.len()).map(|i| Column::new(&format!("__agg_{i}"), Aff::None)));
+                s
+            }
+            Rel::Window { input, funcs } => {
+                let mut s = input.schema();
+                s.extend((0..funcs.len()).map(|i| Column::new(&format!("__win_{i}"), Aff::None)));
+                s
+            }
+            Rel::Union { left, .. } => left.schema(),
+            Rel::With { body, .. } => body.schema(),
+        }
+    }
 }

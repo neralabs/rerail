@@ -121,9 +121,8 @@ impl Options {
     }
 }
 
-/// The document with every `$option` reference replaced, under `config` (option values that
-/// override the defaults, as `replay.ts` writes them into `define.config`).
-pub fn resolve(document: &Json, config: &Map<String, Json>) -> Result<Json, String> {
+/// The option values in force: declared defaults, then `define.config`, then `config`.
+pub fn option_values(document: &Json, config: &Map<String, Json>) -> Result<BTreeMap<String, Json>, String> {
     let clauses = document["clauses"].as_array().ok_or("clauses")?;
     let mut values = BTreeMap::new();
     for clause in clauses {
@@ -149,6 +148,14 @@ pub fn resolve(document: &Json, config: &Map<String, Json>) -> Result<Json, Stri
         }
         values.insert(k.clone(), v.clone());
     }
+    Ok(values)
+}
+
+/// The document with every `$option` reference replaced, under `config` (option values that
+/// override the defaults, as `replay.ts` writes them into `define.config`).
+pub fn resolve(document: &Json, config: &Map<String, Json>) -> Result<Json, String> {
+    let clauses = document["clauses"].as_array().ok_or("clauses")?;
+    let values = option_values(document, config)?;
     let options = Options { values };
     let root = document.as_object().ok_or("document")?;
     let mut out = Map::new();
