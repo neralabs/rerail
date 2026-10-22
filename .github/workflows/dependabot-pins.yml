@@ -7,11 +7,11 @@ name: Dependabot pins
 # any pull request that leaves one behind.
 #
 # The push uses the neralabs-ci app, because a push with the workflow's own token starts no CI run. A Dependabot run
-# sees Dependabot secrets only, so the app's key is stored there under its Actions name (RELEASE_APP_PRIVATE_KEY), and
-# its client id too (RELEASE_APP_CLIENT_ID) when variables are not passed to it. No step that runs project or
-# dependency code holds a write token: the sync runs without `npm ci` and installs nothing, and the app token is made
-# only for the push. Once this pushes, Dependabot stops rebasing the branch on its own; comment
-# `@dependabot recreate` for a fresh one, which this run then completes again.
+# gets secrets from Dependabot secrets only (configuration variables are not restricted), so the app's key is stored
+# there under its Actions name, RELEASE_APP_PRIVATE_KEY; its client id is the RELEASE_APP_CLIENT_ID variable, as in
+# release-pr.yml. No step that runs project or dependency code holds a write token: the sync runs without `npm ci` and
+# installs nothing, and the app token is made only for the push. Once this pushes, Dependabot stops rebasing the branch
+# on its own; comment `@dependabot recreate` for a fresh one, which this run then completes again.
 
 on:
   pull_request:
@@ -55,14 +55,13 @@ jobs:
           if git diff --quiet; then echo "changed=false" >> "$GITHUB_OUTPUT"; else echo "changed=true" >> "$GITHUB_OUTPUT"; fi
           git diff --stat
 
-      - name: Require the app's credentials as Dependabot secrets
+      - name: Require the app's key as a Dependabot secret
         if: steps.changed.outputs.changed == 'true'
         env:
-          CLIENT_ID: ${{ vars.RELEASE_APP_CLIENT_ID || secrets.RELEASE_APP_CLIENT_ID }}
           PRIVATE_KEY_SET: ${{ secrets.RELEASE_APP_PRIVATE_KEY != '' }}
         run: |
-          if [ -z "$CLIENT_ID" ] || [ "$PRIVATE_KEY_SET" != "true" ]; then
-            echo "::error::Add the neralabs-ci app's RELEASE_APP_PRIVATE_KEY (and RELEASE_APP_CLIENT_ID) as Dependabot secrets, or run npm run deps:sync on this branch and push."
+          if [ "$PRIVATE_KEY_SET" != "true" ]; then
+            echo "::error::Add the neralabs-ci app's private key as the Dependabot secret RELEASE_APP_PRIVATE_KEY, or run npm run deps:sync on this branch and push."
             exit 1
           fi
 
@@ -71,7 +70,7 @@ jobs:
         if: steps.changed.outputs.changed == 'true'
         uses: actions/create-github-app-token@v3
         with:
-          client-id: ${{ vars.RELEASE_APP_CLIENT_ID || secrets.RELEASE_APP_CLIENT_ID }}
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
 
