@@ -17,7 +17,7 @@ Status: **G2.6 measured and passing** on this branch, with every slice's latest 
 | Gate row | Target | Measured | Pass/fail | Run dir |
 |---|---|---|---|---|
 | G2.6 every seeded mutant caught | all | 13/13 killed: rewrites R1–R5 (11–15), generic 4–8, interim A3 views 1–3. Kill matrix in § 4. | **pass** | `20261022T154719-gate` (`gate.json`, `mutants/`) |
-| G2.6 gate time, one command | ≤ 10 min | `just facts-gate --mutants`: median **295 s** of 389 / 295 / 268 s (§ 2.1). A cold build from a cloned `target/release` adds 235–257 s under load 10–14 (`…151205-gate`, `…153626-gate`): 9.8 min worst case including a cold build at load 34. | **pass** | `20261022T154719-gate`, `…155725-gate`, `…160221-gate` |
+| G2.6 gate time, one command | ≤ 10 min | `just facts-gate --mutants`: median **295 s** of 389 / 295 / 268 s (§ 2.1). A cold build from a cloned `target/release` adds 235–257 s under load 10–14 (`…151205-gate`, `…153626-gate`). A cold build plus the slowest run (load 34) would be 646 s, over 10 min; with a warm build every measured run is under 6.5 min. | **pass** | `20261022T154719-gate`, `…155725-gate`, `…160221-gate` |
 | `--engine facts`, `replay.ts`, before S4 | Spike A's batch-6 numbers | 1,253/1,259 calls, 0 FP, 2 FN, 6 failures, all `quality-contracts-1` `annotation`. Identical to Spike A's `…135635-replay` and to `facts-a replay`. | **pass** | `20261022T150702-harness-replay` |
 | `--engine facts`, `suite.ts`, before S4 | Spike A's repository numbers | 173/173 findings, 0 FP, 0 FN, 38 failures, all `quality-contracts-1`. Identical to Spike A's `parity.json`. | **pass** | `20261022T150850-harness-suite` |
 | `--engine facts`, `incremental.ts` | 0 differences | 10 checks, 40 transitions, 0 differences | **pass** | `20261022T151155-harness-incremental` |
@@ -141,7 +141,7 @@ S3 owns the plan registry. `facts-b greplay [--plans …] [--real spec.json]` ru
 - **Cross-slice semantic conflicts appear only when every branch is merged.** S2's `Db.regexes` removal broke S4's views. S1's IR change (`deferred` removed) broke S3's `norm.rs` until `bf3685133`. Because the gate builds the merged tree, it is where these surface first.
 - **`a-reference` is still Spike A's unsubstituted SQL path, not `rerail_facts::reference`.** Interim mutants 1 and 3 change no finding on the subset, so only the row-level `FACTS_A3_CHECK` catches them. Once S2's backend runs S1's per-file plans, `a-reference` must compare against `reference::evaluate_plan` over `FileSource` scans; that also gives I1's per-file differential.
 - **Rewrite mutants 11–15 are killed by S1's unit differentials only.** The registry names corpus parity as the second test; it applies once the leaf executor runs the rewritten rules.
-- **Timing.** Only the third run started under load 8 (§ 2.1). A cold build plus the slowest run is close to the limit: 257 s + 389 s. Warm builds are the norm after the first run. Shortening the replays (`--limit`) is the lever if a slower machine needs one, but it would weaken G2.4's exactness evidence.
+- **Timing.** Only the third run started under load 8 (§ 2.1). A cold build plus the slowest run exceeds the limit: 257 s + 389 s = 646 s. Warm builds are the norm after the first run. Shortening the replays (`--limit`) is the lever if a slower machine needs one, but it would weaken G2.4's exactness evidence.
 
 ## 7. Resume notes
 
