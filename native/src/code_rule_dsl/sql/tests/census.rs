@@ -292,7 +292,8 @@ fn run_corpus() {
             .iter()
             .filter(|clause| clause.get("define").is_none())
         {
-            // `RERAIL_CORPUS_CLAUSES`: only the clauses whose `policy/id` holds this text.
+            // `RERAIL_CORPUS_CLAUSES`: only the clauses whose `policy/id` holds one of these
+            // comma-separated texts.
             let name = format!(
                 "{}/{}",
                 path.parent()
@@ -301,7 +302,9 @@ fn run_corpus() {
                     .unwrap_or_default(),
                 clause["id"].as_str().unwrap_or_default()
             );
-            if std::env::var("RERAIL_CORPUS_CLAUSES").is_ok_and(|only| !name.contains(&only)) {
+            if std::env::var("RERAIL_CORPUS_CLAUSES")
+                .is_ok_and(|only| !only.split(',').any(|only| name.contains(only)))
+            {
                 continue;
             }
             let mut document = policy.clone();
@@ -323,7 +326,9 @@ fn run_corpus() {
             };
             let clause_started = std::time::Instant::now();
             crate::code_rule_dsl::sql::exec::STATEMENT_PROFILE.set(Some(Default::default()));
+            crate::code_rule_dsl::sql::profile::attribute(&name);
             let sql = evaluate("sql");
+            crate::code_rule_dsl::sql::profile::dump();
             let profile = crate::code_rule_dsl::sql::exec::STATEMENT_PROFILE
                 .take()
                 .unwrap_or_default();

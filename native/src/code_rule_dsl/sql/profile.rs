@@ -16,8 +16,10 @@ static PATH: LazyLock<Option<String>> = LazyLock::new(|| {
         .filter(|path| !path.is_empty())
 });
 
-/// Per statement text: nanoseconds, rows, runs.
-static STATEMENTS: LazyLock<Mutex<HashMap<String, [u64; 3]>>> = LazyLock::new(Mutex::default);
+/// Per clause a caller names (`attribute`; empty: none named), per statement text: nanoseconds,
+/// rows, runs.
+type Totals = HashMap<String, HashMap<String, [u64; 3]>>;
+static STATEMENTS: LazyLock<Mutex<(String, Totals)>> = LazyLock::new(Mutex::default);
 
 /// The longest shape a tag carries.
 const SHAPE_CHARS: usize = 120;
@@ -26,9 +28,26 @@ pub(super) fn enabled() -> bool {
     PATH.is_some()
 }
 
+/// Attributes what is recorded from now on to `clause` (the corpus census runs one clause at a
+/// time, each in its own program, so its namespaces don't name it).
+#[cfg(test)]
+pub(in crate::code_rule_dsl) fn attribute(clause: &str) {
+    STATEMENTS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .0 = clause.to_owned();
+}
+
 /// Records one execution of `sql` (or of a pseudo-statement such as `<inputs>`).
 pub(super) fn record(sql: &str, nanos: u64, rows: usize) {
-    let mut statements = STATEMENTS.lock().unwrap_or_else(|error| error.into_inner());
+    let mut guard = STATEMENTS.lock().unwrap_or_else(|error| error.into_inner());
+    let (clause, totals) = &mut *guard;
+    if !totals.contains_key(clause.as_str()) {
+        totals.insert(clause.clone(), HashMap::new());
+    }
+    let statements = totals
+        .get_mut(clause.as_str())
+        .expect("the clause's totals");
     match statements.get_mut(sql) {
         Some(entry) => {
             entry[0] += nanos;
@@ -191,17 +210,25 @@ pub(in crate::code_rule_dsl) fn set_names(names: Vec<String>) {
     });
 }
 
-/// Writes what was recorded, with the clause names, to the profile path.
+/// Writes what was recorded, with the clause names, to the profile path: per statement, with
+/// the clause it was `attribute`d to, where one was.
 pub(in crate::code_rule_dsl) fn dump() {
     let Some(path) = PATH.as_deref() else {
         return;
     };
     let rows: Vec<serde_json::Value> = {
-        let statements = STATEMENTS.lock().unwrap_or_else(|error| error.into_inner());
-        statements
+        let guard = STATEMENTS.lock().unwrap_or_else(|error| error.into_inner());
+        guard
+            .1
             .iter()
-            .map(|(sql, [nanos, rows, runs])| {
-                serde_json::json!({ "sql": sql, "nanos": nanos, "rows": rows, "runs": runs })
+            .flat_map(|(clause, statements)| {
+                statements.iter().map(move |(sql, [nanos, rows, runs])| {
+                    let mut row = serde_json::json!({ "sql": sql, "nanos": nanos, "rows": rows, "runs": runs });
+                    if !clause.is_empty() {
+                        row["clause"] = clause.as_str().into();
+                    }
+                    row
+                })
             })
             .collect()
     };
