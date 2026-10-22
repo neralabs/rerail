@@ -540,14 +540,14 @@ pub struct Output {
     pub clause_samples: Vec<((u16, u16), u64)>,
     /// (rule index, input index) -> (row builds, nanoseconds): AST input evaluation.
     pub input_ns: BTreeMap<(usize, usize), (u64, u64)>,
-    /// SQL stage name -> (executions, nanoseconds), over every relational clause.
-    pub stage_ns: BTreeMap<String, (u64, u64)>,
+    /// (rule index, clause index, SQL stage name) -> (executions, nanoseconds).
+    pub stage_ns: BTreeMap<(usize, usize, String), (u64, u64)>,
 }
 
 impl Output {
-    fn add_stages(&mut self, stages: Vec<(String, u64)>) {
+    fn add_stages(&mut self, ri: usize, ci: usize, stages: Vec<(String, u64)>) {
         for (name, ns) in stages {
-            let e = self.stage_ns.entry(name).or_default();
+            let e = self.stage_ns.entry((ri, ci, name)).or_default();
             e.0 += 1;
             e.1 += ns;
         }
@@ -781,7 +781,7 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                         fail(out, format!("unsupported: {u}"));
                     } else if plan.per_file {
                         let r = rel::run(plan, rel::Partition { inputs: tables, anchors, facts: Some((ctx.f, ctx.path)), source: ctx.source, path: ctx.path });
-                        out.add_stages(r.stage_ns);
+                        out.add_stages(ri, ci, r.stage_ns);
                         if let Some(m) = r.failure {
                             fail(out, m);
                         }
@@ -855,7 +855,7 @@ pub fn finish(rules: &[Rule], repo: RepoAcc, budget: BTreeMap<(usize, usize), Ve
             });
         }
         let r = rel::run(plan, rel::Partition { inputs, anchors, facts: None, source: "", path: "" });
-        out.add_stages(r.stage_ns);
+        out.add_stages(ri, ci, r.stage_ns);
         if let Some(m) = r.failure {
             out.failures.push(Failure { check: rule.check.clone(), clause: clause.id.clone(), path: String::new(), message: m });
         }

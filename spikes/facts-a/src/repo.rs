@@ -136,6 +136,15 @@ fn max_rss() -> u64 {
     usage.ru_maxrss as u64
 }
 
+/// The process's current resident set, in bytes (`proc_pidinfo` task info).
+pub fn cur_rss() -> u64 {
+    let mut info: libc::proc_taskinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
+    // SAFETY: `info` is a valid, writable `proc_taskinfo` of `size` bytes.
+    let n = unsafe { libc::proc_pidinfo(std::process::id() as libc::c_int, libc::PROC_PIDTASKINFO, 0, &mut info as *mut _ as *mut libc::c_void, size) };
+    if n == size { info.pti_resident_size } else { 0 }
+}
+
 pub fn repo(args: &[String]) {
     let home = std::env::var("HOME").unwrap();
     let root = arg(args, "--root").unwrap_or(format!("{home}/rerail-bench/nera-data-layer-2b1504ad"));
@@ -154,6 +163,7 @@ pub fn repo(args: &[String]) {
     });
     let workers_wall_ns = t_workers.elapsed().as_nanos() as u64;
     let rss_after_workers = max_rss();
+    let cur_after_workers = cur_rss();
     // Merge on this thread, then the repository partitions and budgets once.
     let t_merge = Instant::now();
     let rules = compile_batch6(&policies);
@@ -170,11 +180,13 @@ pub fn repo(args: &[String]) {
     let (acc, budget) = eval::attach(parts);
     let merge_ns = t_merge.elapsed().as_nanos() as u64;
     let rss_after_merge = max_rss();
+    let cur_after_merge = cur_rss();
     let t_finish = Instant::now();
     let per_file_ns: BTreeMap<(usize, usize), u64> = out.clause_ns.iter().map(|(k, v)| (*k, v.1)).collect();
     eval::finish(&rules, acc, budget, &mut out);
     let finish_ns = t_finish.elapsed().as_nanos() as u64;
     let rss_after_finish = max_rss();
+    let cur_after_finish = cur_rss();
     let wall_ns = t_all.elapsed().as_nanos() as u64;
 
     files.sort_by_key(|f| f.index);
@@ -208,6 +220,12 @@ pub fn repo(args: &[String]) {
         *failure_counts.entry(format!("{}/{}", f.check, f.clause)).or_default() += 1;
     }
     let sum = |g: fn(&FileStat) -> u64| files.iter().map(g).sum::<u64>();
+    let mut stage_agg: BTreeMap<&str, (u64, u64)> = BTreeMap::new();
+    for ((_, _, k), (n, ns)) in &out.stage_ns {
+        let e = stage_agg.entry(k.as_str()).or_default();
+        e.0 += n;
+        e.1 += ns;
+    }
     let result = json!({
         "root": root,
         "threads": threads,
@@ -226,7 +244,13 @@ pub fn repo(args: &[String]) {
             "after_merge": rss_after_merge,
             "after_finish": rss_after_finish,
         },
-        "sql_stage_ns": out.stage_ns.iter().map(|(k, (n, ns))| (k.clone(), json!([n, ns]))).collect::<serde_json::Map<String, Json>>(),
+        "cur_rss_bytes": {
+            "after_workers": cur_after_workers,
+            "after_merge": cur_after_merge,
+            "after_finish": cur_after_finish,
+        },
+        "sql_stage_ns": stage_agg.into_iter().map(|(k, (n, ns))| (k.to_owned(), json!([n, ns]))).collect::<serde_json::Map<String, Json>>(),
+        "clause_stage_ns": out.stage_ns.iter().map(|((ri, ci, k), (n, ns))| json!({"check": rules[*ri].check, "clause": rules[*ri].clauses[*ci].id, "stage": k, "n": n, "ns": ns})).collect::<Vec<Json>>(),
         "thread_ns": {
             "read": sum(|f| f.read_ns),
             "parse": sum(|f| f.parse_ns),
@@ -265,6 +289,7 @@ pub fn repo(args: &[String]) {
     o.remove("failures");
     o.remove("rules");
     o.remove("sql_stage_ns");
+    o.remove("clause_stage_ns");
     o.remove("input_ns");
     println!("{}", serde_json::to_string_pretty(&brief).unwrap());
 }
