@@ -2894,3 +2894,139 @@ This remains an intermediate test-only compiler stage, with no new production sw
 The next stage must compile parameter/store exclusions, body discovery, and load matching from the original rule.
 It must preserve the selected assignment witness through final ordered capture selection.
 Complete B023 performance gates, native resource-budget semantics, and the complete-job limit of 100 executions remain pending.
+
+### Complete ordered answer lowering — work in progress, 2026-10-22
+
+This phase completes the original B023 grammar through final findings.
+It extends the existing compiler entry; it adds no production switch or rule-name recognizer.
+The previous phase stopped at 1,029 intermediate function/value demands.
+This phase must preserve exact final root and capture identities.
+
+The new answer operators represent ordered alternatives, ancestor expansion, binding constraints, and negative value probes.
+Negative probes start from distinct requested function nodes.
+Their recursive rows contain `(file, origin, node, state)`, without capture environments or witnesses.
+Only binding leaves produce atom keys for the anti-join.
+The recursive parameter search must move strictly down the tree; zero-distance cycles fail compilation.
+Pure predicates use bound node probes and proven subtree restrictions for recursive utilities.
+
+Validation will compare native evaluation, the current engine, and generated SQL on identical sources.
+The full reference query remains independent.
+The acceptance limits remain 4,649,592 VM instructions and twice the reference median kernel CPU.
+One matching statement and zero frame publications are required.
+These checks do not establish the complete-job 100-execution gate or permit production cutover.
+
+The first fixture run failed during diagnostic cardinality preparation.
+SQLite reported `too many references to "node": max 65535`.
+The matching query had executed, but final parity assertions had not yet run.
+Repeated utility expansion duplicated complete answer subplans.
+The compiler now shares identical typed answers and caches lowered capture-bearing utilities.
+Diagnostic cardinalities use separate queries instead of a compound query that repeats all dependencies.
+These diagnostic statements remain outside the matching-statement count.
+
+The planner also pushes root-kind and atom constraints into descendant expansion through ordered alternatives.
+These constraints observe the root and value, so they do not depend on the selected witness.
+This prevents a function/value-by-descendant intermediate before load filtering.
+The compiler rejects negative value probes whose input capture is not definitely bound.
+
+The first complete corpus measurement passed exact parity: two findings across all 138 files.
+It used 3,130,168 VM instructions, below the 4,649,592 limit.
+However, it failed the CPU gate: median cold kernel CPU was 170.417 ms, versus 63.804 ms for the reference.
+Preparation consumed a median 94.335 ms; the reference needed 2.791 ms.
+Execution consumed about 74 ms, versus about 60 ms for the reference.
+This is a compiler-output problem, despite acceptable execution work.
+
+The next physical changes remove pass-through answer materializations and merge same-node filters.
+Disjoint necessary kind sets remove impossible branches before SQL emission.
+Equivalent regional recursive producers now share one CTE.
+Existing key-demand producers remain shared with the frontier instead of acquiring a redundant regional copy.
+A producer already restricted to the required region can drive a join directly.
+This replaces a region-wide node scan followed by an existence check against that same producer.
+
+Initial scaling checks passed before these changes.
+Outside assignments at sizes 32, 128, and 512 used exactly 3,580 VM instructions.
+Combined repeated assignments and loads used 54,839, 211,223, and 836,759 instructions.
+The complete upstream fixtures produced 29 exact findings.
+The 22 adversarial snippets produced 24 exact findings.
+
+The second corpus profile reduced work to 2,897,697 VM instructions.
+Preparation fell to a median 54.876 ms.
+The CPU gate still failed: 132.061 ms versus 62.200 ms, approximately 2.12 times the reference.
+The diagnostic relation counts exposed two identical negative-probe closures.
+Each contained 195 traversal rows and produced 89 exclusion keys.
+Merging same-node filters had duplicated those probes across function-kind consumers.
+The emitter now shares probes by their typed plan and exact input relation.
+The lowerer also removes predicates that the frontier's origin scan has already proved.
+These changes target repeated dependency expansion during preparation, as well as repeated execution work.
+
+The new zero-distance recursion test initially expected rejection in relational lowering.
+The policy parser rejects that cycle earlier.
+The corrected test requires compilation to reject the cycle at either boundary.
+The check does not execute a cycle or reinterpret it as an empty result.
+
+### Complete B023 acceptance result — 2026-10-22
+
+Milestone 1 now passes.
+The [evidence](../benchmark/sql-relational-complete-evidence.json) contains the generated query, EXPLAIN, row counts, source hashes, and paired samples.
+The [SQL artifact](../benchmark/sql-relational-complete.sql) makes the complete generated shape directly reviewable.
+The compiler does not read that artifact.
+It lowers the unchanged full grammar through the normal relational compiler entry.
+
+The frozen corpus contains 138 files and 7,336,001 source bytes.
+Every file hash matches the original reference corpus.
+Native evaluation, the current engine, and both relational queries agree on the exact two roots and capture witnesses.
+
+| Measurement | Generated full query | Handwritten reference |
+| --- | ---: | ---: |
+| Actual traced matching executions | 1 | 1 |
+| VM instructions | 2,812,255 | 2,324,796 |
+| Frame publications | 0 | 0 |
+| Median cold kernel CPU, three samples | 125.553 ms | 63.349 ms |
+| Median preparation CPU | 51.560 ms | 2.916 ms |
+| Median execution CPU | 72.052 ms | 59.500 ms |
+| Node advances | 87,702 | 81,315 |
+
+The VM ratio is 1.210; the acceptance limit is 2.
+The CPU ratio is 1.982, so this gate passes narrowly.
+Preparation remains the main performance gap; this result does not establish comfortable CPU headroom.
+The current engine needed roughly 5.5 seconds of kernel CPU in the paired runs.
+The generated query uses about 132 times fewer VM instructions than the recorded 369,851,302-instruction current-engine baseline.
+These are full B023 kernel measurements, not whole-policy-catalog or whole-job speedups.
+
+The final graph retains 1,029 function/value demands.
+One shared exclusion closure contains 195 traversal rows and produces 89 function/value keys.
+Its anti-join leaves 1,020 function/value answers.
+Function bodies retain those keys until indexed name/interval probes produce the two final loads.
+The final query contains 22,020 SQL bytes, creates 54,156 automatic-index entries, and uses 1,327,504 bytes of statement memory.
+There are 3,092 regex requests and nine capture-free pattern requests.
+Intermediate JSON environments and frame publications are absent.
+
+The final outside-assignment scaling cases use 2,999 VM instructions at all three sizes.
+Combined assignment/load cases use 44,248, 170,392, and 674,968 instructions at sizes 32, 128, and 512.
+Thus 16 times the combined input requires about 15.3 times the SQL work.
+The upstream fixtures produce 29 exact findings.
+The 22 adversarial snippets produce 24 exact findings.
+Renamed utilities and captures preserve results; changed loop kinds and leaf patterns change them with native parity.
+Late same-node binding preserves capture overwrite order.
+Unbound negative inputs and zero-distance recursive cycles fail compilation.
+
+Validation passed 24 targeted Rust tests, rustfmt, and both Clippy configurations from `npm run check:native`.
+Clippy exposed an existing regex construction inside a test loop; that construction now occurs once before the loop.
+No production selector or fallback was added.
+The replacement remains test-only while unknowns, reached failures, enumeration, general recursive components, and native resource budgets await Milestone 2.
+The complete-job 100-execution gate remains unproved by this kernel test.
+
+Reproduction uses the same frozen config and the new driver:
+
+```sh
+JEMALLOC_OVERRIDE=/tmp/librerail_jemalloc_check_shim.dylib \
+python3 benchmark/relational-complete-spike.py \
+  /tmp/rerail-b023-relational-20261022/final/config.json \
+  /tmp/rerail-complete-reproduction
+```
+
+The driver builds the test binary unless `--binary` supplies one.
+It freezes the inputs, checks their hashes against the reference manifest, and records source and executable hashes.
+It alternates generated/reference order on fresh connections with identical instrumentation.
+Parsing, EXPLAIN, and diagnostic cardinality queries stay outside the kernel timing and matching-execution count.
+It preserves evidence before failing either performance gate.
+Raw accepted artifacts are in `/tmp/rerail-complete-20261022/accepted`.

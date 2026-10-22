@@ -1,27 +1,36 @@
 # Transition to direct relational SQL
 
-Status: proposed implementation plan, 2026-10-22.
+Status: Milestone 1 implemented and measured; later milestones pending, 2026-10-22.
 Baseline: `a0051ae8`, including the complete B023 reference query.
 This document changes no production behavior.
 
-Implementation progress: target-slot compilation, structural demand, and ordered capture demand now pass their corpus and scaling checks.
-The [target-slot evidence](../benchmark/sql-relational-target-slot-evidence.json) records compiler-generated SQL, EXPLAIN, source hashes, and native/current-engine parity.
-The [region-demand evidence](../benchmark/sql-relational-region-demand-evidence.json) adds ancestor closure, subtree restriction, and recursive consumer-key demand.
-That earlier harness supplies a capture-free demand view using B023's unchanged utilities.
-The new [capture-demand evidence](../benchmark/sql-relational-capture-demand-evidence.json) uses the original full `GrammarMatcher` directly.
-The compiler extracts the admitted search, preserves function identity, and selects assignment witnesses and nearest successful ancestors per value.
-All 1,029 intermediate demand rows agree with native evaluation and the handwritten reference on the frozen corpus.
-The compiler remains test-only.
-Complete B023 generation, remaining capture choices, and Milestone 1's full-query performance gates remain outstanding.
+Implementation progress: Milestone 1 now passes on the frozen corpus.
+The compiler lowers the original full B023 `GrammarMatcher` to one statement, without a policy recognizer or native composition callback.
+The [complete evidence](../benchmark/sql-relational-complete-evidence.json) records exact native/current-engine parity, generated SQL, EXPLAIN, source hashes, and paired CPU samples.
+The [generated SQL](../benchmark/sql-relational-complete.sql) is available separately for review.
+All 138 file hashes match the original reference corpus.
 
-The next concrete step is to lower capture-dependent parameter and store exclusions against the generated demand relation.
-Then the compiler must connect surviving function/name demand to body and load probes, preserving the final witness choice.
-The existing reference query supplies the exact two-result capture oracle on the frozen corpus.
+The complete query returns the exact two roots and capture witnesses.
+It uses 2,812,255 VM instructions, one traced matching execution, and zero frame publications.
+Median cold kernel CPU is 125.553 ms, versus 63.349 ms for the handwritten reference.
+The 1.982 ratio passes the twofold CPU gate narrowly.
+Preparation remains the largest gap: 51.560 ms versus 2.916 ms.
+These measurements include counters and exclude parsing and diagnostic queries.
 
-The next implementation milestone is a compiler-generated B023 query with the reference query's work bounds.
-It must start from `GrammarMatcher`, without a B023 recognizer or hand-written policy SQL.
-The compiler will build typed relations before SQL emission.
-It will preserve ordered capture choices explicitly and restrict utility evaluation through structural demand.
+Outside-region assignments add no SQL work: sizes 32, 128, and 512 each use 2,999 VM instructions.
+Combined assignment/load sizes use 44,248, 170,392, and 674,968 instructions.
+Renamed utilities and captures, changed loop kinds, and changed pattern leaves retain exact native parity.
+The compiler also passes the upstream fixtures and 22 adversarial snippets.
+
+Earlier evidence remains available for the [target-slot](../benchmark/sql-relational-target-slot-evidence.json), [region-demand](../benchmark/sql-relational-region-demand-evidence.json), and [capture-demand](../benchmark/sql-relational-capture-demand-evidence.json) stages.
+The complete lowering adds value-keyed exclusions, downward parameter recursion, body expansion, indexed load probes, and final ordered capture choices.
+Equivalent probes and regional recursive producers share answers.
+Pure root/value constraints can move through choices; witness selection retains its original boundary.
+
+The next phase is Milestone 2: unknown outcomes, reached failures, enumeration, parameterized witnesses, and broader recursive components.
+Native work and stack/depth budgets also remain unresolved.
+The compiler remains test-only until the semantic coverage and production cutover gates pass.
+The complete-job 100-execution gate remains a separate requirement.
 
 There will be one production compiler after the transition.
 The replacement will develop through a test harness until it covers the current engine's supported semantics.
@@ -55,8 +64,9 @@ Those features have explicit gates before production cutover.
 
 ## Replacement interfaces
 
-The implementation will add `native/src/code_rule_dsl/sql/relational/`.
-The names in this section are proposed interfaces, not existing types.
+The implementation now lives in `native/src/code_rule_dsl/sql/relational/`.
+The table below describes the target interfaces.
+Current ordered answers and negative-probe closures share `answers.rs`; the broader interfaces remain planned.
 
 | Module | Responsibility | Required output |
 | --- | --- | --- |
@@ -164,7 +174,7 @@ The compiler must not substitute a conventional lexical-binding interpretation.
 - Near-linear work for the existing combined assignment/load scaling cases.
 
 The twofold allowance measures compiler overhead against a concrete attainable shape.
-It is an initial engineering gate, not a measured result for the replacement.
+The complete replacement kernel now passes this gate; the CPU margin remains small.
 The harness must also report preparation, native leaf work, automatic indexes, and memory.
 Equal outputs with excessive work fail this milestone.
 
@@ -178,6 +188,7 @@ It prevents an easy-subset compiler from becoming another architecture that cann
 | Ordered choices | Native differential cases and generated SQL | No later predicate can introduce backtracking |
 | Unknowns and withheld captures | Three-valued conjunction, search, and count kernels | Preserve reached outcomes and unavailable bindings |
 | Fallible leaves | Reached and unreached error cases | Preserve failure visibility without speculative failure or hidden work |
+| Resource limits | Reached-budget differential cases | Preserve native work and stack/depth limits before production admission |
 | Enumeration | `violation.each` with overlapping results and exclusions | Preserve round order, captures, and exclusion semantics |
 | Parameterized utilities | Equal values with different witness nodes | Share equality work without merging observable witnesses |
 | Positive linear recursion | Cycles, diamonds, and mutually recursive utilities | Deduplicate by semantic state, without path explosion |

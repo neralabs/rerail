@@ -6,6 +6,8 @@ use super::{
 #[derive(Default)]
 struct Emitter {
     aliases: usize,
+    bound_regions: bool,
+    domains: std::collections::HashMap<usize, usize>,
 }
 
 pub(super) fn emit(program: &Program, plan: &[RelationPlan]) -> Result<String, String> {
@@ -16,7 +18,15 @@ pub(super) fn emit(program: &Program, plan: &[RelationPlan]) -> Result<String, S
 }
 
 pub(super) fn definitions(program: &Program, plan: &[RelationPlan]) -> Result<Vec<String>, String> {
-    let mut emitter = Emitter::default();
+    let mut emitter = Emitter {
+        domains: program
+            .relations
+            .iter()
+            .enumerate()
+            .filter_map(|(id, r)| r.domain.map(|domain| (id, domain)))
+            .collect(),
+        ..Emitter::default()
+    };
     let mut relations = Vec::new();
     let active = super::ir::reachable(program);
     let mut regions = std::collections::BTreeSet::new();
@@ -168,7 +178,7 @@ impl Emitter {
             .references
             .iter()
             .enumerate()
-            .filter(|(_, (_, r))| !requested || Some(*r) == owner)
+            .filter(|(_, (node, r))| !requested || Some(*r) == owner || arm.predicates.iter().any(|p| matches!(p,Predicate::Region(at,domain) if at==node && self.domains.get(r)==Some(domain))))
             .min_by_key(|(_, (_, r))| if Some(*r) == owner { 0 } else { 1 })
         {
             let name = &names[node];
@@ -178,6 +188,10 @@ impl Emitter {
             ));
             known[node] = true;
             consumed = Some(index);
+            consumed_region=arm.predicates.iter().find_map(|p|match p {
+                Predicate::Region(at,domain) if *at==node && self.domains.get(&relation)==Some(domain)=>Some((*at,*domain)),
+                _=>None,
+            });
         } else if let Some((node, producer)) = arm.predicates.iter().find_map(|p| match p {
             Predicate::Keys(node, producer) => Some((*node, *producer)),
             _ => None,
@@ -278,6 +292,7 @@ impl Emitter {
                     names[*node], names[*node]
                 ),
                 Predicate::Pattern(node,term)=>format!("relation_pattern({term},{}.file,{}.id)",names[*node],names[*node]),
+                Predicate::Region(node,roots) if self.bound_regions => format!("EXISTS (SELECT 1 FROM r{roots} k CROSS JOIN node ancestor ON ancestor.file=k.file AND ancestor.id=k.node WHERE k.file={0}.file AND ancestor.id<{0}.id AND ancestor.\"last\">={0}.id)",names[*node]),
                 Predicate::Region(node,roots)=>format!("EXISTS (SELECT 1 FROM regions{roots} domain WHERE domain.file={}.file AND {}.id>domain.node AND {}.id<=domain.last)",names[*node],names[*node],names[*node]),
                 Predicate::Keys(node,producer)=>format!("EXISTS (SELECT 1 FROM needed{producer} k WHERE k.file={}.file AND k.node={}.id)",names[*node],names[*node]),
                 Predicate::Absent(node, set) => self.absent(set, &names[*node])?,
@@ -318,6 +333,26 @@ pub(super) fn capture_demand(
     plan: &[RelationPlan],
     demand: &super::ir::CaptureDemand,
 ) -> Result<String, String> {
+    let definitions = capture_definitions(program, plan, demand)?;
+    Ok(format!(
+        "WITH RECURSIVE\n{}\nSELECT file,origin,atom,witness,ancestor,distance FROM capture_demand ORDER BY file,origin,atom",
+        definitions.join(",\n")
+    ))
+}
+
+pub(super) fn condition(set: &Set, alias: &str) -> Result<String, String> {
+    let mut emitter = Emitter {
+        bound_regions: true,
+        ..Emitter::default()
+    };
+    Ok(format!("NOT ({})", emitter.absent(set, alias)?))
+}
+
+pub(super) fn capture_definitions(
+    program: &Program,
+    plan: &[RelationPlan],
+    demand: &super::ir::CaptureDemand,
+) -> Result<Vec<String>, String> {
     let (roots, targets, leaf_stop) = (demand.roots, demand.targets, demand.leaf_stop);
     let mut definitions = definitions(program, plan)?;
     let named = if demand.named { " AND n.named" } else { "" };
@@ -330,9 +365,5 @@ pub(super) fn capture_demand(
     definitions.push(format!("binding_choices(file,node,atom,witness) AS MATERIALIZED (SELECT w.file,w.node,w.atom,MIN(w.witness) FROM binding_walk w JOIN r{roots} k ON k.file=w.file AND k.node=w.node GROUP BY w.file,w.node,w.atom)"));
     definitions.push(format!("origin_choices AS (SELECT p.file,p.origin,b.atom,b.witness,p.node AS ancestor,p.distance,ROW_NUMBER() OVER (PARTITION BY p.file,p.origin,b.atom ORDER BY p.distance) AS choice FROM pairs{roots} p JOIN binding_choices b ON b.file=p.file AND b.node=p.node)"));
     definitions.push("capture_demand AS MATERIALIZED (SELECT file,origin,atom,witness,ancestor,distance FROM origin_choices WHERE choice=1)".into());
-    let sql = format!(
-        "WITH RECURSIVE\n{}\nSELECT file,origin,atom,witness,ancestor,distance FROM capture_demand ORDER BY file,origin,atom",
-        definitions.join(",\n")
-    );
-    Ok(sql)
+    Ok(definitions)
 }

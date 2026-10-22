@@ -15,17 +15,31 @@ pub(in crate::code_rule_dsl::sql) fn measure(
         .iter()
         .map(|(_, s)| (tape(grammar.language, s), FileContext::default()))
         .collect();
-    let expected: Vec<Vec<u32>> = docs
+    let capture_names: Vec<_> = crate::code_rule_dsl::matcher::CaptureAnalysis::default()
+        .mentions(&grammar.matcher)
+        .into_iter()
+        .collect();
+    let expected: Vec<Vec<(u32, Vec<u32>)>> = docs
         .iter()
         .map(|(doc, _)| {
             let tree = AstGrep::doc(doc.clone());
             let mut work = usize::MAX;
             (0..doc.transducer_len() as u32)
-                .filter(|&id| {
+                .filter_map(|id| {
                     grammar
                         .match_root(node_at(&tree, id), &mut work)
                         .unwrap()
-                        .is_some()
+                        .map(|m| {
+                            (
+                                id,
+                                capture_names
+                                    .iter()
+                                    .map(|name| {
+                                        m.get_env().get_match(name).unwrap().node_id() as u32
+                                    })
+                                    .collect(),
+                            )
+                        })
                 })
                 .collect()
         })
@@ -46,15 +60,34 @@ pub(in crate::code_rule_dsl::sql) fn measure(
     let baseline_time = baseline_start.elapsed();
     for (file, expected) in expected.iter().enumerate() {
         assert_eq!(
-            baseline[0][file].iter().map(|m| m.root).collect::<Vec<_>>(),
+            baseline[0][file]
+                .iter()
+                .map(|m| (
+                    m.root,
+                    capture_names
+                        .iter()
+                        .map(|name| {
+                            let (_, sql::exec::Captured::Node(id)) =
+                                m.captures.iter().find(|(key, _)| key == name).unwrap()
+                            else {
+                                panic!("non-node capture")
+                            };
+                            *id
+                        })
+                        .collect::<Vec<_>>()
+                ))
+                .collect::<Vec<_>>(),
             *expected
         );
-        assert!(baseline[0][file].iter().all(|m| m.captures.is_empty()));
     }
     let started = Started::now();
     let compiled = super::compile(grammar).unwrap();
     let generation = started.elapsed();
+    if let Ok(path) = std::env::var("RERAIL_RELATIONAL_QUERY_DUMP") {
+        std::fs::write(path, &compiled.sql).unwrap();
+    }
     let started = Started::now();
+    let kernel_started = Started::now();
     let (result, _) = profiling::frame_counts(|| {
         sql::exec::with_terminals(docs, compiled.terminals, |db, batch, _| {
             let patterns = super::leaves::register(db, batch).unwrap();
@@ -67,8 +100,11 @@ pub(in crate::code_rule_dsl::sql) fn measure(
                 let mut rows = statement.query([]).unwrap();
                 while let Some(row) = rows.next().unwrap() {
                     let file = row.get::<_, u32>(1).unwrap() as usize;
-                    actual[file].push(row.get::<_, u32>(2).unwrap());
-                    assert_eq!(row.get::<_, String>(3).unwrap(), "[]");
+                    actual[file].push((
+                        row.get::<_, u32>(2).unwrap(),
+                        serde_json::from_str::<Vec<u32>>(&row.get::<_, String>(3).unwrap())
+                            .unwrap(),
+                    ));
                 }
             }
             let vm = statement.get_status(rusqlite::StatementStatus::VmStep);
@@ -76,6 +112,7 @@ pub(in crate::code_rule_dsl::sql) fn measure(
             let scans = statement.get_status(rusqlite::StatementStatus::FullscanStep);
             let memory = statement.get_status(rusqlite::StatementStatus::MemUsed);
             let elapsed = started.elapsed();
+            let cold = kernel_started.elapsed().plus(generation);
             let pattern_calls = patterns.load(std::sync::atomic::Ordering::Relaxed);
             let counter_end = profiling::frame_snapshot();
             let counters: [u64; 14] = std::array::from_fn(|i| counter_end[i] - counter_start[i]);
@@ -84,6 +121,29 @@ pub(in crate::code_rule_dsl::sql) fn measure(
                 .query_map([], |row| Ok(json!({"id":row.get::<_,i64>(0)?,"parent":row.get::<_,i64>(1)?,"detail":row.get::<_,String>(3)?})))
                 .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
             let mut cardinalities = Vec::new();
+            if let Some(output) = compiled.relations["output"].as_str() {
+                let prefix = compiled
+                    .sql
+                    .rsplit_once("SELECT 0,file,node,json_array(witness)")
+                    .unwrap()
+                    .0;
+                let names: Vec<_> = compiled
+                    .sql
+                    .lines()
+                    .filter_map(|line| line.split_once("(file,").map(|(name, _)| name))
+                    .filter(|name| name.starts_with("answer"))
+                    .chain(std::iter::once("capture_demand"))
+                    .collect();
+                for name in &names {
+                    let rows: i64 = db
+                        .query_row(&format!("{prefix}SELECT COUNT(*) FROM {name}"), [], |r| {
+                            r.get(0)
+                        })
+                        .unwrap();
+                    cardinalities.push(json!({"relation":name,"rows":rows}));
+                }
+                assert!(names.contains(&output));
+            }
             if let Some(roots) = compiled.relations["regionRoots"]
                 .as_array()
                 .filter(|r| !r.is_empty())
@@ -134,6 +194,7 @@ pub(in crate::code_rule_dsl::sql) fn measure(
                 cardinalities,
                 pattern_calls,
                 counters,
+                cold,
             )
         })
     });
@@ -143,8 +204,8 @@ pub(in crate::code_rule_dsl::sql) fn measure(
         assert_eq!(actual, expected, "{}", sources[index].0);
     }
     assert_eq!(counters[4], 0, "no frame publications");
-    json!({"parity":true,"files":sources.len(),"matches":expected.iter().map(Vec::len).sum::<usize>(),
-      "diagnosticCpuNs":elapsed.cpu,"generationCpuNs":generation.cpu,"prepareCpuNs":result.5.cpu,
+    json!({"parity":true,"output":expected,"files":sources.len(),"matches":expected.iter().map(Vec::len).sum::<usize>(),
+      "coldKernelCpuNs":result.11.cpu,"diagnosticCpuNs":elapsed.cpu,"generationCpuNs":generation.cpu,"prepareCpuNs":result.5.cpu,
       "prepareAndExecuteCpuNs":result.6.cpu,"explain":result.7,
       "diagnosticRelationRows":result.8,
       "patternRequests":result.9,

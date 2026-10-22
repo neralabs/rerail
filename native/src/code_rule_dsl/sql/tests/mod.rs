@@ -174,6 +174,7 @@ fn walks_read_their_sub_rule_kinds_and_a_double_negation_is_a_semi_join() {
         // Nothing narrows a bare negation's candidates.
         (json!({ "not": { "kind": "call_expression" } }), false),
     ];
+    let predicate_kind = regex::Regex::new(r"AND predicate_node_\d+\.kind IN \(").unwrap();
     for (sub, narrowed) in cases {
         let mut has = sub.clone();
         has["stopBy"] = json!("end");
@@ -194,9 +195,7 @@ fn walks_read_their_sub_rule_kinds_and_a_double_negation_is_a_semi_join() {
             })
             .expect("a has-end walk or direct predicate probe");
         let pushed = if walk.1 {
-            regex::Regex::new(r"AND predicate_node_\d+\.kind IN \(")
-                .unwrap()
-                .is_match(walk.0)
+            predicate_kind.is_match(walk.0)
         } else {
             walk.0.contains("c.kind IN (")
         };

@@ -305,3 +305,57 @@ fn ordered_demand_refuses_composite_equality_keys() {
         },
     );
 }
+
+#[test]
+fn complete_answers_keep_nearest_choices_and_capture_identity() {
+    let policy = policy();
+    let grammar = &crate::code_rule_dsl::test_support::grammar_matchers(&policy)[0];
+    let sources = vec![("choices.py".into(),
+        "for outer in xs:\n a=1\n a=2\n def first():\n  return a+a\n for inner in ys:\n  a=3\n  def second():\n   return a\n  def blocked():\n   def third():\n    return a\n".into()),
+        ("other.py".into(),"for other in ys:\n a=4\n def fourth():\n  return a\n".into())];
+    let result = super::tests::measure(grammar, &sources);
+    assert_eq!(result["matches"], 5);
+    // A later same-node pattern overwrites the witness; value equality still constrains it.
+    let mut grammar = grammar.clone();
+    fn move_binding(rule: &mut AstMatcher) -> Option<AstMatcher> {
+        if let AstMatcher::All(items) = rule {
+            for index in 0..items.len() {
+                if matches!(items[index], AstMatcher::Pattern(_)) {
+                    return Some(items.remove(index));
+                }
+                if let Some(binding) = move_binding(&mut items[index]) {
+                    return Some(binding);
+                }
+            }
+        }
+        None
+    }
+    let binding = move_binding(&mut grammar.matcher).unwrap();
+    // Keep the initial binding as input; repeat it after the ancestor search.
+    let AstMatcher::All(items) = &mut grammar.matcher else {
+        unreachable!()
+    };
+    items.insert(0, binding.clone());
+    items.push(binding);
+    let result = super::tests::measure(&grammar, &sources);
+    for file in result["output"].as_array().unwrap() {
+        for hit in file.as_array().unwrap() {
+            assert_eq!(hit[0], hit[1][0]);
+        }
+    }
+}
+
+#[test]
+fn complete_answers_reject_unbound_negative_inputs() {
+    let policy = policy();
+    let mut grammar = crate::code_rule_dsl::test_support::grammar_matchers(&policy)[0].clone();
+    let pattern = AstMatcher::Pattern(std::sync::Arc::new(ast_grep_core::matcher::Pattern::new(
+        "$NAME",
+        grammar.language,
+    )));
+    grammar.matcher = AstMatcher::All(vec![AstMatcher::Not(Box::new(pattern)), grammar.matcher]);
+    let Err(error) = super::compile(&grammar) else {
+        panic!("accepted unbound negative input")
+    };
+    assert!(error.contains("requires a bound input"), "{error}");
+}

@@ -3,8 +3,8 @@
 //! immutable typed relation references. Unsupported stateful constructs fail explicitly.
 mod adapter;
 mod amplification;
-mod buffers;
 mod b023;
+mod buffers;
 mod composition;
 mod crossfile;
 mod direct;

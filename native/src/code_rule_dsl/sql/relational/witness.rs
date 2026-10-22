@@ -12,6 +12,7 @@ use std::collections::{BTreeSet, HashSet};
 
 #[derive(Clone)]
 pub(super) struct Search {
+    pub site: usize,
     pub origins: AstMatcher,
     pub ancestor_filter: AstMatcher,
     pub ancestor_stop: AstMatcher,
@@ -29,7 +30,7 @@ pub(super) struct CompiledDemand {
     pub profile: serde_json::Value,
 }
 
-fn pure(rule: &AstMatcher) -> bool {
+pub(super) fn pure(rule: &AstMatcher) -> bool {
     CaptureAnalysis::default().mentions(rule).is_empty()
         && CaptureAnalysis::default().counts(rule).is_empty()
 }
@@ -227,6 +228,7 @@ impl Discovery {
                     );
                 }
                 self.searches.push(Search {
+                    site: rule as *const AstMatcher as usize,
                     origins: context,
                     ancestor_filter,
                     ancestor_stop: *stop.clone(),
@@ -267,7 +269,10 @@ pub(super) fn discover(grammar: &GrammarMatcher) -> Result<Vec<Search>, String> 
 }
 
 /// Compile one independently inspectable frontier. This does not claim complete clause coverage.
-pub(super) fn compile(grammar: &GrammarMatcher, search: Search) -> Result<CompiledDemand, String> {
+pub(super) fn lower_frontier(
+    grammar: &GrammarMatcher,
+    search: &Search,
+) -> Result<(Lowerer, CaptureDemand, usize), String> {
     let mut lower = Lowerer::new(grammar.language);
     lower.relation(Set::Empty, "frontier outputs");
     let mut add = |rule: &AstMatcher, source: &str| -> Result<usize, String> {
@@ -298,19 +303,25 @@ pub(super) fn compile(grammar: &GrammarMatcher, search: Search) -> Result<Compil
     let mut outputs = vec![Set::Reference(roots), Set::Reference(targets)];
     outputs.extend(leaf_stop.map(Set::Reference));
     lower.program.relations[0].expression = Set::Union(outputs);
-    physical::plan(&lower.program)?;
-    demand::apply(&mut lower.program);
-    let planned = physical::plan(&lower.program)?;
-    let sql = emit::capture_demand(
-        &lower.program,
-        &planned,
-        &CaptureDemand {
+    Ok((
+        lower,
+        CaptureDemand {
             roots,
             targets,
             leaf_stop,
             named: search.named,
         },
-    )?;
+        origins,
+    ))
+}
+
+pub(super) fn compile(grammar: &GrammarMatcher, search: Search) -> Result<CompiledDemand, String> {
+    let (mut lower, demand, origins) = lower_frontier(grammar, &search)?;
+    let (roots, targets) = (demand.roots, demand.targets);
+    physical::plan(&lower.program)?;
+    demand::apply(&mut lower.program);
+    let planned = physical::plan(&lower.program)?;
+    let sql = emit::capture_demand(&lower.program, &planned, &demand)?;
     let profile = serde_json::json!({
         "scope":"Intermediate ordered capture demand extracted from the original GrammarMatcher; not complete clause findings.",
         "capture":search.capture,"origins":origins,"roots":roots,"targets":targets,

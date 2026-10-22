@@ -384,6 +384,11 @@ fn b023_compiler_capture_demand_fixtures_and_mutations() {
         };
         let p = CodeRuleDslRuntime::compile(changed, "json".into(), CAPABILITIES.into()).unwrap();
         let result = sql::relational::witness_tests::measure(&grammar_matchers(&p)[0], &sources);
+        let full = sql::relational::tests::measure(&grammar_matchers(&p)[0], &sources);
+        eprintln!(
+            "complete mutation {mutation}: {} matches, {} VM",
+            full["matches"], full["vmSteps"]
+        );
         assert!(
             result["profile"]["demandDecisions"]
                 .as_array()
@@ -506,6 +511,16 @@ fn counters(c: [u64; 14]) -> Value {
 }
 
 fn check(sources: &[(String, String)], out: Option<&Path>, diagnostic: bool) -> Value {
+    check_query(sources, out, diagnostic, false)
+}
+
+// Both query shapes use fresh connections, identical parsing, counters and trace instrumentation.
+fn check_query(
+    sources: &[(String, String)],
+    out: Option<&Path>,
+    diagnostic: bool,
+    generated: bool,
+) -> Value {
     let compiled = policy();
     let grammars = grammar_matchers(&compiled);
     let grammar = &grammars[0];
@@ -568,7 +583,12 @@ fn check(sources: &[(String, String)], out: Option<&Path>, diagnostic: bool) -> 
       "baseline":{"coldKernelCpuNs":baseline_time.cpu,"matchingCpuNs":session.stats().time.cpu,
         "scheduledStatements":session.stats().statements,"counters":if diagnostic {counters(count)} else {Value::Null}}});
     let generation_start = Started::now();
-    let sql = query();
+    let compiled = generated.then(|| sql::relational::compile(grammar).unwrap());
+    let (sql, terminals) = if let Some(c) = compiled {
+        (c.sql, c.terminals)
+    } else {
+        (query(), vec![])
+    };
     let generation = generation_start.elapsed();
     report["querySha256"] = json!(format!("{:x}", Sha256::digest(sql.as_bytes())));
     report["policySha256"] = json!(format!(
@@ -585,7 +605,8 @@ fn check(sources: &[(String, String)], out: Option<&Path>, diagnostic: bool) -> 
         std::fs::write(out.join("query.sql"), &sql).unwrap();
     }
     let direct_start = Started::now();
-    sql::exec::with_terminals(docs, vec![], |connection, batch, frames| {
+    sql::exec::with_terminals(docs, terminals, |connection, batch, frames| {
+        sql::relational::leaves::register(connection, batch).unwrap();
         struct Leaves(std::panic::AssertUnwindSafe<Arc<sql::exec::Batch>>, Pattern);
         impl Leaves {
             fn text(&self, f: usize, n: u32) -> String {
@@ -659,6 +680,8 @@ fn check(sources: &[(String, String)], out: Option<&Path>, diagnostic: bool) -> 
         report["direct"] = json!({"coldKernelCpuNs":cold.cpu,"generationCpuNs":generation.cpu,"metrics":result.metrics,"counters":if diagnostic {counters(count)} else {Value::Null},"leafCalls":leaf_calls.load(Ordering::Relaxed)});
         if diagnostic {
             report["explain"] = super::profile::explain(connection, &sql);
+        }
+        if diagnostic && !generated {
             let prefix = sql
                 .rsplit_once("SELECT 0,file,id,json_array(capture)")
                 .unwrap()
@@ -722,6 +745,7 @@ fn check(sources: &[(String, String)], out: Option<&Path>, diagnostic: bool) -> 
         }
     });
     report["parity"] = json!(true);
+    report["generated"] = json!(generated);
     if let Some(out) = out {
         std::fs::write(
             out.join("results.json"),
@@ -796,6 +820,7 @@ fn b023_direct_adversarial() {
         .map(|(i, s)| (format!("adversarial-{i}.py"), s.to_string()))
         .collect::<Vec<_>>();
     check(&sources, None, true);
+    sql::relational::tests::measure(&grammar_matchers(&policy())[0], &sources);
 }
 
 #[test]
@@ -863,5 +888,161 @@ fn b023_direct_corpus() {
         &sources,
         Some(Path::new(&std::env::var("RERAIL_B023_OUTPUT").unwrap())),
         std::env::var_os("RERAIL_SQL_PROFILE_DIR").is_some(),
+    );
+}
+
+#[test]
+fn b023_compiler_complete_fixtures() {
+    let paths = [
+        "packs/python/upstream/ruff/fixtures/flake8_bugbear/B023.py",
+        "packs/python/upstream/ruff/fixtures/rerail/noqa/B023.py",
+    ];
+    let sources = paths
+        .iter()
+        .map(|p| {
+            (
+                p.to_string(),
+                std::fs::read_to_string(root().join(p)).unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let result = sql::relational::tests::measure(&grammar_matchers(&policy())[0], &sources);
+    eprintln!(
+        "complete fixtures: {} matches, {} VM",
+        result["matches"], result["vmSteps"]
+    );
+}
+
+#[test]
+#[ignore = "set RERAIL_B023_CONFIG and RERAIL_COMPLETE_OUTPUT"]
+fn b023_compiler_complete_corpus() {
+    let config: Value = serde_json::from_str(
+        &std::fs::read_to_string(std::env::var("RERAIL_B023_CONFIG").unwrap()).unwrap(),
+    )
+    .unwrap();
+    let sources = config["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            let p = p.as_str().unwrap();
+            (
+                p.to_owned(),
+                std::fs::read_to_string(Path::new(config["corpus"].as_str().unwrap()).join(p))
+                    .unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut result = sql::relational::tests::measure(&grammar_matchers(&policy())[0], &sources);
+    result["inputs"]=json!(sources.iter().map(|(path,source)|json!({"path":path,"sha256":format!("{:x}",Sha256::digest(source.as_bytes()))})).collect::<Vec<_>>());
+    let mut samples = vec![];
+    for index in 0..3 {
+        let (generated, reference) = if index % 2 == 0 {
+            let generated = check_query(&sources, None, true, true);
+            (generated, check_query(&sources, None, true, false))
+        } else {
+            let reference = check_query(&sources, None, true, false);
+            (check_query(&sources, None, true, true), reference)
+        };
+        samples.push(json!({"generated":generated,"reference":reference}));
+    }
+    result["samples"] = json!(samples);
+    eprintln!(
+        "complete corpus: {} files, {} matches, {} VM, {} ms",
+        result["files"],
+        result["matches"],
+        result["vmSteps"],
+        result["prepareAndExecuteCpuNs"].as_u64().unwrap() / 1_000_000
+    );
+    std::fs::write(
+        std::env::var("RERAIL_COMPLETE_OUTPUT").unwrap(),
+        serde_json::to_vec_pretty(&result).unwrap(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn b023_compiler_complete_scaling() {
+    let p = policy();
+    let grammar = &grammar_matchers(&p)[0];
+    let mut records = vec![];
+    for family in ["outside-assignments", "repeated-assignment-loads"] {
+        let mut first = 0;
+        for size in [32, 128, 512] {
+            let source = if family == "outside-assignments" {
+                format!(
+                    "{}for x in xs:\n def f():\n  return x\n",
+                    (0..size)
+                        .map(|i| format!("noise_{i}={i}\n"))
+                        .collect::<String>()
+                )
+            } else {
+                format!(
+                    "for x in xs:\n{} def f():\n{}",
+                    " x=0\n".repeat(size),
+                    "  consume(x)\n".repeat(size)
+                )
+            };
+            let mut record = sql::relational::tests::measure(
+                grammar,
+                &[(format!("{family}-{size}.py"), source)],
+            );
+            let vm = record["vmSteps"].as_u64().unwrap();
+            if size == 32 {
+                first = vm;
+            }
+            if family == "outside-assignments" {
+                assert_eq!(vm, first, "unrelated assignments amplify SQL work");
+            } else {
+                assert!(
+                    vm <= first * (size as u64 / 32) * 2,
+                    "superlinear combined assignment/load work"
+                );
+            }
+            assert_eq!(
+                record["matches"],
+                if family == "outside-assignments" {
+                    1
+                } else {
+                    size
+                }
+            );
+            for key in ["sql", "relations", "explain", "diagnosticRelationRows"] {
+                record.as_object_mut().unwrap().remove(key);
+            }
+            record["family"] = json!(family);
+            record["size"] = json!(size);
+            eprintln!("complete scaling {family} {size}: {vm} VM");
+            records.push(record);
+        }
+    }
+    if let Ok(path) = std::env::var("RERAIL_COMPLETE_SCALING") {
+        std::fs::write(path, serde_json::to_vec_pretty(&records).unwrap()).unwrap();
+    }
+}
+
+#[test]
+fn b023_compiler_complete_rejects_zero_distance_recursion() {
+    let mut document: Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            root().join("packs/python/rules/ruff-b023-function-uses-loop-variable.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    document["clauses"][0]["forbid"]["ast"]["utils"]["param-n"] =
+        json!({"any":[{"matches":"param-n"},{"kind":"identifier","pattern":"$N"}]});
+    let error =
+        match CodeRuleDslRuntime::compile(document.to_string(), "json".into(), CAPABILITIES.into())
+        {
+            Err(error) => error.to_string(),
+            Ok(policy) => match sql::relational::compile(&grammar_matchers(&policy)[0]) {
+                Err(error) => error,
+                Ok(_) => panic!("accepted non-descending recursion"),
+            },
+        };
+    assert!(
+        error.contains("cyclic dependency") || error.contains("strictly down"),
+        "{error}"
     );
 }

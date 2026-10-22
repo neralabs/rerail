@@ -1,10 +1,11 @@
 //! Direct DSL-to-relation compiler. Test-only until the transition's semantic coverage gate.
 //! No frame IR, SQL reparsing, rule-ID recognizers, or native composition callbacks.
 mod analysis;
+mod answers;
 mod demand;
 mod emit;
 mod ir;
-mod leaves;
+pub(super) mod leaves;
 mod lower;
 mod physical;
 pub(super) mod tests;
@@ -21,6 +22,21 @@ pub(super) struct Compiled {
 }
 
 pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
+    if !crate::code_rule_dsl::matcher::CaptureAnalysis::default()
+        .mentions(&grammar.matcher)
+        .is_empty()
+    {
+        if grammar.three_valued
+            || grammar.transform.is_some()
+            || !crate::code_rule_dsl::matcher::CaptureAnalysis::default()
+                .counts(&grammar.matcher)
+                .is_empty()
+        {
+            return Err("relational compiler: unsupported capture effects or outcomes".into());
+        }
+        return answers::compile(grammar)
+            .map_err(|e| format!("relational compiler: capture-bearing rules: {e}"));
+    }
     analysis::admit(grammar)?;
     let mut program = lower::compile(grammar)?;
     // Check the original dependency graph before specializing any consumer.

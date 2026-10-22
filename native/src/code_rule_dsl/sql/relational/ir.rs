@@ -22,7 +22,7 @@ pub(super) enum Edge {
 }
 
 /// Every operator returns a set of node keys. Witness order is unobservable in this admitted subset.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Set {
     AllNodes,
     Empty,

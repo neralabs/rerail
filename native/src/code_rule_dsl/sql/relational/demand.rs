@@ -5,7 +5,11 @@ use super::{
 };
 use std::collections::{BTreeSet, HashMap};
 
-fn kinds(set: &Set, program: &Program, visiting: &mut BTreeSet<usize>) -> Option<BTreeSet<u16>> {
+pub(super) fn kinds(
+    set: &Set,
+    program: &Program,
+    visiting: &mut BTreeSet<usize>,
+) -> Option<BTreeSet<u16>> {
     match set {
         Set::Kinds(kinds) => Some(kinds.iter().copied().collect()),
         Set::Empty => Some(BTreeSet::new()),
@@ -248,5 +252,98 @@ pub(super) fn apply(program: &mut Program) {
         let mut expression = program.relations[id].expression.clone();
         specialize(&mut expression, program, &mut cache);
         program.relations[id].expression = expression;
+    }
+}
+
+/// A bound candidate is already a strict descendant of `roots`. Restrict same-node utility
+/// answers, including negative probes, without restricting metadata at other nodes.
+pub(super) fn bound(
+    set: &Set,
+    roots: usize,
+    program: &mut Program,
+    cache: &mut HashMap<usize, usize>,
+) -> Set {
+    match set {
+        Set::Reference(id) => {
+            if program.relations[*id].domain == Some(roots) || program.relations[*id].keys.is_some()
+            {
+                // A key-demand producer already serves the frontier. Reuse its complete answers.
+                return set.clone();
+            }
+            if let Some((existing, _)) =
+                program
+                    .relations
+                    .iter()
+                    .enumerate()
+                    .find(|(candidate, relation)| {
+                        if relation.domain != Some(roots) || relation.keys.is_some() {
+                            return false;
+                        }
+                        let mut expression = relation.expression.clone();
+                        replace(&mut expression, *candidate, *id);
+                        expression == program.relations[*id].expression
+                    })
+            {
+                cache.insert(*id, existing);
+                return Set::Reference(existing);
+            }
+            if let Some(new) = cache.get(id) {
+                return Set::Reference(*new);
+            }
+            if closed(program, *id, roots).is_err() {
+                return set.clone();
+            }
+            let new = program.relations.len();
+            cache.insert(*id, new);
+            let mut expression = program.relations[*id].expression.clone();
+            replace(&mut expression, *id, new);
+            program.relations.push(Relation {
+                source: format!("{} for bound candidates", program.relations[*id].source),
+                expression: Set::Empty,
+                domain: Some(roots),
+                keys: program.relations[*id].keys.clone(),
+            });
+            program.relations[new].expression = bound(&expression, roots, program, cache);
+            Set::Reference(new)
+        }
+        Set::Intersect(sets) => Set::Intersect(
+            sets.iter()
+                .map(|s| bound(s, roots, program, cache))
+                .collect(),
+        ),
+        Set::Union(sets) => Set::Union(
+            sets.iter()
+                .map(|s| bound(s, roots, program, cache))
+                .collect(),
+        ),
+        Set::Complement(s) => Set::Complement(Box::new(bound(s, roots, program, cache))),
+        _ => set.clone(),
+    }
+}
+
+/// Inline nonrecursive predicates for already-bound nodes. Recursive answers retain their CTE.
+pub(super) fn inline(set: &Set, program: &Program) -> Set {
+    match set {
+        Set::Reference(id) => {
+            let relation = &program.relations[*id];
+            let mut refs = Vec::new();
+            ir::references(&relation.expression, &mut refs);
+            if relation.keys.is_none()
+                && !refs.contains(id)
+                && !matches!(
+                    relation.expression,
+                    Set::Ancestors { .. } | Set::SearchRoots { .. }
+                )
+            {
+                inline(&relation.expression, program)
+            } else {
+                set.clone()
+            }
+        }
+        Set::Intersect(s) => Set::Intersect(s.iter().map(|s| inline(s, program)).collect()),
+        Set::Union(s) => Set::Union(s.iter().map(|s| inline(s, program)).collect()),
+        Set::Complement(s) => Set::Complement(Box::new(inline(s, program))),
+        Set::Preimage(e, s) => Set::Preimage(*e, Box::new(inline(s, program))),
+        _ => set.clone(),
     }
 }
