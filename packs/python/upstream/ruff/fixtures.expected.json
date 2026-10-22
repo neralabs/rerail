@@ -110,6 +110,11 @@
    "D105",
    "D106",
    "D107",
+   "D200",
+   "D205",
+   "D209",
+   "D212",
+   "D215",
    "D300",
    "D301",
    "D400",
@@ -228,6 +233,7 @@
    "INT001",
    "INT002",
    "INT003",
+   "ISC001",
    "ISC003",
    "ISC004",
    "LOG001",
@@ -759,6 +765,8 @@
    "flake8_implicit_str_concat/ISC.py",
    "flake8_implicit_str_concat/ISC003_docstring.py",
    "flake8_implicit_str_concat/ISC004.py",
+   "flake8_implicit_str_concat/ISC_syntax_error.py",
+   "flake8_implicit_str_concat/ISC_syntax_error_2.py",
    "flake8_import_conventions/custom_banned.py",
    "flake8_import_conventions/custom_banned_from.py",
    "flake8_import_conventions/defaults.py",
@@ -1142,7 +1150,9 @@
    "pycodestyle/W605_1.py",
    "pycodestyle/constant_literals.py",
    "pydocstyle/D.py",
+   "pydocstyle/D200.py",
    "pydocstyle/D209_D400.py",
+   "pydocstyle/D215.py",
    "pydocstyle/D301.py",
    "pydocstyle/D400_415.py",
    "pydocstyle/D401.py",
@@ -23521,6 +23531,24 @@
    "rule": "ANN201",
    "path": "pydocstyle/D.py",
    "line": 727,
+   "column": 5
+  },
+  {
+   "rule": "ANN201",
+   "path": "pydocstyle/D200.py",
+   "line": 1,
+   "column": 5
+  },
+  {
+   "rule": "ANN201",
+   "path": "pydocstyle/D200.py",
+   "line": 6,
+   "column": 5
+  },
+  {
+   "rule": "ANN201",
+   "path": "pydocstyle/D200.py",
+   "line": 11,
    "column": 5
   },
   {
@@ -48786,6 +48814,12 @@
   {
    "rule": "D100",
    "path": "pydocstyle/D.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D100",
+   "path": "pydocstyle/D200.py",
    "line": 1,
    "column": 1
   },
@@ -76522,6 +76556,912 @@
    "column": 9
   },
   {
+   "rule": "D200",
+   "path": "flake8_pie/PIE790.py",
+   "line": 46,
+   "column": 5
+  },
+  {
+   "rule": "D200",
+   "path": "flake8_pie/PIE790.py",
+   "line": 54,
+   "column": 5
+  },
+  {
+   "rule": "D200",
+   "path": "flake8_pyi/PYI012.py",
+   "line": 15,
+   "column": 5
+  },
+  {
+   "rule": "D200",
+   "path": "flake8_pyi/PYI012.pyi",
+   "line": 12,
+   "column": 5
+  },
+  {
+   "rule": "D200",
+   "path": "flake8_pyi/PYI013.py",
+   "line": 17,
+   "column": 5
+  },
+  {
+   "rule": "D200",
+   "path": "flake8_pyi/PYI013.pyi",
+   "line": 20,
+   "column": 5
+  },
+  {
+   "rule": "D200",
+   "path": "pydocstyle/D.py",
+   "line": 129,
+   "column": 5
+  },
+  {
+   "rule": "D200",
+   "path": "pydocstyle/D.py",
+   "line": 597,
+   "column": 5
+  },
+  {
+   "rule": "D200",
+   "path": "pydocstyle/D.py",
+   "line": 606,
+   "column": 5
+  },
+  {
+   "rule": "D200",
+   "path": "pydocstyle/D.py",
+   "line": 615,
+   "column": 5
+  },
+  {
+   "rule": "D200",
+   "path": "pydocstyle/D.py",
+   "line": 624,
+   "column": 5
+  },
+  {
+   "rule": "D200",
+   "path": "pydocstyle/D.py",
+   "line": 645,
+   "column": 5
+  },
+  {
+   "rule": "D200",
+   "path": "pydocstyle/D200.py",
+   "line": 2,
+   "column": 5
+  },
+  {
+   "rule": "D200",
+   "path": "pydocstyle/D200.py",
+   "line": 7,
+   "column": 5
+  },
+  {
+   "rule": "D200",
+   "path": "pydocstyle/D200.py",
+   "line": 12,
+   "column": 5
+  },
+  {
+   "rule": "D200",
+   "path": "pydocstyle/D301.py",
+   "line": 82,
+   "column": 5
+  },
+  {
+   "rule": "D200",
+   "path": "pydocstyle/D301.py",
+   "line": 87,
+   "column": 5
+  },
+  {
+   "rule": "D200",
+   "path": "pydocstyle/D301.py",
+   "line": 93,
+   "column": 5
+  },
+  {
+   "rule": "D200",
+   "path": "pydocstyle/D301.py",
+   "line": 99,
+   "column": 5
+  },
+  {
+   "rule": "D200",
+   "path": "pydocstyle/D401.py",
+   "line": 18,
+   "column": 5
+  },
+  {
+   "rule": "D200",
+   "path": "pydocstyle/D403.py",
+   "line": 8,
+   "column": 5
+  },
+  {
+   "rule": "D200",
+   "path": "pydocstyle/D403.py",
+   "line": 46,
+   "column": 5
+  },
+  {
+   "rule": "D200",
+   "path": "pydocstyle/D403.py",
+   "line": 51,
+   "column": 5
+  },
+  {
+   "rule": "D200",
+   "path": "pydocstyle/D403.py",
+   "line": 56,
+   "column": 5
+  },
+  {
+   "rule": "D200",
+   "path": "pydocstyle/D403.py",
+   "line": 61,
+   "column": 5
+  },
+  {
+   "rule": "D200",
+   "path": "pyflakes/F401_26__all_empty/__init__.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D200",
+   "path": "pyflakes/F401_27__all_mistyped/__init__.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D200",
+   "path": "pyflakes/F401_28__all_multiple/__init__.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D200",
+   "path": "pyflakes/F401_35.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D200",
+   "path": "pyupgrade/UP009_10.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "fastapi/FAST002_1.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "flake8_bugbear/B002.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "flake8_bugbear/B003.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "flake8_bugbear/B009_B010.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "flake8_bugbear/B011.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "flake8_bugbear/B014.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "flake8_bugbear/B016.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "flake8_bugbear/B017_0.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "flake8_bugbear/B017_1.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "flake8_bugbear/B019.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "flake8_bugbear/B020.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "flake8_bugbear/B022.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "flake8_bugbear/B023.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "flake8_bugbear/B024.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "flake8_bugbear/B025.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "flake8_bugbear/B026.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "flake8_bugbear/B027.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "flake8_bugbear/B027.pyi",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "flake8_bugbear/B029.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "flake8_bugbear/B030.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "flake8_bugbear/B032.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "flake8_bugbear/B904.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "flake8_pyi/PYI025_3.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "flake8_pyi/PYI025_3.pyi",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "pydocstyle/D.py",
+   "line": 200,
+   "column": 5
+  },
+  {
+   "rule": "D205",
+   "path": "pydocstyle/D.py",
+   "line": 210,
+   "column": 5
+  },
+  {
+   "rule": "D205",
+   "path": "pydocstyle/D209_D400.py",
+   "line": 2,
+   "column": 5
+  },
+  {
+   "rule": "D205",
+   "path": "pydocstyle/D215.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "pydocstyle/D401.py",
+   "line": 35,
+   "column": 5
+  },
+  {
+   "rule": "D205",
+   "path": "pydocstyle/D401.py",
+   "line": 56,
+   "column": 5
+  },
+  {
+   "rule": "D205",
+   "path": "pydocstyle/canonical_numpy_examples.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "pydocstyle/sections.py",
+   "line": 196,
+   "column": 5
+  },
+  {
+   "rule": "D205",
+   "path": "pydocstyle/sphinx.py",
+   "line": 12,
+   "column": 5
+  },
+  {
+   "rule": "D205",
+   "path": "pydocstyle/sphinx.py",
+   "line": 23,
+   "column": 5
+  },
+  {
+   "rule": "D205",
+   "path": "pydocstyle/sphinx.py",
+   "line": 35,
+   "column": 5
+  },
+  {
+   "rule": "D205",
+   "path": "pydocstyle/sphinx.py",
+   "line": 46,
+   "column": 5
+  },
+  {
+   "rule": "D205",
+   "path": "pydocstyle/sphinx.py",
+   "line": 58,
+   "column": 5
+  },
+  {
+   "rule": "D205",
+   "path": "pyflakes/F811_20.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "pyupgrade/UP037_3.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "pyupgrade/UP046_1.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "ruff/RUF058_1.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D205",
+   "path": "tryceratops/TRY400.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D209",
+   "path": "fastapi/FAST002_1.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D209",
+   "path": "pydocstyle/D.py",
+   "line": 281,
+   "column": 5
+  },
+  {
+   "rule": "D209",
+   "path": "pydocstyle/D.py",
+   "line": 588,
+   "column": 5
+  },
+  {
+   "rule": "D209",
+   "path": "pydocstyle/D209_D400.py",
+   "line": 2,
+   "column": 5
+  },
+  {
+   "rule": "D209",
+   "path": "pydocstyle/D413.py",
+   "line": 52,
+   "column": 5
+  },
+  {
+   "rule": "D209",
+   "path": "pydocstyle/sections.py",
+   "line": 65,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_bugbear/B002.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_bugbear/B003.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_bugbear/B009_B010.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_bugbear/B011.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_bugbear/B014.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_bugbear/B016.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_bugbear/B017_0.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_bugbear/B017_1.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_bugbear/B019.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_bugbear/B020.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_bugbear/B022.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_bugbear/B023.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_bugbear/B024.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_bugbear/B025.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_bugbear/B026.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_bugbear/B027.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_bugbear/B027.pyi",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_bugbear/B029.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_bugbear/B030.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_bugbear/B032.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_bugbear/B904.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_pie/PIE790.py",
+   "line": 46,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_pie/PIE790.py",
+   "line": 54,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_pyi/PYI012.py",
+   "line": 15,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_pyi/PYI012.pyi",
+   "line": 12,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_pyi/PYI013.py",
+   "line": 17,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_pyi/PYI013.pyi",
+   "line": 20,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_pyi/PYI025_3.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "flake8_pyi/PYI025_3.pyi",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/D.py",
+   "line": 129,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/D.py",
+   "line": 597,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/D.py",
+   "line": 624,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/D215.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/D301.py",
+   "line": 18,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/D301.py",
+   "line": 41,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/D301.py",
+   "line": 50,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/D301.py",
+   "line": 61,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/D301.py",
+   "line": 72,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/D301.py",
+   "line": 82,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/D301.py",
+   "line": 87,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/D301.py",
+   "line": 93,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/D301.py",
+   "line": 99,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/D401.py",
+   "line": 18,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/D403.py",
+   "line": 8,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/D403.py",
+   "line": 36,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/D403.py",
+   "line": 56,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/D403.py",
+   "line": 61,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/D403.py",
+   "line": 78,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/D403.py",
+   "line": 85,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/D417.py",
+   "line": 147,
+   "column": 9
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/D417.py",
+   "line": 186,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/D417.py",
+   "line": 200,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/D417.py",
+   "line": 211,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/sphinx.py",
+   "line": 2,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/sphinx.py",
+   "line": 12,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/sphinx.py",
+   "line": 23,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/sphinx.py",
+   "line": 35,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/sphinx.py",
+   "line": 46,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pydocstyle/sphinx.py",
+   "line": 58,
+   "column": 5
+  },
+  {
+   "rule": "D212",
+   "path": "pyflakes/F401_35.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "pyflakes/F811_20.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "pyupgrade/UP009_10.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "pyupgrade/UP037_3.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "tryceratops/TRY002.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "tryceratops/TRY004.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "tryceratops/TRY201.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "tryceratops/TRY203.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "tryceratops/TRY300.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "tryceratops/TRY301.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D212",
+   "path": "tryceratops/TRY400.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D215",
+   "path": "pydocstyle/D215.py",
+   "line": 3,
+   "column": 5
+  },
+  {
+   "rule": "D215",
+   "path": "pydocstyle/sections.py",
+   "line": 159,
+   "column": 9
+  },
+  {
+   "rule": "D215",
+   "path": "pydocstyle/sections.py",
+   "line": 173,
+   "column": 9
+  },
+  {
    "rule": "D300",
    "path": "flake8_bugbear/B021.py",
    "line": 42,
@@ -76711,6 +77651,18 @@
    "rule": "D301",
    "path": "pydocstyle/D.py",
    "line": 333,
+   "column": 5
+  },
+  {
+   "rule": "D301",
+   "path": "pydocstyle/D200.py",
+   "line": 7,
+   "column": 5
+  },
+  {
+   "rule": "D301",
+   "path": "pydocstyle/D200.py",
+   "line": 12,
    "column": 5
   },
   {
@@ -77342,6 +78294,12 @@
    "path": "pydocstyle/D209_D400.py",
    "line": 2,
    "column": 5
+  },
+  {
+   "rule": "D400",
+   "path": "pydocstyle/D215.py",
+   "line": 1,
+   "column": 1
   },
   {
    "rule": "D400",
@@ -78431,6 +79389,12 @@
   },
   {
    "rule": "D405",
+   "path": "pydocstyle/D215.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "D405",
    "path": "pydocstyle/sections.py",
    "line": 19,
    "column": 5
@@ -78511,6 +79475,12 @@
    "rule": "D408",
    "path": "pydocstyle/sections.py",
    "line": 98,
+   "column": 5
+  },
+  {
+   "rule": "D409",
+   "path": "pydocstyle/D215.py",
+   "line": 3,
    "column": 5
   },
   {
@@ -78620,6 +79590,12 @@
    "path": "pydocstyle/D.py",
    "line": 723,
    "column": 8
+  },
+  {
+   "rule": "D413",
+   "path": "pydocstyle/D215.py",
+   "line": 2,
+   "column": 1
   },
   {
    "rule": "D413",
@@ -78908,6 +79884,12 @@
    "path": "pydocstyle/D.py",
    "line": 723,
    "column": 8
+  },
+  {
+   "rule": "D414",
+   "path": "pydocstyle/D215.py",
+   "line": 2,
+   "column": 1
   },
   {
    "rule": "D414",
@@ -79514,6 +80496,12 @@
    "path": "pydocstyle/D209_D400.py",
    "line": 2,
    "column": 5
+  },
+  {
+   "rule": "D415",
+   "path": "pydocstyle/D215.py",
+   "line": 1,
+   "column": 1
   },
   {
    "rule": "D415",
@@ -97820,6 +98808,18 @@
    "path": "pydocstyle/D.py",
    "line": 653,
    "column": 7
+  },
+  {
+   "rule": "F811",
+   "path": "pydocstyle/D200.py",
+   "line": 6,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "pydocstyle/D200.py",
+   "line": 11,
+   "column": 5
   },
   {
    "rule": "F811",
@@ -128975,6 +129975,18 @@
   },
   {
    "rule": "INP001",
+   "path": "flake8_implicit_str_concat/ISC_syntax_error.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "INP001",
+   "path": "flake8_implicit_str_concat/ISC_syntax_error_2.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "INP001",
    "path": "flake8_import_conventions/custom_banned.py",
    "line": 1,
    "column": 1
@@ -130817,7 +131829,19 @@
   },
   {
    "rule": "INP001",
+   "path": "pydocstyle/D200.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "INP001",
    "path": "pydocstyle/D209_D400.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "INP001",
+   "path": "pydocstyle/D215.py",
    "line": 1,
    "column": 1
   },
@@ -133196,6 +134220,936 @@
    "path": "flake8_gettext/INT003.py",
    "line": 49,
    "column": 19
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_datetimez/DTZ007.py",
+   "line": 41,
+   "column": 32
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 1,
+   "column": 5
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 1,
+   "column": 9
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 38,
+   "column": 5
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 40,
+   "column": 5
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 44,
+   "column": 5
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 46,
+   "column": 5
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 48,
+   "column": 5
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 50,
+   "column": 5
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 52,
+   "column": 5
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 64,
+   "column": 10
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 64,
+   "column": 14
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 65,
+   "column": 14
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 72,
+   "column": 5
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 72,
+   "column": 9
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 72,
+   "column": 14
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 73,
+   "column": 10
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 73,
+   "column": 20
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 84,
+   "column": 5
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 85,
+   "column": 5
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 86,
+   "column": 5
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 87,
+   "column": 5
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 88,
+   "column": 5
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 89,
+   "column": 5
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 90,
+   "column": 5
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 91,
+   "column": 5
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 92,
+   "column": 5
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 93,
+   "column": 5
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 193,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 206,
+   "column": 5
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 206,
+   "column": 9
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 206,
+   "column": 14
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 207,
+   "column": 10
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC.py",
+   "line": 207,
+   "column": 20
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC_syntax_error.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC_syntax_error.py",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC_syntax_error.py",
+   "line": 3,
+   "column": 5
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC_syntax_error.py",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC_syntax_error.py",
+   "line": 4,
+   "column": 5
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC_syntax_error.py",
+   "line": 10,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC_syntax_error.py",
+   "line": 11,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC_syntax_error_2.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC_syntax_error_2.py",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC_syntax_error_2.py",
+   "line": 4,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC_syntax_error_2.py",
+   "line": 4,
+   "column": 4
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC_syntax_error_2.py",
+   "line": 5,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC_syntax_error_2.py",
+   "line": 5,
+   "column": 4
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_implicit_str_concat/ISC_syntax_error_2.py",
+   "line": 7,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_logging_format/G004_implicit_concat.py",
+   "line": 6,
+   "column": 10
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_logging_format/G004_implicit_concat.py",
+   "line": 7,
+   "column": 10
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_logging_format/G004_implicit_concat.py",
+   "line": 8,
+   "column": 10
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_logging_format/G004_implicit_concat.py",
+   "line": 8,
+   "column": 20
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_pyi/PYI025_2.py",
+   "line": 11,
+   "column": 17
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_pyi/PYI025_2.py",
+   "line": 11,
+   "column": 21
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_pyi/PYI025_2.py",
+   "line": 14,
+   "column": 17
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_pyi/PYI025_2.pyi",
+   "line": 11,
+   "column": 17
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_pyi/PYI025_2.pyi",
+   "line": 11,
+   "column": 21
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_pyi/PYI025_2.pyi",
+   "line": 14,
+   "column": 17
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_pyi/PYI041_3.py",
+   "line": 116,
+   "column": 25
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_pyi/PYI041_3.py",
+   "line": 119,
+   "column": 24
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_pyi/PYI041_3.py",
+   "line": 119,
+   "column": 31
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_pyi/PYI041_3.py",
+   "line": 122,
+   "column": 25
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_pyi/PYI041_3.py",
+   "line": 125,
+   "column": 25
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_pyi/PYI041_3.py",
+   "line": 128,
+   "column": 25
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_pyi/PYI041_3.py",
+   "line": 135,
+   "column": 25
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_pyi/PYI041_4.py",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_pyi/PYI041_4.py",
+   "line": 4,
+   "column": 15
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_simplify/SIM222.py",
+   "line": 235,
+   "column": 7
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_simplify/SIM905.py",
+   "line": 60,
+   "column": 2
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_simplify/SIM905.py",
+   "line": 61,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_simplify/SIM905.py",
+   "line": 62,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_simplify/SIM905.py",
+   "line": 63,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_simplify/SIM905.py",
+   "line": 64,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_simplify/SIM905.py",
+   "line": 65,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_simplify/SIM905.py",
+   "line": 66,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_simplify/SIM905.py",
+   "line": 67,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_use_pathlib/PTH210.py",
+   "line": 24,
+   "column": 18
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_use_pathlib/PTH210.py",
+   "line": 30,
+   "column": 24
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_use_pathlib/PTH210.py",
+   "line": 36,
+   "column": 23
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_use_pathlib/PTH210.py",
+   "line": 42,
+   "column": 29
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_use_pathlib/PTH210.py",
+   "line": 48,
+   "column": 31
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_use_pathlib/PTH210.py",
+   "line": 54,
+   "column": 26
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_use_pathlib/PTH210_1.py",
+   "line": 16,
+   "column": 19
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_use_pathlib/PTH210_1.py",
+   "line": 34,
+   "column": 19
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_use_pathlib/PTH210_1.py",
+   "line": 52,
+   "column": 19
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_use_pathlib/PTH210_1.py",
+   "line": 70,
+   "column": 19
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_use_pathlib/PTH210_1.py",
+   "line": 88,
+   "column": 19
+  },
+  {
+   "rule": "ISC001",
+   "path": "flake8_use_pathlib/PTH210_1.py",
+   "line": 106,
+   "column": 19
+  },
+  {
+   "rule": "ISC001",
+   "path": "pydocstyle/sections.py",
+   "line": 510,
+   "column": 5
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyflakes/F504.py",
+   "line": 11,
+   "column": 7
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyflakes/F541.py",
+   "line": 25,
+   "column": 5
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyflakes/F541.py",
+   "line": 25,
+   "column": 9
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyflakes/F541.py",
+   "line": 40,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyflakes/F541.py",
+   "line": 41,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyflakes/F541.py",
+   "line": 42,
+   "column": 2
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyflakes/F541.py",
+   "line": 42,
+   "column": 4
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyflakes/F722.py",
+   "line": 13,
+   "column": 4
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP006_0.py",
+   "line": 45,
+   "column": 10
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP006_0.py",
+   "line": 57,
+   "column": 10
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP012.py",
+   "line": 24,
+   "column": 5
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP012.py",
+   "line": 96,
+   "column": 2
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP012.py",
+   "line": 106,
+   "column": 2
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP012.py",
+   "line": 107,
+   "column": 2
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP012.py",
+   "line": 108,
+   "column": 2
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP012.py",
+   "line": 109,
+   "column": 2
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP012.py",
+   "line": 130,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP018.py",
+   "line": 99,
+   "column": 5
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP018.py",
+   "line": 100,
+   "column": 5
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP025.py",
+   "line": 27,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP025.py",
+   "line": 28,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP025.py",
+   "line": 31,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP025.py",
+   "line": 32,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP025.py",
+   "line": 33,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP025.py",
+   "line": 33,
+   "column": 7
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP025.py",
+   "line": 33,
+   "column": 13
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP025.py",
+   "line": 33,
+   "column": 19
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP025.py",
+   "line": 34,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP030_0.py",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP030_0.py",
+   "line": 3,
+   "column": 7
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP030_0.py",
+   "line": 34,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP031_0.py",
+   "line": 56,
+   "column": 19
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP031_0.py",
+   "line": 76,
+   "column": 8
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP032_0.py",
+   "line": 79,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP032_0.py",
+   "line": 153,
+   "column": 1
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP032_0.py",
+   "line": 235,
+   "column": 2
+  },
+  {
+   "rule": "ISC001",
+   "path": "pyupgrade/UP032_0.py",
+   "line": 244,
+   "column": 2
+  },
+  {
+   "rule": "ISC001",
+   "path": "rerail/probes/UP003-argument-shapes.py",
+   "line": 10,
+   "column": 6
+  },
+  {
+   "rule": "ISC001",
+   "path": "rerail/probes/UP003-argument-shapes.py",
+   "line": 11,
+   "column": 6
+  },
+  {
+   "rule": "ISC001",
+   "path": "ruff/RUF013_0.py",
+   "line": 196,
+   "column": 12
+  },
+  {
+   "rule": "ISC001",
+   "path": "ruff/RUF013_0.py",
+   "line": 212,
+   "column": 18
+  },
+  {
+   "rule": "ISC001",
+   "path": "ruff/RUF022.py",
+   "line": 219,
+   "column": 12
+  },
+  {
+   "rule": "ISC001",
+   "path": "ruff/RUF022.py",
+   "line": 219,
+   "column": 20
+  },
+  {
+   "rule": "ISC001",
+   "path": "ruff/RUF022.py",
+   "line": 219,
+   "column": 36
+  },
+  {
+   "rule": "ISC001",
+   "path": "ruff/RUF022.py",
+   "line": 219,
+   "column": 54
+  },
+  {
+   "rule": "ISC001",
+   "path": "ruff/RUF022.py",
+   "line": 359,
+   "column": 18
+  },
+  {
+   "rule": "ISC001",
+   "path": "ruff/RUF023.py",
+   "line": 155,
+   "column": 18
+  },
+  {
+   "rule": "ISC001",
+   "path": "ruff/RUF023.py",
+   "line": 155,
+   "column": 26
+  },
+  {
+   "rule": "ISC001",
+   "path": "ruff/RUF023.py",
+   "line": 155,
+   "column": 42
+  },
+  {
+   "rule": "ISC001",
+   "path": "ruff/RUF023.py",
+   "line": 155,
+   "column": 62
+  },
+  {
+   "rule": "ISC001",
+   "path": "ruff/RUF023.py",
+   "line": 252,
+   "column": 24
+  },
+  {
+   "rule": "ISC001",
+   "path": "ruff/RUF030.py",
+   "line": 11,
+   "column": 20
+  },
+  {
+   "rule": "ISC001",
+   "path": "ruff/RUF030.py",
+   "line": 21,
+   "column": 20
+  },
+  {
+   "rule": "ISC001",
+   "path": "ruff/RUF037.py",
+   "line": 99,
+   "column": 7
+  },
+  {
+   "rule": "ISC001",
+   "path": "ruff/RUF037.py",
+   "line": 100,
+   "column": 7
+  },
+  {
+   "rule": "ISC001",
+   "path": "ruff/RUF037.py",
+   "line": 103,
+   "column": 7
+  },
+  {
+   "rule": "ISC001",
+   "path": "ruff/RUF037.py",
+   "line": 104,
+   "column": 7
+  },
+  {
+   "rule": "ISC001",
+   "path": "ruff/RUF037.py",
+   "line": 108,
+   "column": 7
+  },
+  {
+   "rule": "ISC001",
+   "path": "ruff/RUF043.py",
+   "line": 64,
+   "column": 45
+  },
+  {
+   "rule": "ISC001",
+   "path": "ruff/RUF051.py",
+   "line": 43,
+   "column": 4
+  },
+  {
+   "rule": "ISC001",
+   "path": "ruff/RUF051.py",
+   "line": 49,
+   "column": 4
+  },
+  {
+   "rule": "ISC001",
+   "path": "ruff/RUF051.py",
+   "line": 92,
+   "column": 4
+  },
+  {
+   "rule": "ISC001",
+   "path": "ruff/RUF051.py",
+   "line": 98,
+   "column": 4
+  },
+  {
+   "rule": "ISC001",
+   "path": "ruff/RUF060.py",
+   "line": 47,
+   "column": 8
+  },
+  {
+   "rule": "ISC001",
+   "path": "ruff/RUF060.py",
+   "line": 48,
+   "column": 8
+  },
+  {
+   "rule": "ISC001",
+   "path": "ruff/confusables.py",
+   "line": 58,
+   "column": 5
   },
   {
    "rule": "ISC003",
@@ -190520,6 +192474,12 @@
    "path": "pycodestyle/W605_1.py",
    "line": 137,
    "column": 9
+  },
+  {
+   "rule": "W605",
+   "path": "pydocstyle/D200.py",
+   "line": 12,
+   "column": 8
   },
   {
    "rule": "W605",

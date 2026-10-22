@@ -1,0 +1,127 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-d209-new-line-after-last-paragraph",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Put the closing quotes of a multi-line docstring on their own line.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "new-line-after-last-paragraph",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "doc-stmt": {
+              "kind": "expression_statement",
+              "not": {
+                "any": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  },
+                  {
+                    "follows": {
+                      "stopBy": "end",
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                ]
+              },
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "module"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "block",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "kind": "class_definition"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "doc-holder": {
+              "any": [
+                {
+                  "matches": "doc-stmt"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "doc-holder"
+                  }
+                }
+              ]
+            },
+            "docstring": {
+              "kind": "string",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "string_start",
+                  "regex": "[bBfFtT]"
+                }
+              },
+              "inside": {
+                "stopBy": "neighbor",
+                "matches": "doc-holder"
+              }
+            }
+          },
+          "rule": {
+            "matches": "docstring",
+            "all": [
+              {
+                "regex": "^[uUrR]*(?:\"{3}|'{3})"
+              },
+              {
+                "regex": "(?:\\r\\n|\\r|\\n)[^\\r\\n]*\\S[^\\r\\n]*(?:\"{3}|'{3})\\z"
+              }
+            ],
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "string_content",
+              "regex": "\\S[^\\r\\n]*[\\r\\n]\\s*\\S"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "D209",
+        "anchor": "witness.span",
+        "message": "Move this docstring's closing quotes onto a new line after its last line of text.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "D209"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -251,12 +251,6 @@ RULES: dict[str, list[str]] = {
     "D414": ["pydocstyle/sections.py"],
     "D415": ["pydocstyle/D.py", "pydocstyle/D400_415.py"],
     "D416": ["pydocstyle/D.py"],
-    "D417": [
-        "pydocstyle/D417.py",
-        "pydocstyle/canonical_google_examples.py",
-        "pydocstyle/canonical_numpy_examples.py",
-        "pydocstyle/sections.py",
-    ],
     "D418": ["pydocstyle/D.py", "pydocstyle/D418.pyi"],
     "D419": ["pydocstyle/D.py"],
     "DTZ001": ["flake8_datetimez/DTZ001.py"],
@@ -625,8 +619,6 @@ RULES: dict[str, list[str]] = {
         "flake8_logging_format/G_warnings_ok.py",
     ],
     "ICN001": ["flake8_import_conventions/defaults.py", "flake8_import_conventions/tricky.py"],
-    "ICN002": ["flake8_import_conventions/custom_banned.py", "flake8_import_conventions/defaults.py"],
-    "ICN003": ["flake8_import_conventions/custom_banned_from.py"],
     "INP001": [
         "flake8_no_pep420/test_fail_empty/example.py",
         "flake8_no_pep420/test_fail_nonempty/example.py",
@@ -1144,9 +1136,7 @@ RULES: dict[str, list[str]] = {
     "TD005": ["flake8_todos/TD005.py"],
     "TD006": ["flake8_todos/TD006.py"],
     "TD007": ["flake8_todos/TD007.py"],
-    "TID251": ["flake8_tidy_imports/TID/my_package/sublib/api/application.py", "flake8_tidy_imports/TID251.py"],
     "TID252": ["flake8_tidy_imports/TID/my_package/sublib/api/application.py", "flake8_tidy_imports/TID252.py"],
-    "TID253": ["flake8_tidy_imports/TID253.py"],
     "TRY002": ["tryceratops/TRY002.py"],
     "TRY003": ["tryceratops/TRY003.py"],
     "TRY004": ["tryceratops/TRY004.py"],
@@ -1382,6 +1372,14 @@ NOQA = {
 }
 
 NOQA_COMMENTS = ["", "  # noqa", "  # noqa: {code}", "  # NOQA: {code}", "  # noqa: E501"]
+
+# Rules Ruff reports only in stubs: their case is a stub, fixtures/rerail/noqa/<CODE>.pyi.
+NOQA_STUBS: tuple[str, ...] = ()
+
+# Shipped rules with no case, and why.
+NOQA_EXEMPT = {
+    "D104": "Ruff reports it once per package `__init__.py`, at its first line, so one file cannot hold the case five times.",
+}
 
 # Ours: inputs a port once misread, each now a golden case (fixtures/rerail/probes/<name>.py).
 PROBES = {
@@ -1630,7 +1628,8 @@ PROBES = {
 
 def authored() -> dict[str, str]:
     """Rerail's own cases, by path under fixtures/."""
-    noqa = common.suppression_cases(NOQA, NOQA_COMMENTS, "ruff")
+    noqa = common.suppression_cases(NOQA, NOQA_COMMENTS, "ruff", paths={code: f"{code}.pyi" for code in NOQA_STUBS},
+                                    exempt=NOQA_EXEMPT)
     cases = {f"rerail/noqa/{path}": text for path, text in noqa.items()}
     cases.update({f"rerail/probes/{name}": text for name, text in PROBES.items()})
     return cases

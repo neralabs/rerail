@@ -108,10 +108,13 @@ def shipped(tool: str) -> set[str]:
 
 
 def suppression_cases(cases: dict[str, str], comments: list[str], tool: str,
-                      names: dict[str, str] | None = None) -> dict[str, str]:
+                      names: dict[str, str] | None = None, paths: dict[str, str] | None = None,
+                      exempt: dict[str, str] | None = None) -> dict[str, str]:
     """One file per rule: its case (`{c}` where the reported line ends) written once per comment, the first being none.
-    `{code}`, `{name}` and `{other}` in a comment are the rule's code, its name in `names` and another rule's code."""
-    missing = sorted(shipped(tool) - set(cases))
+    `{code}`, `{name}` and `{other}` in a comment are the rule's code, its name in `names` and another rule's code.
+    The file is `<code>.py` unless `paths` names another (a stub for a rule the tool reports only in stubs). A shipped
+    rule in `exempt` (with the reason) needs no case."""
+    missing = sorted(shipped(tool) - set(cases) - set(exempt or {}))
     if missing:
         raise SystemExit(f"no suppression case for the shipped {tool} rules {', '.join(missing)}")
     files = {}
@@ -121,7 +124,7 @@ def suppression_cases(cases: dict[str, str], comments: list[str], tool: str,
             other = "B102" if code == "B101" else "B101"
             text = comment.format(code=code, name=(names or {}).get(code, ""), other=other)
             blocks.append(case.replace("{c}", text).replace("{{", "{").replace("}}", "}"))
-        files[f"{code}.py"] = "\n".join(blocks)
+        files[(paths or {}).get(code, f"{code}.py")] = "\n".join(blocks)
     return files
 
 

@@ -3661,19 +3661,6 @@
       "match": "line+column"
     },
     {
-      "id": "ruff-d417-undocumented-param",
-      "upstream": {
-        "tool": "ruff",
-        "rule": "D417"
-      },
-      "policy": "candidates/rules/ruff-d417-undocumented-param.json",
-      "capabilities": [
-        "syntax",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
       "id": "ruff-d418-overload-with-docstring",
       "upstream": {
         "tool": "ruff",
@@ -4174,32 +4161,6 @@
         "rule": "ICN001"
       },
       "policy": "candidates/rules/ruff-icn001-unconventional-import-alias.json",
-      "capabilities": [
-        "syntax",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "ruff-icn002-banned-import-alias",
-      "upstream": {
-        "tool": "ruff",
-        "rule": "ICN002"
-      },
-      "policy": "candidates/rules/ruff-icn002-banned-import-alias.json",
-      "capabilities": [
-        "syntax",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "ruff-icn003-banned-import-from",
-      "upstream": {
-        "tool": "ruff",
-        "rule": "ICN003"
-      },
-      "policy": "candidates/rules/ruff-icn003-banned-import-from.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -7184,38 +7145,12 @@
       "match": "line+column"
     },
     {
-      "id": "ruff-tid251-banned-api",
-      "upstream": {
-        "tool": "ruff",
-        "rule": "TID251"
-      },
-      "policy": "candidates/rules/ruff-tid251-banned-api.json",
-      "capabilities": [
-        "syntax",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
       "id": "ruff-tid252-relative-imports",
       "upstream": {
         "tool": "ruff",
         "rule": "TID252"
       },
       "policy": "candidates/rules/ruff-tid252-relative-imports.json",
-      "capabilities": [
-        "syntax",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
-      "id": "ruff-tid253-banned-module-level-imports",
-      "upstream": {
-        "tool": "ruff",
-        "rule": "TID253"
-      },
-      "policy": "candidates/rules/ruff-tid253-banned-module-level-imports.json",
       "capabilities": [
         "syntax",
         "suppression"
