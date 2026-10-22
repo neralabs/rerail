@@ -829,7 +829,37 @@ pub struct Eval<'a> {
     pub unsupported: std::cell::RefCell<Option<String>>,
     util_memo: std::cell::RefCell<rustc_hash::FxHashMap<(usize, u32), bool>>,
     util_capture_free: Vec<bool>,
+    /// Spike A3: `inside`/`has` with `stopBy: end` over a rule that mentions no capture and
+    /// parses nothing, memoised per node (`RelMemo`), keyed by the rule's address.
+    rel_memo: std::cell::RefCell<rustc_hash::FxHashMap<usize, RelMemo>>,
     pub steps: std::cell::Cell<u64>,
+}
+
+/// Per memoisable rule: whether it qualifies, and per node (0 not yet, 1 true, 2 false, 3
+/// unknown) the rule's verdict, `inside {rule, stopBy: end}`'s and `has {rule, stopBy: end}`'s.
+#[derive(Default)]
+struct RelMemo {
+    ok: bool,
+    at: Vec<u8>,
+    inside: Vec<u8>,
+    has: Vec<u8>,
+}
+
+const T: u8 = 1;
+const F: u8 = 2;
+const U: u8 = 3;
+
+fn parses(rule: &Rule, utils: &[Rule], seen: &mut BTreeSet<usize>) -> bool {
+    match rule {
+        Rule::Parse(_) => true,
+        Rule::All(v) | Rule::Any(v) => v.iter().any(|r| parses(r, utils, seen)),
+        Rule::Not(r) => parses(r, utils, seen),
+        Rule::Has { rule, stop } | Rule::Inside { rule, stop } | Rule::Field { rule, stop, .. } => parses(rule, utils, seen) || matches!(stop, Stop::Rule(s) if parses(s, utils, seen)),
+        Rule::NthChild { of_rule: Some(r), .. } => parses(r, utils, seen),
+        Rule::Count { relation, .. } => parses(relation, utils, seen),
+        Rule::Util(i) => seen.insert(*i) && parses(&utils[*i], utils, seen),
+        _ => false,
+    }
 }
 
 impl<'a> Eval<'a> {
@@ -855,6 +885,7 @@ impl<'a> Eval<'a> {
             unsupported: Default::default(),
             util_memo: Default::default(),
             util_capture_free,
+            rel_memo: Default::default(),
             steps: Default::default(),
         }
     }
@@ -1385,13 +1416,171 @@ impl<'a> Eval<'a> {
         match stop {
             Stop::Neighbor => self.find(stop, self.parent(node), &[], rule, env),
             _ => {
+                if let (Stop::End, Bound::Node(n)) = (stop, node) {
+                    if let Some(key) = self.memo_slot(rule) {
+                        let before = self.unknown.get();
+                        let found = self.memo_finish(self.inside_end_memo(key, rule, n));
+                        if crate::subst::check_mode() {
+                            let after = self.unknown.replace(before);
+                            let anc = self.ancestors(node);
+                            let mut e = env.clone();
+                            let want = self.find(stop, None, &anc, rule, &mut e);
+                            assert!(want == found && self.unknown.get() == after, "FACTS_A3_CHECK: inside memo at node {n} in {}", self.path);
+                        }
+                        return found;
+                    }
+                }
                 let anc = self.ancestors(node);
                 self.find(stop, None, &anc, rule, env)
             }
         }
     }
 
+    /// Spike A3: the relation memo's slot for `rule`, when it qualifies (it mentions no capture
+    /// and parses nothing, so its verdict at a node is a pure function of the node, as the
+    /// utility memo assumes) and no `each` enumeration is active.
+    fn memo_slot(&self, rule: &Rule) -> Option<usize> {
+        if self.each_active() {
+            return None;
+        }
+        let key = rule as *const Rule as usize;
+        let mut memo = self.rel_memo.borrow_mut();
+        let e = memo.entry(key).or_insert_with(|| {
+            let mut m = BTreeSet::new();
+            mentions(rule, &self.q.utils, &mut BTreeSet::new(), &mut m);
+            RelMemo { ok: m.is_empty() && !parses(rule, &self.q.utils, &mut BTreeSet::new()), ..Default::default() }
+        });
+        e.ok.then_some(key)
+    }
+
+    /// The rule's verdict at one node (true, false, unknown), as a relation search tests a
+    /// candidate: evaluated once per node, with the caller's unknown flag set aside.
+    fn verdict_at(&self, key: usize, rule: &Rule, n: u32) -> u8 {
+        if let Some(&v) = self.rel_memo.borrow()[&key].at.get(n as usize) {
+            if v != 0 {
+                return v;
+            }
+        }
+        let saved = self.unknown.replace(false);
+        let mut env = Env::default();
+        let r = self.m(rule, Bound::Node(n), &mut env);
+        let unknown = self.three && self.unknown.get();
+        self.unknown.set(saved);
+        let v = if r { T } else if unknown { U } else { F };
+        let mut memo = self.rel_memo.borrow_mut();
+        let at = &mut memo.get_mut(&key).unwrap().at;
+        if at.is_empty() {
+            at.resize(self.f.len(), 0);
+        }
+        at[n as usize] = v;
+        v
+    }
+
+    /// `inside {rule, stopBy: end}` at `n`: true when an ancestor's verdict is true, else
+    /// unknown when one is unknown, else false. Ancestors are tested upwards until the first
+    /// true one or an ancestor whose answer is already known, so every verdict is first
+    /// evaluated exactly when the unmemoised walk first evaluates it.
+    fn inside_end_memo(&self, key: usize, rule: &Rule, n: u32) -> u8 {
+        let combine = |r: u8, v: u8| if r == T || v == T { T } else if r == U || v == U { U } else { F };
+        let mut chain: Vec<(u32, u8)> = Vec::new();
+        let mut c = n;
+        let mut v = loop {
+            let known = self.rel_memo.borrow()[&key].inside.get(c as usize).copied().unwrap_or(0);
+            if known != 0 {
+                break known;
+            }
+            let Some(p) = self.f.parent(c) else {
+                chain.push((c, F));
+                break F;
+            };
+            let r = self.verdict_at(key, rule, p);
+            chain.push((c, r));
+            if r == T {
+                break T;
+            }
+            c = p;
+        };
+        let mut memo = self.rel_memo.borrow_mut();
+        let inside = &mut memo.get_mut(&key).unwrap().inside;
+        if inside.is_empty() {
+            inside.resize(self.f.len(), 0);
+        }
+        for &(c, r) in chain.iter().rev() {
+            v = combine(r, v);
+            inside[c as usize] = v;
+        }
+        inside[n as usize]
+    }
+
+    /// `has {rule, stopBy: end}` at `n`: the descendants in preorder until the first true
+    /// verdict; a descendant whose own answer is known is not entered again.
+    fn has_end_memo(&self, key: usize, rule: &Rule, n: u32) -> u8 {
+        let known = self.rel_memo.borrow()[&key].has.get(n as usize).copied().unwrap_or(0);
+        if known != 0 {
+            return known;
+        }
+        let end = self.f.subtree_end[n as usize];
+        let mut i = n + 1;
+        let mut unknown = false;
+        let mut res = F;
+        while i < end {
+            let r = self.verdict_at(key, rule, i);
+            if r == T {
+                res = T;
+                break;
+            }
+            unknown |= r == U;
+            match self.rel_memo.borrow()[&key].has.get(i as usize).copied().unwrap_or(0) {
+                0 => i += 1,
+                T => {
+                    res = T;
+                    break;
+                }
+                h => {
+                    unknown |= h == U;
+                    i = self.f.subtree_end[i as usize];
+                }
+            }
+        }
+        if res != T && unknown {
+            res = U;
+        }
+        let mut memo = self.rel_memo.borrow_mut();
+        let has = &mut memo.get_mut(&key).unwrap().has;
+        if has.is_empty() {
+            has.resize(self.f.len(), 0);
+        }
+        has[n as usize] = res;
+        res
+    }
+
+    /// A relation search's answer from an existence verdict over a rule that binds nothing
+    /// (`search_start`/`search_finish`): unknown sets the caller's flag, otherwise it stays.
+    fn memo_finish(&self, v: u8) -> bool {
+        if v == U && self.three {
+            self.unknown.set(true);
+        }
+        v == T
+    }
+
     fn has(&self, node: Bound, rule: &Rule, stop: &Stop, env: &mut Env) -> bool {
+        if let (Stop::End, Bound::Node(n)) = (stop, node) {
+            if let Some(key) = self.memo_slot(rule) {
+                let before = self.unknown.get();
+                let found = self.memo_finish(self.has_end_memo(key, rule, n));
+                if crate::subst::check_mode() {
+                    let after = self.unknown.replace(before);
+                    let mut e = env.clone();
+                    let want = self.has_unmemoised(node, rule, stop, &mut e);
+                    assert!(want == found && self.unknown.get() == after, "FACTS_A3_CHECK: has memo at node {n} in {}", self.path);
+                }
+                return found;
+            }
+        }
+        self.has_unmemoised(node, rule, stop, env)
+    }
+
+    fn has_unmemoised(&self, node: Bound, rule: &Rule, stop: &Stop, env: &mut Env) -> bool {
         let mut s = self.search_start();
         let found = match stop {
             Stop::Neighbor => {
