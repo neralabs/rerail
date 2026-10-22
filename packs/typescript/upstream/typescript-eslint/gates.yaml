@@ -1,10 +1,10 @@
 adapter: eslint
-# typescript-eslint's documents in rerail's typescript pack (NER-1737). The pack's eslint-* documents are ESLint core
+# typescript-eslint's documents in rerail's typescript pack. The pack's eslint-* documents are ESLint core
 # ports that move to the javascript pack, where javascript-eslint lists them.
 rerail:
   pack: typescript
   project: typescript-eslint
-  # Since #52 (NER-1868) a typescript rule runs on TypeScript files only, and JavaScript files are the javascript pack's.
+  # Since #52 a typescript rule runs on TypeScript files only, and JavaScript files are the javascript pack's.
   # typescript-eslint's approved configurations also lint .js, .mjs and .cjs, so the ports are held to the TypeScript
   # types alone. Upstream's tests have no JavaScript file, and the pack's corpus excludes them.
   in_scope:
@@ -51,7 +51,7 @@ real_code_gaps:
     differing_files: 4200
   - rule: typescript-eslint-explicit-member-accessibility
     differing_files: 4343
-  # Counted in NRV 7f933d9 (ggiangi/ner-1856-typescript-pack-gates): typescript-eslint 8.70.1 reports nothing at the
+  # Counted in NRV 7f933d9: typescript-eslint 8.70.1 reports nothing at the
   # rule's default options, and the port runs it as `always` (packs/typescript/README.md).
   - rule: typescript-eslint-init-declarations
     differing_files: 2693

@@ -18,7 +18,7 @@ export const MATCHES_UPSTREAM_TESTS_METHOD = {
   "stays silent": "at least one case where upstream reports nothing and the rule agrees, from an upstream test file or a golden: the golden test that proves a shipped rule stays silent, so a rule without one does not ship",
   goldens: "the rule produces exactly what the pinned upstream reports on every golden of the tool-pack's goldens.tsv, compared as upstream's test files are; a golden is a real-code file read from the pinned corpus and checked against its sha256, and its expected answer is upstream's in corpus.json, which the recorder writes for the files goldens name and no other; goldens.tsv is a reviewed list the gates never write: the files a real-code run found a rule differing on, the run named on the file's source line (NRV's real-code gate, imported for candidates too, or rerail's own for the tool-packs NRV pins no tool of, so a candidate held back by a golden stays held until it agrees there), and for a shipped rule no upstream test file proves silent, a file where upstream reports nothing; a golden whose corpus file is gone from the pinned corpus, or that corpus.json does not answer, fails",
   "real-code gaps": `a candidate that differs from upstream on more than ${SYSTEMATIC_FILES} of its goldens differs throughout, not on cases: gates.yaml lists it under real_code_gaps in place of its goldens, and it fails no-real-code-gap until it agrees there and its goldens are imported; a shipped rule cannot be listed`,
-  "engine gaps": "a golden that differs where the engine could not fully read the file (it reported source-partial, source-incomplete or budget-exceeded) is an engine gap: identical-on-goldens judges only the goldens the engine read fully, and engine-reads-goldens fails the rule on every engine gap, since the rule must not ship until the engine reads the file; the fix belongs in the engine (NER-1764), and once the engine reads the file the golden is judged like any other",
+  "engine gaps": "a golden that differs where the engine could not fully read the file (it reported source-partial, source-incomplete or budget-exceeded) is an engine gap: identical-on-goldens judges only the goldens the engine read fully, and engine-reads-goldens fails the rule on every engine gap, since the rule must not ship until the engine reads the file; the fix belongs in the engine, and once the engine reads the file the golden is judged like any other",
   "gap candidates": "every file the engine cannot fully parse is read by independent parsers, each reporting syntax errors and grammar errors (what the language forbids in a tree the parser built): invalid source when every parser reports one, valid source (the engine's parser is wrong) when none does, and parsers disagree otherwise",
 } as const;
 
@@ -450,7 +450,7 @@ export function engineReadsGoldensCheck(results: Pick<GoldenResult, "task" | "pa
   return {
     id: "engine-reads-goldens",
     ok: false,
-    detail: `${gaps.length} of ${results.length} golden(s) differ where the engine could not fully read the file (${first}${gaps.length > ENGINE_GAP_SAMPLE ? ", …" : ""}): the engine could not fully read it; the fix belongs in the engine (NER-1764), and the rule cannot ship until then`,
+    detail: `${gaps.length} of ${results.length} golden(s) differ where the engine could not fully read the file (${first}${gaps.length > ENGINE_GAP_SAMPLE ? ", …" : ""}): the engine could not fully read it; the fix belongs in the engine, and the rule cannot ship until then`,
   };
 }
 
