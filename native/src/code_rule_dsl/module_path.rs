@@ -4,7 +4,7 @@
 
 /// Where a Python file sits among modules, as Ruff names it (`checkers::ast::check_ast`).
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ModulePath {
+pub struct ModulePath {
     /// The names from the package root's parent as on disk: each directory's, then the file's
     /// stem (`json.d`, `__init__`). Ruff's `to_module_path` reads a directory by its stem.
     segments: Vec<Box<str>>,

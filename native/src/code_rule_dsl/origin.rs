@@ -25,7 +25,7 @@ use std::ops::Range;
 use std::rc::Rc;
 
 /// How one document's bytes map into the document it was read from (its outer document).
-pub(crate) trait Origin {
+pub trait Origin {
     /// The outer ranges the node `id`, spanning `range` here, stands for. A node's ranges hold its
     /// descendants'.
     fn of_node(&self, id: usize, range: Range<usize>) -> Option<FileRanges>;

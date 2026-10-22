@@ -368,13 +368,13 @@ pub(crate) fn annotation_offset(index: usize) -> usize {
 }
 
 /// A string type definition the table parsed and read (Ruff's `string_type_definitions`).
-pub(crate) struct Annotation {
+pub struct Annotation {
     /// The string literal's range: in the source, or, nested in another annotation, in that one's
     /// range space.
-    pub(crate) start: usize,
-    pub(crate) end: usize,
+    pub start: usize,
+    pub end: usize,
     /// The parsed expression, or one `ERROR` node where Ruff reports a syntax error (F722).
-    pub(crate) tree: Arc<crate::code_rule_dsl::literal::SubTree>,
+    pub tree: Arc<crate::code_rule_dsl::literal::SubTree>,
     /// The scope the string is read in.
     pub(crate) scope: u32,
 }
@@ -386,7 +386,7 @@ pub(crate) struct Directives {
     pub(crate) off: BTreeSet<String>,
 }
 
-pub(crate) struct ScopeTable {
+pub struct ScopeTable {
     pub(crate) language: GrammarDialect,
     /// The family of `language`, whose `ScopeRules` read the table.
     pub(crate) family: Family,
@@ -400,7 +400,7 @@ pub(crate) struct ScopeTable {
     pub(crate) reading: Reading,
     /// Python: the string type definitions, parsed; their names are references with ranges of
     /// their own (`annotation_offset`). Sorted by start.
-    pub(crate) annotations: Vec<Annotation>,
+    pub annotations: Vec<Annotation>,
     /// Python: module-level statements that assign `__all__` (`=`, `+=`, `: T =`).
     pub(crate) dunder_all: Vec<NodeRef>,
     /// TypeScript: the scope of each JSX opening or self-closing element, in document order, and
@@ -428,7 +428,7 @@ pub(crate) struct ScopeTable {
 /// How a table reads its file, beyond the grammar: tables of one file under different readings
 /// are kept apart.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Reading {
+pub struct Reading {
     /// Python: every annotation is read after the module (a target of 3.14 or later).
     pub(crate) deferred_annotations: bool,
     /// TypeScript: blocks and switch bodies are scopes, as eslint-scope nests them from
@@ -463,7 +463,7 @@ impl Default for Reading {
 /// Why a build stopped. Any of them fails the clause for the file: a partial table could turn
 /// "shadowed" into "global", which a `not` would report.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum BuildError {
+pub enum BuildError {
     Budget,
     Depth,
     Deadline,
@@ -505,7 +505,7 @@ impl ScopeTable {
 
     /// `build_with` for a Python file at `module`, against which its relative imports and
     /// definitions are qualified where Ruff's typing settings name them.
-    pub(crate) fn build_in<D: Doc>(
+    pub fn build_in<D: Doc>(
         root: Node<'_, D>,
         language: GrammarDialect,
         cap: usize,
