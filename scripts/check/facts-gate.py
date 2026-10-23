@@ -219,7 +219,7 @@ def rewrite_mutants() -> tuple[list[tuple], list[str]]:
 
 
 BATCH_CHECKS = [f"harness-b{n}" for n in BATCH_RECORDINGS] + [f"suite-b{n}" for n in BATCH_RECORDINGS]
-LANES = {"a": ["a-replay", "a-repo", "a-subset", "a-unrewritten"], "p": ["a-pattern"], "r": ["a-vs-reference"], "b": ["b-exactness"], "g": ["b-generated"],
+LANES = {"a": ["a-replay", "a-repo", "a-subset", "a-unrewritten", "count-regression"], "p": ["a-pattern"], "r": ["a-vs-reference"], "b": ["b-exactness"], "g": ["b-generated"],
          "c": ["rerail-facts-lib", "classifier-leak", "planner-audit", "facts-a-unit", "facts-b-unit", "explain-stable", "harness-replay"],
          "v": ["views-derived"], "h": [*BATCH_CHECKS, "explain-physical"], "t": ["b-ties"]}
 # The edit replays' prefix (b-exactness, b-generated and their mutants): events 0-299 hold every
@@ -244,6 +244,11 @@ VIEWS_SHARD = "0/8"
 # Lane v outlives every other lane, which finish within about 2 minutes, so it gets 8 workers.
 VIEWS_THREADS = "8"
 PACKAGES = ["facts-a", "facts-b", "rerail-facts"]
+# One target dir per tree: the gate (T2) builds `release` into `target/release`; the loop (T0/T1,
+# `scripts/check/facts-loop.py`) sets PROFILE to `loop` (`target/loop`). Both carry the `mutants`
+# features (hooks env-gated by FACTS_MUTANT).
+TARGET = ROOT / "target"
+PROFILE = "release"
 
 print_lock = threading.Lock()
 
@@ -295,39 +300,39 @@ def workspace_packages() -> dict[str, dict]:
     return {p["name"]: p for p in meta["packages"]}
 
 
+def profile_args() -> list[str]:
+    return ["--release"] if PROFILE == "release" else ["--profile", PROFILE]
+
+
 def build(rd: Path) -> tuple[bool, dict]:
-    target = Path(os.environ["FACTS_GATE_TARGET"])
-    seed = ROOT / "target" / "release"
-    if not (target / "release").exists() and seed.is_dir():
-        # An APFS clone of the workspace's release build, so dependencies are not rebuilt.
-        target.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["cp", "-cR", str(seed), str(target / "release")], check=False)
+    """The gate's build: `release` with the `mutants` features, into the tree's own `target/release`
+    (the hooks are env-gated: free while `FACTS_MUTANT` is unset)."""
     pkgs = workspace_packages()
     present = [p for p in PACKAGES if p in pkgs]
     mutants = [p for p in present if "mutants" in pkgs[p].get("features", {})]
-    env = {"CARGO_TARGET_DIR": str(target)}
+    env = {"CARGO_TARGET_DIR": str(TARGET)}
     bins = [p for p in present if p in ("facts-a", "facts-b")]
     features = ["--features", ",".join(f"{p}/mutants" for p in bins if p in mutants)] if any(p in mutants for p in bins) else []
     t0 = time.monotonic()
-    status, _ = run(["cargo", "build", "--release", *sum((["-p", p] for p in bins), []), *features], rd / "build", env)
+    status, _ = run(["cargo", "build", *profile_args(), *sum((["-p", p] for p in bins), []), *features], rd / "build", env)
     if status == 0 and "rerail-facts" in present:
         f = ["--features", "rerail-facts/mutants"] if "rerail-facts" in mutants else []
-        status, _ = run(["cargo", "test", "--release", "-p", "rerail-facts", *f, "--no-run"], rd / "build-tests", env)
+        status, _ = run(["cargo", "test", *profile_args(), "-p", "rerail-facts", *f, "--no-run"], rd / "build-tests", env)
     if status == 0 and "facts-a" in present:
         f = ["--features", "facts-a/mutants"] if "facts-a" in mutants else []
-        status, _ = run(["cargo", "test", "--release", "-p", "facts-a", *f, "--bin", "facts-a", "--no-run"], rd / "build-tests-facts-a", env)
+        status, _ = run(["cargo", "test", *profile_args(), "-p", "facts-a", *f, "--bin", "facts-a", "--no-run"], rd / "build-tests-facts-a", env)
     if status == 0 and "facts-b" in present:
         f = ["--features", "facts-b/mutants"] if "facts-b" in mutants else []
-        status, _ = run(["cargo", "test", "--release", "-p", "facts-b", *f, "--bin", "facts-b", "--no-run"], rd / "build-tests-facts-b", env)
+        status, _ = run(["cargo", "test", *profile_args(), "-p", "facts-b", *f, "--bin", "facts-b", "--no-run"], rd / "build-tests-facts-b", env)
     info = {"seconds": round(time.monotonic() - t0, 1), "packages": present, "mutants_feature": mutants,
-            "target": str(target), "ok": status == 0}
+            "target": str(TARGET / PROFILE), "ok": status == 0}
     say(f"build {'ok' if status == 0 else 'FAIL'} {info['seconds']:.0f}s "
         + " ".join(p + ("[mutants]" if p in mutants else "") for p in present))
     return status == 0, info
 
 
 def binary(name: str) -> str:
-    return str(Path(os.environ["FACTS_GATE_TARGET"]) / "release" / name)
+    return str(TARGET / PROFILE / name)
 
 
 # ---------------------------------------------------------------------------------------------------
@@ -399,7 +404,9 @@ def check_a_replay(d: Path, env: dict) -> tuple[bool, str, dict]:
 
 
 def repo_cmd(d: Path, root: Path | None) -> list[str]:
-    return [binary("facts-a"), "repo", "--threads", THREADS, "--out-dir", str(d), *(["--root", str(root)] if root else [])]
+    """`facts-a repo` as the gate runs it: every clause evaluated (`--no-memo`; the digest memo is the
+    loop's, docs/facts/LOOP.md)."""
+    return [binary("facts-a"), "repo", "--threads", THREADS, "--no-memo", "--out-dir", str(d), *(["--root", str(root)] if root else [])]
 
 
 def failures_ok(results: dict) -> list[str]:
@@ -464,6 +471,45 @@ def check_a_unrewritten(d: Path, env: dict, gate_dir: Path) -> tuple[bool, str, 
     if not rewritten.exists():
         return False, "a-subset did not run", {}
     return compare_findings(rewritten, d / "results.json", "unrewritten")
+
+
+# count-regression: per clause, every work count (spikes/facts-a/src/counts.rs, algebraic and physical)
+# of a-subset against the counts stored at the merge-base (COUNTS, committed by the integrator from the
+# check's subset-counts.json); a count that grows by more than COUNT_GROWTH needs a row naming
+# `check/clause` under REWRITES.md's "## Count changes".
+COUNTS = "benchmark/facts/subset-counts.json"
+COUNT_GROWTH = 0.05
+COUNT_BASE = os.environ.get("FACTS_COUNT_BASE", "Moti-Velz/facts-engine")
+
+
+def clause_counts(results: dict) -> dict[str, dict[str, int]]:
+    return {f"{r['check']}/{c['clause']}": c["counts"] for r in results["rules"] for c in r["clauses"]}
+
+
+def check_count_regression(d: Path, gate_dir: Path) -> tuple[bool, str, dict]:
+    got_path = gate_dir / "a-subset" / "results.json"
+    if not got_path.exists():
+        return False, "a-subset did not run", {}
+    got = clause_counts(json.loads(got_path.read_text()))
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "subset-counts.json").write_text(json.dumps({"format": "rerail.facts-counts/v1", "commit": commit(), "clauses": got}, indent=1, sort_keys=True) + "\n")
+    mb = subprocess.run(["git", "merge-base", "HEAD", COUNT_BASE], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+    stored = subprocess.run(["git", "show", f"{mb}:{COUNTS}"], cwd=ROOT, capture_output=True, text=True) if mb else None
+    if not stored or stored.returncode != 0:
+        return True, f"no stored counts at the merge-base {mb[:9] or '?'} ({COUNTS}); baseline written to {d}/subset-counts.json", {}
+    want = json.loads(stored.stdout)["clauses"]
+    text = REWRITES.read_text() if REWRITES.exists() else ""
+    noted = text.split("## Count changes", 1)[1] if "## Count changes" in text else ""
+    grown, unnoted = [], []
+    for clause, counts in sorted(got.items()):
+        for k, v in sorted(counts.items()):
+            base = want.get(clause, {}).get(k)
+            if base is not None and v > base * (1 + COUNT_GROWTH) and v - base > 0:
+                grown.append(f"{clause} {k} {base}->{v}")
+                if f"{clause}" not in noted:
+                    unnoted.append(grown[-1])
+    return (not unnoted, f"{len(got)} clauses against {COUNTS} at {mb[:9]}: {len(grown)} counts grew > {COUNT_GROWTH:.0%}"
+            + (f", {len(unnoted)} without a REWRITES.md § Count changes row: {'; '.join(unnoted[:5])}" if unnoted else ""), {"grown": grown, "unnoted": unnoted})
 
 
 def check_a_pattern(d: Path, env: dict) -> tuple[bool, str, dict]:
@@ -553,12 +599,12 @@ def check_ties(d: Path, env: dict) -> tuple[bool, str, dict]:
 
 
 def cargo_test(d: Path, env: dict, *names: str, package: str = "rerail-facts") -> tuple[int, int, list[str]]:
-    """`cargo test --release -p <package> [--features mutants] <names>`: (exit status, tests run,
+    """`cargo test <profile> -p <package> [--features mutants] <names>`: (exit status, tests run,
     failed tests)."""
     pkgs = workspace_packages()
     f = ["--features", f"{package}/mutants"] if "mutants" in pkgs[package].get("features", {}) else []
-    status, _ = run(["cargo", "test", "--release", "-p", package, *f, *names], d,
-                    {**env, "CARGO_TARGET_DIR": os.environ["FACTS_GATE_TARGET"]})
+    status, _ = run(["cargo", "test", *profile_args(), "-p", package, *f, *names], d,
+                    {**env, "CARGO_TARGET_DIR": str(TARGET)})
     out = (d / "stdout.txt").read_text(errors="replace")
     ran = sum(int(l.split()[1]) for l in out.splitlines() if l.startswith("running ") and l.split()[1].isdigit())
     failed = [l.split()[1] for l in out.splitlines() if l.startswith("test ") and l.rstrip().endswith("FAILED")]
@@ -802,6 +848,8 @@ def run_check(cid: str, gate_dir: Path, env: dict, edits: int | None) -> tuple[b
         return check_a_repo(d, env)
     if cid == "a-subset":
         return check_a_subset(d, env)
+    if cid == "count-regression":
+        return check_count_regression(d, gate_dir)
     if cid == "a-unrewritten":
         return check_a_unrewritten(d, env, gate_dir)
     if cid == "a-pattern":
@@ -887,7 +935,7 @@ def main() -> int:
     if unknown:
         print(f"facts-gate: unknown checks {unknown}; known: {all_checks}", file=sys.stderr)
         return 2
-    if "a-unrewritten" in only and "a-subset" not in only:
+    if {"a-unrewritten", "count-regression"} & set(only) and "a-subset" not in only:
         only.append("a-subset")
     gate_dir = Path(args.run_dir) if args.run_dir else RUNS / (datetime.datetime.now().strftime("%Y%m%dT%H%M%S") + "-gate")
     gate_dir.mkdir(parents=True, exist_ok=True)

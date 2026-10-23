@@ -61,6 +61,10 @@ pub struct Evaluator<'a, S> {
     locals: RefCell<Vec<(LocalId, Rc<Vec<Row>>)>>,
     /// The content a per-file plan runs over (`path`, source text), for `source_text`.
     content: Option<(&'a str, &'a str)>,
+    /// Admitted rows per round of the fixpoints evaluated outside every expression subquery
+    /// (`outer` empty), summed by round since the last `take_fix`: the algebraic fixpoint counts
+    /// the backends report too (facts-a `crate::counts`). Observation only.
+    fix: RefCell<Vec<u64>>,
 }
 
 thread_local! {
@@ -368,14 +372,14 @@ pub fn fold_aggregate<S>(call: &AggCall<S>, items: impl IntoIterator<Item = (Opt
 
 impl<'a, S> Evaluator<'a, S> {
     pub fn new(source: &'a dyn Fn(&S) -> Result<Vec<Row>, Error>) -> Self {
-        Self { source, shared: None, locals: RefCell::new(Vec::new()), content: None }
+        Self { source, shared: None, locals: RefCell::new(Vec::new()), content: None, fix: RefCell::new(Vec::new()) }
     }
 
     /// An evaluator over one content: `source_text(p, s, e)` is the byte range `[s, e)` of
     /// `text` when `p` is `path` (as the per-file executor: NULL for another path or a range
     /// outside the text).
     pub fn with_content(source: &'a dyn Fn(&S) -> Result<Vec<Row>, Error>, path: &'a str, text: &'a str) -> Self {
-        Self { source, shared: None, locals: RefCell::new(Vec::new()), content: Some((path, text)) }
+        Self { source, shared: None, locals: RefCell::new(Vec::new()), content: Some((path, text)), fix: RefCell::new(Vec::new()) }
     }
 
     /// As [`Evaluator::with_content`], with the sources `shared` lends scanned by reference
@@ -383,7 +387,14 @@ impl<'a, S> Evaluator<'a, S> {
     /// rows in place and copies only the rows it keeps; `EXISTS` and a scalar subquery stop at
     /// their first row, as SQLite does).
     pub fn with_shared_content(source: &'a dyn Fn(&S) -> Result<Vec<Row>, Error>, shared: &'a dyn Fn(&S) -> Option<Rc<Vec<Row>>>, path: &'a str, text: &'a str) -> Self {
-        Self { source, shared: Some(shared), locals: RefCell::new(Vec::new()), content: Some((path, text)) }
+        Self { source, shared: Some(shared), locals: RefCell::new(Vec::new()), content: Some((path, text)), fix: RefCell::new(Vec::new()) }
+    }
+
+    /// The fixpoint rounds recorded since the last call (admitted rows per round, round 0 the
+    /// initial arms, through the first round that admits nothing; fixpoints outside expression
+    /// subqueries only, summed by round).
+    pub fn take_fix(&self) -> Vec<u64> {
+        std::mem::take(&mut *self.fix.borrow_mut())
     }
 
     /// A relation's rows in IR order, each passed to `f` (`Ok(false)` stops the scan). Shared
@@ -866,6 +877,7 @@ impl<'a, S> Evaluator<'a, S> {
                 }
             }
         }
+        let mut rounds = vec![level.len() as u64];
         while !level.is_empty() {
             if result.len() > FIXPOINT_CAP {
                 return Err("recursive CTE exceeded 50M rows".into());
@@ -884,6 +896,16 @@ impl<'a, S> Evaluator<'a, S> {
                     level.push(row.clone());
                     result.push(row);
                 }
+            }
+            rounds.push(level.len() as u64);
+        }
+        if outer.is_empty() {
+            let mut f = self.fix.borrow_mut();
+            if f.len() < rounds.len() {
+                f.resize(rounds.len(), 0);
+            }
+            for (a, b) in f.iter_mut().zip(&rounds) {
+                *a += b;
             }
         }
         Ok(result)
@@ -1288,6 +1310,12 @@ fn evaluate_stage<S>(ev: &Evaluator<'_, S>, st: &Stage<S>) -> Result<Vec<Row>, E
 /// refusal, if any (the stages after it are not evaluated). The gate's `a-vs-reference` compares
 /// an engine's stored stages with these.
 pub fn evaluate_stages<S>(stages: &[Stage<S>], stage_of: impl Fn(&S) -> Option<StageId>, scan: &dyn Fn(&S) -> Result<Vec<Row>, Error>) -> (Vec<Rc<Vec<Row>>>, Option<Error>) {
+    let (done, _, refusal) = evaluate_stages_counted(stages, stage_of, scan);
+    (done, refusal)
+}
+
+/// As [`evaluate_stages`], with each computed stage's fixpoint rounds ([`Evaluator::take_fix`]).
+pub fn evaluate_stages_counted<S>(stages: &[Stage<S>], stage_of: impl Fn(&S) -> Option<StageId>, scan: &dyn Fn(&S) -> Result<Vec<Row>, Error>) -> (Vec<Rc<Vec<Row>>>, Vec<Vec<u64>>, Option<Error>) {
     let done: RefCell<Vec<Rc<Vec<Row>>>> = RefCell::new(Vec::new());
     let source = |s: &S| -> Result<Vec<Row>, Error> {
         match stage_of(s) {
@@ -1297,9 +1325,13 @@ pub fn evaluate_stages<S>(stages: &[Stage<S>], stage_of: impl Fn(&S) -> Option<S
     };
     let ev = Evaluator::new(&source);
     let mut refusal = None;
+    let mut fix = Vec::new();
     for st in stages {
         match evaluate_stage(&ev, st) {
-            Ok(rows) => done.borrow_mut().push(Rc::new(rows)),
+            Ok(rows) => {
+                done.borrow_mut().push(Rc::new(rows));
+                fix.push(ev.take_fix());
+            }
             Err(e) => {
                 refusal = Some(e);
                 break;
@@ -1307,7 +1339,7 @@ pub fn evaluate_stages<S>(stages: &[Stage<S>], stage_of: impl Fn(&S) -> Option<S
         }
     }
     drop(ev);
-    (done.into_inner(), refusal)
+    (done.into_inner(), fix, refusal)
 }
 
 /// Reachability `(__path, root, node)`: reflexive, set semantics, per path (IR.md § Recursion).

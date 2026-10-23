@@ -2,6 +2,7 @@ mod ast;
 mod bindings;
 mod cgnative;
 mod closure;
+mod counts;
 mod derived_check;
 mod eval;
 mod facts;
@@ -9,6 +10,7 @@ mod factfile;
 mod fstring;
 mod leaf;
 mod lowered;
+mod memo;
 mod patcheck;
 mod physplan;
 mod volume;
@@ -334,6 +336,9 @@ fn census(args: &[String]) {
 fn explain(args: &[String]) {
     if args.iter().any(|a| a == "--physical") {
         return physplan::run(args);
+    }
+    if args.iter().any(|a| a == "--analyze") {
+        return physplan::analyze(args);
     }
     let rules = arg(args, "--rules").unwrap_or_else(|| "packs/data-layer/candidates/rules".into());
     let only = arg(args, "--rule");

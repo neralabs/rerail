@@ -5,7 +5,7 @@
 //! a `production_scope` suite event) and, per file, reads, parses, builds facts, evaluates and
 //! drops them. Workers return findings, timings and the repository-partition rows; the main
 //! thread merges them and runs the repository partitions and budgets once (`eval::finish`).
-use crate::{BATCH6, arg, call_config, caught, eval, facts, multiset_minus, policy_doc};
+use crate::{BATCH6, arg, call_config, caught, eval, facts, memo, multiset_minus, policy_doc};
 use serde_json::{Map, Value as Json, json};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -30,6 +30,26 @@ struct Worker {
     budget: eval::BudgetRows,
     spill_bytes: u64,
     files: Vec<FileStat>,
+    /// Per clause: (evaluations served by the memo, evaluations run).
+    tally: memo::Tally,
+    /// Files every in-scope clause of which the memo served (not parsed).
+    memo_files: u64,
+}
+
+/// The worker's repository sink: the spill, and while a file's results are being memoised, a
+/// copy of each repository clause's rows.
+struct Sink {
+    spill: crate::spill::Spill,
+    capture: Option<Vec<((usize, usize), crate::spill::FileRows)>>,
+}
+
+impl crate::spill::RepoSink for Sink {
+    fn push(&mut self, clause: (usize, usize), rows: crate::spill::FileRows) {
+        if let Some(c) = self.capture.as_mut() {
+            c.push((clause, crate::spill::FileRows { path: rows.path.clone(), tables: rows.tables.clone(), anchors: rows.anchors.clone() }));
+        }
+        self.spill.push(clause, rows);
+    }
 }
 
 /// The suite's call configuration for each selected check (default: batch 6): `production_scope`,
@@ -84,11 +104,18 @@ fn walk_ext(root: &Path, ext: &str) -> Vec<String> {
     out
 }
 
-fn worker(rules: &[eval::Rule], paths: &[String], root: &Path, next: &AtomicUsize, spill_dir: &Path, wi: usize) -> Worker {
+/// The clauses `rules` evaluate on `path`: every clause of every rule whose scope matches it.
+fn in_scope(rules: &[eval::Rule], path: &str) -> Vec<(usize, usize)> {
+    rules.iter().enumerate().filter(|(_, r)| r.scope.matches(path)).flat_map(|(ri, r)| (0..r.clauses.len()).map(move |ci| (ri, ci))).collect()
+}
+
+fn worker(rules: &[eval::Rule], paths: &[String], root: &Path, next: &AtomicUsize, spill_dir: &Path, wi: usize, memo_dir: Option<&Path>) -> Worker {
     let mut out = eval::Output::default();
-    let mut repo = crate::spill::Spill::new(spill_dir, wi);
-    let mut budget = BTreeMap::new();
+    let mut repo = Sink { spill: crate::spill::Spill::new(spill_dir, wi), capture: None };
+    let mut budget: eval::BudgetRows = BTreeMap::new();
     let mut files = Vec::new();
+    let mut tally = memo::Tally::new();
+    let mut memo_files = 0u64;
     loop {
         let index = next.fetch_add(1, Ordering::Relaxed);
         let Some(path) = paths.get(index) else { break };
@@ -97,6 +124,30 @@ fn worker(rules: &[eval::Rule], paths: &[String], root: &Path, next: &AtomicUsiz
         let read_ns = t_read.elapsed().as_nanos() as u64;
         let source_bytes = bytes.len() as u32;
         let mut stat = FileStat { index: index as u32, source_bytes, nodes: 0, fact_bytes: 0, read_ns, parse_ns: 0, extract_ns: 0, eval_ns: 0 };
+        // The memo: the in-scope clauses it holds for this (content, path) are served from it.
+        let mut fm = memo_dir.map(|d| memo::FileMemo::load(d, blake3::hash(&bytes).as_bytes(), path));
+        let scope = in_scope(rules, path);
+        let hits: Vec<(usize, usize)> = fm.as_ref().map_or_else(Vec::new, |m| scope.iter().copied().filter(|&(ri, ci)| m.has(&rules[ri].digests[ci])).collect());
+        if let Some(m) = &fm {
+            let rc: std::rc::Rc<str> = std::rc::Rc::from(path.as_str());
+            for &(ri, ci) in &hits {
+                let (rule, clause) = (&rules[ri], &rules[ri].clauses[ci]);
+                let e = m.get(&rule.digests[ci], &rule.check, &clause.id, &rc).expect("memo entry");
+                out.findings.extend(e.findings);
+                out.failures.extend(e.failures);
+                *out.clause_counts.entry((ri, ci)).or_default() += &e.counts;
+                if let Some(rows) = e.rows {
+                    crate::spill::RepoSink::push(&mut repo.spill, (ri, ci), rows);
+                }
+                budget.entry((ri, ci)).or_default().extend(e.budget);
+                tally.entry((ri, ci)).or_default().0 += 1;
+            }
+            if !scope.is_empty() && hits.len() == scope.len() {
+                memo_files += 1;
+                files.push(stat);
+                continue;
+            }
+        }
         let source = match String::from_utf8(bytes) {
             Ok(s) => Arc::new(s),
             Err(_) => {
@@ -105,6 +156,17 @@ fn worker(rules: &[eval::Rule], paths: &[String], root: &Path, next: &AtomicUsiz
                 continue;
             }
         };
+        let misses: Vec<(usize, usize)> = scope.iter().copied().filter(|k| !hits.contains(k)).collect();
+        for k in &misses {
+            tally.entry(*k).or_default().1 += 1;
+        }
+        out.skip = hits.into_iter().collect();
+        let (f0, x0) = (out.findings.len(), out.failures.len());
+        let b0: BTreeMap<(usize, usize), usize> = misses.iter().map(|k| (*k, budget.get(k).map_or(0, Vec::len))).collect();
+        if fm.is_some() {
+            out.file_counts = Some(Vec::new());
+            repo.capture = Some(Vec::new());
+        }
         let mut ns = facts::BuildNs::default();
         match facts::build_timed(path, source.clone(), &mut ns) {
             Ok(facts::Built::Facts(f)) => {
@@ -114,16 +176,46 @@ fn worker(rules: &[eval::Rule], paths: &[String], root: &Path, next: &AtomicUsiz
                 let ctx = eval::FileCtx { f: &f, path, source: &source };
                 eval::eval_file(rules, &ctx, &mut out, &mut repo, &mut budget);
                 stat.eval_ns = t_eval.elapsed().as_nanos() as u64;
+                // Each evaluated clause's results become its memo entry.
+                if let Some(m) = fm.as_mut() {
+                    let mut counts = out.file_counts.take().unwrap_or_default();
+                    let mut rows = repo.capture.take().unwrap_or_default();
+                    for &(ri, ci) in &misses {
+                        let (rule, clause) = (&rules[ri], &rules[ri].clauses[ci]);
+                        let mine = |check: &str, cl: &str| check == rule.check && cl == clause.id;
+                        let e = memo::Entry {
+                            findings: out.findings[f0..].iter().filter(|x| mine(&x.check, &x.clause)).cloned().collect(),
+                            failures: out.failures[x0..].iter().filter(|x| mine(&x.check, &x.clause)).cloned().collect(),
+                            counts: counts.iter().filter(|(k, _)| *k == (ri, ci)).fold(Default::default(), |mut a, (_, c)| {
+                                a += c;
+                                a
+                            }),
+                            rows: rows.iter().position(|(k, _)| *k == (ri, ci)).map(|i| rows.swap_remove(i).1),
+                            budget: budget.get(&(ri, ci)).map_or_else(Vec::new, |v| {
+                                v[b0[&(ri, ci)]..].iter().map(|b| eval::BudgetRow { path: b.path.clone(), key: b.key.clone(), line: b.line, values: b.values.clone() }).collect()
+                            }),
+                        };
+                        m.put(&rule.digests[ci], &e);
+                    }
+                    counts.clear();
+                }
             }
             Ok(facts::Built::Unparsed) | Err(_) => {
                 out.failures.push(eval::Failure { check: String::new(), clause: String::new(), path: path.clone(), message: "file could not be parsed".into() });
+                fm = None;
             }
+        }
+        out.file_counts = None;
+        repo.capture = None;
+        out.skip.clear();
+        if let Some(m) = fm {
+            m.save();
         }
         stat.parse_ns = ns.parse;
         stat.extract_ns = ns.extract;
         files.push(stat);
     }
-    Worker { out, budget, spill_bytes: repo.finish(), files }
+    Worker { out, budget, spill_bytes: repo.spill.finish(), files, tally, memo_files }
 }
 
 /// Nearest-rank percentile of sorted values.
@@ -197,16 +289,22 @@ pub fn repo(args: &[String]) {
     // repository phase.
     let (rss_before_compile, heap_before_compile) = (cur_rss(), heap_in_use());
     let t_compile = Instant::now();
-    let (rules, refused) = compile_checks(&policies, &checks);
+    let (mut rules, refused) = compile_checks(&policies, &checks);
+    // `--clauses a,b`: only these clauses of the selected checks (the archetype bench).
+    if let Some(keep) = arg(args, "--clauses") {
+        let keep: Vec<&str> = keep.split(',').collect();
+        rules.iter_mut().for_each(|r| r.retain_clauses(|c| keep.contains(&c)));
+    }
     let rules: Arc<[eval::Rule]> = rules.into();
     let compile_ns = t_compile.elapsed().as_nanos() as u64;
     let compiled_rss = cur_rss().saturating_sub(rss_before_compile);
     let compiled_heap = heap_in_use().saturating_sub(heap_before_compile);
+    let memo_dir = memo::dir(args);
     let t_workers = Instant::now();
     let workers: Vec<Worker> = std::thread::scope(|s| {
         let handles: Vec<_> = (0..threads).map(|wi| {
-            let (rules, paths, next, spill_dir) = (&*rules, &paths, &next, &spill_dir);
-            s.spawn(move || worker(rules, paths, root, next, spill_dir, wi))
+            let (rules, paths, next, spill_dir, memo_dir) = (&*rules, &paths, &next, &spill_dir, memo_dir.as_deref());
+            s.spawn(move || worker(rules, paths, root, next, spill_dir, wi, memo_dir))
         }).collect();
         handles.into_iter().map(|h| h.join().unwrap()).collect()
     });
@@ -229,6 +327,8 @@ pub fn repo(args: &[String]) {
     let mut budget: eval::BudgetRows = BTreeMap::new();
     let mut files = Vec::new();
     let mut spill_bytes = 0u64;
+    let mut tally = memo::Tally::new();
+    let mut memo_files = 0u64;
     for w in workers {
         out.merge(w.out);
         for (k, rows) in w.budget {
@@ -236,6 +336,12 @@ pub fn repo(args: &[String]) {
         }
         files.extend(w.files);
         spill_bytes += w.spill_bytes;
+        for (k, (h, e)) in w.tally {
+            let t = tally.entry(k).or_default();
+            t.0 += h;
+            t.1 += e;
+        }
+        memo_files += w.memo_files;
     }
     let merge_ns = t_merge.elapsed().as_nanos() as u64;
     let rss_after_merge = max_rss();
@@ -269,11 +375,17 @@ pub fn repo(args: &[String]) {
             rule_ns += ns;
             let samples = samples_by_clause.remove(&(ri as u16, ci as u16)).unwrap_or_default();
             let file_ns = per_file_ns.get(&(ri, ci)).copied().unwrap_or(0);
-            clauses.push(json!({"clause": clause.id, "calls": calls, "ns": ns, "per_file_ns": file_ns, "repository_ns": ns - file_ns, "per_file_samples": summary(samples)}));
+            let counts = out.clause_counts.get(&(ri, ci)).cloned().unwrap_or_default();
+            // Per-file evaluations served by the memo and run (`crate::memo`).
+            let (memoised, evaluated) = tally.get(&(ri, ci)).copied().unwrap_or((0, 0));
+            clauses.push(json!({"clause": clause.id, "calls": calls, "ns": ns, "per_file_ns": file_ns, "repository_ns": ns - file_ns, "per_file_samples": summary(samples), "counts": counts,
+                "digest": memo::hex(&rule.digests[ci]), "memo": {"memoised": memoised, "evaluated": evaluated}}));
         }
         rule_rows.push(json!({"check": rule.check, "ns": rule_ns, "clauses": clauses}));
     }
     let findings: Vec<Json> = out.findings.iter().map(|f| json!([f.check, f.path, f.line, f.code])).collect();
+    // The same findings with their clause (the loop's sub200 reference compares per clause).
+    let clause_findings: Vec<Json> = out.findings.iter().map(|f| json!([f.check, f.clause, f.path, f.line, f.code])).collect();
     let failures: Vec<Json> = out.failures.iter().map(|f| json!({"check": f.check, "clause": f.clause, "path": f.path, "message": f.message})).collect();
     let mut failure_counts: BTreeMap<String, u64> = BTreeMap::new();
     for f in &out.failures {
@@ -291,6 +403,15 @@ pub fn repo(args: &[String]) {
         "threads": threads,
         "files": paths.len(),
         "parsed_files": parsed.len(),
+        // The digest memo (`crate::memo`): per-file clause evaluations served by it and run, and
+        // the files it served whole (not parsed); `dir` null with `--no-memo` or a mutant.
+        "memo": {
+            "dir": memo_dir,
+            "lookups": tally.values().map(|t| t.0 + t.1).sum::<u64>(),
+            "hits": tally.values().map(|t| t.0).sum::<u64>(),
+            "evaluated": tally.values().map(|t| t.1).sum::<u64>(),
+            "files_served": memo_files,
+        },
         "wall_ns": wall_ns,
         "phases_ns": {
             "walk": walk_ns,
@@ -315,6 +436,13 @@ pub fn repo(args: &[String]) {
         },
         "sql_stage_ns": stage_agg.into_iter().map(|(k, (n, ns))| (k.to_owned(), json!([n, ns]))).collect::<serde_json::Map<String, Json>>(),
         "clause_stage_ns": out.stage_ns.iter().map(|((ri, ci, k), (n, ns))| json!({"check": rules[*ri].check, "clause": rules[*ri].clauses[*ci].id, "stage": k, "n": n, "ns": ns})).collect::<Vec<Json>>(),
+        // Work counts (`crate::counts`): the run's totals, per stage of each clause, per input.
+        "counts": out.clause_counts.values().fold(crate::counts::Counts::default(), |mut a, c| {
+            a += c;
+            a
+        }),
+        "clause_stage_counts": out.stage_counts.iter().map(|((ri, ci, k), s)| json!({"check": rules[*ri].check, "clause": rules[*ri].clauses[*ci].id, "stage": k, "counts": s})).collect::<Vec<Json>>(),
+        "input_counts": out.input_counts.iter().map(|((ri, ii), c)| json!({"check": rules[*ri].check, "input": ii, "counts": c})).collect::<Vec<Json>>(),
         "thread_ns": {
             "read": sum(|f| f.read_ns),
             "parse": sum(|f| f.parse_ns),
@@ -344,14 +472,18 @@ pub fn repo(args: &[String]) {
         "finding_count": findings.len(),
         "failure_counts": failure_counts,
         "findings": findings,
+        "clause_findings": clause_findings,
         "failures": failures,
     });
     std::fs::write(format!("{out_dir}/results.json"), serde_json::to_string_pretty(&result).unwrap()).unwrap();
     let mut brief = result.clone();
     let o = brief.as_object_mut().unwrap();
     o.remove("findings");
+    o.remove("clause_findings");
     o.remove("failures");
     o.remove("rules");
+    o.remove("clause_stage_counts");
+    o.remove("input_counts");
     o.remove("sql_stage_ns");
     o.remove("clause_stage_ns");
     o.remove("input_ns");

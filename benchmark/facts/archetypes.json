@@ -1,0 +1,14 @@
+{
+  "format": "rerail.facts-archetypes/v1",
+  "about": "The archetype bench (docs/facts/LOOP.md § Bench, just facts-bench): one representative rule per archetype, reported as work counts first (facts-a crate::counts; facts-b's FACTS_PROFILE records), wall-clock second. Per-file archetypes run facts-a repo over sub200 single-threaded with only their clause (--checks CHECK --clauses CLAUSE --no-memo); the repository archetype runs facts-b greplay over the first `events` edit events with its clause's exports (--plans none --no-oracle, FACTS_PROFILE=1).",
+  "sub200": "~/rerail-bench/facts/phase-2/s2-perfile/sub200",
+  "archetypes": [
+    {"name": "pattern-only", "check": "impl_direct_execution", "clause": "direct-execution-lines"},
+    {"name": "relational-per-file", "check": "serverplan_state_tripwires", "clause": "state-flow-1"},
+    {"name": "closure-heavy", "check": "serverplan_quality", "clause": "quality-contracts-1"},
+    {"name": "selection-heavy", "check": "serverplan_quality", "clause": "quality-conditional-1"},
+    {"name": "repository", "check": "serverplan_target_architecture", "clause": "required-contracts", "engine": "greplay",
+     "rule": "packs/data-layer/candidates/rules/data-layer-serverplan-target-architecture.json",
+     "exports": "~/rerail-bench/facts/phase-2/s3-crossfile/exports/w4/replay-required-contracts.jsonl", "events": 100}
+  ]
+}

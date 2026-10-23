@@ -161,6 +161,107 @@ fn is_rows(r: &R) -> bool {
     dbg(r) == dbg(&fp::nodes())
 }
 
+impl Plan {
+    /// The plan as stable text (predicates expanded through the rule's hash-consed ids, kinds by
+    /// name, regexes by pattern): the part of a clause's plan digest (`crate::memo`) its input
+    /// contributes, independent of the other inputs of the rule.
+    pub fn digest_text(&self, preds: &Preds) -> String {
+        fn pn(p: &Preds, id: Id, out: &mut String) {
+            use std::fmt::Write;
+            match &p.nodes[id as usize] {
+                Pn::Kind(k) => {
+                    let _ = write!(out, "Kind({})", facts::name(*k));
+                }
+                Pn::KindIn(ks) => {
+                    let _ = write!(out, "KindIn({})", ks.iter().map(|k| facts::name(*k).to_string()).collect::<Vec<_>>().join(","));
+                }
+                Pn::TextRx(r) => {
+                    let _ = write!(out, "TextRx({:?})", p.regexes[*r as usize].as_str());
+                }
+                Pn::PathRx(r) => {
+                    let _ = write!(out, "PathRx({:?})", p.regexes[*r as usize].as_str());
+                }
+                Pn::Value(eq, r) => {
+                    let _ = write!(out, "Value({eq:?},{:?})", r.map(|r| p.regexes[r as usize].as_str()));
+                }
+                Pn::And(xs) | Pn::Or(xs) => {
+                    out.push_str(if matches!(p.nodes[id as usize], Pn::And(_)) { "And(" } else { "Or(" });
+                    for x in xs {
+                        pn(p, *x, out);
+                        out.push(',');
+                    }
+                    out.push(')');
+                }
+                Pn::Not(x) => {
+                    out.push_str("Not(");
+                    pn(p, *x, out);
+                    out.push(')');
+                }
+                Pn::Exists(ax, x) => {
+                    out.push_str("Exists(");
+                    axis(p, ax, out);
+                    out.push(',');
+                    pn(p, *x, out);
+                    out.push(')');
+                }
+                other => {
+                    let _ = write!(out, "{other:?}");
+                }
+            }
+        }
+        fn axis(p: &Preds, ax: &Ax, out: &mut String) {
+            match ax {
+                Ax::DescendantsUntil(s) | Ax::AncestorsUntil(s) => {
+                    out.push_str(if matches!(ax, Ax::DescendantsUntil(_)) { "DescendantsUntil(" } else { "AncestorsUntil(" });
+                    pn(p, *s, out);
+                    out.push(')');
+                }
+                other => out.push_str(&format!("{other:?}")),
+            }
+        }
+        fn o(x: &Out, out: &mut String) {
+            match x {
+                Out::Path => out.push_str("Path"),
+                Out::Int(v) => out.push_str(&format!("Int({v})")),
+                Out::Node(w, c) => out.push_str(&format!("Node({w},{})", ["id", "kind", "start", "end"][*c as usize])),
+                Out::Text(w) => out.push_str(&format!("Text({w})")),
+                Out::Line(w) => out.push_str(&format!("Line({w})")),
+                Out::Coalesce(a, b) => {
+                    out.push_str("Coalesce(");
+                    o(a, out);
+                    out.push(',');
+                    o(b, out);
+                    out.push(')');
+                }
+                Out::RxExtract(a, rx, g) => {
+                    out.push_str("RxExtract(");
+                    o(a, out);
+                    out.push_str(&format!(",{:?},{g})", rx.as_str()));
+                }
+                Out::Decoded => out.push_str("Decoded"),
+            }
+        }
+        let mut s = String::from("keep ");
+        pn(preds, self.keep, &mut s);
+        for c in &self.caps {
+            s.push_str("\ncap ");
+            axis(preds, &c.ax, &mut s);
+            s.push(' ');
+            pn(preds, c.inner, &mut s);
+        }
+        s.push_str("\nanchor ");
+        o(&self.anchor.0, &mut s);
+        s.push(' ');
+        o(&self.anchor.1, &mut s);
+        for x in &self.outs {
+            s.push_str("\nout ");
+            o(x, &mut s);
+        }
+        s.push_str(&format!("\nrefuse_syntax {} escape_refusal {}", self.refuse_syntax, self.escape_refusal));
+        s
+    }
+}
+
 fn is_col(e: &E, c: u16) -> bool {
     matches!(e, Expr::Col { depth: 0, col } if *col == c)
 }
@@ -614,6 +715,9 @@ impl Bits {
     fn zero(n: usize) -> Bits {
         Bits(vec![0; n.div_ceil(64)])
     }
+    fn count(&self) -> u64 {
+        self.0.iter().map(|w| w.count_ones() as u64).sum()
+    }
     #[inline]
     fn get(&self, i: u32) -> bool {
         self.0[(i >> 6) as usize] >> (i & 63) & 1 != 0
@@ -716,11 +820,15 @@ pub struct FileState<'f> {
     values: FxHashMap<u32, Lv>,
     /// The source holds no `\N{` (no literal can decode a named escape).
     escape_free: Option<bool>,
+    /// Physical counts (`crate::counts::InputCounts`): nodes a memoised predicate was evaluated
+    /// on, and nodes its memo answered.
+    pred_tests: u64,
+    memo_hits: u64,
 }
 
 impl<'f> FileState<'f> {
     pub fn new(f: &'f Facts, path: &'f str) -> Self {
-        FileState { f, path, memo: Vec::new(), named: None, first_field: None, values: FxHashMap::default(), escape_free: None }
+        FileState { f, path, memo: Vec::new(), named: None, first_field: None, values: FxHashMap::default(), escape_free: None, pred_tests: 0, memo_hits: 0 }
     }
 
     fn n(&self) -> usize {
@@ -798,8 +906,10 @@ impl<'f> FileState<'f> {
             Some(m) => {
                 let todo = mask.and_not(&m.0);
                 if todo.is_empty() {
+                    self.memo_hits += mask.count();
                     return Tv { t: m.1.t.and(mask), u: m.1.u.as_ref().map(|u| u.and(mask)) };
                 }
+                self.memo_hits += mask.count() - todo.count();
                 todo
             }
             None => mask.clone(),
@@ -1171,13 +1281,15 @@ pub fn rows(plan: &Plan, preds: &Preds, st: &mut FileState<'_>, schema: &Schema,
     if plan.escape_refusal && !*st.escape_free.get_or_insert_with(|| !f.source.contains("\\N{")) {
         return None;
     }
-    let mut out = Rows { table: Rc::new(Table::empty(schema.clone())), anchors: Vec::new(), witnesses: Vec::new(), unsupported: None };
+    let mut out = Rows { table: Rc::new(Table::empty(schema.clone())), anchors: Vec::new(), witnesses: Vec::new(), unsupported: None, counts: Default::default() };
+    out.counts.nodes = f.len() as u64;
     if plan.refuse_syntax && f.syntax_errors {
         out.unsupported = Some(fp::NO_SYNTAX.into());
         return Some(out);
     }
     let mut all = Bits::zero(f.len());
     all.set_range(0, f.len() as u32);
+    let (tests0, hits0) = (st.pred_tests, st.memo_hits);
     let roots: Vec<u32> = st.eval(preds, plan.keep, &all).t.ones().collect();
     let caps: Vec<Vec<u32>> = plan.caps.iter().map(|c| st.capture(preds, c, &roots)).collect();
     // Decoded values of the roots, where an output reads them (`string_value`: string kinds).
@@ -1261,6 +1373,10 @@ pub fn rows(plan: &Plan, preds: &Preds, st: &mut FileState<'_>, schema: &Schema,
     cols.insert(1, Rc::new(Column::U32(starts)));
     cols.insert(2, Rc::new(Column::U32(ends)));
     out.table = Rc::new(Table::new(schema.clone(), cols, k));
+    out.counts.roots = k as u64;
+    out.counts.rows = k as u64;
+    out.counts.pred_tests = st.pred_tests - tests0;
+    out.counts.memo_hits = st.memo_hits - hits0;
     Some(out)
 }
 

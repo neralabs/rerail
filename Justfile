@@ -87,9 +87,21 @@ rerail-sql-loop-tool *args:
 rerail-sql-gate *args:
     @scripts/check/rerail-sql-gate.sh {{ args }}
 
-# The facts engine's gate (Phase 2, G2.6), one command: facts-a replay and repository parity, the default plan against FACTS_REWRITES=0 and the matcher inputs three ways on the deterministic subset, every relational stage against rerail_facts::reference (stage-check), Spike B's edit-replay exactness (300-event prefix; --full: all), the classifier's leak test, and batches 1-5 through replay.ts/suite.ts --engine facts (the GATED checks held exact); --mutants also runs every seeded mutant (FACTS_MUTANT) and fails unless each is killed; --no-build reuses the last gate build. Output format: scripts/check/facts-gate.py.
+# The facts engine's gate (Phase 2, G2.6; T2 of docs/facts/LOOP.md), one command: facts-a replay and repository parity, the default plan against FACTS_REWRITES=0 and the matcher inputs three ways on the deterministic subset, every relational stage against rerail_facts::reference (stage-check), Spike B's edit-replay exactness (300-event prefix; --full: all), the classifier's leak test, and batches 1-5 through replay.ts/suite.ts --engine facts (the GATED checks held exact); --mutants also runs every seeded mutant (FACTS_MUTANT) and fails unless each is killed; --no-build reuses the last release build (target/release). Output format: scripts/check/facts-gate.py.
 facts-gate *args:
     @scripts/check/facts-gate.sh {{ args }}
+
+# The loop's T0 (docs/facts/LOOP.md, before every commit, <= 60 s): one incremental `loop`-profile build (target/loop, mutants features on), the unit tests (rewrite and engine differentials against bundled SQLite and the reference), and the mutants whose sites are in files changed since the merge-base (--base REF, default Moti-Velz/facts-engine). Output: facts-gate.py's line format.
+facts-t0 *args:
+    @python3 scripts/check/facts-loop.py t0 {{ args }}
+
+# The loop's T1 (docs/facts/LOOP.md, before every milestone and A/B, <= 2 min): the same build, then sub200 against benchmark/facts/sub200-reference.json (findings and failures per clause; the digest memo re-evaluates only changed plans), the 50 files of benchmark/facts/ref50.list through stage-check against rerail_facts::reference (algebraic counts included), the 100-event edit replays when facts-b changed (--replay: always), and the archetype bench. --rebase NOTE rewrites the reference from this run, recording NOTE.
+facts-t1 *args:
+    @python3 scripts/check/facts-loop.py t1 {{ args }}
+
+# The archetype bench (docs/facts/LOOP.md § Bench): one rule per archetype of benchmark/facts/archetypes.json (all, or the named ones) on sub200, single thread, work counts first (algebraic, then physical), wall-clock second (not calibrated). An A/B is two runs: the second with --compare <first run dir> prints the count differences; --serial runs one archetype at a time.
+facts-bench *args:
+    @python3 scripts/check/facts-loop.py bench {{ args }}
 
 # Dashboard history load: seed a throwaway database with N audits, then time each history read, a poll, and /healthz under polling (--audits 4000).
 rerail-dashboard-history *args:

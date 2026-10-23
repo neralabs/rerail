@@ -59,6 +59,10 @@ struct Stats {
     not_compared: BTreeMap<String, u64>,
     /// Per `check/clause`: (runs, reference seconds).
     per_clause: BTreeMap<String, (u64, f64)>,
+    /// Stages whose algebraic counts (rows, fixpoint rounds) were compared, and the differences.
+    counts_compared: u64,
+    count_mismatch_total: u64,
+    count_mismatches: Vec<Json>,
 }
 
 impl Stats {
@@ -73,6 +77,9 @@ impl Stats {
         self.ordered_compared += o.ordered_compared;
         self.mismatch_total += o.mismatch_total;
         self.mismatches.extend(o.mismatches);
+        self.counts_compared += o.counts_compared;
+        self.count_mismatch_total += o.count_mismatch_total;
+        self.count_mismatches.extend(o.count_mismatches);
         for (k, v) in o.not_compared {
             *self.not_compared.entry(k).or_default() += v;
         }
@@ -138,7 +145,8 @@ fn compare(ir: &ClauseIr, label: &str, path: &str, traced: &rel::Traced, st: &mu
         }
     };
     let t0 = Instant::now();
-    let (done, refusal) = reference::evaluate_stages(&ir.stages, |s| if let AnySource::Stage(i) = s { Some(*i) } else { None }, &scan);
+    let (done, fix, refusal) = reference::evaluate_stages_counted(&ir.stages, |s| if let AnySource::Stage(i) = s { Some(*i) } else { None }, &scan);
+    let engine_counts = rel::last_counts();
     let e = st.per_clause.entry(label.to_owned()).or_default();
     e.0 += 1;
     e.1 += t0.elapsed().as_secs_f64();
@@ -147,7 +155,7 @@ fn compare(ir: &ClauseIr, label: &str, path: &str, traced: &rel::Traced, st: &mu
         let at = ir.stages.get(done.len()).map_or("?", |s| s.name.as_str());
         st.skip(format!("reference refused ({label} stage {at}): {}", r.chars().take(120).collect::<String>()));
     }
-    for (stage, want) in ir.stages.iter().zip(&done) {
+    for ((stage, want), want_fix) in ir.stages.iter().zip(&done).zip(&fix) {
         let Some(t) = table(&stage.name.to_ascii_lowercase()) else {
             st.skip("engine stopped before the stage (its failure is reported by repo)");
             continue;
@@ -155,6 +163,20 @@ fn compare(ir: &ClauseIr, label: &str, path: &str, traced: &rel::Traced, st: &mu
         let got = rows_of(&t);
         st.stages_compared += 1;
         st.rows_compared += want.len() as u64;
+        // The algebraic counts (`crate::counts`): rows emitted and fixpoint rounds, engine against
+        // reference, stage by stage.
+        match engine_counts.stages.iter().find(|(n, _)| n.eq_ignore_ascii_case(&stage.name)) {
+            Some((_, c)) => {
+                st.counts_compared += 1;
+                if c.rows != want.len() as u64 || c.fix != *want_fix {
+                    st.count_mismatch_total += 1;
+                    if st.count_mismatches.len() < 50 {
+                        st.count_mismatches.push(json!({"clause": label, "stage": stage.name, "path": path, "engine": {"rows": c.rows, "fix": c.fix}, "reference": {"rows": want.len(), "fix": want_fix}}));
+                    }
+                }
+            }
+            None => st.skip("stage counts not recorded"),
+        }
         let (bg, bw) = (bag(&got), bag(want));
         let mut problem = None;
         if bg != bw {
@@ -377,6 +399,9 @@ pub fn run(args: &[String]) {
             "clauses_compared": s.per_clause.len(),
             "mismatch_total": s.mismatch_total,
             "mismatches": s.mismatches,
+            "counts_compared": s.counts_compared,
+            "count_mismatch_total": s.count_mismatch_total,
+            "count_mismatches": s.count_mismatches,
             "not_compared": s.not_compared,
             "reference_seconds_by_clause": slowest.iter().take(20).map(|(k, (n, t))| json!([k, n, t])).collect::<Vec<_>>(),
             "wall_s": secs,
@@ -388,14 +413,16 @@ pub fn run(args: &[String]) {
         "max_nodes": (max_nodes != usize::MAX).then_some(max_nodes),
         "max_input_rows": (max_rows != usize::MAX).then_some(max_rows),
         "mismatch_total": rec_stats.mismatch_total + corpus_stats.mismatch_total,
+        "count_mismatch_total": rec_stats.count_mismatch_total + corpus_stats.count_mismatch_total,
+        "counts_compared": rec_stats.counts_compared + corpus_stats.counts_compared,
         "stages_compared": rec_stats.stages_compared + corpus_stats.stages_compared,
         "wall_s": t_all.elapsed().as_secs_f64(),
     });
     std::fs::write(Path::new(&out_dir).join("results.json"), serde_json::to_string_pretty(&res).unwrap()).unwrap();
     for (what, s) in [("recorded calls", &rec_stats), ("corpus", &corpus_stats)] {
         println!(
-            "stage-check {what}: {} runs, {} stages compared ({} ordered, {} rows) in {} clauses, {} mismatches, {} not compared",
-            s.runs, s.stages_compared, s.ordered_compared, s.rows_compared, s.per_clause.len(), s.mismatch_total, s.not_compared.values().sum::<u64>()
+            "stage-check {what}: {} runs, {} stages compared ({} ordered, {} rows) in {} clauses, {} mismatches, {} not compared; counts {} compared, {} mismatches",
+            s.runs, s.stages_compared, s.ordered_compared, s.rows_compared, s.per_clause.len(), s.mismatch_total, s.not_compared.values().sum::<u64>(), s.counts_compared, s.count_mismatch_total
         );
     }
 }

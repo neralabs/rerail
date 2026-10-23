@@ -298,3 +298,80 @@ pub fn run(args: &[String]) {
     }
     eprintln!("explain --physical: {} files, {} stage plans, {} inner scans (audit)", files.len(), counts.0, counts.1);
 }
+
+/// `name=value` pairs of a counts object (JSON field order).
+fn pairs<T: serde::Serialize>(c: &T) -> String {
+    match serde_json::to_value(c) {
+        Ok(serde_json::Value::Object(m)) => m.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" "),
+        _ => String::new(),
+    }
+}
+
+/// `facts-a explain --analyze FILE [--rules DIR] [--checks a,b] [--rule ID]`: EXPLAIN ANALYZE for
+/// one content. The selected checks (default batch 6, production configuration, as `repo`) run
+/// over `FILE` alone (its repository clauses over a partition of that one file); per clause in
+/// scope, its counts (`crate::counts`: algebraic, then physical), then per stage its counts and
+/// its physical plan; then each input's counts. Two runs print the same text (no timing).
+pub fn analyze(args: &[String]) {
+    let file = arg(args, "--analyze").expect("--analyze FILE");
+    let rules_dir = arg(args, "--rules").unwrap_or_else(|| "packs/data-layer/candidates/rules".into());
+    let (rules, refused) = crate::repo::compile_checks(&rules_dir, &crate::repo::selected_checks(args));
+    let only = arg(args, "--rule");
+    let rules: Vec<eval::Rule> = rules.into_iter().filter(|r| only.as_ref().is_none_or(|o| *o == r.check || *o == r.id)).collect();
+    for f in &refused {
+        println!("refused {}: {}", f.check, f.message);
+    }
+    let source = std::sync::Arc::new(std::fs::read_to_string(&file).unwrap_or_else(|e| panic!("{file}: {e}")));
+    let mut out = eval::Output::default();
+    let mut repo = crate::spill::Memory::default();
+    let mut budget = std::collections::BTreeMap::new();
+    let nodes = match crate::facts::build(&file, source.clone()) {
+        Ok(crate::facts::Built::Facts(f)) => {
+            let ctx = eval::FileCtx { f: &f, path: &file, source: &source };
+            eval::eval_file(&rules, &ctx, &mut out, &mut repo, &mut budget);
+            f.len()
+        }
+        _ => {
+            println!("== file {file}: could not be parsed");
+            return;
+        }
+    };
+    eval::finish(&rules, |k| repo.0.remove(&k).unwrap_or_default(), budget, &mut out);
+    let mut text = format!("== file {file} ({nodes} nodes)\n");
+    for (ri, rule) in rules.iter().enumerate() {
+        for (ci, c) in rule.clauses.iter().enumerate() {
+            let Some(counts) = out.clause_counts.get(&(ri, ci)) else { continue };
+            let kind = match &c.kind {
+                eval::Kind::Relational(p) if p.per_file => "relational, per file",
+                eval::Kind::Relational(_) => "relational, repository",
+                eval::Kind::ForbidAst { .. } => "forbid ast",
+                eval::Kind::ForbidRegex(_) => "forbid regex",
+                eval::Kind::Budget { .. } => "budget",
+            };
+            let found = out.findings.iter().filter(|x| x.check == rule.check && x.clause == c.id).count();
+            let failed = out.failures.iter().filter(|x| x.check == rule.check && x.clause == c.id).count();
+            let _ = writeln!(text, "clause {}/{} ({kind}): {found} findings, {failed} failures", rule.check, c.id);
+            let _ = writeln!(text, "  counts {}", pairs(counts));
+            let eval::Kind::Relational(plan) = &c.kind else { continue };
+            let plans: Vec<(String, Node)> = clause(plan);
+            for (name, n) in plans.iter().map(|(n, p)| (if n == "query" { "<final>" } else { n.as_str() }, p)) {
+                match out.stage_counts.get(&(ri, ci, name.to_owned())) {
+                    Some(s) => {
+                        let phys: Vec<String> = crate::counts::PHYSICAL.iter().zip(&s.phys).filter(|(_, v)| **v > 0).map(|(k, v)| format!("{k}={v}")).collect();
+                        let _ = writeln!(text, "  stage {name}: rows={} fix={:?} {}", s.rows, s.fix, phys.join(" "));
+                    }
+                    None => {
+                        let _ = writeln!(text, "  stage {name}: not run");
+                    }
+                }
+                for l in phys::explain(n).lines() {
+                    let _ = writeln!(text, "    {l}");
+                }
+            }
+        }
+        for ((r, i), c) in out.input_counts.iter().filter(|((r, _), _)| *r == ri) {
+            let _ = writeln!(text, "input {}#{i}: {}", rules[*r].check, pairs(c));
+        }
+    }
+    print!("{text}");
+}
