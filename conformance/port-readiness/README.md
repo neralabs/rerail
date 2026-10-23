@@ -10,19 +10,21 @@ gates and are only reported.
 
 Each gate has a stage (`section` in types.ts `GATES`). Conformance checks every rule document of every pack: a
 tool-pack's run judges its own rules on it, and `conformance-gates.ts` (`npm run port-readiness -- conformance`, its
-own CI job) judges every rule no gated tool-pack does, with no recording and no cache. Port readiness checks ports, once
-they pass conformance: that each is true to the upstream rule it comes from. Each rule document declares its origin
-(conformance/origins.ts, docs/pack-format.md "origins.json"): a port, by its conformance.json entry or, while no entry
-maps it, in the pack's origins.json; or an original, Rerail's own rule (complexity's), in origins.json, which is done
-after conformance. The declaration is per document, so a pack of ports can hold an original. The gates run in `GATES`
-order, conformance first:
+own CI job) judges every rule no gated tool-pack does, with no recording and no cache. That job also runs each pack's
+conformance check (`passes-conformance`, which scores every rule of the pack at once) once, for every rule the pack
+maps, so CI's tool-pack runs and shards skip it (`--conformance-in-own-job`) and the summary takes their rules' results
+from the job's `passesConformance`. Port readiness checks ports, once they pass conformance: that each is true to the
+upstream rule it comes from. Each rule document declares its origin (conformance/origins.ts, docs/pack-format.md
+"origins.json"): a port, by its conformance.json entry or, while no entry maps it, in the pack's origins.json; or an
+original, Rerail's own rule (complexity's), in origins.json, which is done after conformance. The declaration is per
+document, so a pack of ports can hold an original. The gates run in `GATES` order, conformance first:
 
 | V1 gate | Gate id | Section | Blocking |
 | --- | --- | --- | --- |
 | 1 | `upstream-status` (decides on or off) | port | no |
 | 2 | `loads` | conformance | yes |
 | 4 | `compact` | conformance | yes |
-| — | `passes-conformance` (the pack's `test:conformance` verdict on the rule; never cached; not applicable to a rule conformance.json does not map) | conformance | yes |
+| — | `passes-conformance` (the pack's `test:conformance` verdict on the rule; never cached; in CI run once per pack, in the conformance job; not applicable to a rule conformance.json does not map) | conformance | yes |
 | 3 | `not-overfit` | port | yes |
 | 5 | `matches-upstream-tests` | port | yes |
 | 6 | none: real code runs in NRV only; `matches-upstream-tests` judges the goldens imported from it | — | — |
@@ -80,7 +82,8 @@ npm run port-readiness -- --pack python --tool bandit    # one tool-pack
 npm run port-readiness -- --no-cache                     # judge every rule again; read and save no results
 npm run port-readiness -- --refresh-cache                # judge every rule again and save the fresh results (the nightly)
 npm run port-readiness -- --pack javascript --tool eslint --shard 2/4   # one shard: rules with sha256(id) mod 4 = 1
-npm run port-readiness -- conformance                     # the conformance gates on every rule no tool-pack judges
+npm run port-readiness -- --pack python --tool ruff --conformance-in-own-job   # leave passes-conformance to the conformance job (CI)
+npm run port-readiness -- conformance                     # the conformance gates on every rule no tool-pack judges, and each pack's conformance check
 npm run port-readiness -- merge .rerail/reports/port-readiness    # join each tool-pack's shard-<i>of<n>/ reports (shard.ts, merge.ts)
 npm run port-readiness -- summary .rerail/reports/port-readiness
 npm run port-readiness -- summary .rerail/reports/port-readiness --planned '["python/ruff"]'   # the others: not re-run

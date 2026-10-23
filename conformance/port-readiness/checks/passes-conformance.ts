@@ -1,8 +1,10 @@
 /**
  * passes-conformance: the pack contract's own check (`test:conformance`, conformance/languages/) as a gate, so the rule
  * gates are a superset of it and a candidate is never "ready to promote" while the pack's check would fail it once
- * shipped. The pack's fixtures tier runs once per tool-pack run, over every rule, shipped or candidate (each in its own
- * workspace, as the check runs them): upstream's fixtures and Rerail's probes, after the pack's declared divergences.
+ * shipped. The pack's fixtures tier runs over every rule, shipped or candidate (each in its own workspace, as the check
+ * runs them): upstream's fixtures and Rerail's probes, after the pack's declared divergences. In CI it runs once per
+ * pack, in the conformance job (conformance-gates.ts), and the tool-pack runs leave it to that job; run alone, a
+ * tool-pack run runs it itself.
  * Every rule is held to what the check fails a shipped rule on (`reportFailures`). When the pack pins corpora, the
  * tool's corpus recordings must also cover the rule, as the check requires of every shipped rule.
  */
@@ -30,6 +32,9 @@ export interface PackConformance {
 }
 
 const add = (map: Map<string, string[]>, key: string, value: string) => map.set(key, [...(map.get(key) ?? []), value]);
+
+/** The one check of a tool-pack run's `passes-conformance` when it leaves the pack's conformance check to the conformance job. */
+export const LEFT_TO_CONFORMANCE_JOB = "left-to-conformance-job";
 
 /** Run the pack's conformance check on its fixtures, as `test:conformance` does. */
 export async function packConformance(root: string, pack: string): Promise<PackConformance> {

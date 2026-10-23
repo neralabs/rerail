@@ -38,8 +38,12 @@ Every rule document declares its origin, one of two
 The declaration is per document, not per pack: an original can sit in a pack of ports. A document that declares
 neither fails conformance, at its first step, and the pack checks (check 1) fail it too.
 
-A gated tool-pack's run judges its own rules on both stages; the conformance job
-(`conformance/port-readiness/conformance-gates.ts`) judges every other rule on conformance. A rule's verdict is the first
+A gated tool-pack's run judges its own rules on `loads`, `compact` and port readiness; the conformance job
+(`conformance/port-readiness/conformance-gates.ts`) judges every other rule on conformance. `passes-conformance` is the
+pack's conformance check, which scores every rule of the pack at once, so in CI it runs once per pack, in the
+conformance job, for every rule the pack's `conformance.json` maps: the tool-pack runs and their shards skip it
+(`--conformance-in-own-job`), and the summary takes each rule's result from the conformance job's report. A tool-pack run
+started by hand runs the check itself. A rule's verdict is the first
 step it fails, conformance first, so a port that fails conformance stops there, whatever port readiness would say.
 Every gate still runs on every rule it applies to, so the report shows every failure, not only the first. The summary
 holds one verdict per rule document (`STEPS` in `conformance/port-readiness/summary.ts`), so each rule is counted once.
@@ -466,7 +470,7 @@ which the gates have no verdict and draw no conclusion.
 `ci.yml` calls `port-readiness.yml` after its build job when a pull request or a push to main touches `packs/`,
 `conformance/`, the engine, the root package files or the workflows: a plan job, one job per leg it plans, the
 conformance job, which runs the conformance gates on every rule no tool-pack judges on every run (it reads no
-recording and takes seconds), then a report job that writes the summary and fails when anything blocking failed. A push to main is compared with the
+recording and takes about a minute, most of it the javascript pack's conformance check), then a report job that writes the summary and fails when anything blocking failed. A push to main is compared with the
 previous head only when CI finished green there; after a red, cancelled or missing run it runs port readiness
 whatever it touches, so a failing shipped rule, or a change whose queued run was replaced, is never skipped past.
 
