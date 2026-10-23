@@ -120,6 +120,8 @@ GATED: set[str] = {
     "rust_sql_grammar_boundary",
     "missing_async_pairs", "sync_async_signatures", "async_sync_delegation", "data_layer_facade_purity", "data_layer_compat_aliases",
     "layer_violations", "backend_coupling",
+    # exact in both with S6's 31d76fa73 (budget evidence closure; run 20261022T234304-gate)
+    "sql_grammar_escape_hatches", "grammar_callable_constructors", "grammar_fragment_usage",
 }
 
 # The generic mutants: (number, name, crate, site, what it breaks, the checks that run against it). They
