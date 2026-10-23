@@ -1,25 +1,61 @@
 # Contributing to Rerail
 
-Thank you for helping. This guide covers who can open a pull request, how work starts, how to set up a checkout, what a
-pull request needs, and the rules that keep the project open source and its licensing clean.
+Thank you for helping. This guide covers trusted contributors, how work starts, how to set up a checkout, what a pull
+request needs, and the rules that keep the project open source and its licensing clean.
 
 Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md). Report a security vulnerability privately, as
 [SECURITY.md](SECURITY.md) describes, never in a public issue or pull request.
 
-## Who can open a pull request
+## Trusted contributors
 
-Anyone can open an issue. Pull requests are open to trusted contributors, from their own fork; a pull request from
-anyone else is closed with a pointer to the issues, which says nothing about the change itself. A clear issue, with a
-reproduction or a failing case, is often all a fix needs.
+Anyone can open an issue. Pull requests come from trusted contributors, each from their own fork. That keeps the
+project's CI, its secrets and its release workflows away from code nobody on the team has read, without closing the
+project to outside work.
 
-Contributors never get write access to this repository. CI on a pull request from a fork runs without the project's
-secrets, and only once a maintainer has approved the run.
+### What trust gives you
+
+| | Trusted contributor | Anyone else |
+| --- | --- | --- |
+| Open and comment on issues | Yes | Yes |
+| Claim a `good first issue` or `help wanted` issue | Yes | Ask to become trusted ([below](#becoming-a-trusted-contributor)) |
+| Open a pull request from a fork | Yes | Closed with a link to this section |
+| Write access, merging, triage, the project's secrets | No | No |
+
+CI on a pull request from a fork runs once a maintainer has approved the run, without the project's secrets; the jobs
+that need them skip the pull request and run when the change reaches `main`. A trusted contributor's pull request is
+reviewed like anyone else's.
 
 ### Becoming a trusted contributor
 
-Ask in the issue you want to work on, or open one: say what you plan to change and how. A maintainer who agrees adds
-you to the trusted contributors list and assigns you the issue, and you stay on the list for later work. There is no
-form to fill in; how you work in the issues is what counts.
+Ask in the issue you want to work on, or open one: say what you want to change and how you would go about it. For
+anything in [Start with an issue](#start-with-an-issue), that is the conversation a maintainer has with you anyway.
+
+Maintainers look at:
+
+- the issue itself: a reproduction, a failing case, or an approach that holds up;
+- whether the change fits where Rerail is going, at a size you can finish;
+- how you have worked in the issues so far, under the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+A maintainer answers in the issue. If it's a yes, they add you to the list below and assign you the issue. If it's not
+yet, they say why and what would change it.
+
+### The list
+
+The list changes only through a maintainer's pull request that links the issue where it was agreed, so every name on
+it has a public reason.
+
+Trusted contributors: none yet.
+
+### Leaving the list
+
+- Ask, in any issue or at [opensource@nera.software](mailto:opensource@nera.software), and you are taken off.
+- Twelve months without a pull request, issue or comment here takes you off. Ask again any time.
+- Breaking the Code of Conduct can take you off, as its enforcement steps describe.
+
+### Pull requests from anyone else
+
+A maintainer closes them with a link to this section. That says nothing about the change itself: ask in an issue,
+linking the closed pull request, and once you are trusted, open it again from your fork.
 
 ## Start with an issue
 
