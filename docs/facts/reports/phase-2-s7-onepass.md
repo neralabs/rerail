@@ -13,7 +13,6 @@ The decider's ledger says the A3→generic gap is "A3's dump groups ≈ 10 s vs 
 | matcher inputs, true total | **59.0 s** | **66.5 s** |
 | `nodes` / `descendants` / `ownership` | 6.9 / 5.8 / 3.1 s | 8.5 / 7.9 / 6.7 s |
 | CPU | 134.9 s | 158.6 s |
-
 So A3's dump groups cost ≈ 59 s, not 10 s; the step-2 target "≤ A3's ≈ 10 s" was never A3's number. The selection logic itself (the 20 KB `quality-conditional-1-selection` over all 28 M nodes) is the cost, and only a cheaper evaluation of it (not one pass vs many) removes it.
 
 ## 2. Gate rows
@@ -27,7 +26,9 @@ All timing pairs ran under `bench-lock`, but at load 12–73 (other slices build
 | G2.3 ≤ 90 s | ≤ 90 s, 3 runs | not met; quiet re-run needed (estimate from pair 1 scaled to the decider's quiet ratio: ≈ 125 s) | **fail** | — |
 | Parity | 173/173, 0 FP, 0 FN, 0 failures | 173/173, 0/0/0 on all four runs | pass | `parity.json` in each |
 | `pattern-check`, physical vs leaf executor | 0 mismatches | **0 mismatches on 8.1 M rows** over the 200 heaviest files (sub200), 340 lowered inputs, 339 planned | pass (sub200) | `…20261022T2333*-pattern-check-sub200` (latest) |
-| `pattern-check`, full corpus 9,010 files | 0 mismatches | running at hand-off with the reference on files ≤ 200 nodes (`bin/facts-a-p2`); result in the run dir | open | `…20261022T233157-pattern-check-full-ref200` |
+| `pattern-check`, full corpus 9,010 files | 0 mismatches | **not completed**: the run (`bin/facts-a-p2`, reference on files ≤ 200 nodes) hit the 1 h cap with no report; shard it or skip the reference half | **open** | `…20261022T233157-pattern-check-full-ref200` (empty) |
+| Gate on the wave-3 tree (before the integration merge) | 25/25, all mutants | **25/25 checks, 21/21 mutants**, 1,723 s at load 10–70 | pass (time untrusted) | `runs/*-gate` |
+| After merging `d47f859c4` | parity, exactness | build green; `pattern-check` sub200 0/0; generic repo 173/173, 0/0/0 (gate not re-run) | pass (partial) | `…*-pattern-check-sub200-merged`, `…*-repo-generic-merged` |
 | Memory (G2.5, generic) | per-file phase ≤ 300 MB end | end of per-file phase 121 / 108 MB; per-file peak 497 / 476 MB; overall 3.05 / 3.04 GB (A3 5.86 GB) | pass (end) | same pairs |
 
 ## 3. What changed
@@ -57,6 +58,6 @@ All timing pairs ran under `bench-lock`, but at load 12–73 (other slices build
 
 ## 6. Resume notes
 
-- **Not committed at hand-off unless the gate run passes** (`runs/*-gate`); then commit `s7-onepass: lowered matcher inputs, physical plan, closure keys` with everything in § 3.
+- **Committed:** `4dcfc9ae0` (§ 3; gate 25/25, 21/21) and `53251bff4` (merge of `d47f859c4`; `Rule` keeps `preds` and S6's `report_count_gt`). Full-corpus `pattern-check` still owed.
 - **Step 4 (delete `subst.rs`), exact list**: remove `mod subst` (main.rs), `subst.rs`; `rel.rs` `kernels`/`dump` fields, `schedule_releases` kernel reads, the kernel/check branches in `run`; `eval.rs` `plan_clause` call, `DumpNs`, `dump_rows`, `nearest_where`, `PENDING`, the `from_dump` block in `eval_file`; `physplan.rs` `kernel_name` and kernel printing; `ast.rs` the three `check_mode` blocks and the mutant-3 site (S6 agreed to the blocks; ask for the mutant site); `run-repo.sh` label → `FACTS_REWRITES`. Then message S5 (switch `FACTS_REWRITES=0`; `pattern-check --max-nodes 2000` as a gate check, pass = 0 physical and 0 reference mismatches; mutants 1–3 killed by default vs `FACTS_REWRITES=0` findings).
 - Quiet-machine A/B (3 runs each) is the decider's.
