@@ -36,7 +36,8 @@ Being blunt about code is fine. None of this is, however it's phrased:
 Email [opensource@nera.software](mailto:opensource@nera.software) with what happened, where (links help), and who was
 involved. You don't need to be the target to report something, or to be sure it crosses a line.
 
-The maintainers review every report promptly and fairly, and keep the reporter's identity private.
+The maintainers acknowledge a report within three business days, review every report fairly, and keep the reporter's
+identity private.
 
 ## What happens next
 

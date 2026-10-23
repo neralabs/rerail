@@ -98,6 +98,23 @@ you within two weeks, the issue is open to others again.
 
 Ask in the issue you are working on, or open an issue with your question.
 
+### Response times
+
+Rerail is maintained by a small team. These are the times we aim to reply in, counted in business days; they are
+not times to a fix, a merge or a release.
+
+| You sent | We reply within |
+| --- | --- |
+| A vulnerability report ([SECURITY.md](SECURITY.md)) | 2 business days |
+| A conduct report ([CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md#reporting)) | 3 business days |
+| A bug report | 5 business days: triaged, labelled, or asked for a reproduction |
+| A feature request | 10 business days: accepted, declined, or "not now" with a reason |
+| A request to become a trusted contributor | 10 business days |
+| A pull request, as a trusted contributor | 10 business days to its first review |
+| A question | Best effort |
+
+If an issue or pull request gets no reply within its window, comment on it to bring it back up.
+
 ## Development setup
 
 One repository holds everything: the core package at the root, rule packs under [`packs/`](packs/), and the engine's
