@@ -81,6 +81,7 @@ fn main() {
                 skip: !args.iter().any(|a| a == "--no-skip"),
                 worktrees: arg(&args, "--worktrees").map(|x| x.parse().unwrap()),
                 workers: arg(&args, "--workers").map_or(1, |x| x.parse().unwrap()),
+                maintained: args.iter().any(|a| a == "--maintained"),
             },
         ),
         "edits" => edits::run(
@@ -113,6 +114,10 @@ fn main() {
         // `gnorm --real SPEC [--dump STAGE]`: compile and normalise the spec's repository plans
         // only (no exports read): the refusals, and the IR of the named stages.
         "gnorm" => gen::real::check(&PathBuf::from(arg(&args, "--real").expect("--real")), arg(&args, "--dump").as_deref()),
+        // X4: `dgraph --real SPEC`: declared-fact split and demand-rewrite verdict per plan.
+        "dgraph" => gen::declared::report(&PathBuf::from(arg(&args, "--real").expect("--real"))),
+        // X4: `dref --real SPEC --worktree N --out DIR`: one worktree's frontier relations and outputs.
+        "dref" => gen::declared::dref(&PathBuf::from(arg(&args, "--real").expect("--real")), arg(&args, "--worktree").map_or(1, |x| x.parse().unwrap()), &PathBuf::from(arg(&args, "--out").expect("--out"))),
         _ => {
             eprintln!("usage: facts-b extract --run-dir DIR [--corpus DIR] [--threads N] | dump FILE");
             std::process::exit(2);

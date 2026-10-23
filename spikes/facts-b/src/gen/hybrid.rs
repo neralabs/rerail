@@ -60,6 +60,9 @@ pub struct Opts {
     pub worktrees: Option<usize>,
     /// Plan runs in flight at once (forked workers); 1: one at a time.
     pub workers: usize,
+    /// X4, design (d): the declared facts (`declared::frontier`) are evaluated first and timed
+    /// apart; latencies are the rule logic's recompute.
+    pub maintained: bool,
 }
 
 // --------------------------------------------------------------------------------------------
@@ -430,12 +433,15 @@ struct EvAcc {
     ms: f64,
     pending: usize,
     ran: Vec<usize>,
+    /// X4: the frontier's milliseconds in this event's runs (from scratch; not in `ms`).
+    maint_ms: f64,
 }
 
 struct Plan {
     name: String,
     graph: Rc<Graph>,
     reads: Vec<u32>,
+    frontier: Vec<usize>,
 }
 
 /// `k` worktrees evenly spaced over `ws` (all when `k` is `None` or covers them).
@@ -488,7 +494,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
                         reads.insert(*e);
                     }
                 }
-                Plan { name: n.clone(), graph: g.clone(), reads: reads.into_iter().collect() }
+                Plan { name: n.clone(), graph: g.clone(), reads: reads.into_iter().collect(), frontier: super::declared::frontier(g) }
             })
             .collect();
         let exports = Rc::new(RefCell::new(Exports { read: plans.iter().flat_map(|p| p.reads.iter().copied()).collect(), ..Default::default() }));
@@ -522,16 +528,23 @@ pub fn run(run_dir: &Path, opts: Opts) {
         // Runtime refusals raised in workers (counted per construct), and the workers' peak RSS.
         let worker_refusals: RefCell<BTreeMap<String, u64>> = RefCell::new(BTreeMap::new());
         let worker_peak: RefCell<(u64, Vec<f64>)> = RefCell::new((0, Vec::new()));
+        // X4 (`--maintained`): per plan, the milliseconds and counts of the frontier's facts
+        // (evaluated first, apart; a maintained table would hold them) per run, and the last run's.
+        let maint_ms: RefCell<Vec<Vec<f64>>> = RefCell::new(vec![Vec::new(); plans.len()]);
+        let maint_counts: RefCell<Vec<Counts>> = RefCell::new(vec![Counts::default(); plans.len()]);
+        let last_maint = std::cell::Cell::new(0.0f64);
         // A plan run from scratch over `files`, in a worker: the child reports its result, its
-        // counts, per-stage profile, the runtime refusals it raised and its compute time.
+        // counts, per-stage profile, the runtime refusals it raised and its compute time (with
+        // `--maintained`, the rule logic's only; the frontier's apart).
         let eval_spawn = |k: usize, files: &[(Sym, Cid)]| -> Child {
             spawn(|| {
                 let before = lower::refusals().0;
                 let t = Instant::now();
-                let o = batch::eval(&plans[k].name, &plans[k].graph, &src, files);
-                let ms = t.elapsed().as_secs_f64() * 1e3;
+                let first: &[usize] = if opts.maintained { &plans[k].frontier } else { &[] };
+                let (o, pre) = batch::eval_with(&plans[k].name, &plans[k].graph, &src, files, first);
+                let ms = (t.elapsed().as_secs_f64() - pre.secs) * 1e3;
                 let inc: BTreeMap<String, u64> = lower::refusals().0.into_iter().filter_map(|(s, n)| (n > before.get(&s).copied().unwrap_or(0)).then(|| (s.clone(), n - before.get(&s).copied().unwrap_or(0)))).collect();
-                serde_json::to_vec(&json!({"res": put_res(&res_of(&o)), "counts": o.counts, "stages": o.stages, "refusals": inc, "ms": ms})).unwrap()
+                serde_json::to_vec(&json!({"res": put_res(&res_of(&o)), "counts": o.counts, "stages": o.stages, "refusals": inc, "ms": ms, "maint_ms": pre.secs * 1e3, "maint_counts": pre.counts})).unwrap()
             })
         };
         // Its result in the parent, and the run's milliseconds (the child's compute plus the
@@ -560,6 +573,10 @@ pub fn run(run_dir: &Path, opts: Opts) {
             wp.1.push(mb(peak));
             let ms = j["ms"].as_f64().unwrap() + t.elapsed().as_secs_f64() * 1e3;
             per_plan_ms[k].push(ms);
+            let m = j["maint_ms"].as_f64().unwrap();
+            maint_ms.borrow_mut()[k].push(m);
+            maint_counts.borrow_mut()[k].add(&serde_json::from_value(j["maint_counts"].clone()).unwrap());
+            last_maint.set(m);
             (r, ms)
         };
         let files_of = |m: &Members| -> Vec<(Sym, Cid)> { m.iter().map(|(p, c)| (*p, *c)).collect() };
@@ -699,6 +716,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
             let (r, ms) = eval_finish(k, c, per_plan_ms, per_plan_counts);
             results.get_mut(&w).unwrap()[k] = r;
             evs[i].ms += ms;
+            evs[i].maint_ms += last_maint.get();
             evs[i].pending -= 1;
         };
         let mut edits_done = 0usize;
@@ -765,7 +783,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
                 inflight_ev.push_back((i, w, k, eval_spawn(k, &files)));
                 recomputes += 1;
             }
-            evs.push(EvAcc { seq: ev.seq, group: ev.group.clone(), kind: ev.kind.clone(), w, changes: ev.changes.len(), load_ms, ms: d1_ms, pending: ran.len(), ran });
+            evs.push(EvAcc { seq: ev.seq, group: ev.group.clone(), kind: ev.kind.clone(), w, changes: ev.changes.len(), load_ms, ms: d1_ms, pending: ran.len(), ran, maint_ms: 0.0 });
             while inflight_ev.len() >= max_workers {
                 land_ev(&mut inflight_ev, &mut results, &mut per_plan_ms, &mut per_plan_counts, &mut evs);
             }
@@ -822,10 +840,13 @@ pub fn run(run_dir: &Path, opts: Opts) {
         for e in &evs {
             assert_eq!(e.pending, 0);
             lat.entry(e.group.clone()).or_default().push(e.ms);
+            if opts.maintained {
+                lat.entry(format!("{}+frontier_from_scratch", e.group)).or_default().push(e.ms + e.maint_ms);
+            }
             if e.group == "edit" {
                 lat.entry(format!("edit:{}", e.kind)).or_default().push(e.ms);
             }
-            per_event.push(json!([e.seq, e.group, e.kind, e.w, e.changes, e.ms, e.load_ms, e.ran]));
+            per_event.push(json!([e.seq, e.group, e.kind, e.w, e.changes, e.ms, e.load_ms, e.ran, e.maint_ms]));
         }
         let rss_end = rss();
         rss_samples.push(json!({"at": "end", "rss_mb": mb(rss_end.0), "footprint_mb": mb(rss_end.1)}));
@@ -835,6 +856,10 @@ pub fn run(run_dir: &Path, opts: Opts) {
         }
         let single: Vec<f64> = ["edit", "new_worktree_edit"].iter().flat_map(|k| lat.get(*k).cloned().unwrap_or_default()).collect();
         lat_summary.insert("single_file_all".into(), summary(&single));
+        if opts.maintained {
+            let s2: Vec<f64> = ["edit+frontier_from_scratch", "new_worktree_edit+frontier_from_scratch"].iter().flat_map(|k| lat.get(*k).cloned().unwrap_or_default()).collect();
+            lat_summary.insert("single_file_all+frontier_from_scratch".into(), summary(&s2));
+        }
         drop(check);
         let lower::Refusals(mut runtime_refusals) = lower::refusals();
         for (s, n) in worker_refusals.borrow().iter() {
@@ -846,12 +871,14 @@ pub fn run(run_dir: &Path, opts: Opts) {
             .flat_map(|(w, rs)| rs.iter().enumerate().filter(|(_, r)| !r.refusals.is_empty()).map(move |(k, r)| json!({"worktree": w, "plan": k, "refusals": r.refusals.iter().map(show).collect::<Vec<_>>()})))
             .collect();
         let out = json!({
-            "model": "M2 hybrid",
+            "model": if opts.maintained { "X4 declared facts (frontier apart)" } else { "M2 hybrid" },
             "skip": opts.skip,
             "plans": plans.iter().enumerate().map(|(k, p)| {
                 let mut top: Vec<(String, (f64, u64))> = stage_prof.borrow()[k].clone().into_iter().collect();
                 top.sort_by(|a, b| b.1 .0.partial_cmp(&a.1 .0).unwrap());
-                json!({"plan": p.name, "nodes": p.graph.nodes.len(), "exports_read": p.reads.len(), "runs": per_plan_ms[k].len(), "skipped": skipped[k], "ms": summary(&per_plan_ms[k]), "counts": per_plan_counts[k], "top_stages_secs_rows": top.iter().map(|(s, (t, r))| json!([s, t, r])).collect::<Vec<_>>()})
+                json!({"plan": p.name, "nodes": p.graph.nodes.len(), "exports_read": p.reads.len(), "runs": per_plan_ms[k].len(), "skipped": skipped[k], "ms": summary(&per_plan_ms[k]), "counts": per_plan_counts[k],
+                       "frontier": p.frontier.iter().map(|x| p.graph.labels[*x].clone()).collect::<Vec<_>>(), "frontier_ms": summary(&maint_ms.borrow()[k]), "frontier_counts": maint_counts.borrow()[k],
+                       "top_stages_secs_rows": top.iter().map(|(s, (t, r))| json!([s, t, r])).collect::<Vec<_>>()})
             }).collect::<Vec<_>>(),
             "refused_static": real.refused,
             "events": events.len(),

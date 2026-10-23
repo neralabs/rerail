@@ -266,17 +266,61 @@ pub struct RelPlan {
     /// table, and a duplicate counts in `bounds_unproven` (the content's class is then the
     /// fallback). Set by `eval::Rule::compile` from `physplan::clause_cost`.
     pub checked_keys: Vec<(String, Vec<u16>)>,
+    /// X4 (design (d) measurement harness, `FACTS_X4_REFEDGES=FILE`): the clause's `references`
+    /// graph is read as the maintained table `reference_edges` from FILE (JSON lines, one row
+    /// each, the IR view's 9 columns) instead of being refused.
+    pub x4_refedges: bool,
+}
+
+/// The X4 harness's `reference_edges` columns (the IR view `views/reference_edges`).
+const X4_REFEDGE_COLS: [&str; 9] = ["__path", "__start", "__end", "target_path", "target_start", "target_end", "source_name", "target_name", "target_class"];
+
+fn x4_schema() -> Schema {
+    Schema { cols: X4_REFEDGE_COLS.iter().map(|c| c.to_string()).collect(), affs: vec![Aff::None; X4_REFEDGE_COLS.len()] }
+}
+
+thread_local! {
+    static X4_REFEDGES: std::cell::OnceCell<Rc<Table>> = const { std::cell::OnceCell::new() };
+}
+
+fn x4_table() -> Rc<Table> {
+    X4_REFEDGES.with(|c| {
+        c.get_or_init(|| {
+            let p = std::env::var("FACTS_X4_REFEDGES").expect("FACTS_X4_REFEDGES");
+            let text = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{p}: {e}"));
+            let rows: Vec<Box<[V]>> = text
+                .lines()
+                .filter(|l| !l.is_empty())
+                .map(|l| {
+                    let j: Json = serde_json::from_str(l).unwrap();
+                    j.as_array().unwrap().iter().map(|v| match v {
+                        Json::Null => V::Null,
+                        Json::String(s) => V::text(s),
+                        Json::Number(n) if n.is_i64() => V::Int(n.as_i64().unwrap()),
+                        Json::Number(n) => V::Real(n.as_f64().unwrap()),
+                        o => panic!("reference_edges value {o}"),
+                    }).collect()
+                })
+                .collect();
+            Rc::new(Table::from_rows(x4_schema(), rows))
+        })
+        .clone()
+    })
 }
 
 impl RelPlan {
     pub fn compile(rel: &Json, inputs: Vec<(String, usize, Vec<String>)>, grammar: &rerail_engine::code_rule_dsl::tape::Grammar) -> Result<Self, String> {
         let o = rel.as_object().ok_or("relational")?;
-        if o.contains_key("references") {
+        let x4_refedges = o.contains_key("references") && std::env::var_os("FACTS_X4_REFEDGES").is_some();
+        if o.contains_key("references") && !x4_refedges {
             return Err("references unsupported".into());
         }
         let per_file = matches!(o.get("partitionBy").and_then(Json::as_str), Some("file"));
         let mut catalog = Catalog::new();
         let mut input_schemas = Vec::new();
+        if x4_refedges {
+            catalog.insert("reference_edges".into(), x4_schema());
+        }
         let mut ins = Vec::new();
         for (name, idx, fields) in inputs {
             let s = input_schema(&fields);
@@ -341,7 +385,7 @@ impl RelPlan {
         let key = o.get("key").and_then(Json::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect()).unwrap_or_default();
         let code = o.get("code").and_then(Json::as_str).map(str::to_owned);
         let locations = o.get("locations").and_then(Json::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect()).unwrap_or_default();
-        Ok(Self { inputs: ins, input_schemas, syntax, stages, fin, key, code, per_file, locations, release: Vec::new(), checked_keys: Vec::new() })
+        Ok(Self { inputs: ins, input_schemas, syntax, stages, fin, key, code, per_file, locations, release: Vec::new(), checked_keys: Vec::new(), x4_refedges })
     }
 
     /// Computes `release` from every statement's reads (stages and deferred columns); the
@@ -592,6 +636,9 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
         trace.push(name, &t);
         check_keys(plan, name, &t);
         db.tables.insert(name.to_ascii_lowercase(), t);
+    }
+    if plan.x4_refedges {
+        db.tables.insert("reference_edges".into(), x4_table());
     }
     let mut syntax_tables_present = false;
     if let Some(spec) = &plan.syntax {

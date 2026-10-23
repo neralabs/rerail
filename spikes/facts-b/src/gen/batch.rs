@@ -85,6 +85,20 @@ struct Ev<'a> {
 
 /// Evaluates `g`'s outputs over `files` (one worktree's members).
 pub fn eval(name: &str, g: &Graph, src: &Source, files: &[(Sym, Cid)]) -> Outcome {
+    eval_with(name, g, src, files, &[]).0
+}
+
+/// What `eval_with` spent on its `first` nodes: seconds and work counts.
+#[derive(Default, Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+pub struct First {
+    pub secs: f64,
+    pub counts: Counts,
+}
+
+/// `eval`, with the nodes `first` evaluated before the outputs (X4, design (d): the declared
+/// facts a maintained base table would hold, `declared::frontier`), their time and counts
+/// returned apart; the outputs are the same relations.
+pub fn eval_with(name: &str, g: &Graph, src: &Source, files: &[(Sym, Cid)], first: &[NodeId]) -> (Outcome, First) {
     let n = g.nodes.len();
     let mut needed = vec![false; n];
     let mut stack: Vec<NodeId> = g.outputs.iter().map(|(_, o, _)| *o).collect();
@@ -105,6 +119,13 @@ pub fn eval(name: &str, g: &Graph, src: &Source, files: &[(Sym, Cid)]) -> Outcom
         uses[*o] += 1;
     }
     let mut ev = Ev { name, g, src, files, done: vec![None; n], uses, refused: FxHashSet::default(), counts: Counts::default(), live_rows: 0, child_secs: 0.0, stages: FxHashMap::default() };
+    let t = std::time::Instant::now();
+    for &f in first {
+        if needed[f] {
+            ev.node(f);
+        }
+    }
+    let pre = First { secs: t.elapsed().as_secs_f64(), counts: ev.counts };
     let mut outputs = Vec::new();
     for (clause, o, _) in &g.outputs {
         let b = ev.node(*o);
@@ -116,7 +137,29 @@ pub fn eval(name: &str, g: &Graph, src: &Source, files: &[(Sym, Cid)]) -> Outcom
     }
     let mut refusals: Vec<Row> = ev.refused.into_iter().collect();
     refusals.sort();
-    Outcome { outputs, refusals, counts: ev.counts, stages: ev.stages }
+    (Outcome { outputs, refusals, counts: ev.counts, stages: ev.stages }, pre)
+}
+
+/// One node's relation over `files` (X4's harness: a frontier relation handed to another engine).
+pub fn eval_node(name: &str, g: &Graph, src: &Source, files: &[(Sym, Cid)], root: NodeId) -> Bag {
+    let n = g.nodes.len();
+    let mut needed = vec![false; n];
+    let mut stack = vec![root];
+    while let Some(x) = stack.pop() {
+        if !needed[x] {
+            needed[x] = true;
+            stack.extend(lower::op_inputs(&g.nodes[x]));
+        }
+    }
+    let mut uses = vec![0u32; n];
+    for x in (0..n).filter(|x| needed[*x]) {
+        for i in lower::op_inputs(&g.nodes[x]) {
+            uses[i] += 1;
+        }
+    }
+    uses[root] += 1;
+    let mut ev = Ev { name, g, src, files, done: vec![None; n], uses, refused: FxHashSet::default(), counts: Counts::default(), live_rows: 0, child_secs: 0.0, stages: FxHashMap::default() };
+    ev.node(root)
 }
 
 impl Ev<'_> {

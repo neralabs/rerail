@@ -5,6 +5,7 @@
 //! (`vectors`). M2's hybrid model (`hybrid`) runs the same normalised plans from scratch on a
 //! set-at-a-time executor (`batch`) over resident per-content exports.
 pub mod batch;
+pub mod declared;
 pub mod drive;
 pub mod hybrid;
 pub mod lower;
