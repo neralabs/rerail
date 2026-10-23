@@ -38,6 +38,7 @@ def main():
     ap.add_argument("--probe", default=str(HERE / "pack/rules/facts-probe-symbols.json"))
     ap.add_argument("--out", required=True)
     ap.add_argument("--keep-exports", action="store_true")
+    ap.add_argument("--stages", default="reference", help="xexport --stages (engine: faster, no references)")
     a = ap.parse_args()
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -50,7 +51,7 @@ def main():
         doc = d / "pack.json"
         subprocess.run(["python3", str(HERE / "link.py"), "--facts", a.facts, "--rules", rules, "--mode", "merged", "--out", str(doc)], check=True)
         exp = d / "exports.jsonl"
-        subprocess.run([FA, "xexport", "--rule", str(doc), "--clauses", "pack", "--jobs", str(JOBS), "--out", str(exp), "--stages", "reference", "--threads", "8"],
+        subprocess.run([FA, "xexport", "--rule", str(doc), "--clauses", "pack", "--jobs", str(JOBS), "--out", str(exp), "--stages", a.stages, "--threads", "8"],
                        check=True, capture_output=True)
         spec = d / "spec.json"
         spec.write_text(json.dumps([{"rule": str(doc), "clauses": ["pack"], "exports": str(exp)}]))

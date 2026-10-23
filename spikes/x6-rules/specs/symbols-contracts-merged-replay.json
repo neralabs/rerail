@@ -1,0 +1,9 @@
+[
+ {
+  "rule": "/Users/tim/orca/workspaces/rerail/facts-engine/.worktrees/x6-rules/spikes/x6-rules/linked/symbols-contracts-merged.json",
+  "clauses": [
+   "pack"
+  ],
+  "exports": "/Users/tim/rerail-bench/facts/explore/x6-rules/exports/replay-symbols-contracts-merged.jsonl"
+ }
+]

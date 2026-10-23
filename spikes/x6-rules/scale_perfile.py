@@ -41,6 +41,7 @@ def main():
     ap.add_argument("--threads", default="8")
     ap.add_argument("--jobs", default=str(Path.home() / "rerail-bench/facts/phase-2/s3-crossfile/exports/oracle-b6-jobs.tsv"))
     ap.add_argument("--unshared", action="store_true")
+    ap.add_argument("--stages", default="reference", help="xexport --stages: reference (any plan) | engine (facts-a's engine; no references)")
     a = ap.parse_args()
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -64,7 +65,7 @@ def main():
         spec.write_text(json.dumps([{"rule": str(doc), "clauses": ["pack"], "exports": "/nonexistent"}]))
         g, gout, _ = timed([FB, "gnorm", "--real", str(spec)])
         exp = d / "exports.jsonl"
-        x, _, _ = timed([FA, "xexport", "--rule", str(doc), "--clauses", "pack", "--jobs", a.jobs, "--out", str(exp), "--stages", "reference", "--threads", a.threads])
+        x, _, _ = timed([FA, "xexport", "--rule", str(doc), "--clauses", "pack", "--jobs", a.jobs, "--out", str(exp), "--stages", a.stages, "--threads", a.threads])
         summ = json.loads((Path(str(exp) + ".summary.json")).read_text())
         row = {"n": n, "unshared": a.unshared, "rules": len(rules.split(",")) if n else 0, "doc_bytes": doc.stat().st_size, "gnorm": g,
                "gnorm_out": gout.strip()[-200:], "xexport": x, "export_bytes": exp.stat().st_size, "exports": len(summ["exports"]),
