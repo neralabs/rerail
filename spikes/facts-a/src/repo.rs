@@ -5,7 +5,7 @@
 //! a `production_scope` suite event) and, per file, reads, parses, builds facts, evaluates and
 //! drops them. Workers return findings, timings and the repository-partition rows; the main
 //! thread merges them and runs the repository partitions and budgets once (`eval::finish`).
-use crate::{BATCH6, RUST_REFUSED, arg, call_config, caught, eval, facts, multiset_minus, policy_doc};
+use crate::{BATCH6, arg, call_config, caught, eval, facts, multiset_minus, policy_doc};
 use serde_json::{Map, Value as Json, json};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -193,11 +193,12 @@ pub fn repo(args: &[String]) {
     let (rules, refused) = compile_checks(&policies, &checks);
     let mut out = eval::Output::default();
     out.failures.extend(refused);
-    // The engine parses Python only: a Rust file a compiled rule's scope selects is refused by name
-    // for that rule, never skipped.
+    // Files the facts do not cover (`.rs`): regex clauses read their text, as in `facts-a calls`
+    // (`eval::eval_text_file`); AST clauses over the Python grammar read no such file.
     for path in walk_ext(root, "rs") {
-        for rule in rules.iter().filter(|r| r.scope.matches(&path)) {
-            out.failures.push(eval::Failure { check: rule.check.clone(), clause: String::new(), path: path.clone(), message: RUST_REFUSED.into() });
+        match std::fs::read_to_string(root.join(&path)) {
+            Ok(source) => eval::eval_text_file(&rules, &path, &source, &mut out),
+            Err(e) => out.failures.push(eval::Failure { check: String::new(), clause: String::new(), path: path.clone(), message: format!("file could not be read as UTF-8: {e}") }),
         }
     }
     let mut budget: eval::BudgetRows = BTreeMap::new();

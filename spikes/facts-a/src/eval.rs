@@ -66,10 +66,101 @@ pub struct RegexClause {
 pub enum Kind {
     ForbidAst { input: usize },
     ForbidRegex(RegexClause),
-    /// `budget` (native query/crossfile.rs:436-509): rows grouped by the `group` columns of the
-    /// input's table (none: one group), a group of more than `lte` rows reported at its first row.
-    Budget { input: usize, lte: u64, group: Vec<usize> },
+    /// `budget` (native query/crossfile.rs:436-509): rows kept by `filter` (the evidence `where`),
+    /// grouped by the `group` columns of the input's table (none: one group), a group of more
+    /// than `lte` rows reported at its first row.
+    Budget { input: usize, lte: u64, group: Vec<usize>, filter: Option<Where> },
     Relational(Box<RelPlan>),
+}
+
+/// An evidence `where` over one relation's rows (native query/crossfile.rs:97-267 `Predicate`):
+/// `eq`/`ne` compare the operands' JSON text, `lt`/`le`/`gt`/`ge` order two strings by UTF-16
+/// code unit (anything else does not order).
+pub enum Where {
+    Constant(bool),
+    All(Vec<Where>),
+    Any(Vec<Where>),
+    Not(Box<Where>),
+    Equal(Operand, Operand, bool),
+    Ordered(Operand, Operand, std::cmp::Ordering, bool),
+}
+
+/// A field (a column of the input's table) or a literal: a string, number or null (a boolean,
+/// array or object literal is refused: projected fields hold none of them).
+pub enum Operand {
+    Field(usize),
+    Literal(V),
+}
+
+impl Where {
+    /// `column` maps `alias.field` to its table column; `None` for another alias's or a
+    /// non-projected field, which is refused when the alias is this relation's.
+    fn compile(w: &Json, alias: &str, column: &dyn Fn(&str) -> Option<usize>) -> Result<Where, String> {
+        let operand = |v: &Json| -> Result<Operand, String> {
+            if let Some(t) = v.as_str().filter(|t| t.split_once('.').is_some_and(|(a, _)| a == alias)) {
+                return column(t).map(Operand::Field).ok_or_else(|| format!("`{t}` names no projected field"));
+            }
+            Ok(Operand::Literal(match v {
+                Json::Null => V::Null,
+                Json::String(s) => V::text(s),
+                Json::Number(n) if n.is_i64() => V::Int(n.as_i64().unwrap()),
+                Json::Number(n) if n.is_f64() => V::Real(n.as_f64().unwrap()),
+                _ => return Err(format!("literal {v} unsupported")),
+            }))
+        };
+        let Some(o) = w.as_object() else { return Ok(Where::Constant(false)) };
+        let items = |v: &Json| -> Result<Vec<Where>, String> { v.as_array().into_iter().flatten().map(|i| Where::compile(i, alias, column)).collect() };
+        if let Some(v) = o.get("all") {
+            return Ok(Where::All(items(v)?));
+        }
+        if let Some(v) = o.get("any") {
+            return Ok(Where::Any(items(v)?));
+        }
+        if let Some(v) = o.get("not") {
+            return Ok(Where::Not(Box::new(Where::compile(v, alias, column)?)));
+        }
+        let pair = |k: &str| o.get(k).and_then(Json::as_array).filter(|a| a.len() == 2);
+        for (k, eq) in [("eq", true), ("ne", false)] {
+            if let Some(a) = pair(k) {
+                return Ok(Where::Equal(operand(&a[0])?, operand(&a[1])?, eq));
+            }
+        }
+        use std::cmp::Ordering::{Greater, Less};
+        for (k, ord, holds) in [("lt", Less, true), ("le", Greater, false), ("gt", Greater, true), ("ge", Less, false)] {
+            if let Some(a) = pair(k) {
+                return Ok(Where::Ordered(operand(&a[0])?, operand(&a[1])?, ord, holds));
+            }
+        }
+        Ok(Where::Constant(false))
+    }
+
+    fn holds(&self, t: &Table, r: usize) -> bool {
+        let read = |o: &Operand| match o {
+            Operand::Field(c) => t.value(r, *c),
+            Operand::Literal(v) => v.clone(),
+        };
+        match self {
+            Where::Constant(b) => *b,
+            Where::All(v) => v.iter().all(|w| w.holds(t, r)),
+            Where::Any(v) => v.iter().any(|w| w.holds(t, r)),
+            Where::Not(w) => !w.holds(t, r),
+            Where::Equal(a, b, eq) => {
+                let same = match (read(a), read(b)) {
+                    (V::Null, V::Null) => true,
+                    (V::Int(x), V::Int(y)) => x == y,
+                    (V::Real(x), V::Real(y)) => x.to_bits() == y.to_bits(),
+                    (V::Text(x), V::Text(y)) => x == y,
+                    _ => false,
+                };
+                same == *eq
+            }
+            // `lt`: order is Less; `le`: order is not Greater; `gt`: Greater; `ge`: not Less.
+            Where::Ordered(a, b, ord, holds) => match (read(a), read(b)) {
+                (V::Text(x), V::Text(y)) => (x.encode_utf16().cmp(y.encode_utf16()) == *ord) == *holds,
+                _ => false,
+            },
+        }
+    }
 }
 
 pub struct Clause {
@@ -241,21 +332,23 @@ impl Rule {
                 if b["count"].get("distinct").is_some() {
                     return Err(format!("{cid}: budget count.distinct unsupported"));
                 }
-                if ev.get("where").is_some() || ev.get("closure").is_some() {
-                    return Err(format!("{cid}: budget evidence where/closure unsupported"));
+                if ev.get("closure").is_some() {
+                    return Err(format!("{cid}: budget evidence closure unsupported (a name closure over the repository's rows)"));
                 }
                 let alias = ev.get("as").and_then(Json::as_str).unwrap_or("row").to_owned();
                 let gb: Vec<String> = b.get("group_by").and_then(Json::as_array).map(|a| a.iter().filter_map(Json::as_str).map(str::to_owned).collect()).unwrap_or_default();
                 let (i, fields) = add_input(&ev, &mut names, &mut inputs).map_err(|e| format!("{cid}: {e}"))?;
                 // Table columns: __path, __start, __end, then the projected fields in name order.
+                let column = |operand: &str| -> Option<usize> {
+                    let field = operand.strip_prefix(alias.as_str())?.strip_prefix('.')?;
+                    fields.iter().position(|f| f == field).map(|p| p + 3)
+                };
                 let group = gb
                     .iter()
-                    .map(|g| {
-                        let field = g.strip_prefix(alias.as_str()).and_then(|r| r.strip_prefix('.')).ok_or_else(|| format!("{cid}: group_by {g} is not a field of {alias}"))?;
-                        fields.iter().position(|f| f == field).map(|p| p + 3).ok_or_else(|| format!("{cid}: group_by {g} is not projected"))
-                    })
+                    .map(|g| column(g).ok_or_else(|| format!("{cid}: group_by {g} is not a projected field of {alias}")))
                     .collect::<Result<Vec<_>, String>>()?;
-                Kind::Budget { input: i, lte: b["count"]["lte"].as_u64().ok_or("lte")?, group }
+                let filter = ev.get("where").map(|w| Where::compile(w, &alias, &column)).transpose().map_err(|e| format!("{cid}/where: {e}"))?;
+                Kind::Budget { input: i, lte: b["count"]["lte"].as_u64().ok_or("lte")?, group, filter }
             } else if let Some(r) = c.get("relational") {
                 let mut ins = Vec::new();
                 let mut named: Vec<(&String, &Json)> = r["inputs"].as_object().ok_or("inputs")?.iter().collect();
@@ -720,6 +813,9 @@ pub struct Finding {
     pub path: String,
     pub line: u32,
     pub code: String,
+    /// Regex findings: the 1-based code-point column of the anchor's start in its line.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub column: Option<u32>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -843,7 +939,7 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                                         Anchor::Capture(n) => capture_range(&ev, &e, &groups, *n).unwrap_or(witness),
                                     };
                                     let line = if matches!(clause.viol.anchor, Anchor::FileStart) { 0 } else { line_of(f, span.0) };
-                                    out.findings.push(Finding { check: rule.check.clone(), clause: clause.id.clone(), path: ctx.path.to_owned(), line: line + 1, code: clause.viol.code.clone() });
+                                    out.findings.push(Finding { check: rule.check.clone(), clause: clause.id.clone(), path: ctx.path.to_owned(), line: line + 1, code: clause.viol.code.clone(), column: None });
                                 }
                             }
                             if let Some(u) = ev.unsupported.borrow_mut().take() {
@@ -854,12 +950,12 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                 }
                 Kind::ForbidRegex(rc) => {
                     if rc.paths.as_ref().is_none_or(|p| p.matches(ctx.path)) {
-                        regex_findings(rc, ctx, &mut |line| {
-                            out.findings.push(Finding { check: rule.check.clone(), clause: clause.id.clone(), path: ctx.path.to_owned(), line: line + 1, code: clause.viol.code.clone() });
+                        regex_findings(rc, ctx.path, ctx.source, &ctx.f.lines, &mut |line, column| {
+                            out.findings.push(Finding { check: rule.check.clone(), clause: clause.id.clone(), path: ctx.path.to_owned(), line: line + 1, code: clause.viol.code.clone(), column: Some(column) });
                         }, &clause.viol.anchor, &rule.names);
                     }
                 }
-                Kind::Budget { input, group, .. } => {
+                Kind::Budget { input, group, filter, .. } => {
                     if let Some(rows) = get(*input, out) {
                         if let Some(u) = &rows.unsupported {
                             fail(out, format!("unsupported: {u}"));
@@ -868,6 +964,9 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                         // The group key: the `group_by` values, each typed (as native's JSON text
                         // of each value tells types apart).
                         for k in 0..rows.table.len() {
+                            if filter.as_ref().is_some_and(|w| !w.holds(&rows.table, k)) {
+                                continue;
+                            }
                             let mut key = String::new();
                             for &c in group {
                                 match rows.table.value(k, c) {
@@ -946,7 +1045,7 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                             fail(out, m);
                         }
                         for (p, line, code) in r.findings {
-                            out.findings.push(Finding { check: rule.check.clone(), clause: clause.id.clone(), path: p, line: line + 1, code: if code.is_empty() { clause.viol.code.clone() } else { code } });
+                            out.findings.push(Finding { check: rule.check.clone(), clause: clause.id.clone(), path: p, line: line + 1, code: if code.is_empty() { clause.viol.code.clone() } else { code }, column: None });
                         }
                     } else {
                         let anchors = anchors.into_iter().map(|((_, s, e), l)| (s, e, l)).collect();
@@ -961,6 +1060,27 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
             e.1 += ns;
             out.clause_samples.push(((ri as u16, ci as u16), ns));
             cache.borrow_mut().retain(|i, _| rule.last_use[*i] > ci);
+        }
+    }
+}
+
+/// A file the facts do not cover (not Python: a `.rs` file). Natively an AST clause over a Python
+/// grammar reads no such file; a regex clause reads its text with the language's line table, whose
+/// terminators are `Newlines` for every adapter but ECMAScript's (native language/adapter.rs).
+pub fn eval_text_file(rules: &[Rule], path: &str, source: &str, out: &mut Output) {
+    use rerail_engine::code_rule_dsl::lines::{LineTable, Terminators};
+    let lines = LineTable::new(source, Terminators::Newlines);
+    for rule in rules {
+        if !rule.scope.matches(path) {
+            continue;
+        }
+        for clause in &rule.clauses {
+            let Kind::ForbidRegex(rc) = &clause.kind else { continue };
+            if rc.paths.as_ref().is_none_or(|p| p.matches(path)) {
+                regex_findings(rc, path, source, &lines, &mut |line, column| {
+                    out.findings.push(Finding { check: rule.check.clone(), clause: clause.id.clone(), path: path.to_owned(), line: line + 1, code: clause.viol.code.clone(), column: Some(column) });
+                }, &clause.viol.anchor, &rule.names);
+            }
         }
     }
 }
@@ -989,7 +1109,7 @@ pub fn finish(rules: &[Rule], mut load: impl FnMut((usize, usize)) -> Vec<crate:
         for (first, n) in groups {
             if n > *lte {
                 let (p, _, line) = &rows[first];
-                out.findings.push(Finding { check: rule.check.clone(), clause: clause.id.clone(), path: p.clone(), line: line + 1, code: clause.viol.code.clone() });
+                out.findings.push(Finding { check: rule.check.clone(), clause: clause.id.clone(), path: p.clone(), line: line + 1, code: clause.viol.code.clone(), column: None });
             }
         }
     }
@@ -1023,7 +1143,7 @@ pub fn finish(rules: &[Rule], mut load: impl FnMut((usize, usize)) -> Vec<crate:
                 out.failures.push(Failure { check: rule.check.clone(), clause: clause.id.clone(), path: String::new(), message: m });
             }
             for (p, line, code) in r.findings {
-                out.findings.push(Finding { check: rule.check.clone(), clause: clause.id.clone(), path: p, line: line + 1, code: if code.is_empty() { clause.viol.code.clone() } else { code } });
+                out.findings.push(Finding { check: rule.check.clone(), clause: clause.id.clone(), path: p, line: line + 1, code: if code.is_empty() { clause.viol.code.clone() } else { code }, column: None });
             }
             let e = out.clause_ns.entry((ri, ci)).or_default();
             e.0 += 1;
@@ -1033,28 +1153,34 @@ pub fn finish(rules: &[Rule], mut load: impl FnMut((usize, usize)) -> Vec<crate:
 }
 
 /// A regex clause's findings in one file (native `eval/query.rs:721-802`): the matches of
-/// `ast/lines.rs::matches`; under `lines` each reports the scan's own line, else the line of its
-/// start (or of the anchoring capture's start) in the file's line table; `file.path` matches
-/// report line 0.
-fn regex_findings(rc: &RegexClause, ctx: &FileCtx<'_>, emit: &mut dyn FnMut(u32), anchor: &Anchor, names: &Names) {
+/// `ast/lines.rs::matches`, each emitted as (0-based line, 1-based code-point column) of its
+/// start or of the anchoring capture's start: under `lines` the scan's own line and the offset in
+/// it (native eval/query.rs:754-762), else the file's line table's point; `file.path` matches
+/// report line 0. The column is the harness's `[...prefix].length + 1` over native's span.
+fn regex_findings(rc: &RegexClause, path: &str, source: &str, lines: &rerail_engine::code_rule_dsl::lines::LineTable, emit: &mut dyn FnMut(u32, u32), anchor: &Anchor, names: &Names) {
     let haystack = match rc.source {
-        RegexSource::Path => ctx.path,
-        RegexSource::Content => ctx.source,
+        RegexSource::Path => path,
+        RegexSource::Content => source,
     };
     ast::lines::matches(&rc.rx, haystack, &rc.options, &mut |m| {
-        emit(match (m.line, &rc.source) {
-            (Some(line), _) => line as u32,
-            (None, RegexSource::Path) => 0,
-            (None, RegexSource::Content) => {
-                let start = match anchor {
-                    Anchor::Capture(n) => {
-                        let name = &names.names[*n as usize];
-                        rc.rx.captures_at(haystack, m.range.start).and_then(|caps| caps.name(name).map(|g| g.start())).unwrap_or(m.range.start)
-                    }
-                    _ => m.range.start,
-                };
-                line_of(ctx.f, start as u32)
+        // Captures are read in the match's context (a line under `lines`), as native does.
+        let context = &haystack[m.context.clone()];
+        let start = match anchor {
+            Anchor::Capture(n) => {
+                let name = &names.names[*n as usize];
+                rc.rx.captures_at(context, m.range.start).and_then(|caps| caps.name(name).map(|g| g.start())).unwrap_or(m.range.start)
             }
-        })
+            _ => m.range.start,
+        };
+        let (line, prefix) = match (m.line, &rc.source) {
+            (Some(line), _) => (line as u32, &context[..start]),
+            (None, RegexSource::Path) => (0, &haystack[..m.context.start + start]),
+            (None, RegexSource::Content) => {
+                let at = m.context.start + start;
+                let (line, column) = lines.point(at);
+                (line as u32, &haystack[at - column..at])
+            }
+        };
+        emit(line, prefix.chars().count() as u32 + 1)
     });
 }

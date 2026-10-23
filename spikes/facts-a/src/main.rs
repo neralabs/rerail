@@ -38,10 +38,6 @@ const BATCH6: &[&str] = &[
     "legacy_execution_surfaces",
 ];
 
-/// The failure message for a Rust source a rule's scope selects: the engine parses Python only, so
-/// such a file is refused by name (I9), never skipped.
-const RUST_REFUSED: &str = "Rust sources are not supported by the facts engine (language rust)";
-
 /// Runs `f`, turning a panic into its message: the harness paths report a panic as a failure of the
 /// call, file or rule it hit (I9: refused by name, never an answer, never a lost batch).
 fn caught<T>(f: impl FnOnce() -> T) -> Result<T, String> {
@@ -155,11 +151,7 @@ fn evaluate(rules: &[eval::Rule], files: &[(String, Arc<String>)]) -> eval::Outp
             Some(Ok(facts::Built::Unparsed)) | Some(Err(_)) => {
                 out.failures.push(eval::Failure { check: String::new(), clause: String::new(), path: path.clone(), message: "file could not be parsed".into() });
             }
-            None => {
-                for rule in rules.iter().filter(|r| r.scope.matches(path)) {
-                    out.failures.push(eval::Failure { check: rule.check.clone(), clause: String::new(), path: path.clone(), message: RUST_REFUSED.into() });
-                }
-            }
+            None => eval::eval_text_file(rules, path, source, &mut out),
         }
     }
     eval::finish(rules, |k| repo.0.remove(&k).unwrap_or_default(), budget, &mut out);
