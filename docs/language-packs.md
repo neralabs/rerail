@@ -356,6 +356,14 @@ A rule id is lowercase letters, digits and dashes, in one style for every pack (
 }
 ```
 
+`packs/laravel/origins.json`, which declares where the rule comes from: it ports no other linter's rule, so it is an
+original. Every rule document declares its origin, and check 1 fails one that does not
+([origins.json](pack-format.md#conformancejson-divergencesjson-originsjson-upstream)):
+
+```json
+[{ "document": "rules/laravel-no-dd.json", "original": "Rerail's own rule: flags Laravel's dd() and dump() debugging helpers" }]
+```
+
 Add a `README.md` saying what the pack covers, then record the new workspace and run the contract:
 
 ```sh
@@ -388,7 +396,7 @@ complete example, for the test-only planned language above.
 
 A pack whose rules reproduce another tool's rules adds the validation material, which `files` never publishes:
 
-1. `conformance.json` ([schema](pack-format.md#conformancejson-divergencesjson-upstream)): the family, the
+1. `conformance.json` ([schema](pack-format.md#conformancejson-divergencesjson-originsjson-upstream)): the family, the
    capabilities the pack declares, the pinned `tools` and `corpora`, and per ported rule its `upstream` tool and rule,
    its `id` (the rule's own id) and `policy` (the same `rules/<id>.json` as the rule's `document`), how findings
    compare (`line` or `line+column`) and the capabilities it exercises. A port's clauses report the upstream rule's
@@ -408,6 +416,10 @@ A pack whose rules reproduce another tool's rules adds the validation material, 
    (`Apache-2.0 AND MIT` for an MIT tool), and annotate the copied files in `REUSE.toml`.
 4. `divergences.json`: each line where Rerail and the tool disagree, with its kind and the evidence checked. Start
    with `[]` and add an entry only for a disagreement you have checked.
+5. `origins.json`, only for a rule document no `conformance.json` entry maps: a rule of Rerail's own (an original,
+   with what it is), or a port no recording covers yet (its `upstream` rule, with why). Every rule document declares
+   its origin once, so check 1 fails one that neither file declares
+   ([origins.json](pack-format.md#conformancejson-divergencesjson-originsjson-upstream)).
 
 Then score one rule with every false positive and false negative listed, and run the contract:
 

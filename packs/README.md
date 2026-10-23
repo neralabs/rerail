@@ -40,6 +40,7 @@ Each pack lives in `packs/<id>/`:
 | `LICENSE`, `NOTICE`, `README.md` | The pack's licence, notice and description | yes |
 | `licenses/<project>/` | Upstream licence, verbatim, and `UPSTREAM.md` listing every copied or adapted file | yes |
 | `conformance.json`, `divergences.json`, `upstream/`, `candidates/` | For ported rules: the tools' recorded findings, their copied tests, declared divergences, ports under evaluation (scored and reported, never gated). The recorded findings and copied tests under `upstream/<tool>/` are pack test data, not in git: one archive per tool in S3, which `upstream/<tool>/test-data.lock` names and `npm run fixtures:pull` fetches ([CONTRIBUTING.md](../CONTRIBUTING.md#pack-test-data)) | no |
+| `origins.json` | Where each rule document no `conformance.json` entry maps comes from: an original (Rerail's own rule), or a port not mapped yet and why ([pack format](../docs/pack-format.md#conformancejson-divergencesjson-originsjson-upstream)) | no |
 
 A pack is data only: it never imports the core engine. Core runs its rules, and the repository's tests validate
 every pack against the contract. A pack may hold rules for a language core lists as `planned`: they are stored

@@ -98,9 +98,12 @@ function recordingSections(recordings: RecordingSummary[]): string[] {
 const NOT_DECLARED = "not declared";
 const ORIGINAL = "original";
 
-/** Where a rule comes from: its upstream linter (`ruff`), `original` for a rule that is not a port, or `not declared`. */
+/**
+ * Where a rule comes from, as its pack declares it (conformance/origins.ts): its upstream linter (`ruff`) for a port,
+ * `original` for Rerail's own rule, or `not declared` for a document that declares neither.
+ */
 export function originOf(rule: RuleVerdict): string {
-  return rule.upstream?.tool ?? (rule.port ? NOT_DECLARED : ORIGINAL);
+  return rule.upstream?.tool ?? (rule.origin === "original" ? ORIGINAL : NOT_DECLARED);
 }
 
 /** Upstream linters by name, then `original`, then `not declared`. */
@@ -140,7 +143,11 @@ function failuresOf(rules: RuleVerdict[]): string[] {
   return [...new Set([...rules].sort((a, b) => stepIndex(a) - stepIndex(b)).map(failureOf))];
 }
 
-/** The steps that mean no port readiness gate could judge a port: nothing says what it ports, or its linter is not set up. */
+/**
+ * The steps that mean no port readiness gate could judge a port: no conformance.json entry maps the port origins.json
+ * declares (its reason is that entry's), or its linter is not set up. A document that declares no origin fails
+ * conformance instead, and is counted with the other failures.
+ */
 const UNJUDGED: readonly StepId[] = ["mapping", "set-up"];
 
 interface Limits {

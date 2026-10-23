@@ -17,6 +17,7 @@ import { parsePlanned, stepLabel, summarize } from "../../../conformance/port-re
 import { CONFORMANCE_REPORT_FORMAT, conformanceBlockingFailures, runConformanceGates, type ConformanceReport, type ConformanceRuleReport } from "../../../conformance/port-readiness/conformance-gates.js";
 import { loadEngine } from "../../../conformance/port-readiness/engine.js";
 import { BLOCKING_GATES, type BlockingGateId } from "../../../conformance/port-readiness/types.js";
+import type { Origin } from "../../../conformance/origins.js";
 import { PACKAGE_ROOT } from "../../../src/engine/index.js";
 
 const temporary: string[] = [];
@@ -90,10 +91,23 @@ describe("location-based blocking", () => {
     assert.equal(blockingFailures(report([], [{ file: "packs/python/rules/x.json", location: "shipped" }])), 1);
   });
 
-  it("an unmapped document of a pack with a conformance.json is a port that stops at the mapping step; a shipped one blocks", () => {
-    const summary = summarize([report([rule("a", "candidate")])], [bandit], undefined, conformanceReport([unported("x", "python", "candidate"), unported("y", "python", "shipped")], [pythonPack]));
-    assert.deepEqual(summary.rules.map((entry) => [entry.id, entry.port, entry.stoppedAt]), [["a", true, null], ["x", true, "mapping"], ["y", true, "mapping"]]);
+  it("a port origins.json declares, which no conformance.json entry maps, stops at the mapping step and says why; a shipped one blocks", () => {
+    const unmapped: Origin = { kind: "port", upstream: { tool: "ruff", rule: "A005" }, unmapped: "Ruff's only fixtures for it are GPL-derived" };
+    const summary = summarize([report([rule("a", "candidate")])], [bandit], undefined, conformanceReport([unported("x", "python", "candidate", unmapped), unported("y", "python", "shipped", unmapped)], [pythonPack]));
+    assert.deepEqual(summary.rules.map((entry) => [entry.id, entry.origin, entry.upstream?.rule ?? null, entry.stoppedAt]), [["a", "port", "X1", null], ["x", "port", "A005", "mapping"], ["y", "port", "A005", "mapping"]]);
+    // The reason is the origins.json entry's own, so the comment can show it as it is.
+    assert.equal(summary.rules[1]!.why, "Ruff's only fixtures for it are GPL-derived");
     assert.deepEqual(summary.failing.map((entry) => entry.id), ["y"]);
+    assert.equal(summary.pass, false);
+  });
+
+  it("a rule document that declares no origin stops at the first conformance step, whatever else it fails; a shipped one blocks", () => {
+    const summary = summarize([], [], [], conformanceReport([unported("x", "python", "candidate", null), unported("y", "complexity", "shipped", null, { loads: "schema" })], [pythonPack, packEntry("complexity")]));
+    assert.deepEqual(summary.rules.map((entry) => [entry.id, entry.origin, entry.stoppedAt, entry.check]), [["y", null, "origin", "origin"], ["x", null, "origin", "origin"]]);
+    assert.match(summary.rules[0]!.why, /^declares no origin: map it in conformance\.json if the conformance runner can score it, or declare it in origins\.json/u);
+    assert.equal(stepLabel("origin"), "Conformance > Declares its origin: a port or an original");
+    assert.deepEqual(summary.failing.map((entry) => entry.id), ["y"]);
+    assert.deepEqual(summary.promotable, []);
     assert.equal(summary.pass, false);
   });
 
@@ -182,25 +196,29 @@ describe("location-based blocking", () => {
   });
 });
 
-/** A rule of the conformance report: one no gated upstream linter judges, of `tool` when conformance.json maps it. */
-function unported(id: string, pack: string, location: RuleReport["location"], failing: Partial<Record<"loads" | "compact", string>> = {}, tool?: string): ConformanceRuleReport {
+const original: Origin = { kind: "original", why: "Rerail's own rule, modelled on lizard" };
+/** A port of `tool` a conformance.json entry maps. */
+const mapped = (tool: string, rule: string): Origin => ({ kind: "port", upstream: { tool, rule } });
+
+/** A rule of the conformance report, one no gated upstream linter judges, with the origin its pack declares (null: none). */
+function unported(id: string, pack: string, location: RuleReport["location"], origin: Origin | null, failing: Partial<Record<"loads" | "compact", string>> = {}): ConformanceRuleReport {
   const ok = { pass: true, checks: [] };
   const failed = (check: string) => ({ pass: false, checks: [{ id: check, ok: false, detail: `${check} failed` }] });
   const gates = {
     loads: failing.loads === undefined ? ok : failed(failing.loads),
     compact: { ...(failing.compact === undefined ? ok : failed(failing.compact)), metrics: null },
-    "passes-conformance": tool !== undefined ? { ...ok, applies: true } : { pass: true, applies: false, checks: [{ id: "not-applicable", ok: true, detail: "nothing to score it against" }] },
+    "passes-conformance": origin?.kind === "port" && origin.unmapped === undefined ? { ...ok, applies: true } : { pass: true, applies: false, checks: [{ id: "not-applicable", ok: true, detail: "nothing to score it against" }] },
   };
-  const stoppedAt = failing.loads !== undefined ? "loads" : failing.compact !== undefined ? "compact" : null;
-  return { id, file: `packs/${pack}/${location === "shipped" ? "rules" : "candidates/rules"}/${id}.json`, pack, location, upstream: tool === undefined ? null : { tool, rule: id }, pass: stoppedAt === null, stoppedAt, gates };
+  const stoppedAt = origin === null ? "origin" : failing.loads !== undefined ? "loads" : failing.compact !== undefined ? "compact" : null;
+  return { id, file: `packs/${pack}/${location === "shipped" ? "rules" : "candidates/rules"}/${id}.json`, pack, location, origin, pass: stoppedAt === null, stoppedAt, gates };
 }
 
 function conformanceReport(rules: ConformanceRuleReport[], packs: ConformanceReport["packs"] = [], passesConformance: ConformanceReport["passesConformance"] = []): ConformanceReport {
   return { format: CONFORMANCE_REPORT_FORMAT, engine: { sha256: "" }, packs, rules, passesConformance };
 }
 
-const packEntry = (pack: string, hasConformanceJson: boolean): ConformanceReport["packs"][number] => ({ pack, checks: { pass: true, checks: [] }, judgedByToolPacks: 0, hasConformanceJson });
-const pythonPack = packEntry("python", true);
+const packEntry = (pack: string): ConformanceReport["packs"][number] => ({ pack, checks: { pass: true, checks: [] }, judgedByToolPacks: 0 });
+const pythonPack = packEntry("python");
 
 describe("one verdict per rule", () => {
   it("a rule is counted once, at the first step it fails: the conformance gates come before the port readiness gates", () => {
@@ -225,24 +243,26 @@ describe("one verdict per rule", () => {
     assert.deepEqual(summary.rules.map((entry) => [entry.id, entry.stoppedAt, entry.check]), [["a", "in-scope", "in-scope"], ["b", "in-scope", "in-scope"]]);
   });
 
-  it("a rule that is not a port is done after conformance; a port of a linter with no gates.yaml stops at set-up", () => {
+  it("an original is done after conformance, in any pack; a port of a linter with no gates.yaml stops at set-up", () => {
     const summary = summarize([report([rule("a", "shipped"), rule("c", "candidate")])], [bandit], undefined, conformanceReport([
-      unported("complexity-x", "complexity", "shipped"),
-      unported("complexity-y", "complexity", "candidate"),
-      unported("complexity-z", "complexity", "candidate", { compact: "expansion" }),
-      unported("n1", "node", "candidate", {}, "eslint-plugin-n"),
-      unported("n2", "node", "shipped", {}, "eslint-plugin-n"),
-      unported("n3", "node", "candidate", { loads: "schema" }, "eslint-plugin-n"),
-    ], [packEntry("complexity", false), packEntry("node", true)]));
-    assert.deepEqual(summary.rules.filter((entry) => !entry.file.startsWith("packs/python/")).map((entry) => [entry.id, entry.port, entry.stoppedAt]), [
-      ["complexity-y", false, null],
-      ["complexity-z", false, "compact"],
-      ["complexity-x", false, null],
-      ["n1", true, "set-up"],
-      ["n3", true, "loads"],
-      ["n2", true, "set-up"],
+      unported("complexity-x", "complexity", "shipped", original),
+      unported("complexity-y", "complexity", "candidate", original),
+      unported("complexity-z", "complexity", "candidate", original, { compact: "expansion" }),
+      unported("n1", "node", "candidate", mapped("eslint-plugin-n", "n/n1")),
+      unported("n2", "node", "shipped", mapped("eslint-plugin-n", "n/n2")),
+      unported("n3", "node", "candidate", mapped("eslint-plugin-n", "n/n3"), { loads: "schema" }),
+      unported("n4", "node", "candidate", original),
+    ], [packEntry("complexity"), packEntry("node")]));
+    assert.deepEqual(summary.rules.filter((entry) => !entry.file.startsWith("packs/python/")).map((entry) => [entry.id, entry.origin, entry.stoppedAt]), [
+      ["complexity-y", "original", null],
+      ["complexity-z", "original", "compact"],
+      ["complexity-x", "original", null],
+      ["n1", "port", "set-up"],
+      ["n3", "port", "loads"],
+      ["n4", "original", null],
+      ["n2", "port", "set-up"],
     ]);
-    assert.deepEqual(summary.promotable.map((entry) => entry.id), ["complexity-y", "c"]);
+    assert.deepEqual(summary.promotable.map((entry) => entry.id), ["complexity-y", "n4", "c"]);
     assert.deepEqual(summary.failing.map((entry) => entry.id), ["n2"]);
     assert.match(summary.failing[0]!.why, /^eslint-plugin-n has no packs\/node\/upstream\/eslint-plugin-n\/gates\.yaml yet/u);
     assert.deepEqual(summary.shipped, { rules: 3, pass: 2 });
@@ -250,7 +270,7 @@ describe("one verdict per rule", () => {
   });
 
   it("a shipped rule that fails conformance, a failing pack check, and a missing conformance report each block", () => {
-    const failing = summarize([], [], [], conformanceReport([unported("complexity-x", "complexity", "shipped", { compact: "expansion" })], [{ ...packEntry("complexity", false), checks: { pass: false, checks: [{ id: "bundled-load", ok: false, detail: "duplicate id" }] } }]));
+    const failing = summarize([], [], [], conformanceReport([unported("complexity-x", "complexity", "shipped", original, { compact: "expansion" })], [{ ...packEntry("complexity"), checks: { pass: false, checks: [{ id: "bundled-load", ok: false, detail: "duplicate id" }] } }]));
     assert.deepEqual(failing.failing.map((entry) => [entry.id, entry.check]), [["complexity-x", "expansion"]]);
     assert.deepEqual(failing.otherFailures.map((entry) => [entry.what, entry.check]), [["complexity", "bundled-load"]]);
     assert.equal(failing.pass, false);
@@ -445,13 +465,17 @@ function packCheck(passing: string[]): (root: string, pack: string) => Promise<P
   return async () => ({ rows: new Map(passing.map((id) => [id, row(id)])), pinsCorpora: false, stale: new Map(), uncovered: new Map(), ruleErrors: new Map(), errors: [] });
 }
 
-/** A tree of two packs: `demo`, with no conformance.json, and `ported`, whose one tool has a gates.yaml. */
+/**
+ * A tree of two packs: `demo`, with no conformance.json, whose origins.json declares its two documents originals, and
+ * `ported`, whose one tool has a gates.yaml.
+ */
 function conformanceTree(): string {
   const root = tempRoot();
   const complexity = readFileSync(join(PACKAGE_ROOT, "packs/complexity/rules/complexity-cyclomatic-python.json"), "utf8");
   write(root, "packs/demo/pack.json", { rules: [{ id: "complexity-cyclomatic-python", document: "rules/complexity-cyclomatic-python.json" }] });
   write(root, "packs/demo/rules/complexity-cyclomatic-python.json", complexity);
   write(root, "packs/demo/candidates/rules/broken.json", "{");
+  write(root, "packs/demo/origins.json", ["rules/complexity-cyclomatic-python.json", "candidates/rules/broken.json"].map((document) => ({ document, original: "Rerail's own rule, for the conformance gates' tests" })));
   write(root, "packs/ported/pack.json", { rules: [] });
   write(root, "packs/ported/conformance.json", { tools: [{ name: "lint" }], rules: [{ id: "x", policy: "rules/x.json", upstream: { tool: "lint", rule: "x" } }] });
   write(root, "packs/ported/upstream/lint/gates.yaml", "");
@@ -465,9 +489,9 @@ describe("the conformance gates", () => {
   it("judge the rules no gated tool-pack judges, and leave the gated tool-pack's loads and compact to its own run", async () => {
     const root = conformanceTree();
     const report = await runConformanceGates(root, { engine: loadEngine(), cacheRoot: join(root, ".cache"), packConformance: packCheck(["x"]) });
-    assert.deepEqual(report.rules.map((rule) => [rule.file, rule.location, rule.pass, rule.stoppedAt]), [
-      ["packs/demo/candidates/rules/broken.json", "candidate", false, "loads"],
-      ["packs/demo/rules/complexity-cyclomatic-python.json", "shipped", true, null],
+    assert.deepEqual(report.rules.map((rule) => [rule.file, rule.location, rule.origin?.kind, rule.pass, rule.stoppedAt]), [
+      ["packs/demo/candidates/rules/broken.json", "candidate", "original", false, "loads"],
+      ["packs/demo/rules/complexity-cyclomatic-python.json", "shipped", "original", true, null],
     ]);
     assert.deepEqual(report.packs.map((entry) => [entry.pack, entry.checks.pass, entry.judgedByToolPacks]), [["demo", true, 0], ["ported", true, 1]]);
     assert.equal(conformanceBlockingFailures(report), 0);
@@ -507,9 +531,23 @@ describe("the conformance gates", () => {
     const root = conformanceTree();
     write(root, "packs/demo/rules/broken.json", "{");
     write(root, "packs/demo/pack.json", { rules: [{ id: "complexity-cyclomatic-python", document: "rules/complexity-cyclomatic-python.json" }, { id: "broken", document: "rules/broken.json" }] });
+    write(root, "packs/demo/origins.json", ["rules/complexity-cyclomatic-python.json", "rules/broken.json", "candidates/rules/broken.json"].map((document) => ({ document, original: "Rerail's own rule, for the conformance gates' tests" })));
     const report = await runConformanceGates(root, { engine: loadEngine(), cacheRoot: join(root, ".cache"), packConformance: packCheck(["x"]) });
-    assert.equal(report.rules.find((rule) => rule.file === "packs/demo/rules/broken.json")?.pass, false);
+    assert.deepEqual(report.rules.filter((rule) => rule.file === "packs/demo/rules/broken.json").map((rule) => [rule.pass, rule.stoppedAt]), [[false, "loads"]]);
     assert.equal(report.packs.find((entry) => entry.pack === "demo")?.checks.pass, false);
+    assert.equal(conformanceBlockingFailures(report), 2);
+  });
+
+  it("stop a rule document that declares no origin at the origin step, and fail a pack whose origins.json is wrong", async () => {
+    const root = conformanceTree();
+    write(root, "packs/demo/origins.json", [{ document: "rules/gone.json", original: "declared, though no such document exists" }]);
+    const report = await runConformanceGates(root, { engine: loadEngine(), cacheRoot: join(root, ".cache"), packConformance: packCheck(["x"]) });
+    assert.deepEqual(report.rules.map((rule) => [rule.file, rule.origin, rule.pass, rule.stoppedAt]), [
+      ["packs/demo/candidates/rules/broken.json", null, false, "origin"],
+      ["packs/demo/rules/complexity-cyclomatic-python.json", null, false, "origin"],
+    ]);
+    const demo = report.packs.find((entry) => entry.pack === "demo")!;
+    assert.deepEqual(demo.checks.checks.filter((check) => !check.ok).map((check) => [check.id, check.detail]), [["origins", "origins.json: rules/gone.json is not a rule document of the pack"]]);
     assert.equal(conformanceBlockingFailures(report), 2);
   });
 });

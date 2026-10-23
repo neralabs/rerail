@@ -37,9 +37,16 @@ const POINTS: Readonly<Record<string, FailurePoint>> = {
   "divergences-current": { what: "Declares a difference from upstream that no longer happens", fix: "remove the stale entry from `divergences.json`" },
   "corpus-recorded": { what: "The pack's real-code recordings don't cover it", fix: "record the pack's corpora for its upstream rule" },
   "conformance-job": { what: "The conformance job didn't report it", fix: "re-run CI; if it persists, the conformance job is missing the rule" },
+  // Conformance: where it comes from (conformance/origins.ts).
+  origin: {
+    what: "Not declared: neither `conformance.json` nor `origins.json` says where it comes from",
+    fix: "add its `conformance.json` entry if it is a port the recordings cover; otherwise declare it in `origins.json`, as an original or as a port with why it is not recorded",
+  },
   // Port readiness: what it needs before any port readiness gate can run.
-  origin: { what: "Doesn't declare where it comes from (a port of an upstream rule, or an original)", fix: "declare its origin" },
-  "conformance-entry": { what: "Not declared: no `conformance.json` entry says which upstream rule it ports", fix: "add its `conformance.json` entry" },
+  "conformance-entry": {
+    what: "Declared, not recorded: `origins.json` names its upstream rule, but no `conformance.json` entry maps it yet",
+    fix: "record its upstream rule, then replace its `origins.json` entry with a `conformance.json` entry",
+  },
   "gates-yaml": { what: "Its upstream linter isn't set up for port readiness yet", fix: "add the linter's `gates.yaml`, or keep the rule a candidate" },
   // Port readiness: the upstream licence.
   "license-sha256": { what: "The kept copy of upstream's licence isn't upstream's", fix: "re-record the linter, or restore `licenses/<project>/`" },

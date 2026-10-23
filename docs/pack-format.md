@@ -34,6 +34,8 @@ packs/<id>/
 │   └── <rule id>.json  code-rule documents (rerail.policy/v1), each named for its id
 ├── licenses/
 │   └── <project>/      upstream LICENSE (verbatim) and UPSTREAM.md (every copied or adapted file)
+├── origins.json        where the rule documents no conformance.json entry maps come from: originals, and ports not
+│                       mapped yet (only when the pack has one)
 │
 │   only for packs that port rules from another tool:
 ├── conformance.json    the conformance pack schema of conformance/languages/pack.ts, as today
@@ -69,8 +71,8 @@ packs/<id>/
   core is never installed beside the packs in `$RERAIL_HOME/packs`.
 - The peer is `optional`: `packs/*` are workspaces of this repository, whose root package is core itself, and npm
   would otherwise try to install a published core into them.
-- `files` publishes the pack and its licence records. `conformance.json`, `divergences.json`, `upstream/` and
-  `candidates/` are validation material: they stay in the repository and never reach npm, which keeps copied
+- `files` publishes the pack and its licence records. `conformance.json`, `divergences.json`, `origins.json`,
+  `upstream/` and `candidates/` are validation material: they stay in the repository and never reach npm, which keeps copied
   upstream tests out of the package.
 - `repository` names this repository and the pack's directory: npm's trusted publishing requires the repository it
   publishes from. `publishConfig.access` is `restricted` until launch, like core.
@@ -105,7 +107,7 @@ the upstream tool's name then its rule for a port (`eslint-no-empty`, `typescrip
 its id when it ships), and its port's `id` in `conformance.json`. Check 1 enforces this, and the pack tests reject an id
 that two documents in any packs share.
 
-### conformance.json, divergences.json, upstream/
+### conformance.json, divergences.json, origins.json, upstream/
 
 Today's schemas from `conformance/languages/pack.ts`, moved next to the rules they validate. The runner reads a pack's
 recordings from `upstream/` unless `conformance.json` sets `oracles`:
@@ -143,6 +145,31 @@ recordings from `upstream/` unless `conformance.json` sets `oracles`:
   patterns the rename must keep (names the rule's implementation or the test's options mention).
 - `divergences.json`: each place Rerail and the tool disagree, with its kind (`upstream-wrong`, `not-comparable`,
   `rerail-unknown`) and the evidence checked.
+- `origins.json` (`conformance/origins.ts`): where each rule document no `conformance.json` entry maps comes from.
+  Every rule document, shipped or candidate, declares its origin exactly once: a `conformance.json` entry (the root
+  one or `candidates/conformance.json`) declares its document a port of the upstream rule it names; `origins.json`
+  declares the rest. It is a list of entries, each naming a pack-relative `document`:
+  - an **original**, Rerail's own rule, with `original`: what it is, and what it is modelled on, if anything;
+  - a **port not mapped yet**, with `upstream` (`tool`, one of the pack's `conformance.json` tools, and `rule`) and
+    `unmapped`: why no `conformance.json` entry maps it, typically that no recording covers its upstream rule. The
+    rule gates comment shows it as written, after the rule's id, so it reads on its own: "Ruff's only fixtures for
+    A005 are GPL-derived, so Rerail does not record them".
+
+  ```json
+  [
+    { "document": "rules/complexity-cyclomatic-python.json", "original": "Rerail's own rule, modelled on lizard 1.24.0: ..." },
+    {
+      "document": "candidates/rules/typescript-eslint-prefer-optional-chain.json",
+      "upstream": { "tool": "typescript-eslint", "rule": "@typescript-eslint/prefer-optional-chain" },
+      "unmapped": "it needs type information, which the recordings do not have"
+    }
+  ]
+  ```
+
+  The [port readiness](port-readiness.md#the-gates) gates read the declaration: a port meets port readiness after
+  conformance, an original is done after conformance, and a document declared nowhere fails conformance. A port
+  declared here stops at "Mapped to an upstream rule" until its `conformance.json` entry replaces its `origins.json`
+  one.
 
 ## Rule text
 
@@ -234,7 +261,7 @@ negative of one ported rule: `node --import tsx conformance/languages/cli.ts --p
 
 | # | Check | Fails when |
 |---|---|---|
-| 1 | Rules | A file in `rules/` is not listed in `pack.json`, a listed `document` is missing, is not named for its rule's id, its `id` differs from the listing, or it does not compile against core's capabilities; a rule id breaks the [id rule](#packjson); a candidate is not `rerail.policy/v1`, not in a `rules/` directory or not named for its id; a port's `id` differs from its document's; a `conformance.json` under `candidates/` does not parse or names a missing document |
+| 1 | Rules | A file in `rules/` is not listed in `pack.json`, a listed `document` is missing, is not named for its rule's id, its `id` differs from the listing, or it does not compile against core's capabilities; a rule id breaks the [id rule](#packjson); a candidate is not `rerail.policy/v1`, not in a `rules/` directory or not named for its id; a port's `id` differs from its document's; a `conformance.json` under `candidates/` does not parse or names a missing document; a rule document declares no origin, or two; an `origins.json` entry does not parse, names no rule document of the pack, or ports a tool no `conformance.json` of the pack lists |
 | 2 | Proof | A rule has neither `examples` nor a port entry in `conformance.json` |
 | 3 | Examples | A `caught` example produces no violation of its rule, or a `passes` example produces one |
 | 4 | Ports | With `conformance.json`: a shipped ported rule's violations and the tool's recordings differ outside `divergences.json`; a divergence matches nothing (stale); a declared capability has neither a ported rule nor an exemption; a port's violation does not carry the suppression comment its tool honours, outside `suppressionExemptions`, or an exemption is stale; a port carries `suppress.oxlint` and `suppress.eslint` on different violations; a violation carries `suppress.eslint` without the Biome rules the same as its ESLint rule under `suppress.biome`, or `suppress.biome` without `suppress.eslint` |
@@ -253,7 +280,9 @@ Precisely:
    (`candidates/rules/<id>.json`, `candidates/probes/rules/<id>.json`); candidates need not compile. Every port in the
    pack's `conformance.json`, and in each `conformance.json` under `candidates/` (probes), has its document's `id`.
    Check 4 loads only the root `conformance.json`, so check 1 also fails a `conformance.json` under `candidates/` that
-   does not parse (`packSchema`) or has a port whose document does not exist.
+   does not parse (`packSchema`) or has a port whose document does not exist. Every rule document in `rules/` and under
+   `candidates/` (outside `candidates/probes/`) declares its origin once, by a `conformance.json` entry or an
+   `origins.json` one ([origins.json](#conformancejson-divergencesjson-originsjson-upstream)).
 2. A port entry is a `conformance.json` rule whose `policy` is the rule's `document`.
 3. Each example is evaluated alone, as a one-file repository at its `path`, through the engine (`evaluateExample` in
    `conformance/pack-validation.ts`). Its path must be in the rule's scope, and it must produce no engine failure. A

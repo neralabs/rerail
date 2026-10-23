@@ -1,0 +1,10 @@
+[
+  {
+    "document": "candidates/rules/unicorn-no-array-for-each.json",
+    "upstream": {
+      "tool": "eslint-plugin-unicorn",
+      "rule": "unicorn/no-array-for-each"
+    },
+    "unmapped": "it is not a rule of the pinned eslint-plugin-unicorn 76.0.0, so there is nothing to record"
+  }
+]

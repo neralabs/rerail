@@ -17,7 +17,8 @@ checked by `npx vitest run test/engine/catalog/packs.test.ts`.
 | `divergences.json` | Declared disagreements with the tools |
 | `upstream/<tool>/` | The tool's copied tests (`fixtures/`), the cases Rerail wrote for it (`fixtures/rerail/`, listed in `UPSTREAM.md`: every shipped rule on lines carrying `# noqa` or `# nosec`, and probes of inputs the ports once misread), its recordings (`fixtures.expected.json`, `corpus-django.expected.json`) and the recorder (`generate.py`, sharing `upstream/common.py`) |
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
-| `candidates/rules/` | Ports still being evaluated (98 Ruff and Bandit ports): never shipped or listed in `pack.json`. 96 have a `conformance.json` port and are scored against the recordings without gating; A005 (GPL-derived fixtures only) and INP001 (tested only with a `namespace-packages` option) are not recorded |
+| `candidates/rules/` | Ports still being evaluated (98 Ruff and Bandit ports): never shipped or listed in `pack.json`. 96 have a `conformance.json` port and are scored against the recordings without gating; A005 (GPL-derived fixtures only) and INP001 (tested only with a `namespace-packages` option) are not recorded, so `origins.json` declares them ports no entry maps yet |
+| `origins.json` | The ports no `conformance.json` entry maps yet, each with its upstream rule and why ([pack format](../../docs/pack-format.md#conformancejson-divergencesjson-originsjson-upstream)) |
 
 Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
 ([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe

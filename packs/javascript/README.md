@@ -18,7 +18,8 @@ It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack java
 | `upstream/generate.mjs` | ESLint's recorder |
 | `upstream/eslint-plugin-unicorn/` | eslint-plugin-unicorn's copied test cases, its recording and its recorder (`generate.mjs`) |
 | `upstream/<tool>/gates.yaml`, `recording.lock`, `goldens.tsv` | The port readiness gates' manifest for the tool, the lock naming its recordings (`recording.json`, `corpus.json`, kept out of git, by sha256) and its goldens ([docs/port-readiness.md](../../docs/port-readiness.md)) |
-| `candidates/rules/` | Ports of ESLint and eslint-plugin-unicorn rules still being evaluated: listed in `conformance.json`, scored and reported, never gated, never shipped |
+| `candidates/rules/` | Ports of ESLint and eslint-plugin-unicorn rules still being evaluated: listed in `conformance.json`, scored and reported, never gated, never shipped. `unicorn-no-array-for-each` is not: its rule is not in the pinned eslint-plugin-unicorn 76.0.0, so `origins.json` declares it a port no entry maps yet |
+| `origins.json` | The ports no `conformance.json` entry maps yet, each with its upstream rule and why ([pack format](../../docs/pack-format.md#conformancejson-divergencesjson-originsjson-upstream)) |
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
 
 The pack is recommended for a repository with JavaScript or TypeScript source files. Files under test, script and

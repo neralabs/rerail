@@ -1,0 +1,6 @@
+[
+  {
+    "document": "rules/no-identifier.json",
+    "original": "Rerail's own rule for the test-only exemplar language: there is no upstream linter for it to port"
+  }
+]

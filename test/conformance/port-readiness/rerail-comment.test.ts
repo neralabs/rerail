@@ -9,13 +9,12 @@ import { failureLabel, failurePoint } from "../../../conformance/port-readiness/
 import { readRecordingSummaries, SUMMARY_FORMAT, type OtherFailure, type RuleVerdict, type StepId, type Summary } from "../../../conformance/port-readiness/summary.js";
 
 /** The check a rule stopping at each step fails in these tests. */
-const CHECKS: Partial<Record<StepId, string>> = { compact: "no-combinatorial-expansion", "passes-conformance": "catches-something", mapping: "conformance-entry", "not-overfit": "no-fixture-only-names", "matches-upstream-tests": "identical-results" };
+const CHECKS: Partial<Record<StepId, string>> = { origin: "origin", compact: "no-combinatorial-expansion", "passes-conformance": "catches-something", mapping: "conformance-entry", "not-overfit": "no-fixture-only-names", "matches-upstream-tests": "identical-results" };
 
-/** A port of `tool` unless `tool` is null: a complexity rule, not a port, or with `undeclared` a port no entry maps. */
+/** A port of `tool`, unless `tool` is null: then an original (a complexity rule), or with `undeclared` a document that declares no origin. */
 function verdict(id: string, location: RuleVerdict["location"], stoppedAt: StepId | null, tool: string | null = "ruff", pack = tool === null ? "complexity" : "python", undeclared = false): RuleVerdict {
-  const port = tool !== null || undeclared;
   return {
-    id, file: `packs/${pack}/${location === "shipped" ? "rules" : "candidates/rules"}/${id}.json`, pack, location, port,
+    id, file: `packs/${pack}/${location === "shipped" ? "rules" : "candidates/rules"}/${id}.json`, pack, location, origin: tool !== null ? "port" : undeclared ? null : "original",
     upstream: tool === null ? null : { tool, rule: id.toUpperCase() }, stoppedAt,
     check: stoppedAt === null ? "" : CHECKS[stoppedAt]!, why: stoppedAt === null ? "" : stoppedAt === "mapping" ? "the fixtures are GPL-derived" : `1 upstream test file differs ${"x".repeat(400)}`,
     ...(tool === null ? {} : { onByDefault: true }),
@@ -36,7 +35,10 @@ function summary(rules: RuleVerdict[], otherFailures: OtherFailure[] = []): Summ
   };
 }
 
-/** python: 3 shipped ruff rules (one failing) and 2 bandit; candidates across the gates; complexity: 2 shipped originals. */
+/**
+ * python: 3 shipped ruff rules (one failing) and 2 bandit; candidates across the gates, among them a port no
+ * conformance.json entry maps (ruff-g) and a document that declares no origin (python-h); complexity: originals.
+ */
 const sample = (): RuleVerdict[] => [
   verdict("ruff-a", "shipped", null),
   verdict("ruff-b", "shipped", null),
@@ -49,7 +51,8 @@ const sample = (): RuleVerdict[] => [
   verdict("ruff-e", "candidate", "passes-conformance"),
   verdict("ruff-f", "candidate", "matches-upstream-tests"),
   verdict("bandit-c", "candidate", "not-overfit", "bandit"),
-  verdict("ruff-g", "candidate", "mapping", null, "python", true),
+  verdict("ruff-g", "candidate", "mapping"),
+  verdict("python-h", "candidate", "origin", null, "python", true),
   verdict("complexity-c", "candidate", null, null),
 ];
 
@@ -91,15 +94,15 @@ test("a blocking failure no rule owns is listed with the blockers, and counted i
 
 test("the candidate rule summary lists the candidates ready to promote, then each pack's candidates by origin and gate", () => {
   const text = renderComment(summary(sample()));
-  const section = text.slice(text.indexOf("### Candidate Rule Summary: 6 candidates, 🟢 2 ready to promote"));
+  const section = text.slice(text.indexOf("### Candidate Rule Summary: 7 candidates, 🟢 2 ready to promote"));
   assert.match(section, /^- 🟢 `ruff-d` \(python, from ruff RUFF-D\): on by default$/mu);
   assert.match(section, /^- 🟢 `complexity-c` \(complexity, original\)$/mu);
-  const python = block(section, "python: 5");
+  const python = block(section, "python: 6");
   assert.match(python, /^\| Origin \| 🟢 Ready \| ❌ Conformance \| ❌ Port readiness \| Total \|$/mu);
-  assert.match(python, /^\| bandit \| 0 \| 0 \| 1 \| 1 \|\n\| ruff \| 1 \| 1 \| 1 \| 3 \|\n\| not declared \| 0 \| 0 \| 1 \| 1 \|\n\| \*\*Total\*\* \| \*\*1\*\* \| \*\*1\*\* \| \*\*3\*\* \| \*\*5\*\* \|$/mu);
+  assert.match(python, /^\| bandit \| 0 \| 0 \| 1 \| 1 \|\n\| ruff \| 1 \| 1 \| 2 \| 4 \|\n\| not declared \| 0 \| 1 \| 0 \| 1 \|\n\| \*\*Total\*\* \| \*\*1\*\* \| \*\*2\*\* \| \*\*3\*\* \| \*\*6\*\* \|$/mu);
   assert.match(python, /^\| Fails because \| bandit \| ruff \| not declared \|$/mu);
-  assert.match(python, /^\| Conformance: Flags nothing in its test fixtures \|  \| 1 \|  \|\n\| Port readiness: Not declared: no `conformance\.json` entry says which upstream rule it ports \|  \|  \| 1 \|\n\| Port readiness: Hardcodes names that only appear in upstream's tests \| 1 \|  \|  \|\n\| Port readiness: Reports different findings than upstream on upstream's own tests \|  \| 1 \|  \|$/mu);
-  // The candidates no port readiness gate could judge are named, with why.
+  assert.match(python, /^\| Conformance: Not declared: neither `conformance\.json` nor `origins\.json` says where it comes from \|  \|  \| 1 \|\n\| Conformance: Flags nothing in its test fixtures \|  \| 1 \|  \|\n\| Port readiness: Declared, not recorded: `origins\.json` names its upstream rule, but no `conformance\.json` entry maps it yet \|  \| 1 \|  \|\n\| Port readiness: Hardcodes names that only appear in upstream's tests \| 1 \|  \|  \|\n\| Port readiness: Reports different findings than upstream on upstream's own tests \|  \| 1 \|  \|$/mu);
+  // The candidates no port readiness gate could judge are named, with the reason their origins.json entry gives.
   assert.match(python, /^Not judged against upstream:\n\n- `ruff-g`: the fixtures are GPL-derived$/mu);
   // Every candidate of complexity is ready: no failure table.
   assert.doesNotMatch(block(section, "complexity: 1"), /Fails because/u);
@@ -111,9 +114,10 @@ test("the candidate rule summary lists the candidates ready to promote, then eac
 test("the job summary is the comment's page in full, with each failing candidate's gate and why", () => {
   const text = renderJobSummary(summary(sample()));
   assert.ok(!text.startsWith(COMMENT_MARKER));
-  const python = block(text, "Each failing python candidate (4)");
+  const python = block(text, "Each failing python candidate (5)");
   assert.match(python, /^\*\*Port readiness: Hardcodes names that only appear in upstream's tests\*\*\n\n- `bandit-c` \(python, from bandit BANDIT-C\): 1 upstream test file differs x{400}$/mu);
-  assert.match(python, /^- `ruff-g` \(python, not declared\): /mu);
+  assert.match(python, /^- `ruff-g` \(python, from ruff RUFF-G\): /mu);
+  assert.match(python, /^- `python-h` \(python, not declared\): /mu);
 });
 
 test("thousands of rules still fit in one comment", () => {
