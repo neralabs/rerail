@@ -29,6 +29,9 @@ zstd = "=0.14.2"
 # The daemon's bulk sync reads trees and blobs from the Git object database (the version and
 # features rerail-engine builds, so nothing builds twice).
 gix = { version = "=0.84.0", default-features = false, features = ["sha1"] }
+# The daemon's persistent evaluation workers (the version rerail-engine builds): regex match caches
+# are per thread, so a fixed set of threads bounds them where threads spawned per request do not.
+rayon = "=1.12.0"
 # Live and peak heap bytes for FACTS_MEMTRACE (the process allocator is the engine's jemalloc).
 tikv-jemalloc-ctl = { version = "=0.6.1", features = ["stats"] }
 tikv-jemalloc-sys = { version = "=0.6.1", default-features = false }

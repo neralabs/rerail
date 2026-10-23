@@ -1,7 +1,8 @@
 /**
  * A client of the facts daemon (`facts-a daemon`, docs/facts/PROTOCOL.md): starts the daemon, speaks its framed protocol
- * over the Unix socket, matches replies to requests by `seq` and hands cross-file pushes to a listener. The end-to-end
- * run of the memory47 harness (`benchmark/workspaces/workspaces.ts run --engine facts`) drives it.
+ * over the Unix socket, matches replies to requests by `seq` (a request's partial frames go to its listener before the
+ * reply) and hands cross-file pushes to a listener. The end-to-end run of the memory47 harness
+ * (`benchmark/workspaces/workspaces.ts run --engine facts`) drives it.
  */
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -28,10 +29,15 @@ export function gitBlobId(bytes: Buffer): string {
   return createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
 }
 
+interface Pending {
+  resolve: (message: DaemonMessage) => void;
+  partial: (message: DaemonMessage) => void;
+}
+
 export class FactsDaemon {
   readonly pid: number;
   #next = 1;
-  #pending = new Map<number, (message: DaemonMessage) => void>();
+  #pending = new Map<number, Pending>();
   #buffer = Buffer.alloc(0);
   #onPush: (message: DaemonMessage) => void = () => {};
 
@@ -62,7 +68,8 @@ export class FactsDaemon {
     this.#onPush = listener;
   }
 
-  request(header: Record<string, unknown>, body: Buffer = Buffer.alloc(0)): Promise<DaemonMessage> {
+  /** One request; its partial frames (`partial: true`, same `seq`) go to `partial` as they arrive, then the reply resolves. */
+  request(header: Record<string, unknown>, body: Buffer = Buffer.alloc(0), partial: (message: DaemonMessage) => void = () => {}): Promise<DaemonMessage> {
     const seq = this.#next++;
     const h = Buffer.from(JSON.stringify({ ...header, seq }));
     const frame = Buffer.alloc(8 + h.length + body.length);
@@ -71,26 +78,33 @@ export class FactsDaemon {
     frame.writeUInt32LE(body.length, 4 + h.length);
     body.copy(frame, 8 + h.length);
     const reply = Promise.withResolvers<DaemonMessage>();
-    this.#pending.set(seq, message => (message.op === "error" ? reply.reject(new Error(`facts daemon: ${String(message.error)}`)) : reply.resolve(message)));
+    this.#pending.set(seq, { resolve: message => (message.op === "error" ? reply.reject(new Error(`facts daemon: ${String(message.error)}`)) : reply.resolve(message)), partial });
     this.socket.write(frame);
     return reply.promise;
   }
 
   /**
    * An edit by Git blob id, hash first: the bytes go only when the daemon answers that it does not know the content.
-   * Returns the findings reply and whether the bytes were sent.
+   * Returns the findings reply, whether the bytes were sent, and the partial frames before the reply.
    */
-  async edit(worktree: string, path: string, bytes: Buffer | null): Promise<{ reply: DaemonMessage; sentBytes: boolean }> {
-    if (bytes === null) return { reply: await this.request({ op: "edit", worktree, path }), sentBytes: false };
+  async edit(worktree: string, path: string, bytes: Buffer | null, partial: (message: DaemonMessage) => void = () => {}): Promise<{ reply: DaemonMessage; sentBytes: boolean }> {
+    if (bytes === null) return { reply: await this.request({ op: "edit", worktree, path }, undefined, partial), sentBytes: false };
     const git = gitBlobId(bytes);
-    const first = await this.request({ op: "edit", worktree, path, git });
+    const first = await this.request({ op: "edit", worktree, path, git }, undefined, partial);
     if (first.op !== "need_bytes") return { reply: first, sentBytes: false };
-    return { reply: await this.request({ op: "edit", worktree, path, git }, bytes), sentBytes: true };
+    return { reply: await this.request({ op: "edit", worktree, path, git }, bytes, partial), sentBytes: true };
   }
-  async close(): Promise<void> {
-    await this.request({ op: "shutdown" });
+
+  /** Shuts the daemon down; with `attribute`, its `bye` carries the memory attribution (`Engine::attribute`). */
+  async close(attribute = false): Promise<DaemonMessage> {
+    const bye = await this.request({ op: "shutdown", attribute });
     this.socket.end();
-    if (this.child.exitCode === null) await new Promise(resolve => this.child.once("exit", resolve));
+    if (this.child.exitCode === null) {
+      const exited = Promise.withResolvers<void>();
+      this.child.once("exit", () => exited.resolve());
+      await exited.promise;
+    }
+    return bye;
   }
 
   #receive(chunk: Buffer): void {
@@ -103,13 +117,17 @@ export class FactsDaemon {
       const message = JSON.parse(this.#buffer.subarray(4, 4 + headerLength).toString("utf8")) as DaemonMessage;
       this.#buffer = this.#buffer.subarray(8 + headerLength + bodyLength);
       const seq = typeof message.seq === "number" ? message.seq : undefined;
-      const resolve = seq === undefined ? undefined : this.#pending.get(seq);
-      if (resolve === undefined) {
+      const pending = seq === undefined ? undefined : this.#pending.get(seq);
+      if (pending === undefined) {
         this.#onPush(message);
         continue;
       }
+      if (message.partial === true) {
+        pending.partial(message);
+        continue;
+      }
       this.#pending.delete(seq!);
-      resolve(message);
+      pending.resolve(message);
     }
   }
 }

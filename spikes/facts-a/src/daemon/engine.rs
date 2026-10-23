@@ -1,23 +1,25 @@
 //! The daemon's state: compiled rules, the memo (content store), contents and paths interned, the
 //! membership model (base, cluster bases, worktree deltas; `membership.rs`), the per-file results
-//! of every (path, content) pair some tag holds, and the cross-file side.
+//! of every (path, content) pair some tag holds, and the cross-file side's worker.
 //!
 //! Per-worktree state is its delta from its parent level and its epoch; findings are not stored per
 //! worktree: a worktree's per-file findings are its members' pair results, and a membership change
-//! answers with the changed paths' old and new pair results (introduced / removed).
-use super::crossfile::{self, Content, CrossFile, FindingsDelta, PathChange};
+//! answers with the changed paths' old and new pair results (introduced / removed): at once for
+//! the pairs resident or served by the memo, then as the workers finish the clauses evaluated
+//! (partial frames, PROTOCOL.md § Streaming), the remainder in the reply.
+use super::crossfile::{self, PathChange, Snapshot, Worker};
 use super::git::Odb;
 use super::membership::{self, BASE, Cid, Members, Model, Resident, Sym, W};
-use super::perfile;
-use crate::eval::{Failure, Finding, Rule};
+use super::memory;
+use super::perfile::{self, Progress};
+use crate::eval::{Failure, Rule};
 use crate::memo::Memo;
 use rerail_engine::content_store::{HashKey, SourceId};
 use rustc_hash::FxHashMap;
 use serde_json::{Value as Json, json};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 /// The pins the daemon holds on the sources of the contents some worktree holds.
@@ -75,7 +77,7 @@ impl Work {
     }
 }
 
-/// A membership change's answer.
+/// A membership change's answer: the reply's part of the delta (what no partial frame carried).
 pub struct Change {
     pub epoch: u64,
     pub introduced: Vec<Json>,
@@ -84,17 +86,61 @@ pub struct Change {
     pub failures_removed: Vec<Json>,
     pub changed_paths: usize,
     pub work: Work,
+    /// Partial frames sent before the reply.
+    pub frames: u32,
+    pub shape: perfile::Shape,
 }
 
 impl Change {
+    fn none(epoch: u64) -> Change {
+        Change { epoch, introduced: Vec::new(), removed: Vec::new(), failures_introduced: Vec::new(), failures_removed: Vec::new(), changed_paths: 0, work: Work::default(), frames: 0, shape: perfile::Shape::default() }
+    }
+
     pub fn json(&self, worktree: &str) -> Json {
         json!({
-            "op": "findings", "worktree": worktree, "epoch": self.epoch, "cross": false,
+            "op": "findings", "worktree": worktree, "epoch": self.epoch, "cross": false, "partial": false,
             "introduced": self.introduced, "removed": self.removed,
             "failures_introduced": self.failures_introduced, "failures_removed": self.failures_removed,
-            "changed_paths": self.changed_paths, "work": self.work.json(),
+            "changed_paths": self.changed_paths, "work": self.work.json(), "frames": self.frames,
+            "tasks": self.shape.tasks, "workers": self.shape.workers, "scratch_peak": self.shape.scratch_peak,
         })
     }
+}
+
+/// Findings and failures introduced and removed, not yet sent.
+#[derive(Default)]
+struct Buffered {
+    introduced: Vec<Json>,
+    removed: Vec<Json>,
+    failures_introduced: Vec<Json>,
+    failures_removed: Vec<Json>,
+}
+
+impl Buffered {
+    fn is_empty(&self) -> bool {
+        self.introduced.is_empty() && self.removed.is_empty() && self.failures_introduced.is_empty() && self.failures_removed.is_empty()
+    }
+
+    /// A partial `findings` frame of `worktree`'s request (the connection adds `seq` and `ms`).
+    fn frame(&mut self, worktree: &str, epoch: u64) -> Json {
+        let b = std::mem::take(self);
+        json!({
+            "op": "findings", "worktree": worktree, "epoch": epoch, "cross": false, "partial": true,
+            "introduced": b.introduced, "removed": b.removed,
+            "failures_introduced": b.failures_introduced, "failures_removed": b.failures_removed,
+        })
+    }
+}
+
+/// A changed path while its request runs: the old content's per-file results by clause ordinal
+/// (`NO_CLAUSE`: file-level failures), each removed when the new content's clause is sent, and the
+/// new content's ordinals already sent. `whole`: answered at once (deleted, or the new pair was
+/// resident).
+struct Changing {
+    new: Option<Cid>,
+    old: BTreeMap<u32, (Vec<Json>, Vec<Json>)>,
+    sent: HashSet<u32>,
+    whole: bool,
 }
 
 pub struct Engine {
@@ -105,7 +151,8 @@ pub struct Engine {
     /// Per global clause ordinal, (rule, clause).
     clause_of: Vec<(usize, usize)>,
     first: Vec<u32>,
-    threads: usize,
+    /// The evaluation workers (`--threads`), persistent for the daemon's life.
+    pool: rayon::ThreadPool,
     paths: Vec<Arc<str>>,
     path_ids: HashMap<Arc<str>, Sym>,
     contents: Vec<ContentInfo>,
@@ -121,28 +168,16 @@ pub struct Engine {
     worktrees: BTreeMap<String, Worktree>,
     next_tag: W,
     odbs: HashMap<PathBuf, Odb>,
-    cross: Option<Box<dyn CrossFile>>,
-    /// Worktrees whose membership changed since their last cross-file run, with the changes.
-    dirty: BTreeMap<String, Vec<PathChange>>,
+    cross: Option<Worker>,
     pub total: Work,
-}
-
-/// A worktree's members, for the cross-file side.
-struct View<'a> {
-    engine: &'a Engine,
-    w: &'a Worktree,
-}
-
-impl crossfile::Members for View<'_> {
-    fn for_each(&self, f: &mut dyn FnMut(&str, Content)) {
-        for (p, c) in self.engine.effective(self.w) {
-            f(&self.engine.paths[p as usize], self.engine.contents[c as usize].source);
-        }
-    }
+    /// The largest worker scratch of any request (`perfile::Shape::scratch_peak`).
+    pub scratch_peak: u64,
+    /// Purges jemalloc's freed pages after each evaluating request, on its own thread.
+    pub purger: memory::Purger,
 }
 
 impl Engine {
-    pub fn new(rules: Arc<[Rule]>, refused: Vec<Failure>, memo: Arc<Memo>, threads: usize, cross: Option<Box<dyn CrossFile>>) -> Engine {
+    pub fn new(rules: Arc<[Rule]>, refused: Vec<Failure>, memo: Arc<Memo>, threads: usize, cross: Option<Worker>) -> Engine {
         let per_file = crossfile::per_file_clauses(&rules);
         let mut first = Vec::new();
         let mut clause_of = Vec::new();
@@ -157,7 +192,7 @@ impl Engine {
             per_file,
             clause_of,
             first,
-            threads,
+            pool: rayon::ThreadPoolBuilder::new().num_threads(threads).thread_name(|i| format!("facts-eval-{i}")).build().expect("evaluation pool"),
             paths: Vec::new(),
             path_ids: HashMap::new(),
             contents: Vec::new(),
@@ -174,8 +209,9 @@ impl Engine {
             next_tag: 1,
             odbs: HashMap::new(),
             cross,
-            dirty: BTreeMap::new(),
             total: Work::default(),
+            scratch_peak: 0,
+            purger: memory::Purger::spawn(),
         }
     }
 
@@ -183,10 +219,10 @@ impl Engine {
         let clauses = self.clause_of.len();
         let per_file: Vec<Json> = self.clause_of.iter().filter(|&&(ri, ci)| self.per_file[ri][ci]).map(|&(ri, ci)| json!([self.rules[ri].check, self.rules[ri].clauses[ci].id])).collect();
         json!({
-            "op": "hello", "protocol": 1,
+            "op": "hello", "protocol": 2,
             "rules": self.rules.len(), "refused": self.refused.iter().map(|f| json!({"check": f.check, "message": f.message})).collect::<Vec<_>>(),
             "clauses": clauses, "cross_file_clauses": clauses - per_file.len(), "per_file_clauses": per_file,
-            "cross": self.cross.as_ref().map(|c| c.name()), "store": self.memo.path, "threads": self.threads,
+            "cross": self.cross.as_ref().map(|c| c.name), "store": self.memo.path, "threads": self.pool.current_num_threads(),
         })
     }
 
@@ -322,7 +358,9 @@ impl Engine {
     /// read from the memo), pairs no longer held are dropped, and contents whose held-pair count
     /// crossed zero are pinned or unpinned. A pair both acquired and released in the batch (moved
     /// between tags) is neither. `fresh`: bytes read for this change (new blobs, an edit's body).
-    fn settle(&mut self, acquired: &[(Sym, Cid)], released: &[(Sym, Cid)], fresh: &HashMap<Cid, Arc<Vec<u8>>>, work: &mut Work) {
+    /// `on` sees the evaluation's progress (`perfile::Progress`, results indexed into the pairs
+    /// evaluated) with the engine as it was before the evaluation.
+    fn settle(&mut self, acquired: &[(Sym, Cid)], released: &[(Sym, Cid)], fresh: &HashMap<Cid, Arc<Vec<u8>>>, work: &mut Work, on: &mut dyn FnMut(&Engine, &[(Sym, Cid)], Progress)) -> perfile::Shape {
         let mut before: HashMap<Cid, u32> = HashMap::new();
         for &(_, c) in acquired {
             before.entry(c).or_insert(self.content_held[c as usize]);
@@ -356,46 +394,20 @@ impl Engine {
         todo.sort_unstable();
         todo.dedup();
         if todo.is_empty() {
-            return;
+            return perfile::Shape::default();
         }
-        let rules = &*self.rules;
-        let memo = &*self.memo;
-        let jobs: Vec<(Arc<str>, SourceId, Option<Arc<Vec<u8>>>)> = todo.iter().map(|&(p, c)| (self.paths[p as usize].clone(), self.contents[c as usize].source, fresh.get(&c).cloned())).collect();
-        // Pairs over the threads; when there are fewer pairs than threads, each pair's rules over
-        // the threads left (a large file's rules in parallel).
-        let outer = self.threads.min(jobs.len()).max(1);
-        let inner = (self.threads / outer).max(1);
-        let next = AtomicUsize::new(0);
-        let run = || {
-            let mut done = Vec::new();
-            loop {
-                let i = next.fetch_add(1, Ordering::Relaxed);
-                let Some((path, source, bytes)) = jobs.get(i) else { break };
-                let read = || match bytes {
-                    Some(b) => (**b).clone(),
-                    None => memo.store.get_source(*source).unwrap_or_else(|e| panic!("store: {e}")),
-                };
-                done.push((i, perfile::evaluate(rules, memo, path, *source, &read, inner)));
-            }
-            done
-        };
-        let mut results: Vec<(usize, perfile::Evaluated)> = std::thread::scope(|s| {
-            let handles: Vec<_> = (1..outer).map(|_| s.spawn(&run)).collect();
-            let mut all = run();
-            for h in handles {
-                all.extend(h.join().expect("evaluation thread"));
-            }
-            all
-        });
-        results.sort_by_key(|(i, _)| *i);
-        for (i, ev) in results {
-            let (p, c) = todo[i];
+        let jobs: Vec<perfile::Job> = todo.iter().map(|&(p, c)| perfile::Job { path: self.paths[p as usize].clone(), source: self.contents[c as usize].source, bytes: fresh.get(&c).cloned() }).collect();
+        let this = &*self;
+        let (results, shape) = perfile::evaluate(&this.rules, &this.memo, &jobs, &this.pool, &mut |p| on(this, &todo, p));
+        for (&(p, c), ev) in todo.iter().zip(results) {
             work.evaluated_clauses += u64::from(ev.evaluated);
             work.memoised_clauses += u64::from(ev.memoised);
             work.evaluated_pairs += u64::from(ev.evaluated > 0);
             let pair = self.pair_of(p, ev);
             self.pairs.insert((p, c), pair);
         }
+        self.scratch_peak = self.scratch_peak.max(shape.scratch_peak);
+        shape
     }
 
     fn pair_of(&mut self, p: Sym, ev: perfile::Evaluated) -> Pair {
@@ -441,8 +453,12 @@ impl Engine {
     }
 
     /// Replaces `name`'s membership by `m` (creating the worktree if new) and answers with the
-    /// per-file findings of the changed paths.
-    pub fn set_membership(&mut self, name: &str, m: Members, fresh: &HashMap<Cid, Arc<Vec<u8>>>, mut work: Work) -> Change {
+    /// per-file findings of the changed paths. When the change evaluates some clause, `send` gets
+    /// partial frames first (PROTOCOL.md § Streaming): the changed paths whose new pair is resident
+    /// or served by the memo, then each batch of clauses the workers finish, each clause's old
+    /// results removed in the frame that introduces its new ones; the returned change holds the
+    /// rest. Without evaluation every result is in the returned change.
+    pub fn set_membership(&mut self, name: &str, m: Members, fresh: &HashMap<Cid, Arc<Vec<u8>>>, mut work: Work, send: &mut dyn FnMut(Json)) -> Change {
         let (old, existed) = match self.worktrees.get(name) {
             Some(w) => (self.effective(w), true),
             None => (Members::new(), false),
@@ -459,11 +475,32 @@ impl Engine {
                 changed.push((*p, Some(*c), None));
             }
         }
-        let (mut removed, mut failures_removed) = (Vec::new(), Vec::new());
-        for (p, o, _) in &changed {
+        // The old pairs' results by clause (they may be released below), and the paths answered
+        // at once: deleted, or their new pair resident.
+        let mut buf = Buffered::default();
+        let mut changing: HashMap<Sym, Changing> = HashMap::with_capacity(changed.len());
+        for &(p, o, n) in &changed {
+            let mut ch = Changing { new: n, old: BTreeMap::new(), sent: HashSet::new(), whole: false };
             if let Some(o) = o {
-                self.pair_json(*p, *o, &mut removed, &mut failures_removed);
+                let pair = self.pairs.get(&(p, o)).expect("a held pair is resident");
+                for f in pair.found.iter() {
+                    ch.old.entry(f.ord).or_default().0.push(self.finding_json(f));
+                }
+                for (ord, msg) in pair.failures.iter() {
+                    ch.old.entry(*ord).or_default().1.push(self.failure_json(p, *ord, msg));
+                }
             }
+            if n.is_none_or(|n| self.pairs.contains_key(&(p, n))) {
+                ch.whole = true;
+                for (_, (fs, xs)) in std::mem::take(&mut ch.old) {
+                    buf.removed.extend(fs);
+                    buf.failures_removed.extend(xs);
+                }
+                if let Some(n) = n {
+                    self.pair_json(p, n, &mut buf.introduced, &mut buf.failures_introduced);
+                }
+            }
+            changing.insert(p, ch);
         }
         let (mut acquired, mut released) = (Vec::new(), Vec::new());
         let tag = if existed {
@@ -499,30 +536,71 @@ impl Engine {
         let recs = self.worktree_records(&w);
         self.update(tag, &recs, 1, &mut acquired, &mut released);
         self.worktrees.insert(name.to_owned(), w);
-        self.settle(&acquired, &released, fresh, &mut work);
-        let (mut introduced, mut failures_introduced) = (Vec::new(), Vec::new());
-        for (p, _, n) in &changed {
-            if let Some(n) = n {
-                self.pair_json(*p, *n, &mut introduced, &mut failures_introduced);
+        let mut frames = 0u32;
+        let shape = self.settle(&acquired, &released, fresh, &mut work, &mut |eng, todo, progress| {
+            let (results, flush) = match progress {
+                Progress::Served { results, evaluating } => (results, evaluating),
+                Progress::Evaluated(results) => (results, true),
+            };
+            for (j, r) in results {
+                let (p, c) = todo[*j];
+                let Some(ch) = changing.get_mut(&p) else { continue };
+                let (ri, ci) = r.clause;
+                if ch.whole || ch.new != Some(c) || !eng.per_file[ri][ci] {
+                    continue;
+                }
+                let ord = eng.first[ri] + ci as u32;
+                ch.sent.insert(ord);
+                buf.introduced.extend(r.findings.iter().map(|f| json!([f.check, f.clause, f.path, f.line, f.code, f.column])));
+                buf.failures_introduced.extend(r.failures.iter().map(|f| json!([f.check, f.clause, &*eng.paths[p as usize], f.message])));
+                if let Some((fs, xs)) = ch.old.remove(&ord) {
+                    buf.removed.extend(fs);
+                    buf.failures_removed.extend(xs);
+                }
             }
+            if flush && !buf.is_empty() {
+                send(buf.frame(name, epoch));
+                frames += 1;
+            }
+        });
+        // The rest: what was not sent of each changed path (with no evaluation, everything).
+        for (p, ch) in &mut changing {
+            if ch.whole {
+                continue;
+            }
+            for (_, (fs, xs)) in std::mem::take(&mut ch.old) {
+                buf.removed.extend(fs);
+                buf.failures_removed.extend(xs);
+            }
+            let pair = self.pairs.get(&(*p, ch.new.expect("not whole: present"))).expect("a held pair is resident");
+            buf.introduced.extend(pair.found.iter().filter(|f| !ch.sent.contains(&f.ord)).map(|f| self.finding_json(f)));
+            buf.failures_introduced.extend(pair.failures.iter().filter(|(o, _)| !ch.sent.contains(o)).map(|(o, m)| self.failure_json(*p, *o, m)));
         }
-        if self.cross.is_some() && !changed.is_empty() {
+        if let Some(cross) = &self.cross
+            && !changed.is_empty()
+        {
             let changes: Vec<PathChange> = changed
                 .iter()
                 .map(|(p, o, n)| PathChange { path: self.paths[*p as usize].clone(), old: o.map(|c| self.contents[c as usize].source), new: n.map(|c| self.contents[c as usize].source) })
                 .collect();
-            self.dirty.entry(name.to_owned()).or_default().extend(changes);
+            cross.apply(name, epoch, self.snapshot(&self.worktrees[name]), changes);
         }
         self.total.add(&work);
-        Change { epoch, introduced, removed, failures_introduced, failures_removed, changed_paths: changed.len(), work }
+        let Buffered { introduced, removed, failures_introduced, failures_removed } = buf;
+        Change { epoch, introduced, removed, failures_introduced, failures_removed, changed_paths: changed.len(), work, frames, shape }
+    }
+
+    /// A worktree's members for the cross-file worker.
+    fn snapshot(&self, w: &Worktree) -> Snapshot {
+        Snapshot(self.effective(w).into_iter().map(|(p, c)| (self.paths[p as usize].clone(), self.contents[c as usize].source)).collect())
     }
 
     /// One path's new content (`None`: deleted). An unchanged content is no work and no change.
-    pub fn edit(&mut self, name: &str, path: &str, content: Option<Cid>, fresh: &HashMap<Cid, Arc<Vec<u8>>>) -> Result<Change, String> {
+    pub fn edit(&mut self, name: &str, path: &str, content: Option<Cid>, fresh: &HashMap<Cid, Arc<Vec<u8>>>, send: &mut dyn FnMut(Json)) -> Result<Change, String> {
         let p = self.path_id(path);
         let w = self.worktrees.get(name).ok_or_else(|| format!("unknown worktree {name}"))?;
         if self.member(w, p) == content {
-            return Ok(Change { epoch: w.epoch, introduced: Vec::new(), removed: Vec::new(), failures_introduced: Vec::new(), failures_removed: Vec::new(), changed_paths: 0, work: Work::default() });
+            return Ok(Change::none(w.epoch));
         }
         let mut m = self.effective(w);
         match content {
@@ -533,23 +611,23 @@ impl Engine {
                 m.remove(&p);
             }
         }
-        Ok(self.set_membership(name, m, fresh, Work::default()))
+        Ok(self.set_membership(name, m, fresh, Work::default(), send))
     }
 
     /// `name`'s membership from `commit`'s tree in the Git object database at `git_dir`: blobs the
     /// store knows by their Git id are not read.
-    pub fn sync_git(&mut self, name: &str, git_dir: &Path, commit: &str) -> Result<Change, String> {
+    pub fn sync_git(&mut self, name: &str, git_dir: &Path, commit: &str, send: &mut dyn FnMut(Json)) -> Result<Change, String> {
         if !self.odbs.contains_key(git_dir) {
             let odb = Odb::open(git_dir)?;
             self.odbs.insert(git_dir.to_path_buf(), odb);
         }
         let files = self.odbs[git_dir].tree_files(commit)?;
-        self.sync_files(name, git_dir, files.into_iter().map(|f| (f.path, f.oid)).collect())
+        self.sync_files(name, git_dir, files.into_iter().map(|f| (f.path, f.oid)).collect(), send)
     }
 
     /// `name`'s membership from an index snapshot: (path, Git blob id) entries, blobs read from
     /// the object database at `git_dir` when the store does not know them.
-    pub fn sync_files(&mut self, name: &str, git_dir: &Path, files: Vec<(String, [u8; 20])>) -> Result<Change, String> {
+    pub fn sync_files(&mut self, name: &str, git_dir: &Path, files: Vec<(String, [u8; 20])>, send: &mut dyn FnMut(Json)) -> Result<Change, String> {
         if !self.odbs.contains_key(git_dir) {
             let odb = Odb::open(git_dir)?;
             self.odbs.insert(git_dir.to_path_buf(), odb);
@@ -576,7 +654,7 @@ impl Engine {
             };
             m.insert(p, c);
         }
-        Ok(self.set_membership(name, m, &fresh, work))
+        Ok(self.set_membership(name, m, &fresh, work, send))
     }
 
     /// Recomputes the membership model (plurality base and cluster bases over every worktree, in
@@ -611,7 +689,7 @@ impl Engine {
             self.update(*tag, recs, -1, &mut acquired, &mut released);
         }
         let mut work = Work::default();
-        self.settle(&acquired, &released, &HashMap::new(), &mut work);
+        self.settle(&acquired, &released, &HashMap::new(), &mut work, &mut |_, _, _| {});
         self.total.add(&work);
         json!({"op": "rebalanced", "worktrees": names.len(), "clusters": clusters, "cost": cost, "flat_cost": flat_cost, "ms": t0.elapsed().as_secs_f64() * 1e3, "work": work.json(), "state": self.state_json()})
     }
@@ -630,11 +708,10 @@ impl Engine {
         let (mut acquired, mut released) = (Vec::new(), Vec::new());
         self.update(w.tag, &recs, -1, &mut acquired, &mut released);
         let mut work = Work::default();
-        self.settle(&acquired, &released, &HashMap::new(), &mut work);
+        self.settle(&acquired, &released, &HashMap::new(), &mut work, &mut |_, _, _| {});
         self.total.add(&work);
         self.model.parent.remove(&w.tag);
-        self.dirty.remove(name);
-        if let Some(c) = self.cross.as_mut() {
+        if let Some(c) = &self.cross {
             c.forget(name);
         }
         Ok(json!({"op": "closed", "worktree": name, "released_pairs": released.len()}))
@@ -667,33 +744,51 @@ impl Engine {
             "held_contents": self.content_held.iter().filter(|h| **h > 0).count(),
             "paths": self.paths.len(),
             "cross_held_findings": self.cross.as_ref().map_or(0, |c| c.held_findings()),
+            "cross_runs": self.cross.as_ref().map_or(0, |c| c.runs()),
+            "scratch_peak": self.scratch_peak,
+            "purges": self.purger.json(),
         })
     }
 
-    /// Runs the cross-file side for every worktree changed since its last run; one push each.
-    pub fn cross_pending(&mut self) -> Vec<Json> {
-        let Some(mut cross) = self.cross.take() else { return Vec::new() };
-        let dirty = std::mem::take(&mut self.dirty);
-        let mut pushes = Vec::new();
-        for (name, changes) in dirty {
-            let Some(w) = self.worktrees.get(&name) else { continue };
-            let t0 = Instant::now();
-            let delta: FindingsDelta = cross.apply(&name, &View { engine: self, w }, &changes);
-            let row = |f: &Finding| json!([f.check, f.clause, f.path, f.line, f.code, f.column]);
-            pushes.push(json!({
-                "op": "findings", "worktree": name, "epoch": w.epoch, "cross": true, "model": cross.name(),
-                "introduced": delta.introduced.iter().map(row).collect::<Vec<_>>(),
-                "removed": delta.removed.iter().map(row).collect::<Vec<_>>(),
-                "failures": delta.failures.iter().map(|f| json!([f.check, f.clause, f.path, f.message])).collect::<Vec<_>>(),
-                "files_read": delta.files_read, "ms": t0.elapsed().as_secs_f64() * 1e3,
-            }));
-        }
-        self.cross = Some(cross);
-        pushes
-    }
-
-    pub fn has_pending_cross(&self) -> bool {
-        !self.dirty.is_empty()
+    /// Tears the engine down one component at a time and measures what each held: the live
+    /// Rust heap (jemalloc `stats.allocated`) and the C heap (the system malloc zones: SQLite's
+    /// page caches, statements and schema) that dropping it returned. What stays live after the
+    /// last component is the process's own (statics such as the regex cache, thread-locals,
+    /// connections' buffers).
+    pub fn attribute(self) -> Json {
+        let start = memory::heaps();
+        let mut last = start;
+        let mut rows = Vec::new();
+        let mut step = |component: &str, items: Json| {
+            let now = memory::heaps();
+            rows.push(json!({"component": component, "items": items, "rust_heap": last.0 as i64 - now.0 as i64, "c_heap": last.1 as i64 - now.1 as i64}));
+            last = now;
+        };
+        let Engine { rules, refused, memo, per_file, clause_of, first, paths, path_ids, contents, by_source, by_blake3, by_git, codes, code_ids, pairs, content_held, resident, model, worktrees, odbs, cross, .. } = self;
+        let n = cross.as_ref().map_or(0, |c| c.held_findings());
+        drop(cross);
+        step("cross-file worker", json!({"held_findings": n}));
+        let n = (pairs.len(), pairs.values().map(|p| p.found.len()).sum::<usize>());
+        drop(pairs);
+        step("per-file results (held pairs)", json!({"pairs": n.0, "findings": n.1}));
+        let n = (resident.held(), resident.records(), worktrees.len(), model.base.len());
+        drop((resident, model, worktrees));
+        step("membership (tag records, base and cluster bases, deltas)", json!({"held_pairs": n.0, "tag_records": n.1, "worktrees": n.2, "base_paths": n.3}));
+        let n = (paths.len(), contents.len(), codes.len());
+        drop((paths, path_ids, contents, by_source, by_blake3, by_git, codes, code_ids, content_held));
+        step("interner (paths, contents, codes)", json!({"paths": n.0, "contents": n.1, "codes": n.2}));
+        let n = odbs.len();
+        drop(odbs);
+        step("Git object databases", json!({"repositories": n}));
+        let store = Arc::try_unwrap(memo).ok().expect("the engine holds the last memo").into_store();
+        step("memo index (plan set, clause ordinals)", Json::Null);
+        drop(store);
+        step("content store (read caches, plan sets, this thread's SQLite connection)", Json::Null);
+        let n = rules.iter().map(|r| r.clauses.len()).sum::<usize>();
+        drop((rules, refused, per_file, clause_of, first));
+        step("compiled rules", json!({"clauses": n}));
+        let end = memory::heaps();
+        json!({"start": {"rust_heap": start.0, "c_heap": start.1}, "components": rows, "remainder": {"rust_heap": end.0, "c_heap": end.1}, "allocators": memory::allocators()})
     }
 
     /// The store's size on disk (database and WAL).

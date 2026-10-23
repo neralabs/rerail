@@ -125,6 +125,11 @@ impl Memo {
         self.pure[ri][ci]
     }
 
+    /// The store alone (the daemon's memory attribution drops the memo's own index first).
+    pub fn into_store(self) -> ContentStore {
+        self.store
+    }
+
     /// The content's source, if the store holds it.
     pub fn source(&self, content: &[u8; 32]) -> Option<SourceId> {
         self.store.facts_source(*content).unwrap_or_else(|e| panic!("memo: {e}"))

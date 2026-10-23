@@ -5,7 +5,9 @@
 //! daemon answers it synchronously.
 //!
 //! `CrossFile::apply` takes the worktree's membership after a change and the paths that changed,
-//! and returns the findings delta. Implementations:
+//! and returns the findings delta. It runs on its own thread (`Worker`), never on the engine
+//! thread: the engine hands it a snapshot of the membership with the epoch it was taken at, and
+//! per-file replies never wait for it. Implementations:
 //! - `FromScratch`: `eval::finish` over every member's stored per-file rows (the memo holds every
 //!   evaluated clause's rows), i.e. the repository phase of `facts-a repo`; the reference any
 //!   incremental model is compared with.
@@ -15,9 +17,13 @@ use crate::eval::{self, Failure, Finding, Kind, Rule};
 use crate::memo::Memo;
 use crate::spill::FileRows;
 use rerail_engine::content_store::SourceId;
+use serde_json::{Value as Json, json};
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::mpsc;
+use std::time::Instant;
 
 /// A member's content: its stored source (the store maps blake3 and Git blob hashes to it).
 pub type Content = SourceId;
@@ -44,13 +50,123 @@ pub struct FindingsDelta {
     pub files_read: u64,
 }
 
-pub trait CrossFile {
+pub trait CrossFile: Send {
     fn name(&self) -> &'static str;
     fn apply(&mut self, worktree: &str, members: &dyn Members, delta: &[PathChange]) -> FindingsDelta;
     /// Drops a closed worktree's state.
     fn forget(&mut self, worktree: &str);
     /// The worktrees' held cross-file findings (state proportional to findings).
     fn held_findings(&self) -> usize;
+}
+
+/// A worktree's membership at one epoch, as the engine hands it to the worker.
+pub struct Snapshot(pub Vec<(Arc<str>, Content)>);
+
+impl Members for Snapshot {
+    fn for_each(&self, f: &mut dyn FnMut(&str, Content)) {
+        for (p, c) in &self.0 {
+            f(p, *c);
+        }
+    }
+}
+
+enum Msg {
+    Apply { worktree: String, epoch: u64, members: Snapshot, changes: Vec<PathChange> },
+    Forget(String),
+}
+
+/// The cross-file side's thread. The engine sends every membership change (`apply`) and close
+/// (`forget`); the thread takes everything queued at once, keeps per worktree the latest snapshot
+/// and every change since its last run, and runs `CrossFile::apply` once per worktree, pushing the
+/// delta stamped with the snapshot's epoch. A burst of edits yields one run and one push per
+/// worktree; a run in progress delays only later pushes.
+pub struct Worker {
+    tx: Option<mpsc::Sender<Msg>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+    pub name: &'static str,
+    held: Arc<AtomicUsize>,
+    runs: Arc<AtomicU64>,
+}
+
+impl Worker {
+    /// Starts the thread; `push(worktree, message)` delivers each push.
+    pub fn spawn(mut cross: Box<dyn CrossFile>, push: Box<dyn Fn(&str, Json) + Send>) -> Worker {
+        let name = cross.name();
+        let (tx, rx) = mpsc::channel::<Msg>();
+        let (held, runs) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicU64::new(0)));
+        let (held2, runs2) = (held.clone(), runs.clone());
+        let thread = std::thread::Builder::new()
+            .name("facts-cross".into())
+            .spawn(move || {
+                while let Ok(first) = rx.recv() {
+                    let mut pending: BTreeMap<String, (u64, Snapshot, Vec<PathChange>)> = BTreeMap::new();
+                    for m in std::iter::once(first).chain(rx.try_iter()) {
+                        match m {
+                            Msg::Apply { worktree, epoch, members, changes } => match pending.get_mut(&worktree) {
+                                Some(p) => {
+                                    (p.0, p.1) = (epoch, members);
+                                    p.2.extend(changes);
+                                }
+                                None => {
+                                    pending.insert(worktree, (epoch, members, changes));
+                                }
+                            },
+                            Msg::Forget(worktree) => {
+                                pending.remove(&worktree);
+                                cross.forget(&worktree);
+                            }
+                        }
+                    }
+                    for (worktree, (epoch, members, changes)) in pending {
+                        let t0 = Instant::now();
+                        let delta = cross.apply(&worktree, &members, &changes);
+                        held2.store(cross.held_findings(), Ordering::Relaxed);
+                        runs2.fetch_add(1, Ordering::Relaxed);
+                        let row = |f: &Finding| json!([f.check, f.clause, f.path, f.line, f.code, f.column]);
+                        push(
+                            &worktree,
+                            json!({
+                                "op": "findings", "worktree": worktree, "epoch": epoch, "cross": true, "model": name,
+                                "introduced": delta.introduced.iter().map(row).collect::<Vec<_>>(),
+                                "removed": delta.removed.iter().map(row).collect::<Vec<_>>(),
+                                "failures": delta.failures.iter().map(|f| json!([f.check, f.clause, f.path, f.message])).collect::<Vec<_>>(),
+                                "members": members.0.len(), "changes": changes.len(),
+                                "files_read": delta.files_read, "ms": t0.elapsed().as_secs_f64() * 1e3,
+                            }),
+                        );
+                    }
+                }
+            })
+            .expect("cross-file thread");
+        Worker { tx: Some(tx), thread: Some(thread), name, held, runs }
+    }
+
+    pub fn apply(&self, worktree: &str, epoch: u64, members: Snapshot, changes: Vec<PathChange>) {
+        let _ = self.tx.as_ref().expect("running").send(Msg::Apply { worktree: worktree.to_owned(), epoch, members, changes });
+    }
+
+    pub fn forget(&self, worktree: &str) {
+        let _ = self.tx.as_ref().expect("running").send(Msg::Forget(worktree.to_owned()));
+    }
+
+    /// The worktrees' held cross-file findings, as of the last run.
+    pub fn held_findings(&self) -> usize {
+        self.held.load(Ordering::Relaxed)
+    }
+
+    pub fn runs(&self) -> u64 {
+        self.runs.load(Ordering::Relaxed)
+    }
+}
+
+impl Drop for Worker {
+    /// Lets the thread finish the runs queued, then joins it.
+    fn drop(&mut self) {
+        drop(self.tx.take());
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
 }
 
 /// Per (rule, clause): whether the daemon delivers it synchronously (per-file) or through
@@ -171,5 +287,68 @@ impl CrossFile for FromScratch {
 
     fn held_findings(&self) -> usize {
         self.held.values().map(|m| m.values().sum::<u32>() as usize).sum()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Holds its first run until released, and records each run's (worktree, changes).
+    struct Gated {
+        started: mpsc::Sender<()>,
+        release: mpsc::Receiver<()>,
+        runs: Arc<parking_lot::Mutex<Vec<(String, usize)>>>,
+    }
+
+    impl CrossFile for Gated {
+        fn name(&self) -> &'static str {
+            "gated"
+        }
+        fn apply(&mut self, worktree: &str, _: &dyn Members, delta: &[PathChange]) -> FindingsDelta {
+            let first = self.runs.lock().is_empty();
+            self.runs.lock().push((worktree.to_owned(), delta.len()));
+            if first {
+                self.started.send(()).unwrap();
+                self.release.recv().unwrap();
+            }
+            FindingsDelta::default()
+        }
+        fn forget(&mut self, _: &str) {}
+        fn held_findings(&self) -> usize {
+            0
+        }
+    }
+
+    fn change(path: &str) -> Vec<PathChange> {
+        vec![PathChange { path: Arc::from(path), old: None, new: None }]
+    }
+
+    /// The worker runs off the caller's thread, and the changes queued during a run fold into one
+    /// run per worktree, pushed with the latest epoch; a forgotten worktree's queued change is not
+    /// run.
+    #[test]
+    fn queued_changes_fold_into_one_run_per_worktree() {
+        let (started_tx, started) = mpsc::channel();
+        let (release, release_rx) = mpsc::channel();
+        let runs = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let pushes = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let p = pushes.clone();
+        let worker = Worker::spawn(
+            Box::new(Gated { started: started_tx, release: release_rx, runs: runs.clone() }),
+            Box::new(move |w, push| p.lock().push((w.to_owned(), push["epoch"].as_u64().unwrap(), push["changes"].as_u64().unwrap()))),
+        );
+        worker.apply("a", 1, Snapshot(Vec::new()), change("x.py"));
+        started.recv().unwrap();
+        // The first run is in progress: these queue behind it, and the caller is not blocked.
+        worker.apply("a", 2, Snapshot(Vec::new()), change("y.py"));
+        worker.apply("b", 1, Snapshot(Vec::new()), change("z.py"));
+        worker.apply("a", 3, Snapshot(Vec::new()), change("x.py"));
+        worker.apply("c", 1, Snapshot(Vec::new()), change("w.py"));
+        worker.forget("c");
+        release.send(()).unwrap();
+        drop(worker);
+        assert_eq!(*runs.lock(), vec![("a".to_owned(), 1), ("a".to_owned(), 2), ("b".to_owned(), 1)]);
+        assert_eq!(*pushes.lock(), vec![("a".to_owned(), 1, 1), ("a".to_owned(), 3, 2), ("b".to_owned(), 1, 1)]);
     }
 }

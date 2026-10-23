@@ -745,6 +745,7 @@ dependencies = [
  "libc",
  "memchr",
  "parking_lot",
+ "rayon",
  "regex",
  "rerail-engine",
  "rerail-facts",
