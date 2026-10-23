@@ -1,11 +1,17 @@
-//! `facts-a xexport` (S3, interim until the per-file backend executes IR plans): the exported
-//! relations of a rule's repository clauses, per (path, content). The rule is compiled by
-//! `rerail_facts::compile`; each export's producer (`Program.per_file[producer]`, sink
-//! `Sink::Export`) runs over one content: its pattern inputs through this crate's leaf executor
-//! (`eval::Input::rows` over facts), `file(path)` and native's call summaries (`cgn_*`, SCHEMA
-//! § 3.4, through `cgnative`) as fact relations, its stages and export relations through the
-//! reference evaluator (`rerail_facts::reference`). Output: one JSON line per job,
-//! `{"path", "hash", "exports": {"<id>": [[v, …], …]}, "failure"}`.
+//! `facts-a xexport` (S3): the exported relations of a rule's repository clauses, per (path,
+//! content). The rule is compiled by `rerail_facts::compile`; each export's producer
+//! (`Program.per_file[producer]`, sink `Sink::Export`) runs over one content. Its stages run on
+//! this crate's engine, the path `repo` uses (`--stages engine`, the default): the clause's
+//! relational plan (`rel::run`) over the content's inputs, its stored stage tables read by name
+//! (`rel::TRACE`); a producer stage the engine did not store (it failed before it) fails the
+//! content. With `--stages reference` the stages run on the reference evaluator instead (clauses
+//! the engine cannot plan, e.g. over `reference_edges`). The export relations themselves (cut
+//! subtrees over the stages) and `file(path)`/native call summaries (`cgn_*`, SCHEMA § 3.4,
+//! through `cgnative`) go through the reference evaluator (`rerail_facts::reference`). Pattern
+//! inputs come from the leaf executor (`eval::Input::rows` over facts). `--check-below BYTES`
+//! (default 4096): on contents up to that size the reference also evaluates the stages, and an
+//! export that differs fails the content (the reference stays the checker). Output: one JSON line
+//! per job, `{"path", "hash", "exports": {"<id>": [[v, …], …]}, "failure"}`.
 use crate::cgnative::{self, Variant};
 use crate::eval;
 use crate::facts;
@@ -15,6 +21,7 @@ use rerail_facts::sql::value::V;
 use serde_json::{Map, Value as Json, json};
 use std::collections::BTreeMap;
 use std::io::Write;
+use std::rc::Rc;
 use std::sync::Arc;
 
 fn projection_json(p: &Projection) -> Result<Json, String> {
@@ -61,9 +68,14 @@ struct Exporter {
     rule: eval::Rule,
     /// IR input id -> (Spike A input index, schema)
     inputs: BTreeMap<u32, (usize, crate::sql::engine::Schema)>,
+    /// The rule as `repo` compiles it: its repository clauses' relational plans run the producers'
+    /// stages (`--stages engine`); `None`: the reference evaluator runs them.
+    engine: Option<eval::Rule>,
+    /// Contents up to this many bytes are also exported through the reference and compared.
+    check_below: usize,
 }
 
-fn compile(doc: &Json, config: &Map<String, Json>, clauses: &[String]) -> Result<Exporter, String> {
+fn compile(doc: &Json, config: &Map<String, Json>, clauses: &[String], engine: bool, check_below: usize) -> Result<Exporter, String> {
     let mut leaves = crate::leaf::Leaves::new();
     let c = rerail_facts::compile::compile_report(doc, config, &mut leaves)?;
     let program = c.program;
@@ -117,7 +129,8 @@ fn compile(doc: &Json, config: &Map<String, Json>, clauses: &[String]) -> Result
             inputs.insert(id, (*idx, plan.input_schemas[k].clone()));
         }
     }
-    Ok(Exporter { program, exports, rule, inputs })
+    let engine = if engine { Some(eval::Rule::compile(doc, config, None, &facts::GRAMMAR).map_err(|e| format!("engine: {e}"))?) } else { None };
+    Ok(Exporter { program, exports, rule, inputs, engine, check_below })
 }
 
 fn reads(p: &Plan<ir::RepoSource>, out: &mut std::collections::BTreeSet<u32>) {
@@ -149,7 +162,6 @@ fn file_inputs(p: &Plan<FileSource>, out: &mut std::collections::BTreeSet<u32>) 
 
 impl Exporter {
     fn run(&self, path: &str, source: Arc<String>) -> Result<BTreeMap<u32, Vec<Vec<V>>>, String> {
-        let mut out = BTreeMap::new();
         // Outside the rule's scope a content has no inputs and no summary; it is still a member
         // (`file(path)`), which views over the path set read (module paths, package markers).
         let in_scope = self.rule.scope.matches(path);
@@ -198,35 +210,106 @@ impl Exporter {
             }
             rows.insert(*id, (0..r.table.len()).map(|i| r.table.row(i)).collect());
         }
-        for (eid, p) in &self.exports {
-            let plan = &self.program.per_file[*p];
-            let Sink::Export(list) = &plan.sink else { return Err("producer without an Export sink".into()) };
-            let (_, rel) = list.iter().find(|(i, _)| i == eid).ok_or("export not in its producer")?;
+        let scan = |s: &FileSource| -> Result<Vec<Vec<V>>, String> {
+            match s {
+                FileSource::Input(i) => rows.get(i).cloned().ok_or_else(|| format!("input {i} not computed")),
+                FileSource::Core(ir::CoreRel::File) => Ok(vec![vec![V::text(path)]]),
+                FileSource::Summary { rel, links } => summary_rows(*rel, links),
+                other => Err(format!("{other:?} not wired in xexport")),
+            }
+        };
+        let reference_stages = |plan: &Plan<FileSource>| -> Result<Vec<Rc<Vec<Vec<V>>>>, String> {
+            let (done, refusal) = reference::evaluate_stages(&plan.stages, |s| if let FileSource::Stage(i) = s { Some(*i) } else { None }, &scan);
+            refusal.map_or(Ok(done), Err)
+        };
+        // Each producer's stages, computed once and read by all of its exports.
+        let mut producers: Vec<usize> = self.exports.iter().map(|(_, p)| *p).collect();
+        producers.sort();
+        producers.dedup();
+        let mut stages: BTreeMap<usize, Vec<Rc<Vec<Vec<V>>>>> = BTreeMap::new();
+        for &p in &producers {
+            let plan = &self.program.per_file[p];
             if plan.syntax.is_some() {
                 return Err("per-file producer with a syntax spec (not wired in xexport)".into());
             }
-            let one = Plan { clause: plan.clause.clone(), syntax: None, stages: plan.stages.clone(), sink: Sink::Findings { rel: rel.clone(), key: vec![], code: None, locations: vec![], violation: ir::Violation { code: String::new(), anchor: ir::Anchor::Span, each: None } } };
-            let r = reference::evaluate_plan(
-                &one,
-                |s| match s {
-                    FileSource::Stage(i) => Some(*i),
-                    _ => None,
-                },
-                &|s| match s {
-                    FileSource::Input(i) => rows.get(i).cloned().ok_or_else(|| format!("input {i} not computed")),
-                    FileSource::Core(ir::CoreRel::File) => Ok(vec![vec![V::text(path)]]),
-                    FileSource::Summary { rel, links } => summary_rows(*rel, links),
-                    other => Err(format!("{other:?} not wired in xexport")),
-                },
-            )?;
-            out.insert(*eid, r);
+            let st = match &self.engine {
+                Some(e) => self.engine_stages(e, plan, f.as_ref(), path, &source, &text, &memo)?,
+                None => reference_stages(plan)?,
+            };
+            stages.insert(p, st);
+        }
+        let exports_over = |stages: &BTreeMap<usize, Vec<Rc<Vec<Vec<V>>>>>| -> Result<BTreeMap<u32, Vec<Vec<V>>>, String> {
+            let mut out = BTreeMap::new();
+            for (eid, p) in &self.exports {
+                let plan = &self.program.per_file[*p];
+                let Sink::Export(list) = &plan.sink else { return Err("producer without an Export sink".into()) };
+                let (_, rel) = list.iter().find(|(i, _)| i == eid).ok_or("export not in its producer")?;
+                let one = Plan { clause: plan.clause.clone(), syntax: None, stages: vec![], sink: Sink::Findings { rel: rel.clone(), key: vec![], code: None, locations: vec![], violation: ir::Violation { code: String::new(), anchor: ir::Anchor::Span, each: None } } };
+                let st = &stages[p];
+                let r = reference::evaluate_plan(&one, |_| None, &|s| match s {
+                    FileSource::Stage(i) => st.get(*i as usize).map(|r| (**r).clone()).ok_or_else(|| format!("stage {i} not computed")),
+                    other => scan(other),
+                })?;
+                out.insert(*eid, r);
+            }
+            Ok(out)
+        };
+        let out = exports_over(&stages)?;
+        if self.engine.is_some() && source.len() <= self.check_below {
+            // The reference stays the checker: the same exports with the stages on the reference.
+            let mut want = BTreeMap::new();
+            for &p in &producers {
+                want.insert(p, reference_stages(&self.program.per_file[p]).map_err(|e| format!("reference check: {e}"))?);
+            }
+            for (eid, rows) in exports_over(&want)? {
+                if reference::multiset(&rows) != reference::multiset(&out[&eid]) {
+                    return Err(format!("engine stages differ from the reference on export {eid}: {} vs {} rows", out[&eid].len(), rows.len()));
+                }
+            }
         }
         Ok(out)
     }
+
+    /// A producer's stages on the engine: its clause's relational plan (`rel::run`, as `repo`
+    /// runs it) over this content's inputs; each producer stage is the engine's stored table of
+    /// the same name (`rel::TRACE`). A stage the engine did not store fails the content.
+    #[allow(clippy::too_many_arguments)]
+    fn engine_stages(&self, e: &eval::Rule, plan: &Plan<FileSource>, f: Option<&facts::Facts>, path: &str, source: &Arc<String>, text: &Rc<str>, memo: &crate::ast::FileMemo) -> Result<Vec<Rc<Vec<Vec<V>>>>, String> {
+        let cl = e.clauses.iter().find(|c| c.id == plan.clause).ok_or_else(|| format!("engine: no clause {}", plan.clause))?;
+        let eval::Kind::Relational(rp) = &cl.kind else { return Err(format!("engine: clause {} is not relational", plan.clause)) };
+        let mut inputs = Vec::new();
+        for (k, (_, idx)) in rp.inputs.iter().enumerate() {
+            inputs.push(match f {
+                Some(f) => {
+                    let ctx = eval::FileCtx { f, path, source: source.as_str() };
+                    let r = e.inputs[*idx].rows(&ctx, &rp.input_schemas[k], memo, text);
+                    if let Some(u) = r.unsupported {
+                        return Err(format!("engine input {k}: {u}"));
+                    }
+                    r.table
+                }
+                None => Rc::new(crate::sql::engine::Table::empty(rp.input_schemas[k].clone())),
+            });
+        }
+        let traced: Rc<std::cell::RefCell<Option<crate::rel::Traced>>> = Rc::default();
+        let sink = traced.clone();
+        crate::rel::TRACE.with(|h| *h.borrow_mut() = Some(Box::new(move |_, _, t: &crate::rel::Traced| *sink.borrow_mut() = Some(t.clone()))));
+        let r = crate::rel::run(rp, crate::rel::Partition { inputs, anchors: Default::default(), facts: f.map(|f| (f, path)), source: source.as_str(), path });
+        crate::rel::TRACE.with(|h| *h.borrow_mut() = None);
+        let tables = traced.borrow_mut().take().unwrap_or_default();
+        plan.stages
+            .iter()
+            .map(|st| {
+                let name = st.name.to_ascii_lowercase();
+                let t = tables.iter().find(|(n, _)| *n == name).map(|(_, t)| t).ok_or_else(|| format!("engine: stage {} not stored ({})", st.name, r.failure.as_deref().unwrap_or("not in the clause")))?;
+                Ok(Rc::new((0..t.len()).map(|i| t.row(i)).collect()))
+            })
+            .collect()
+    }
 }
 
-/// `xexport --rule FILE [--config JSON] [--clauses a,b] --jobs TSV --out FILE [--threads N]`;
-/// jobs: `path \t hash \t source file` per line.
+/// `xexport --rule FILE [--config JSON] [--clauses a,b] --jobs TSV --out FILE [--threads N]
+/// [--stages engine|reference] [--check-below BYTES]`; jobs: `path \t hash \t source file` per line.
 pub fn main(args: &[String]) {
     let arg = |n: &str| args.iter().position(|a| a == n).and_then(|i| args.get(i + 1)).cloned();
     let doc: Json = serde_json::from_str(&std::fs::read_to_string(arg("--rule").expect("--rule")).unwrap()).unwrap();
@@ -243,18 +326,26 @@ pub fn main(args: &[String]) {
         .collect();
     let threads: usize = arg("--threads").map(|t| t.parse().unwrap()).unwrap_or(4);
     let out_path = arg("--out").expect("--out");
+    let engine = match arg("--stages").as_deref() {
+        None | Some("engine") => true,
+        Some("reference") => false,
+        Some(o) => panic!("--stages {o}: engine | reference"),
+    };
+    let check_below: usize = arg("--check-below").map(|t| t.parse().unwrap()).unwrap_or(4096);
     let summary = {
-        let e = compile(&doc, &config, &clauses).unwrap_or_else(|e| panic!("compile: {e}"));
+        let e = compile(&doc, &config, &clauses, engine, check_below).unwrap_or_else(|e| panic!("compile: {e}"));
         json!({"exports": e.exports.iter().map(|(id, p)| json!({"id": id, "producer": p, "name": e.program.exported.iter().find(|x| x.id == *id).map(|x| x.name.clone())})).collect::<Vec<_>>(), "inputs": e.inputs.len(), "repository": e.program.repository.iter().map(|p| p.clause.clone()).collect::<Vec<_>>()})
     };
     eprintln!("xexport: {summary}");
     let next = std::sync::atomic::AtomicUsize::new(0);
+    // Contents whose engine exports the reference re-derived equal (a difference fails the job).
+    let checked = std::sync::atomic::AtomicUsize::new(0);
     let lines: parking_lot::Mutex<Vec<(usize, String)>> = parking_lot::Mutex::new(Vec::new());
     let t0 = std::time::Instant::now();
     std::thread::scope(|s| {
         for _ in 0..threads {
             s.spawn(|| {
-                let e = compile(&doc, &config, &clauses).unwrap();
+                let e = compile(&doc, &config, &clauses, engine, check_below).unwrap();
                 loop {
                     let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let Some((path, hash, file)) = jobs.get(i) else { break };
@@ -265,7 +356,12 @@ pub fn main(args: &[String]) {
                             return Err(format!("{file}: content hash {h} != {hash}"));
                         }
                         let src = String::from_utf8(bytes).map_err(|_| "not utf-8".to_string())?;
-                        e.run(path, Arc::new(src))
+                        let small = src.len() <= check_below;
+                        let r = e.run(path, Arc::new(src))?;
+                        if engine && small {
+                            checked.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                        Ok(r)
                     })();
                     let line = match res {
                         Ok(m) => json!({"path": path, "hash": hash, "exports": m.iter().map(|(k, rows)| (k.to_string(), Json::Array(rows.iter().map(|r| Json::Array(r.iter().map(v_json).collect())).collect()))).collect::<Map<_, _>>(), "failure": Json::Null}),
@@ -291,6 +387,9 @@ pub fn main(args: &[String]) {
     let mut sum = summary;
     sum["jobs"] = json!(lines.len());
     sum["failures"] = json!(failures);
+    sum["stages"] = json!(if engine { "engine" } else { "reference" });
+    sum["reference_checked"] = json!(checked.into_inner());
+    sum["check_below_bytes"] = json!(check_below);
     sum["seconds"] = json!(t0.elapsed().as_secs_f64());
     std::fs::write(format!("{out_path}.summary.json"), serde_json::to_string_pretty(&sum).unwrap()).unwrap();
 }

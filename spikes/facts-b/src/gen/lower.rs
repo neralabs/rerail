@@ -346,10 +346,42 @@ fn vals_of(members: &[(&Row, R)]) -> Vec<(Vec<V>, R)> {
     members.iter().map(|(r, c)| (val::row_to_v(r), *c)).collect()
 }
 
-fn agg_logic(keys: Key, aggs: Vec<AggCall<RepoSource>>, width: usize) -> Rc<dyn Fn(&Row, &[(&Row, R)]) -> Vec<(Row, R)>> {
+/// GROUP BY logic per group. Ordered aggregates (`group_concat`, `json_group_array`) fold the
+/// group's rows in `order` (stable over equal rows) through the reference evaluator's own fold;
+/// a tie between distinct rows on equal order keys is a runtime refusal (the reference raises
+/// `tie:` on the same groups), never broken by representation order.
+fn agg_logic(keys: Key, aggs: Vec<AggCall<RepoSource>>, width: usize, order: Vec<(X, bool)>) -> Rc<dyn Fn(&Row, &[(&Row, R)]) -> Vec<(Row, R)>> {
     let key_cols: Vec<usize> = keys.iter().filter_map(|(k, _)| if let rerail_facts::ir::Expr::Col { depth: 0, col } = k { Some(*col as usize) } else { None }).collect();
+    let ordered = aggs.iter().any(|a| matches!(a.f, AggFn::GroupConcat | AggFn::JsonGroupArray));
+    let desc: Vec<bool> = order.iter().map(|x| x.1).collect();
     Rc::new(move |_k, members| {
         let rows = vals_of(members);
+        // The ordered aggregates' sequence: member indices sorted by the order keys.
+        let mut seq: Vec<usize> = (0..rows.len()).collect();
+        if ordered {
+            let mut keyed: Vec<(Vec<V>, usize)> = Vec::with_capacity(rows.len());
+            for (i, (r, _)) in rows.iter().enumerate() {
+                let mut k = Vec::with_capacity(order.len());
+                for (e, _) in &order {
+                    match ev(e, r) {
+                        Some(v) => k.push(v),
+                        None => return Vec::new(),
+                    }
+                }
+                keyed.push((k, i));
+            }
+            // Mutant 42: the group's rows are folded in representation order (the sort skipped).
+            if !crate::mutant::on(42) {
+                keyed.sort_by(|a, b| order_cmp(&a.0, &b.0, &desc));
+            }
+            for w in keyed.windows(2) {
+                if order_cmp(&w[0].0, &w[1].0, &desc) == Ordering::Equal && members[w[0].1].0 != members[w[1].1].0 {
+                    refuse("ordered aggregate (group_concat/json_group_array) over an order with ties between distinct rows (input-order dependent)");
+                    return Vec::new();
+                }
+            }
+            seq = keyed.into_iter().map(|(_, i)| i).collect();
+        }
         let mut out: Vec<Val> = vec![Val::NULL; width];
         for &c in &key_cols {
             let first = members.first().map(|(r, _)| r[c]).unwrap_or(Val::NULL);
@@ -360,6 +392,30 @@ fn agg_logic(keys: Key, aggs: Vec<AggCall<RepoSource>>, width: usize) -> Rc<dyn 
             out[c] = first;
         }
         for a in &aggs {
+            if matches!(a.f, AggFn::GroupConcat | AggFn::JsonGroupArray) {
+                let mut items: Vec<(Option<V>, Option<V>)> = Vec::new();
+                for &i in &seq {
+                    let (r, c) = &rows[i];
+                    let mut one = |e: &Option<X>| -> Result<Option<V>, ()> {
+                        match e {
+                            None => Ok(None),
+                            Some(e) => ev(e, r).map(Some).ok_or(()),
+                        }
+                    };
+                    let (Ok(v), Ok(s)) = (one(&a.arg), one(&a.sep)) else { return Vec::new() };
+                    for _ in 0..*c {
+                        items.push((v.clone(), s.clone()));
+                    }
+                }
+                match rerail_facts::reference::fold_aggregate(a, items) {
+                    Ok(v) => out.push(val::from_v(&v)),
+                    Err(m) => {
+                        refuse(&m);
+                        return Vec::new();
+                    }
+                }
+                continue;
+            }
             let mut vals: Vec<(V, R)> = Vec::new();
             for (r, c) in &rows {
                 let v = match &a.arg {
@@ -738,7 +794,7 @@ impl<'s> Lower<'s> {
                 let first = self.node(it.next().unwrap());
                 it.fold(first, |a, i| a.concat(self.node(i)))
             }
-            Op::Group { input, keys, aggs, keyless, width } => {
+            Op::Group { input, keys, aggs, keyless, width, order } => {
                 let mut c = self.node(*input);
                 if *keyless {
                     // One group even over no rows: a sentinel member under the base.
@@ -755,7 +811,7 @@ impl<'s> Lower<'s> {
                         key_of(&row, &kk, &mut vr).map(|k| (k, (w, row)))
                     })
                     .arrange_by_key_named(&format!("n{n}:group-in"));
-                let (data, refused) = group(arr, agg_logic(keys.clone(), aggs.clone(), *width), *keyless, &format!("n{n}"));
+                let (data, refused) = group(arr, agg_logic(keys.clone(), aggs.clone(), *width, order.clone()), *keyless, &format!("n{n}"));
                 self.refused.push(refused);
                 data
             }
@@ -1018,7 +1074,7 @@ impl<'i> IterLower<'i> {
                 let lv = self.is_view(*l);
                 let rv = self.is_view(*r);
                 if *anti && rv {
-                    refuse("antijoin by a recursive relation inside the recursion (not stratified)");
+                    refuse(&format!("{}: antijoin by a recursive relation inside the recursion (not stratified)", g.labels[n]));
                     return self.rec.clone().filter(|_| false);
                 }
                 let left = self.node(*l);
@@ -1053,11 +1109,11 @@ impl<'i> IterLower<'i> {
                 if *anti { left.concat(hit.negate()) } else { hit }
             }
             Op::Group { .. } | Op::Window { .. } | Op::DistinctPrefix { .. } => {
-                refuse("aggregate, window or DISTINCT-prefix over a recursive relation (not stratified)");
+                refuse(&format!("{}: aggregate, window or DISTINCT-prefix over a recursive relation (not stratified)", g.labels[n]));
                 self.rec.clone().filter(|_| false)
             }
             Op::Fix { .. } => {
-                refuse("nested recursion");
+                refuse(&format!("{}: nested recursion", g.labels[n]));
                 self.rec.clone().filter(|_| false)
             }
             Op::Exported(_) | Op::Const(_) => unreachable!("delta-mode node in view mode"),
@@ -1094,12 +1150,17 @@ pub fn build(worker: &mut timely::worker::Worker, graphs: Vec<(String, Rc<Graph>
             let n = g.nodes.len();
             let gi = outputs.len();
             let mut lw = Lower { scope, g: g.clone(), files: files.clone(), src: src.clone(), name: name.clone(), done: vec![None; n], track: track_on.then_some(gi * 100_000), arrs: FxHashMap::default(), press: FxHashMap::default(), refused: Vec::new() };
-            for (clause, node, _) in &g.outputs {
-                let c = lw.node(*node);
-                outputs.push((format!("{name}:{clause}"), capture(c, probe)));
-            }
-            let none: Vec<((W, Row), T, R)> = Vec::new();
-            let refused = lw.refused.drain(..).fold(none.to_stream(scope).as_collection(), |a, c| a.concat(c));
+            // A construct refused while lowering (inside a recursion: a non-stratified antijoin,
+            // an aggregate over the recursive relation) leaves part of the plan empty: the plan's
+            // findings are withheld everywhere by a base refusal record, never reported partial.
+            let (_, at_build) = captured(|| {
+                for (clause, node, _) in &g.outputs {
+                    let c = lw.node(*node);
+                    outputs.push((format!("{name}:{clause}"), capture(c, probe)));
+                }
+            });
+            let built: Vec<((W, Row), T, R)> = at_build.iter().map(|w| ((BASE, refusal_row(&name, w)), 0, 1)).collect();
+            let refused = lw.refused.drain(..).fold(built.to_stream(scope).as_collection(), |a, c| a.concat(c));
             refusals.push((name.clone(), capture(refused, probe)));
         }
         Built { files: files_in, outputs, refusals }

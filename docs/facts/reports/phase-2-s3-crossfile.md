@@ -257,3 +257,65 @@ Status: **partial**. The linker now runs on the generator in usable time and exa
   2. Engine from-scratch checks in greplay, then the 1,000-edit replay for every clause that runs.
   3. Memory: the linker base is 7.4 GB (58.8M arranged records, about 110 B each). G2.4's 250 MB for 40 worktrees cannot hold with the linker as is. Levers: presence keeps both input and output arrangements; packed rows; fewer intermediate interned strings.
   4. G2.4 rows, 3× locked; closure-cost aggregate; `calls` atom.
+
+## 13. Wave 5 (S3CrossFile-5)
+
+Status: **partial**. All six named decorrelation gaps are closed by generic, registered rewrites; three more generic changes were needed on the way (R34, ordered aggregates, a LEFT JOIN antijoin on keys), each with a test and a mutant. 5 of the 8 clauses now normalise and run. 4 of them have oracle parity 0 = 0. `unreachable-internal-symbols` runs but is **not exact** (11,560 vs 4,931). The cause is traced to its per-file `imports` export (§ 13.3). `xexport` runs a clause's stages on the facts-a engine: `quality-conditional-1` exports in 59 s (9,010 jobs) and 315 s (19,801 jobs), against a 1,500 s timeout before. The generator still refuses that clause by name (non-equality correlations). Neither incremental ≡ from-scratch nor the protocol rows finished (§ 13.4). Run dirs are under `~/rerail-bench/facts/phase-2/s3-crossfile/{runs,exports/w5}/`.
+
+### 13.1 Results
+
+| Gate / item | Target | Measured | Result | Run directory |
+|---|---|---|---|---|
+| Six decorrelation gaps (§ 11.3) | generic, registered, test + mutant | R20 (ON subqueries over the left row → left columns), R22 (correlations lifted to the body's WHERE), R24 (disjunctive EXISTS split), R26 (correlated filter pulled through Project/Sort into an aggregate), R28 (uncorrelated EXISTS in ON → cross join with its count), R30 (window subqueries → input columns). Two more were needed: R32 (nested EXISTS joined into its EXISTS body, for `direct_events`) and R34 (an `IN`-list ON → union of keyed joins: `reach_edges` was a 28M-pair cross join on 514 files, 45 s and 11 GB, now 6.5 s and 0.9 GB). Each rewrite has a differential test: the reference before ≡ after on 150 random table sets with NULLs, plus the generated dataflow ≡ the reference on the unrewritten query. Mutants 28–40 and 44 are each killed by `facts-b-unit` | pass | gate `s5-gate/runs/20261023T070721-gate` |
+| Generator: ordered aggregates | `group_concat`/`json_group_array` exact | folded in the order of the Sort below (`norm::rel_keyed`, the reference's `keyed`) through `reference::fold_aggregate`. A tie between distinct rows is a runtime refusal exactly where the reference raises `tie:`. Empty-group values come from the same fold (`json_group_array` → `'[]'`; the old code returned NULL). Test `generated_ordered_aggregates`; mutant 42 | pass | same |
+| Generator: LEFT JOIN on equalities | stratified in a recursion | the unmatched rows are an antijoin on the join's own keys (before: an identity antijoin against the matched rows, refused inside a recursion). This fixed `views/name_sub`, whose recursive step was silently empty. Test `generated_left_join_equi_antijoin`; mutant 46 | pass | same |
+| I9 hole closed | no partial plans | a construct the recursion lowering refused (non-stratified antijoin, aggregate over the recursion, nested recursion) used to drop that subtree and still report findings. Such a refusal is now a base refusal record of the plan, so its findings are withheld in every worktree and the record names the stage | pass | — |
+| Clauses normalised (`facts-b gnorm`) | 8 | `required-contracts`, `quality-project-taxonomy`, `exported-families`, `state-flow-project-1`, `unreachable-internal-symbols`: 0 refusals (also after merging S8b `093977aa2`). `quality-conditional-1`: refused, `block_results` and `conditional_findings_0`: *correlated subquery with a non-equality correlation* (`stmt.__start <= coalesce(…)`, `x.__start > outer.__start`), inside a recursive fold whose string state the subqueries read. `state-flow-1`, `state-projection-recovery-2`: no oracle (native exceeds its budget, wave 2) | 5 of 8 | — |
+| Oracle parity on `2b1504adc` (suite options) | findings = oracle | `exported-families` 0 = 0, `state-flow-project-1` 0 = 0, `required-contracts` 0 = 0, `quality-project-taxonomy` 0 = 0, all with 0 static and 0 runtime refusals (9.5 s, 2.2 GB) | pass (4) | `runs/20261023-*-parity-light-w5c` |
+| `unreachable-internal-symbols` parity | 4,931 = 4,931 | generator **11,560**: 0 missing, 6,629 extra, spread over all four categories; 0 refusals; 79 s; 11.2 GB. **Not exact** | **fail** | `runs/20261023-*-parity-dead-code-w5c` (`findings-parity-*.json`), stages `runs/*-dead-code-stages-w5` |
+| Per-file exports on the engine (`xexport --stages engine`) | qc1 exports complete | `quality-conditional-1`: oracle 9,010 jobs in 59.1 s, replay 19,801 jobs in 315.0 s, **0 failures**. Every export of 3,383 (oracle) and 5,138 (replay) contents of ≤ 4 KB was re-derived by the reference: equal | pass | `exports/w5/{oracle,replay}-quality-conditional-1.jsonl{,.summary.json}` |
+| Incremental ≡ from-scratch, replay | 0 differences | **Not measured.** The 5 runnable clauses together, 300 events: the load took 48.6 s at 8.6 GB RSS. The first from-scratch check on the reference evaluator (`exported-families`, `state-flow-project-1` over a whole worktree) did not finish within 59 min, and the run was killed at the 1 h cap | open | `runs/20261023-072602-exactness-light-w5` |
+| G2.4 protocol rows (3× locked) | ≤ 250 MB for 40 worktrees, latency, state vs divergence | **not run** (run budget). The only measurement: 8.6 GB RSS after loading 40 worktrees with the 5 plans (unlocked), far over 250 MB. The dead-code plan alone is 11.2 GB for one 9,010-file worktree (the linker base 7.4 GB, wave 4; 721 MB interner) → Phase 3 memory item | open | same |
+| `captured-return` aggregate, `calls` atom | implemented | not started | open | — |
+| Bare `GROUP BY` columns (decider's question) | — | none of the 8 clauses is refused for a bare non-key column (no such refusal in `gnorm` for the 6 that reach the generator). A runtime-checked form would unblock nothing today | — | — |
+
+### 13.2 Commits and gate
+
+- `bcadf44eb` (s3): R20–R34, ordered aggregates, the LEFT JOIN key antijoin, build-time refusals withheld, `xexport --stages engine` with the reference check, `facts-b gnorm`, `scripts/findings_parity.py`. Gate **28/28 checks, 36/36 mutants**, 828 s (`20261023T070721-gate`). That is over the 10 min target, and the timing includes the gate's build.
+- `96dada3f0`: `FACTS_STAGE_OUTPUTS=1` (each stage also an output, for diagnosis).
+- `02d88aba2`: merge of S8b `093977aa2` (SQLite 3.53.2 typing). The only conflict was REWRITES.md's numbering list (both sides kept). `norm::tests` 13/13 and `gnorm` unchanged after the merge. Gate on the merged tree: see the final message.
+- Gate changes: `REWRITE_FAMILIES["facts-b"]` is now `facts-b-unit` only, because `b-generated`'s vectors hold none of the normalisation shapes (R15's mutant 24 already survived it). `MUTANTS` gains 42 and 46.
+
+### 13.3 Dead-code: where it goes wrong
+
+Per-stage sizes on the generator (`FACTS_STAGE_OUTPUTS=1`) against the SQLite harness of NARROWINGS:
+
+| Stage | Generator | SQLite |
+|---|---|---|
+| `declarations` | 74,579 | 74,579 |
+| `class_names` | 38,771 | 38,771 |
+| `views/reference_edges` | 145,431 | 145,431 |
+| `imports` | **0** | 95,684 |
+| `base_edges` | 5,483 | 5,534 |
+| `hierarchy` | 27,381 | 27,528 |
+| `public_methods` | 417,836 | 418,068 |
+
+`imports` reads export 18, the import statements: 52,201 rows, the same with the merged binary and with the w4 exports. Its rows are wrong: `['_internal/__init__.py', 348, 348, None, '', ',', 0]` gives `top` = the start byte, `base` = NULL and `items` = ''. `imports` is therefore empty, `reachable` is too small, and symbols come out "unreachable" (all extras, no misses). The defect is in the per-file producer's input projection for that input: the IR leaf inputs as `xexport` builds them (`projection_json` over `InputDef.fields`), or the cut's column map. It is not in the generator: every stage that reads correct exports matches SQLite.
+
+### 13.4 Interface changes
+
+- `norm`: `hoist_on_subqueries` (R20), `lift_correlations` (R22), `split_exists` (R24), `pull_correlation` (R26), `count_on_exists` (R28), `hoist_window_subqueries` (R30), `flatten_exists` (R32), `split_in_list_join` (R34); `remap_expr`/`remap_rel` (depth-aware column maps through subqueries); `Op::Group.order`; `Ctx::rel_keyed`.
+- `lower`: `agg_logic(…, order)`. Refusals raised while building a plan are base refusal records (`Built.refusals`), named `<stage>: <construct>`.
+- `reference::fold_aggregate` (pub; S5's evaluator state reused by the generator).
+- `facts-a xexport --stages engine|reference --check-below BYTES`; the summary gains `stages`, `reference_checked`, `check_below_bytes`. Stages are computed once per producer, not once per export (that repetition was most of the old 460 s per 200 jobs).
+- `facts-b gnorm --real SPEC [--dump all|TEXT]`; `scripts/findings_parity.py RUN --clause PLAN:CLAUSE --check CHECK --jobs JOBS [--code-col N]`.
+
+## 14. Resume notes (wave 5)
+
+- Next, in order:
+  1. Dead-code `imports` export (§ 13.3). Compare export 18's IR producer columns with the clause's `inputs` declaration (fields `top`, `base`, `items`). Run `facts-a xexport --stages reference` on one file and evaluate the IR producer by hand. Then rerun `greplay … spec-oracle-dead-code.json --parity oracle-b6-jobs.tsv` and `findings_parity.py … --check internal_dead_code --code-col 4` (expected 4,931).
+  2. `quality-conditional-1`: a generic θ-semijoin. An EXISTS/scalar with a non-equality correlation becomes `n ⋉_identity π_n(σ_θ(n ⋈_eq B))` (and per-identity groups for scalars). Inside its recursive fold (`block_results`), the body reads the recursive row's `state`, so the identity semijoin is over the recursion: it needs the stratification check or a narrowing. Exports are ready (`exports/w5/*-quality-conditional-1.jsonl`; spec: rule `exports/w3/policies/data-layer-serverplan-quality.json`).
+  3. Incremental ≡ from-scratch: the reference cannot evaluate `exported-families`/`state-flow-project-1` over a worktree in usable time (> 59 min for one check). Implement the engine from-scratch side of § 12: a second dataflow per checked worktree with only base records, dropped after the check. Then replay with `--real exports/w4/spec-replay-light.json`.
+  4. Protocol rows, 3× under `bench-lock`: `greplay --plans none --real …spec-replay-light.json --no-oracle --track`. Expect ~8.6 GB at load. Memory is the blocker for 250 MB: arranged rows of the wide exported relations (`state-flow` exports carry about 60 columns of `nodes`), the linker base 7.4 GB, the interner.
+  5. `captured-return` aggregate and `calls` atom (scratchpad decision; § 9.3, § 10 item 2).
+- Run dirs: parity `runs/*-parity-{light,dead-code}-w5c`, stage sizes `runs/*-dead-code-stages-w5`, profiles `runs/*-dead-code-sub500-prof{,2}`, exactness attempt `runs/20261023-072602-exactness-light-w5`, exports `exports/w5/`.

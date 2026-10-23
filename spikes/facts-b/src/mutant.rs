@@ -8,6 +8,9 @@
 //! - 6: recursion stops after one step: records a fixpoint step derives at round ≥ 2 are dropped.
 //! - 9: runtime tie detection off.
 //! - 24: R15 filter pushdown moves a right-only WHERE conjunct below a LEFT join.
+//! - 28, 30, …, 40, 44: R20–R34 (REWRITES.md, facts-b table), each at its rewrite in `gen/norm.rs`.
+//! - 42: ordered aggregates fold a group's rows in representation order (`gen/lower.rs`).
+//! - 46: a LEFT JOIN on equalities finds its unmatched rows by a semijoin (`gen/norm.rs` join).
 
 #[cfg(feature = "mutants")]
 pub fn on(n: u32) -> bool {
