@@ -9,7 +9,7 @@ pub(crate) mod contracts;
 pub(crate) mod names;
 pub(crate) mod php;
 pub(crate) mod rust;
-pub(crate) mod summary;
+pub mod summary;
 
 #[cfg(test)]
 mod php_tests;

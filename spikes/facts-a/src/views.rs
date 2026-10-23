@@ -3,6 +3,7 @@
 //! (its `-- view: <name>` lines), so the document is the one definition both this engine and the
 //! Phase 2 compiler run. Views are evaluated per content, in document order.
 use crate::facts::{self, Facts, NONE};
+use crate::pyvalue;
 use crate::sql::engine::{self, Catalog, Db, Schema, Statement, Table};
 use crate::sql::value::{Aff, V};
 use std::rc::Rc;
@@ -35,6 +36,8 @@ pub fn core_catalog() -> Catalog {
     c.insert("field".into(), ints(&["parent", "field", "child", "rank"]));
     c.insert("identifier".into(), ints(&["id", "name"]));
     c.insert("line".into(), ints(&["no", "start", "end", "indent"]));
+    c.insert("string_value".into(), ints(&["id", "value"]));
+    c.insert("string_value_unknown".into(), ints(&["id", "named_escape"]));
     c
 }
 
@@ -112,8 +115,42 @@ pub fn core_tables(f: &Facts) -> Vec<(&'static str, Table)> {
             vec![V::Int(l as i64 + 1), V::Int(a as i64), V::Int(b as i64), V::Int(indent as i64)].into_boxed_slice()
         })
         .collect();
+    let (string_value, string_value_unknown) = string_values(f);
     let t = |name: &'static str, rows: Vec<Box<[V]>>| (name, Table::from_rows(cat[name].clone(), rows));
-    vec![t("node", node), t("child", child), t("field", field), t("identifier", identifier), t("line", line)]
+    vec![
+        t("node", node),
+        t("child", child),
+        t("field", field),
+        t("identifier", identifier),
+        t("line", line),
+        t("string_value", string_value),
+        t("string_value_unknown", string_value_unknown),
+    ]
+}
+
+/// `string_value` and `string_value_unknown` (SCHEMA.md § 1.2, § 1.3): every `string` /
+/// `concatenated_string` node decoded by `pyvalue::decode`. `Str` goes to the first, unknown to
+/// the second (with whether a `\N{...}` escape was met), `Bytes` to neither.
+pub fn string_values(f: &Facts) -> (Vec<Box<[V]>>, Vec<Box<[V]>>) {
+    let (mut known, mut unknown) = (Vec::new(), Vec::new());
+    let mut ids: Vec<u32> = ["string", "concatenated_string"]
+        .iter()
+        .filter_map(|k| facts::lookup(k))
+        .flat_map(|k| f.of_kind(k).iter().copied())
+        .collect();
+    ids.sort_unstable();
+    let saved = pyvalue::NAMED_ESCAPES.with(|n| n.replace(0));
+    for id in ids {
+        let value = pyvalue::decode(f, id).expect("string kinds never refuse");
+        let named = pyvalue::NAMED_ESCAPES.with(|n| n.replace(0)) > 0;
+        match value {
+            pyvalue::PyValue::Str(s) => known.push(vec![V::Int(id as i64), V::text(&s)].into_boxed_slice()),
+            pyvalue::PyValue::Unknown => unknown.push(vec![V::Int(id as i64), V::Int(named as i64)].into_boxed_slice()),
+            pyvalue::PyValue::Bytes(_) | pyvalue::PyValue::Other => {}
+        }
+    }
+    pyvalue::NAMED_ESCAPES.with(|n| n.set(saved));
+    (known, unknown)
 }
 
 mod smallvec_ranks {

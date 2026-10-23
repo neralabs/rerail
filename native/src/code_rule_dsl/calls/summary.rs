@@ -28,8 +28,8 @@ use foldhash::{HashMap, HashMapExt};
 /// Bumped whenever extraction changes what a summary holds for the same file.
 pub(crate) const EXTRACTOR_VERSION: u32 = 18;
 
-pub(crate) const ASYNC: u8 = 1;
-pub(crate) const CLASS: u8 = 2;
+pub const ASYNC: u8 = 1;
+pub const CLASS: u8 = 2;
 /// The definition's body calls something unknown.
 pub(crate) const OPEN: u8 = 4;
 /// Python: a decorator that is not known to return the definition itself binds its name.
@@ -56,13 +56,13 @@ const TRANSPARENT: [&str; 6] = [
 ];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Summary {
+pub struct Summary {
     /// The name others import the module by (`pkg.mod`; `pkg` for `pkg/__init__.py`).
     pub(crate) module: Option<u32>,
     /// Names used by this summary, each once.
     pub(crate) names: Vec<Name>,
     /// Functions and classes, by node start.
-    pub(crate) defs: Vec<Def>,
+    pub defs: Vec<Def>,
     /// `(definition, callee name)`: what each definition's own body calls. Sorted, distinct.
     pub(crate) edges: Vec<(u32, u32)>,
     /// Resolved value references, including callbacks and returned function values.
@@ -97,14 +97,14 @@ pub(crate) struct Summary {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Def {
+pub struct Def {
     /// The qualified name (`pkg.mod.Class.method`, `pkg.mod.f.<locals>.g`).
-    pub(crate) name: u32,
+    pub name: u32,
     /// The `function_definition` or `class_definition` node's start.
-    pub(crate) start: u32,
+    pub start: u32,
     /// And its end.
-    pub(crate) end: u32,
-    pub(crate) flags: u8,
+    pub end: u32,
+    pub flags: u8,
 }
 
 impl Def {
@@ -208,7 +208,7 @@ impl Summary {
         }
         summary
     }
-    pub(crate) fn name(&self, id: u32) -> &str {
+    pub fn name(&self, id: u32) -> &str {
         self.names[id as usize].text()
     }
 
@@ -234,7 +234,7 @@ impl Summary {
 
     /// Extracts `root`'s summary through its scope table; without one (it could not be built), a
     /// summary of its definitions alone, which is open.
-    pub(crate) fn extract<D: Doc>(
+    pub fn extract<D: Doc>(
         root: &Node<'_, D>,
         table: Option<&ScopeTable>,
         module: Option<&ModulePath>,

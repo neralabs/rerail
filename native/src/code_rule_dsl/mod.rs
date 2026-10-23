@@ -1,6 +1,6 @@
 mod blade;
 mod budget;
-mod calls;
+pub mod calls;
 mod compile;
 pub mod embed;
 pub mod eval;

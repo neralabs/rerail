@@ -43,9 +43,9 @@ thread_local! {
 
 /// A node of a file, by its byte range and kind: a binding's site, value or annotation.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct NodeRef {
-    pub(crate) start: u32,
-    pub(crate) end: u32,
+pub struct NodeRef {
+    pub start: u32,
+    pub end: u32,
     pub(crate) kind: u16,
 }
 

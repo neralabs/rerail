@@ -150,14 +150,14 @@ impl Site {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct Binding {
+pub struct Binding {
     /// Where the binding takes effect (Python ordering); TypeScript ignores it.
     pub(crate) offset: usize,
     pub(crate) spaces: u8,
     /// Made from a function body into an enclosing scope (`global`/`nonlocal`): Ruff visits it after
     /// the enclosing body, so only other deferred bodies see it.
     pub(crate) deferred: bool,
-    pub(crate) import: Option<Import>,
+    pub import: Option<Import>,
     pub(crate) origin: Origin,
     /// Where Python unbinds the name: the end of its `except` handler. A later read, and any read
     /// from a deferred body, sees what the name meant before.
@@ -171,7 +171,7 @@ pub(crate) struct Binding {
     pub(crate) mutated: bool,
     /// The name node, where a linter reports the binding: the identifier; for an unaliased
     /// Python import item its `dotted_name` (`os.path`, `x`), for an aliased one the alias.
-    pub(crate) name: Option<NodeRef>,
+    pub name: Option<NodeRef>,
     /// Python: the innermost branch of an `if`/`elif`/`else`, `try` clause, `with` body or `match`
     /// case the binding's statement sits in (Ruff's branch path); 0 outside any. A `try` body and
     /// its `else` share one.
@@ -183,9 +183,9 @@ pub(crate) struct Binding {
     /// Python: an explicit re-export, `import a as a` or `from m import a as a`.
     pub(crate) explicit_export: bool,
     /// Python: `import a.b` without an alias binds `a`; this is the submodule it imports.
-    pub(crate) submodule: Option<Box<str>>,
+    pub submodule: Option<Box<str>>,
     /// Python: which import statement form binds the name (Ruff's binding kinds).
-    pub(crate) import_kind: Option<ImportKind>,
+    pub import_kind: Option<ImportKind>,
     /// Python: a nested function's `nonlocal` statement names this binding (Ruff's rebinding
     /// scopes), so a bare annotation may be initialized there.
     pub(crate) rebound: bool,
@@ -193,7 +193,7 @@ pub(crate) struct Binding {
 
 /// The import forms Ruff binds apart.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum ImportKind {
+pub enum ImportKind {
     /// `import m`, `import m as x`, `import a.b as x` (Ruff's `Import`).
     Module,
     /// `import a.b` without an alias, which binds `a` (Ruff's `SubmoduleImport`).
@@ -265,7 +265,7 @@ impl Binding {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Import {
+pub enum Import {
     /// The qualified name the bound name denotes (`import a.b` binds `a` to `a`).
     Qualified(Box<str>),
     /// A relative import, `level` dots and then `rest` (`from ..a import b`: 2, `a.b`). It
@@ -276,12 +276,12 @@ pub(crate) enum Import {
     Definition,
 }
 
-pub(crate) struct Scope {
+pub struct Scope {
     pub(crate) kind: ScopeKind,
     #[allow(dead_code)]
     pub(crate) range: Range<usize>,
     pub(crate) parent: Option<u32>,
-    pub(crate) bindings: HashMap<Box<str>, Vec<Binding>>,
+    pub bindings: HashMap<Box<str>, Vec<Binding>>,
     /// Python `nonlocal` declarations of this scope.
     pub(crate) nonlocals: BTreeSet<Box<str>>,
     /// Python: where each `from m import *` of this scope takes effect, in order. Rust: where each
@@ -390,7 +390,7 @@ pub struct ScopeTable {
     pub(crate) language: GrammarDialect,
     /// The family of `language`, whose `ScopeRules` read the table.
     pub(crate) family: Family,
-    pub(crate) scopes: Vec<Scope>,
+    pub scopes: Vec<Scope>,
     /// Sorted by start byte; at most one reference starts at a byte.
     pub(crate) references: Vec<Reference>,
     pub(crate) directives: Directives,
