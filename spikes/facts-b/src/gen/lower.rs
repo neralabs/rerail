@@ -81,7 +81,7 @@ pub fn uncounted<X>(f: impl FnOnce() -> X) -> X {
     x
 }
 
-fn refuse(what: &str) {
+pub(super) fn refuse(what: &str) {
     REFUSALS.with(|r| *r.borrow_mut().0.entry(what.to_owned()).or_default() += 1);
     CAPTURE.with(|c| {
         if let Some(v) = c.borrow_mut().as_mut() {
@@ -91,7 +91,7 @@ fn refuse(what: &str) {
 }
 
 /// Runs `f`, returning its result and the distinct refusals it raised.
-fn captured<X>(f: impl FnOnce() -> X) -> (X, Vec<String>) {
+pub(super) fn captured<X>(f: impl FnOnce() -> X) -> (X, Vec<String>) {
     let outer = CAPTURE.with(|c| c.borrow_mut().replace(Vec::new()));
     let x = f();
     let mut got = CAPTURE.with(|c| std::mem::replace(&mut *c.borrow_mut(), outer)).unwrap_or_default();
@@ -100,7 +100,7 @@ fn captured<X>(f: impl FnOnce() -> X) -> (X, Vec<String>) {
     (x, got)
 }
 
-fn refusal_row(at: &str, what: &str) -> Row {
+pub(super) fn refusal_row(at: &str, what: &str) -> Row {
     Row::from([Val::text(val::sym(&format!("{at}: {what}")))])
 }
 
@@ -151,7 +151,7 @@ fn track<'s>(c: C<'s, T>, node: usize) -> C<'s, T> {
 // --------------------------------------------------------------------------------------------
 // Per-record evaluation
 
-fn ev(e: &X, row: &[V]) -> Option<V> {
+pub(super) fn ev(e: &X, row: &[V]) -> Option<V> {
     match super::scalar::eval(e, row, &[]) {
         Ok(v) => Some(v),
         Err(m) => {
@@ -163,7 +163,7 @@ fn ev(e: &X, row: &[V]) -> Option<V> {
 
 /// A map's output row into `out` (false: a scalar refused). Bare columns are copied; the row is
 /// converted to `V` only when an expression needs it.
-fn map_row(exprs: &[X], row: &[Val], out: &mut Vec<Val>) -> bool {
+pub(super) fn map_row(exprs: &[X], row: &[Val], out: &mut Vec<Val>) -> bool {
     out.clear();
     let mut vr: Option<Vec<V>> = None;
     for e in exprs {
@@ -190,7 +190,7 @@ fn canon(v: Val) -> Val {
 }
 
 /// A row's key under `key`; `None` when an equality key is NULL (it matches nothing).
-fn key_of(row: &[Val], key: &Key, vrow: &mut Option<Vec<V>>) -> Option<Row> {
+pub(super) fn key_of(row: &[Val], key: &Key, vrow: &mut Option<Vec<V>>) -> Option<Row> {
     key.iter()
         .map(|(x, mode)| {
             let fast = match x {
@@ -359,7 +359,7 @@ fn vals_of(members: &[(&Row, R)]) -> Vec<(Vec<V>, R)> {
 /// group's rows in `order` (stable over equal rows) through the reference evaluator's own fold;
 /// a tie between distinct rows on equal order keys is a runtime refusal (the reference raises
 /// `tie:` on the same groups), never broken by representation order.
-fn agg_logic(keys: Key, aggs: Vec<AggCall<RepoSource>>, width: usize, order: Vec<(X, bool)>) -> Rc<dyn Fn(&Row, &[(&Row, R)]) -> Vec<(Row, R)>> {
+pub(super) fn agg_logic(keys: Key, aggs: Vec<AggCall<RepoSource>>, width: usize, order: Vec<(X, bool)>) -> Rc<dyn Fn(&Row, &[(&Row, R)]) -> Vec<(Row, R)>> {
     let key_cols: Vec<usize> = keys.iter().filter_map(|(k, _)| if let rerail_facts::ir::Expr::Col { depth: 0, col } = k { Some(*col as usize) } else { None }).collect();
     let ordered = aggs.iter().any(|a| matches!(a.f, AggFn::GroupConcat | AggFn::JsonGroupArray));
     let desc: Vec<bool> = order.iter().map(|x| x.1).collect();
@@ -519,7 +519,7 @@ fn order_cmp(a: &[V], b: &[V], desc: &[bool]) -> Ordering {
     Ordering::Equal
 }
 
-fn window_logic(order: Vec<(X, bool)>, kind: WindowKind<RepoSource>) -> Rc<dyn Fn(&Row, &[(&Row, R)]) -> Vec<(Row, R)>> {
+pub(super) fn window_logic(order: Vec<(X, bool)>, kind: WindowKind<RepoSource>) -> Rc<dyn Fn(&Row, &[(&Row, R)]) -> Vec<(Row, R)>> {
     Rc::new(move |_k, members| {
         let rows = vals_of(members);
         match &kind {
@@ -583,7 +583,7 @@ fn window_logic(order: Vec<(X, bool)>, kind: WindowKind<RepoSource>) -> Rc<dyn F
     })
 }
 
-fn distinct_prefix_logic(prefix: usize) -> Rc<dyn Fn(&Row, &[(&Row, R)]) -> Vec<(Row, R)>> {
+pub(super) fn distinct_prefix_logic(prefix: usize) -> Rc<dyn Fn(&Row, &[(&Row, R)]) -> Vec<(Row, R)>> {
     Rc::new(move |_k, members| {
         let first = members[0].0;
         if members.iter().any(|(r, _)| r[prefix..] != first[prefix..] || r[..prefix] != first[..prefix]) {
@@ -605,7 +605,7 @@ pub struct Built {
 }
 
 /// A stage's stored row: each column under its declared affinity (CTAS).
-fn affinity(row: &[Val], affs: &[rerail_facts::ir::Aff]) -> Row {
+pub(super) fn affinity(row: &[Val], affs: &[rerail_facts::ir::Aff]) -> Row {
     row.iter()
         .enumerate()
         .map(|(i, v)| match affs.get(i) {
@@ -636,7 +636,7 @@ struct Lower<'s> {
 /// nodes in id order (an operator's inputs are always added before it, so ids are topological).
 /// Linear in the graph; a recursive walk without memo visits every path of the shared DAG, which
 /// is exponential in the depth of stage reuse.
-fn var_readers(g: &Graph, var: u32) -> Vec<bool> {
+pub(super) fn var_readers(g: &Graph, var: u32) -> Vec<bool> {
     let mut rd = vec![false; g.nodes.len()];
     for (n, op) in g.nodes.iter().enumerate() {
         let ins = op_inputs(op);
@@ -650,7 +650,7 @@ fn var_readers(g: &Graph, var: u32) -> Vec<bool> {
 }
 
 /// An operator's input nodes.
-fn op_inputs(op: &Op) -> Vec<NodeId> {
+pub(super) fn op_inputs(op: &Op) -> Vec<NodeId> {
     match op {
         Op::Var(_) | Op::Exported(_) | Op::Const(_) => Vec::new(),
         Op::Map { input, .. } | Op::Filter { input, .. } | Op::Distinct { input } | Op::Group { input, .. } | Op::Window { input, .. } | Op::DistinctPrefix { input, .. } | Op::Affinity { input, .. } => vec![*input],

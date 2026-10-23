@@ -64,6 +64,25 @@ fn main() {
                 sweep: arg(&args, "--sweep").map(|x| x.parse().unwrap()),
             },
         ),
+        "hreplay" => gen::hybrid::run(
+            &PathBuf::from(arg(&args, "--run-dir").expect("--run-dir")),
+            gen::hybrid::Opts {
+                events: arg(&args, "--events").map(PathBuf::from),
+                limit: arg(&args, "--limit").map(|x| x.parse().unwrap()),
+                real: PathBuf::from(arg(&args, "--real").expect("--real")),
+                check: match arg(&args, "--check").as_deref() {
+                    None | Some("batch") => gen::hybrid::Check::Batch,
+                    Some("engine") => gen::hybrid::Check::Engine,
+                    Some("none") => gen::hybrid::Check::None,
+                    Some(o) => panic!("--check {o}: none | batch | engine"),
+                },
+                check_every: arg(&args, "--check-every").map_or(1, |x| x.parse().unwrap()),
+                sweep: arg(&args, "--sweep").map(|x| x.parse().unwrap()),
+                skip: !args.iter().any(|a| a == "--no-skip"),
+                worktrees: arg(&args, "--worktrees").map(|x| x.parse().unwrap()),
+                workers: arg(&args, "--workers").map_or(1, |x| x.parse().unwrap()),
+            },
+        ),
         "edits" => edits::run(
             &PathBuf::from(arg(&args, "--out").expect("--out")),
             arg(&args, "--seed").map(|x| x.parse().unwrap()).unwrap_or(0x5EED_B),

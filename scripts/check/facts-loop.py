@@ -68,7 +68,7 @@ T0_EDITS = 30
 UNIT = {
     "rerail-facts-lib": ("rerail-facts", "rerail_facts", []),
     "facts-a-unit": ("facts-a", "facts-a", []),
-    "facts-b-unit": ("facts-b", "facts-b", ["norm::tests"]),
+    "facts-b-unit": ("facts-b", "facts-b", ["tests::"]),
 }
 CRATES = {"rerail-facts": ROOT / "facts/src", "facts-a": ROOT / "spikes/facts-a/src", "facts-b": ROOT / "spikes/facts-b/src"}
 BIN_FEATURES = "facts-a/mutants,facts-b/mutants"
