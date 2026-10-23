@@ -84,6 +84,9 @@ pub struct Graph {
     pub outputs: Vec<(String, NodeId, Vec<String>)>,
     /// The stage each node was first built for (`clause/stage`): profiles and EXPLAIN.
     pub labels: Vec<String>,
+    /// Per output, the plan it belongs to, when several plans share the graph (`Plans`); empty
+    /// for a graph of one plan.
+    pub owners: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -104,10 +107,17 @@ enum Local {
     Var(u32, usize),
 }
 
+/// Provisional fixpoint variables (`Ctx::fix`) count down from `u32::MAX`; final ones are heights.
+const PROVISIONAL: u32 = 1 << 30;
+
 struct Ctx<'a> {
+    /// The last provisional fixpoint variable handed out.
+    provisional: u32,
     g: Graph,
     stages: Vec<NodeId>,
     exported: &'a [ir::ExportedRelation],
+    /// The graph-wide id of each of the program's exported relations (`Plans::add`).
+    export_id: &'a dyn Fn(u32) -> u32,
     locals: Vec<(u32, Local)>,
     at: String,
     /// Hash-consing: operator signature → node.
@@ -1003,7 +1013,7 @@ impl<'a> Ctx<'a> {
                 if self.exported.iter().find(|e| e.id == *id).is_some_and(|e| e.ordered) {
                     // Order is checked where it is observed (window, limit, group_concat).
                 }
-                Ok(self.add(Op::Exported(*id), schema.len(), Vec::new()))
+                Ok(self.add(Op::Exported((self.export_id)(*id)), schema.len(), Vec::new()))
             }
             Rel::Scan { src: ir::RepoSource::Stage(s), .. } => self.stages.get(*s as usize).copied().ok_or_else(|| Refused { at: self.at.clone(), construct: format!("stage {s} read before it is defined") }),
             Rel::Local { id, schema } => match self.locals.iter().rev().find(|(i, _)| i == id).map(|x| x.1.clone()) {
@@ -1135,9 +1145,18 @@ impl<'a> Ctx<'a> {
         }
     }
 
+    /// A recursive binding. Its variable is named by height (`var_height`), not by the program's
+    /// binding id, so equal recursions in two plans are one node: the step is normalised once
+    /// with a provisional variable to find the recursions it reads, then with the final one.
     fn fix(&mut self, id: u32, init: &[Rel<RepoSource>], step: &[Rel<RepoSource>], width: usize) -> R<NodeId> {
         let init: Vec<NodeId> = init.iter().map(|r| self.rel(r)).collect::<R<_>>()?;
-        self.locals.push((id, Local::Var(id, width)));
+        self.provisional -= 1;
+        let provisional = self.provisional;
+        self.locals.push((id, Local::Var(provisional, width)));
+        let first: R<Vec<NodeId>> = step.iter().map(|r| self.rel(r)).collect();
+        self.locals.pop();
+        let var = self.var_height(&init.iter().chain(&first?).copied().collect::<Vec<_>>());
+        self.locals.push((id, Local::Var(var, width)));
         let step: Vec<NodeId> = step.iter().map(|r| self.rel(r)).collect::<R<_>>()?;
         self.locals.pop();
         for &n in init.iter().chain(&step) {
@@ -1145,7 +1164,28 @@ impl<'a> Ctx<'a> {
                 return refuse(&self.at, "recursion over bare aggregate columns");
             }
         }
-        Ok(self.add(Op::Fix { var: id, init, step }, width, Vec::new()))
+        Ok(self.add(Op::Fix { var, init, step }, width, Vec::new()))
+    }
+
+    /// The variable of a recursion over `nodes`: one more than the highest recursion they read
+    /// (provisional variables, ≥ `PROVISIONAL`, are not heights). A recursion therefore never
+    /// reads another with its own variable, and equal recursions get equal variables.
+    fn var_height(&self, nodes: &[NodeId]) -> u32 {
+        let mut seen = vec![false; self.g.nodes.len()];
+        let mut stack = nodes.to_vec();
+        let mut h = 0;
+        while let Some(n) = stack.pop() {
+            if std::mem::replace(&mut seen[n], true) {
+                continue;
+            }
+            if let Op::Fix { var, .. } = &self.g.nodes[n] {
+                if *var < PROVISIONAL {
+                    h = h.max(*var);
+                }
+            }
+            stack.extend(super::lower::op_inputs(&self.g.nodes[n]));
+        }
+        h + 1
     }
 
     /// `ORDER BY keys LIMIT lim OFFSET off`, per partition `part` (empty: the whole relation):
@@ -1744,9 +1784,56 @@ impl<'a> Ctx<'a> {
 
 /// Normalise one repository plan. Refusals name the construct and the stage.
 pub fn plan(p: &ir::Plan<RepoSource>, exported: &[ir::ExportedRelation]) -> Result<Graph, Vec<Refused>> {
-    let mut ctx = Ctx { g: Graph::default(), stages: Vec::new(), exported, locals: Vec::new(), at: String::new(), seen: FxHashMap::default() };
+    let mut ctx = Ctx { provisional: u32::MAX, g: Graph::default(), stages: Vec::new(), exported, export_id: &|e| e, locals: Vec::new(), at: String::new(), seen: FxHashMap::default() };
+    let refused = normalise(&mut ctx, p);
+    if refused.is_empty() { Ok(ctx.g) } else { Err(refused) }
+}
+
+/// Several repository plans normalised through one hash-consing context (R37, REWRITES.md):
+/// operators are pure, so an operator tree equal in two plans (over the same graph-wide exported
+/// relations, `export_id`) is one node, lowered once, whichever plans read it. A refused plan
+/// leaves nothing behind.
+#[derive(Default)]
+pub struct Plans {
+    g: Graph,
+    seen: FxHashMap<String, NodeId>,
+}
+
+impl Plans {
+    /// Adds plan `p` (outputs owned by `owner`); `export_id` maps its program's export ids to the
+    /// graph-wide ids (equal ids: the same exported relation).
+    pub fn add(&mut self, owner: &str, p: &ir::Plan<RepoSource>, exported: &[ir::ExportedRelation], export_id: &dyn Fn(u32) -> u32) -> Result<(), Vec<Refused>> {
+        // Mutant 50: every program's export ids are taken as graph-wide (relations of different
+        // producers with equal ids are merged).
+        let mutant = |e: u32| e;
+        let export_id: &dyn Fn(u32) -> u32 = if crate::mutant::on(50) { &mutant } else { export_id };
+        let (nodes, outs) = (self.g.nodes.len(), self.g.outputs.len());
+        let mut ctx = Ctx { provisional: u32::MAX, g: std::mem::take(&mut self.g), stages: Vec::new(), exported, export_id, locals: Vec::new(), at: String::new(), seen: std::mem::take(&mut self.seen) };
+        let refused = normalise(&mut ctx, p);
+        let (mut g, mut seen) = (ctx.g, ctx.seen);
+        if refused.is_empty() {
+            g.owners.resize(g.outputs.len(), owner.to_owned());
+        } else {
+            g.nodes.truncate(nodes);
+            g.widths.truncate(nodes);
+            g.poison.truncate(nodes);
+            g.labels.truncate(nodes);
+            g.outputs.truncate(outs);
+            seen.retain(|_, n| *n < nodes);
+        }
+        (self.g, self.seen) = (g, seen);
+        if refused.is_empty() { Ok(()) } else { Err(refused) }
+    }
+
+    pub fn graph(self) -> Graph {
+        self.g
+    }
+}
+
+/// Normalises `p` into `ctx`'s graph; returns its refusals (none: its outputs were added).
+fn normalise(ctx: &mut Ctx, p: &ir::Plan<RepoSource>) -> Vec<Refused> {
     let mut refused = Vec::new();
-    for (si, st) in p.stages.iter().enumerate() {
+    for st in &p.stages {
         ctx.at = format!("{}/{}", p.clause, st.name);
         let r = match &st.def {
             StageDef::Query { rel } => ctx.rel(rel).map(|n| {
@@ -1766,7 +1853,7 @@ pub fn plan(p: &ir::Plan<RepoSource>, exported: &[ir::ExportedRelation]) -> Resu
                     let nn = |c: usize| Expr::IsNull { e: Box::new(col(c)), negated: true };
                     let rf = ctx.add(Op::Filter { input: rn, pred: Expr::And(Box::new(nn(0)), Box::new(nn(1))) }, 2, Vec::new());
                     let init = ctx.add(Op::Map { input: rf, exprs: vec![col(0), col(1), col(1)] }, 3, Vec::new());
-                    let var = u32::MAX - si as u32;
+                    let var = ctx.var_height(&[init, en]);
                     let v = ctx.add(Op::Var(var), 3, Vec::new());
                     let k = |a: usize, b: usize| vec![(col(a), KeyMode::Eq(Aff::None)), (col(b), KeyMode::Eq(Aff::None))];
                     let j = ctx.add(Op::Join { l: v, r: en, lk: k(0, 2), rk: k(0, 1) }, 6, Vec::new());
@@ -1810,7 +1897,7 @@ pub fn plan(p: &ir::Plan<RepoSource>, exported: &[ir::ExportedRelation]) -> Resu
         Sink::Budget { .. } => refused.push(Refused { at: ctx.at.clone(), construct: "budget sink in a repository plan (cross-file closure/group): not lowered yet".into() }),
         Sink::Witnesses { .. } | Sink::Export(_) => refused.push(Refused { at: ctx.at.clone(), construct: "per-file sink in a repository plan".into() }),
     }
-    if refused.is_empty() { Ok(ctx.g) } else { Err(refused) }
+    refused
 }
 
 #[cfg(test)]
@@ -2287,5 +2374,189 @@ mod tests {
             Err(e) => assert!(e.contains("not stratified"), "{e}"),
             Ok(m) => panic!("θ antijoin over the recursion lowered: {m:?}"),
         }
+    }
+
+    /// R37 (cross-plan sharing, mutant 50): plans of two programs normalised through one context
+    /// (`Plans`), their exports mapped to graph-wide ids (program 0's export 0 and program 1's
+    /// export 0 the same relation; each program's export 1 its own), lowered as one dataflow:
+    /// every plan's output equals the reference over its own program's relations, equal stages
+    /// (a join and a recursion bound under different ids) are one node, and the merged graph is
+    /// smaller than the two apart.
+    #[test]
+    fn rewrite_cross_plan_sharing() {
+        install();
+        let ids: [[u32; 2]; 2] = [[2, 3], [2, 4]];
+        let col1 = |n: &str| vec![Column::new(n, Aff::None)];
+        // A recursion over export 0 (a join of it with itself seeds it, export 0 is its edge
+        // relation); `rid` its binding id.
+        let rec = |rid: u32| {
+            let a = scan(0, &["x", "y"]);
+            let seed = proj(join(INNER, a.clone(), a.clone(), Some(eq(c(0), c(3)))), vec![c(1)]);
+            let local = Rel::Local { id: rid, schema: col1("v") };
+            let step = proj(join(INNER, local.clone(), a, Some(eq(c(0), c(1)))), vec![c(2)]);
+            Rel::With { bindings: vec![(rid, Binding::Fix { init: vec![seed], step: vec![step], set: true, schema: col1("v") })], body: Box::new(local) }
+        };
+        // Plan p0 (program 0) and p1 (program 1): the same recursion under different binding ids,
+        // then each kept where its own program's export 1 has the value (a semijoin).
+        let kept = |rid: u32, negated: bool| filt(rec(rid), exists(filt(scan(1, &["x", "z"]), eq(c(0), o(1, 0))), negated));
+        let qs = [kept(3, false), kept(9, true)];
+        let apart: usize = qs.iter().map(|q| super::plan(&plan(q.clone()), &[]).unwrap().nodes.len()).sum();
+        let mut all = Plans::default();
+        for (k, q) in qs.iter().enumerate() {
+            let m = ids[k];
+            all.add(&format!("p{k}"), &plan(q.clone()), &[], &move |e| m[e as usize]).unwrap();
+        }
+        let g = std::rc::Rc::new(all.graph());
+        assert!(g.nodes.iter().filter(|o| matches!(o, Op::Fix { .. })).count() >= 1);
+        let mut rng = Rng(37);
+        let mut rows = 0;
+        for _ in 0..60 {
+            // Tables by graph-wide id; ids 0 and 1 (the programs' own ids) hold other rows.
+            let t: Tables = (0..5).map(|_| (0..rng.next(9)).map(|_| (0..2).map(|_| if rng.next(6) == 0 { V::Null } else { V::Int(rng.next(4) as i64) }).collect()).collect()).collect();
+            let rows_of: Vec<std::rc::Rc<[Row]>> = t.iter().map(|x| x.iter().map(|r| r.iter().map(val::from_v).collect::<Row>()).collect::<Vec<_>>().into()).collect();
+            let alloc = timely::communication::Allocator::Thread(timely::communication::allocator::thread::Thread::default());
+            let mut worker = timely::worker::Worker::new(timely::WorkerConfig::default(), alloc, Some(std::time::Instant::now()));
+            let probe = timely::dataflow::operators::probe::Handle::new();
+            let src: super::super::lower::Source = std::rc::Rc::new(move |e, _, _| rows_of[e as usize].clone());
+            let mut built = super::super::lower::build(&mut worker, vec![("p0".into(), g.clone()), ("p1".into(), g.clone())], src, &probe, false);
+            assert_eq!(built.groups.len(), 1, "one dataflow graph for both plans");
+            built.files.update((super::super::tags::BASE, (0, 0)), 1);
+            built.files.advance_to(1);
+            built.files.flush();
+            worker.step_while(|| probe.less_than(&1));
+            for (k, q) in qs.iter().enumerate() {
+                let exported = |id: ir::ExportId| -> Result<Vec<Vec<V>>, rerail_facts::reference::Error> { Ok(t[ids[k][id as usize] as usize].clone()) };
+                let want = evaluate_repository(&plan(q.clone()), &exported).map(|rs| {
+                    let mut m = BTreeMapRows::new();
+                    for r in rs {
+                        *m.entry(r.iter().map(val::from_v).collect::<Row>()).or_default() += 1;
+                    }
+                    m
+                });
+                let (name, out) = &built.outputs[k];
+                assert!(name.starts_with(&format!("p{k}:")), "{name}");
+                let got = super::super::lower::full(out, super::super::tags::BASE);
+                assert_eq!(got.as_ref().ok(), want.as_ref().ok(), "plan p{k} shared ≠ reference\ntables {t:?}");
+                rows += got.map_or(0, |m| m.len());
+            }
+        }
+        assert!(rows > 50, "rows {rows}");
+        // The recursion and the join below it are shared: fewer nodes than the plans apart.
+        let fixes = g.nodes.iter().filter(|o| matches!(o, Op::Fix { .. })).count();
+        assert_eq!(fixes, 1, "one recursion node for both plans: {:?}", g.nodes);
+        assert!(g.nodes.len() < apart, "{} nodes shared vs {apart} apart", g.nodes.len());
+    }
+
+    /// A rule with one repository clause over an input (a pattern of `kind`), its stage and
+    /// input named as given, under `scope`.
+    fn r37_rule(id: &str, scope: serde_json::Value, kind: &str, input: &str, stage: &str) -> serde_json::Value {
+        use serde_json::json;
+        let q = format!("SELECT a.__path, a.__start, a.__end FROM {input} a WHERE EXISTS (SELECT 1 FROM {input} b WHERE b.name = a.name AND b.__path <> a.__path)");
+        let mut inputs = serde_json::Map::new();
+        inputs.insert(input.into(), json!({ "evidence": { "as": "row", "query": { "ast": { "language": "python", "rule": { "kind": kind } } }, "project": { "name": "capture.N" } } }));
+        json!({ "format": "rerail.policy/v1", "id": id, "revision": 1, "mode": "report", "scope": scope, "clauses": [{ "id": "c", "relational": { "inputs": inputs, "stages": [{ "name": stage, "query": q }], "query": format!("SELECT __path AS path, __start AS start_byte, __end AS end_byte FROM {stage}") }, "violation": { "code": "X", "message": "m", "anchor": "witness.span" } }] })
+    }
+
+    fn r37_digests(doc: &serde_json::Value) -> Vec<String> {
+        let c = rerail_facts::compile::compile_report(doc, &serde_json::Map::new(), &mut super::super::real::Accept).unwrap();
+        assert!(!c.program.exported.is_empty());
+        c.program.exported.iter().map(|e| super::super::real::export_digest(doc, &serde_json::Map::new(), &c.program, e)).collect()
+    }
+
+    /// R37's export digest (mutant 52): exported relations of two rules get one graph-wide id
+    /// exactly when their per-content computation is the same: equal whatever the rule, input and
+    /// stage names; not equal under another scope or another input pattern.
+    #[test]
+    fn rewrite_export_digest() {
+        let scope = serde_json::json!({ "include": ["a/**/*.py"] });
+        let base = r37_digests(&r37_rule("r1", scope.clone(), "identifier", "names", "s"));
+        assert_eq!(base, r37_digests(&r37_rule("r2", scope.clone(), "identifier", "idents", "t")), "renaming changes no row");
+        let other_scope = r37_digests(&r37_rule("r1", serde_json::json!({ "include": ["b/**/*.py"] }), "identifier", "names", "s"));
+        assert!(base.iter().zip(&other_scope).all(|(a, b)| a != b), "another scope: other rows");
+        let other_input = r37_digests(&r37_rule("r1", scope, "string", "names", "s"));
+        assert!(base.iter().zip(&other_input).all(|(a, b)| a != b), "another pattern: other rows");
+    }
+
+    /// R37's side condition on the data (mutant 54): producers whose outputs fail on, or index,
+    /// different contents do not share an id.
+    #[test]
+    fn rewrite_shared_exports_agree_on_failures() {
+        use super::super::real::{index, producers_agree};
+        use serde_json::json;
+        let dir = std::env::temp_dir().join(format!("facts-b-r37-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = |name: &str, lines: &[serde_json::Value]| {
+            let p = dir.join(name);
+            std::fs::write(&p, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
+            index(&p)
+        };
+        let ok = |p: &str| json!({ "exports": { "0": [["x"]] }, "hash": "h", "path": p });
+        let failed = |p: &str| json!({ "failure": "unparsed", "hash": "h", "path": p });
+        let a = file("a.jsonl", &[ok("p1"), failed("p2")]);
+        let b = file("b.jsonl", &[ok("p1"), failed("p2")]);
+        let c = file("c.jsonl", &[ok("p1"), ok("p2")]);
+        let d = file("d.jsonl", &[ok("p1")]);
+        assert!(producers_agree(&[&a, &b]));
+        assert!(!producers_agree(&[&a, &c]), "p2 fails in one producer only");
+        assert!(!producers_agree(&[&a, &d]), "p2 is indexed by one producer only");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The interner's epoch sweep (mutant 56) keeps every symbol an arrangement holds: a
+    /// computed key held only by a semijoin's counts survives a sweep and the reuse of reclaimed
+    /// ids, so a row arriving later with the same text still matches it.
+    #[test]
+    fn sweep_keeps_symbols_arrangements_hold() {
+        use super::super::{lower, tags::BASE};
+        use std::rc::Rc;
+        install();
+        let pinned = val::syms_len();
+        let txt = |s: &str| val::Val::text(val::sym(s));
+        let bang = Expr::Concat(Box::new(c(0)), Box::new(Expr::Lit(ir::Lit::Text("!".into()))));
+        // t0 rows kept where some t1.x || '!' equals their y.
+        let q = filt(scan(0, &["x", "y"]), exists(filt(scan(1, &["x", "z"]), eq(bang, o(1, 1))), false));
+        let g = Rc::new(super::plan(&plan(q), &[]).unwrap());
+        // Export e, content c: rows[e][c]. The key "a!" is computed, held by no source row.
+        let t1: Rc<[Row]> = vec![Row::from([txt("a"), txt("z")])].into();
+        let t0: Vec<Rc<[Row]>> = vec![vec![Row::from([val::Val::int(1), txt("b")])].into(), vec![Row::from([val::Val::int(1), txt("b")])].into()];
+        let rows = Rc::new(std::cell::RefCell::new(vec![t0, vec![t1.clone(), t1]]));
+        let r2 = rows.clone();
+        let src: lower::Source = Rc::new(move |e, _, c| r2.borrow()[e as usize][c as usize].clone());
+        let alloc = timely::communication::Allocator::Thread(timely::communication::allocator::thread::Thread::default());
+        let mut worker = timely::worker::Worker::new(timely::WorkerConfig::default(), alloc, Some(std::time::Instant::now()));
+        let probe = timely::dataflow::operators::probe::Handle::new();
+        lower::register_traces(true);
+        let mut built = lower::build(&mut worker, vec![("t".into(), g)], src, &probe, false);
+        lower::register_traces(false);
+        built.files.update((BASE, (0, 0)), 1);
+        built.files.advance_to(1);
+        built.files.flush();
+        worker.step_while(|| probe.less_than(&1));
+        let sweep = |built: &lower::Built| {
+            val::sweep(pinned, &[], |f| {
+                for per in rows.borrow().iter() {
+                    per.iter().for_each(|rs| rs.iter().for_each(|r| f(r)));
+                }
+                for (_, o) in built.outputs.iter().chain(&built.refusals) {
+                    o.borrow().keys().for_each(|(_, r)| f(r));
+                }
+                lower::walk_rows(f);
+            })
+        };
+        sweep(&built);
+        // Reclaimed ids are reused by new strings; then t0 gains a row whose y is "a!".
+        for i in 0..64 {
+            val::sym(&format!("filler {i}"));
+        }
+        rows.borrow_mut()[0][1] = vec![Row::from([val::Val::int(1), txt("b")]), Row::from([val::Val::int(2), txt("a!")])].into();
+        built.files.update((BASE, (0, 0)), -1);
+        built.files.update((BASE, (0, 1)), 1);
+        built.files.advance_to(2);
+        built.files.flush();
+        worker.step_while(|| probe.less_than(&2));
+        let got: Vec<String> = lower::full(&built.outputs[0].1, BASE).unwrap().keys().map(|r| format!("{:?}", val::row_to_v(r))).collect();
+        assert_eq!(got, vec![format!("{:?}", vec![V::Int(2), V::Text("a!".into())])], "the computed key \"a!\" survived the sweep");
+        let (_, live, _, _) = sweep(&built);
+        assert!(live > 0);
     }
 }

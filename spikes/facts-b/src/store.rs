@@ -8,13 +8,17 @@ pub type Sym = u32;
 pub type Cid = u32; // content id (index into Store::contents)
 
 /// String interner over one owned arena: each string's bytes are stored once; the map goes from
-/// the string's hash to its symbol (colliding hashes spill to `overflow`).
+/// the string's hash to its symbol (colliding hashes spill to `overflow`). Symbols no holder
+/// reaches are reclaimed by `sweep` (an epoch sweep: the caller marks every live symbol); their
+/// ids are reused by later strings, and the arena is rebuilt from the live strings only.
 #[derive(Default)]
 pub struct Interner {
     arena: String,
     spans: Vec<(u32, u32)>,
     map: FxHashMap<u64, Sym>,
     overflow: FxHashMap<u64, Vec<Sym>>,
+    /// Reclaimed ids, reused before new ones.
+    free: Vec<Sym>,
 }
 
 fn hash_str(s: &str) -> u64 {
@@ -24,14 +28,26 @@ fn hash_str(s: &str) -> u64 {
     h.finish()
 }
 
+/// A reclaimed id's span: no string (reads as "", never found).
+const FREED: (u32, u32) = (u32::MAX, 0);
+
 impl Interner {
     pub fn intern(&mut self, s: &str) -> Sym {
         let h = hash_str(s);
         if let Some(i) = self.find(h, s) {
             return i;
         }
-        let i = self.spans.len() as Sym;
-        self.spans.push((self.arena.len() as u32, s.len() as u32));
+        let span = (self.arena.len() as u32, s.len() as u32);
+        let i = match self.free.pop() {
+            Some(i) => {
+                self.spans[i as usize] = span;
+                i
+            }
+            None => {
+                self.spans.push(span);
+                (self.spans.len() - 1) as Sym
+            }
+        };
         self.arena.push_str(s);
         if self.map.contains_key(&h) {
             self.overflow.entry(h).or_default().push(i);
@@ -52,14 +68,72 @@ impl Interner {
     }
     pub fn str(&self, i: Sym) -> &str {
         let (o, l) = self.spans[i as usize];
+        debug_assert!((o, l) != FREED, "symbol {i} read after it was reclaimed");
+        if l == 0 {
+            return "";
+        }
         &self.arena[o as usize..(o + l) as usize]
     }
+    /// Symbol ids handed out (live and reclaimed).
     pub fn len(&self) -> usize {
         self.spans.len()
     }
-    /// Arena + spans (8 B per entry) + map (capacity x 16 B).
+    /// Live symbols.
+    pub fn live(&self) -> usize {
+        self.spans.len() - self.free.len()
+    }
+    /// Arena + spans (8 B per entry) + map (capacity x 16 B) + free list.
     pub fn bytes(&self) -> usize {
-        self.arena.capacity() + self.spans.capacity() * 8 + self.map.capacity() * 16
+        self.arena.capacity() + self.spans.capacity() * 8 + self.map.capacity() * 16 + self.free.capacity() * 4
+    }
+    /// Bytes of the strings themselves (the arena's length).
+    pub fn string_bytes(&self) -> usize {
+        self.arena.len()
+    }
+
+    /// Reclaims every symbol `i` with `live(i)` false: its id goes to the free list and its
+    /// string out of the map; the arena is rebuilt from the live strings, exactly sized. The
+    /// caller guarantees no holder keeps a reclaimed id (a later string may take it). Returns
+    /// the number reclaimed.
+    pub fn sweep(&mut self, live: impl Fn(Sym) -> bool) -> usize {
+        let mut arena = String::with_capacity(self.arena.len());
+        let mut freed = 0;
+        for i in 0..self.spans.len() {
+            let (o, l) = self.spans[i];
+            if (o, l) == FREED {
+                continue;
+            }
+            let s = if l == 0 { "" } else { &self.arena[o as usize..(o + l) as usize] };
+            if live(i as Sym) {
+                self.spans[i] = (arena.len() as u32, l);
+                arena.push_str(s);
+                continue;
+            }
+            let h = hash_str(s);
+            if self.map.get(&h) == Some(&(i as Sym)) {
+                // An overflow entry of the same hash takes the map's place.
+                match self.overflow.get_mut(&h).and_then(|v| v.pop()) {
+                    Some(j) => {
+                        self.map.insert(h, j);
+                    }
+                    None => {
+                        self.map.remove(&h);
+                    }
+                }
+            } else if let Some(v) = self.overflow.get_mut(&h) {
+                v.retain(|&j| j != i as Sym);
+            }
+            if self.overflow.get(&h).is_some_and(|v| v.is_empty()) {
+                self.overflow.remove(&h);
+            }
+            self.spans[i] = FREED;
+            self.free.push(i as Sym);
+            freed += 1;
+        }
+        arena.shrink_to_fit();
+        self.arena = arena;
+        self.map.shrink_to_fit();
+        freed
     }
 }
 

@@ -272,11 +272,47 @@ fn string(i: u32) -> Rc<str> {
     world(|w| Rc::from(w.borrow().store.syms.str(i)))
 }
 
-/// The string table: (strings, bytes).
+/// The string table: (live strings, bytes).
 pub fn syms_footprint() -> (usize, usize) {
     world(|w| {
         let w = w.borrow();
-        (w.store.syms.len(), w.store.syms.bytes())
+        (w.store.syms.live(), w.store.syms.bytes())
+    })
+}
+
+/// Symbols handed out so far (the next new one's id when none is free): a pin mark for `sweep`.
+pub fn syms_len() -> u32 {
+    world(|w| w.borrow().store.syms.len() as u32)
+}
+
+/// An epoch sweep of the string table: every symbol below `pinned`, every symbol in `pins`, and
+/// every TEXT value `mark` reports stays; every other symbol is reclaimed. `mark` must report
+/// every row any holder keeps (arrangements, outputs, cached exported rows, constants).
+/// Returns (reclaimed, live, bytes, string bytes).
+pub fn sweep(pinned: u32, pins: &[u32], mark: impl FnOnce(&mut dyn FnMut(&[Val]))) -> (usize, usize, usize, usize) {
+    let n = syms_len() as usize;
+    let mut live = vec![0u64; n.div_ceil(64)];
+    let mut set = |s: u32| {
+        let s = s as usize;
+        if s < n {
+            live[s / 64] |= 1 << (s % 64);
+        }
+    };
+    for s in 0..pinned.min(n as u32) {
+        set(s);
+    }
+    pins.iter().for_each(|s| set(*s));
+    mark(&mut |row: &[Val]| {
+        for v in row {
+            if (v.0 & 3) == TAG_TEXT {
+                set((v.0 >> 2) as u32);
+            }
+        }
+    });
+    world(|w| {
+        let mut w = w.borrow_mut();
+        let freed = w.store.syms.sweep(|s| (live[s as usize / 64] >> (s % 64)) & 1 == 1);
+        (freed, w.store.syms.live(), w.store.syms.bytes(), w.store.syms.string_bytes())
     })
 }
 
