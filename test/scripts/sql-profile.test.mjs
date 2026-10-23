@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Script } from "node:vm";
 import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { actionableSummary, sqlShape } from "../../benchmark/sql-profile/summary.mjs";
 import { buildReport, flags } from "../../benchmark/sql-profile/report.mjs";
 
@@ -57,8 +57,10 @@ test("report preserves execution trace, counter order, plans, and exclusive CPU"
     assert.ok(readFileSync(join(directory, "profile.md"), "utf8").includes(sql));
     assert.ok(readFileSync(join(directory, "summary.md"), "utf8").includes("Priority actions"));
     const originalTrace = readFileSync(join(directory, "trace.json"));
-    const stdout = execFileSync(process.execPath, [fileURLToPath(new URL("../../benchmark/sql-profile/summarize.mjs", import.meta.url)), directory], { encoding: "utf8" });
-    assert.ok(stdout.includes("Recorded CPU"));
+    const child = spawnSync(process.execPath, [fileURLToPath(new URL("../../benchmark/sql-profile/summarize.mjs", import.meta.url)), directory], { encoding: "utf8" });
+    assert.equal(child.status, 1); // Historical captures lack complete coverage and parity proof.
+    assert.match(child.stderr, /invalid-capture/);
+    assert.ok(child.stdout.includes("Recorded CPU"));
     assert.deepEqual(readFileSync(join(directory, "trace.json")), originalTrace);
     // Mixed captures retain coverage instead of treating untimed legacy builds as free.
     const events = readFileSync(join(raw, "profile-9-0.jsonl"), "utf8").trim().split("\n").map(JSON.parse);

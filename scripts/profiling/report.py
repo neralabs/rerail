@@ -90,7 +90,10 @@ def chrome_trace(events, process_rows=()):
 
 
 def summary(report):
+    budget = report.get("sqlExecutionBudget")
     lines = [f"Elapsed: {report['elapsedSeconds']:.3f}s; exit: {report['exitCode']}; timeout: {report['timedOut']}"]
+    if budget:
+        lines += [f"SQL execution budget: {budget['status']}; {budget['observed']}/{budget['limit']} actual statements for the complete job; target exit: {report.get('targetExitCode')}."]
     if "process" in report:
         process = report["process"]
         lines += [f"Sampled process tree: CPU >= {process['treeCpuSecondsLowerBound']:.3f}s; peak summed RSS {process['peakTreeRssBytes']} bytes; {process['samples']} samples.", process["note"]]

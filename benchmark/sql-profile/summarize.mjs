@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { writeReport } from "./report.mjs";
 import { summaryMarkdown } from "./summary.mjs";
+import { requireExecutionBudget } from "./execution-budget.mjs";
 
 if (process.argv.length !== 3) {
   throw new Error("Usage: node benchmark/sql-profile/summarize.mjs /existing/profile/directory");
@@ -13,3 +14,4 @@ if (report.version !== 1) throw new Error(`Unsupported SQL profile version: ${re
 writeReport(report, directory);
 console.log(summaryMarkdown(report));
 console.log(`Reports: ${directory}/summary.md and ${directory}/profile.html`);
+requireExecutionBudget(report);

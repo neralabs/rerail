@@ -1,6 +1,9 @@
 # Shared producer implementation workplan
 
 Status: implementation plan. Runtime work has not started.
+The [SQL recovery workplan](sql-performance-recovery-workplan.md) now defines the execution order after the aggregate regression.
+Its acceptance, accounting, eligibility, and publication steps precede WP1.
+WP1 starts at recovery step R4 in this same worktree.
 The [contract design](shared-producer-contracts.md), [execution stages](sql-execution-stages.md), and [ownership invariant](sql-materialization-shape.md) define the target.
 WP1 will use this worktree after the [aggregate checkpoint](data-layer-performance-journal.md#aggregate-optimization-checkpoint-2026-10-23).
 That checkpoint records a 19.93-fold first-50 cold CPU regression and failed full-repository 60-rule execution.

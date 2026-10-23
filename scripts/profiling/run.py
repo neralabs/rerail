@@ -234,6 +234,7 @@ def main():
     (output / "trace.chrome.json").write_text(json.dumps(chrome_trace(events, process_rows)) + "\n")
     report = {"version": 1, "command": command, "elapsedSeconds": time.monotonic() - started,
               "exitCode": code, "timedOut": timed_out, "deadlineSeconds": args.deadline,
+              "targetExitCode": code, "targetTimedOut": timed_out,
               "trace": args.trace, "external": args.external, "queryPlans": args.query_plans, "sqlProfile":args.sql_profile,
               "memoryCensus": args.memory_census, "memoryTool": args.memory_tool, "batchFiles": args.batch_files,
               "sampleModules":args.sample_module or ["rerail_engine"],
@@ -256,6 +257,9 @@ def main():
             report["sqlProfileError"] = str(error)
             code = code or 1
             timed_out = timed_out or isinstance(error, subprocess.TimeoutExpired)
+        budget = output / "sql" / "execution-budget.json"
+        if budget.exists():
+            report["sqlExecutionBudget"] = json.loads(budget.read_text())
         report.update(exitCode=code, timedOut=timed_out, elapsedSeconds=time.monotonic() - started)
         (output / "profile.json").write_text(json.dumps(report, indent=2) + "\n")
     (output / "summary.txt").write_text(summary(report))

@@ -20,6 +20,7 @@ export default defineConfig({
       "packs/*/candidates/**",
       "**/scripts/ensure-sqlite.test.mjs",
       "**/scripts/sql-profile.test.mjs",
+      "**/scripts/sql-execution-budget.test.mjs",
     ],
   },
 });
