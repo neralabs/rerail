@@ -3151,6 +3151,116 @@ fn walk_ref<'p>(pe: &'p PE, s: &PSelect, slots: &mut usize) -> Option<WalkRef<'p
     })
 }
 
+/// P3b's forest-walk bound (`docs/facts/REWRITES.md` W1): a bag recursion whose one step reads
+/// the recursion as its first item, probes one edge relation `E` (item 1) with columns of the
+/// recursion (the walk key, at positions `key`, on `E`'s columns `from`), then only looks rows up
+/// (items 2..), and projects back into the walk key columns of `E` (`to`, through the lookups'
+/// equalities). Every derivation moves along one `E` row from `from` to `to`. When, on a content,
+/// that relation is a forest (acyclic; every node with at most one parent, or at most one child)
+/// and every lookup finds at most one row, every initial row's derivations follow distinct paths
+/// of that forest: at most its depth `d` going up, at most its subtree going down (with distinct
+/// initial keys, `n·d` over all of them). `Exec::check_walk` checks this per content.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct WalkBound {
+    pub(crate) key: Vec<u16>,
+    pub(crate) from: Vec<u16>,
+    pub(crate) to: Vec<u16>,
+}
+
+/// The recursive arm extends a path: some output column is a concatenation reading the same
+/// column of the recursion's row (`path || step`). Its rows are paths of the graph it walks, which
+/// only the visited test or set semantics keep simple: simple-path enumeration, bounded by the
+/// number of simple paths (exponential in general; docs/facts/PHASE-3.md § P3b).
+pub(crate) fn extends_path(batch: usize, rec: &[PBody]) -> bool {
+    fn reads(e: &PE, item: u16, c: u16) -> bool {
+        match e {
+            PE::Col { depth: 0, item: i, col } => *i == item && *col == c,
+            PE::Concat(l, r) => reads(l, item, c) || reads(r, item, c),
+            _ => false,
+        }
+    }
+    rec.iter().any(|b| {
+        let PBody::Select(s) = b else { return false };
+        let Some(item) = s.items.iter().position(|i| matches!(i.src, Src::Cte(x) if x == batch)) else { return false };
+        s.proj.iter().enumerate().any(|(j, e)| matches!(e, PE::Concat(..)) && reads(e, item as u16, j as u16))
+    })
+}
+
+/// M1, a shrinking text (`docs/facts/REWRITES.md`): the one recursive arm reads only the
+/// recursion's row and replaces its column `c` by a substring of itself (`substr(c, …)`).
+/// Checked per round by `Exec::recursive`: the round's longest `c` is shorter than the previous
+/// round's, so the rounds are at most the initial longest text (the content's size).
+pub(crate) fn shrinking_text(batch: usize, rec: &[PBody]) -> Option<u16> {
+    let [PBody::Select(s)] = rec else { return None };
+    if s.items.len() != 1 || !matches!(s.items[0].src, Src::Cte(x) if x == batch) || s.grouped || !s.aggs.is_empty() {
+        return None;
+    }
+    s.proj.iter().enumerate().find_map(|(c, e)| match e {
+        PE::Func(Func::Substr, a) if matches!(a.first(), Some(PE::Col { depth: 0, item: 0, col }) if *col as usize == c) => Some(c as u16),
+        _ => None,
+    })
+}
+
+/// M2, a counter up to a value of the input: the one recursive arm probes `E` (item 1) with the
+/// recursion's column `c` plus a positive constant and writes back `E`'s probed column (or
+/// `c + k`), so `c` strictly increases through values `E` holds: at most `|E|` rounds. Returns
+/// `E`'s probed columns (a key checked per content, K1, bounds each round's rows).
+pub(crate) fn counter_up(batch: usize, rec: &[PBody]) -> Option<(usize, Vec<u16>)> {
+    let [PBody::Select(s)] = rec else { return None };
+    if s.items.len() < 2 || !matches!(s.items[0].src, Src::Cte(x) if x == batch) || s.items[1..].iter().any(|i| matches!(i.src, Src::Cte(x) if x == batch)) {
+        return None;
+    }
+    let p = s.probes.get(1)?.as_ref()?;
+    p.exprs.iter().zip(&p.cols).find_map(|(x, &e)| {
+        let PE::Arith('+', l, r) = x else { return None };
+        let (PE::Col { depth: 0, item: 0, col: c }, PE::Lit(Lit::Int(k))) = (&**l, &**r) else { return None };
+        let back = s.proj.get(*c as usize)?;
+        let writes = matches!(back, PE::Col { depth: 0, item: 1, col } if *col == e) || matches!(back, PE::Arith('+', l2, r2) if matches!(**l2, PE::Col { depth: 0, item: 0, col } if col == *c) && matches!(**r2, PE::Lit(Lit::Int(k2)) if k2 > 0));
+        (*k > 0 && writes).then(|| (*c as usize, p.cols.clone()))
+    })
+}
+
+pub(crate) fn walk_bound(batch: usize, rec: &[PBody]) -> Option<WalkBound> {
+    let [PBody::Select(s)] = rec else { return None };
+    let plain = !s.grouped && s.aggs.is_empty() && s.wins.is_empty() && !s.distinct && s.having.is_none();
+    if !plain || s.items.len() < 2 || !matches!(s.items[0].src, Src::Cte(b) if b == batch) {
+        return None;
+    }
+    if s.items.iter().any(|i| i.left || i.lateral || matches!(i.src, Src::JsonEach(_))) || s.items[1..].iter().any(|i| matches!(i.src, Src::Cte(b) if b == batch)) {
+        return None;
+    }
+    // Every later item is reached by an equality probe without affinity conversion.
+    let probe = |k: usize| s.probes.get(k).and_then(Option::as_ref).filter(|p| s.or_probes.get(k).is_none_or(Option::is_none) && s.ranges.get(k).is_none_or(Option::is_none) && p.col_affs.iter().chain(&p.expr_affs).all(|a| *a == Aff::None));
+    let e = probe(1)?;
+    if (2..s.items.len()).any(|k| probe(k).is_none()) {
+        return None;
+    }
+    let key: Vec<u16> = e.exprs.iter().map(|x| match x {
+        PE::Col { depth: 0, item: 0, col } => Some(*col),
+        _ => None,
+    }).collect::<Option<_>>()?;
+    // An output column as a column of `E`, through the lookups' equalities; a column of the
+    // recursion carried unchanged is the `E` column it was probed against.
+    fn to_edge(s: &PSelect, e: &Probe, x: &PE, fuel: usize) -> Option<u16> {
+        let PE::Col { depth: 0, item, col } = x else { return None };
+        match *item {
+            0 => e.exprs.iter().position(|y| matches!(y, PE::Col { depth: 0, item: 0, col: c } if c == col)).map(|j| e.cols[j]),
+            1 => Some(*col),
+            i if fuel > 0 => {
+                let p = s.probes.get(i as usize)?.as_ref()?;
+                let j = p.cols.iter().position(|c| c == col)?;
+                to_edge(s, e, &p.exprs[j], fuel - 1)
+            }
+            _ => None,
+        }
+    }
+    let to: Vec<u16> = key.iter().map(|&c| s.proj.get(c as usize).and_then(|x| to_edge(s, e, x, s.items.len()))).collect::<Option<_>>()?;
+    if to == e.cols {
+        return None;
+    }
+    Some(WalkBound { key, from: e.cols.clone(), to })
+}
+
 /// The plan shape `Exec::walk` (R19) evaluates: a bag recursion with one initial select and one
 /// step select reading the recursion once, as its first FROM item (a scan: not left-joined, not
 /// lateral), not grouped, windowed, `DISTINCT` or ordered, every output column a reference form.
@@ -3247,6 +3357,16 @@ impl<'d, 'a> Exec<'d, 'a> {
         }
     }
 
+    /// G3b.3: one round of a top-level fixpoint (where `fix_rounds` counts it) against the
+    /// clause's algebraic budget (`rerail_facts::budget`); over it, the execution fails.
+    fn spend_round(&self, outer: Option<&Frame<'_>>, rows: u64) {
+        if outer.is_none() {
+            if let Err(e) = rerail_facts::budget::round(rows) {
+                self.fail(e);
+            }
+        }
+    }
+
     fn query(&self, q: &PQuery, outer: Option<&Frame<'_>>) -> Table {
         for cte in &q.ctes {
             match cte {
@@ -3255,6 +3375,15 @@ impl<'d, 'a> Exec<'d, 'a> {
                     self.slots.borrow_mut()[*slot] = Some(Rc::new(t));
                 }
                 PCte::Recursive { slot, batch, init, rec, distinct, tree, schema, real } => {
+                    // W1: a bag recursion of the walk shape is checked against its forest bound
+                    // before it runs. Where the bound does not hold the recursion runs as
+                    // written, under the clause's algebraic budget (its kill switch), and the
+                    // content is counted (`bounds_unproven`): never a different answer.
+                    if let (false, Some(wb), [PBody::Select(s)]) = (*distinct, walk_bound(*batch, rec), &rec[..]) {
+                        if self.check_walk(&wb, init, s, outer).is_err() {
+                            self.ph.add(Phys::BoundsUnproven, 1);
+                        }
+                    }
                     let t = if !real.is_empty() {
                         self.recursive(*batch, init, rec, *distinct, schema, real, outer)
                     } else {
@@ -3828,6 +3957,9 @@ impl<'d, 'a> Exec<'d, 'a> {
         let mut row: Vec<Vec<u32>> = (0..w).map(|_| (0..n0 as u32).collect()).collect();
         let (mut lo, mut hi, mut steps) = (0usize, n0, 0usize);
         let mut rounds = vec![n0 as u64];
+        // The budget's rounds so far, restored if the walk gives up (the fixpoint runs again).
+        let mark = rerail_facts::budget::live();
+        self.spend_round(outer, n0 as u64);
         let mut slot_refs: Vec<&WalkRef<'_>> = Vec::with_capacity(n_slots);
         fn collect<'r, 'p>(r: &'r WalkRef<'p>, out: &mut Vec<&'r WalkRef<'p>>) {
             match r {
@@ -3877,6 +4009,7 @@ impl<'d, 'a> Exec<'d, 'a> {
             }
             if srcs.len() >= PICK_NULL as usize {
                 self.slots.borrow_mut()[batch] = None;
+                rerail_facts::budget::set_live(mark);
                 return None;
             }
             let mut next_tag: Vec<Vec<u16>> = vec![Vec::new(); w];
@@ -3897,6 +4030,7 @@ impl<'d, 'a> Exec<'d, 'a> {
             }
             (lo, hi) = (hi, tag.first().map_or(hi, Vec::len));
             rounds.push((hi - lo) as u64);
+            self.spend_round(outer, (hi - lo) as u64);
         }
         self.fix_rounds(outer, rounds);
         #[cfg(test)]
@@ -3938,6 +4072,78 @@ impl<'d, 'a> Exec<'d, 'a> {
         }
     }
 
+    /// W1 (`walk_bound`), checked on this execution's rows: the edge relation of a bag recursion
+    /// of the walk shape is a forest over its walk key (acyclic, every node with at most one
+    /// parent or every node with at most one child), every lookup after it finds at most one row,
+    /// and, going down (a node may have several children), the initial rows' walk keys are
+    /// distinct. `Err` names what does not hold: the recursion's bound is not proven on this
+    /// content, which is refused.
+    fn check_walk(&self, wb: &WalkBound, init: &[PBody], s: &PSelect, outer: Option<&Frame<'_>>) -> Result<(), String> {
+        let keyof = |t: &Table, r: usize, cols: &[u16]| -> Option<Vec<DKey>> {
+            let k: Vec<DKey> = cols.iter().map(|&c| sv::dkey(&t.value(r, c as usize))).collect();
+            (!k.contains(&DKey::Null)).then_some(k)
+        };
+        let e = self.table_of(&s.items[1].src, outer);
+        let mut ids: FxHashMap<Vec<DKey>, u32> = FxHashMap::default();
+        let mut edges: Vec<(u32, u32)> = Vec::new();
+        for r in 0..e.len() {
+            let (Some(a), Some(b)) = (keyof(&e, r, &wb.from), keyof(&e, r, &wb.to)) else { continue };
+            let next = ids.len() as u32;
+            let a = *ids.entry(a).or_insert(next);
+            let next = ids.len() as u32;
+            let b = *ids.entry(b).or_insert(next);
+            edges.push((a, b));
+        }
+        let n = ids.len();
+        let (mut out, mut inn) = (vec![0u32; n], vec![0u32; n]);
+        let mut adj: Vec<Vec<u32>> = vec![Vec::new(); n];
+        for &(a, b) in &edges {
+            out[a as usize] += 1;
+            inn[b as usize] += 1;
+            adj[a as usize].push(b);
+        }
+        let up = out.iter().all(|&x| x <= 1);
+        if !up && !inn.iter().all(|&x| x <= 1) {
+            return Err("its edge relation is not a forest over the walk key (a node with two parents, and a node with two children)".into());
+        }
+        // Mutant 59 (W1): the acyclicity check is skipped.
+        if !crate::mutant::on(59) {
+            let mut deg = inn;
+            let mut stack: Vec<u32> = (0..n as u32).filter(|&v| deg[v as usize] == 0).collect();
+            let mut done = 0;
+            while let Some(v) = stack.pop() {
+                done += 1;
+                for &w in &adj[v as usize] {
+                    deg[w as usize] -= 1;
+                    if deg[w as usize] == 0 {
+                        stack.push(w);
+                    }
+                }
+            }
+            if done < n {
+                return Err("its edge relation has a cycle over the walk key".into());
+            }
+        }
+        for k in 2..s.items.len() {
+            let Some(p) = s.probes[k].as_ref() else { continue };
+            let t = self.table_of(&s.items[k].src, outer);
+            let mut seen = rustc_hash::FxHashSet::default();
+            if (0..t.len()).filter_map(|r| keyof(&t, r, &p.cols)).any(|kk| !seen.insert(kk)) {
+                return Err(format!("lookup item {k} finds two rows for one key"));
+            }
+        }
+        if !up {
+            let mut seen = rustc_hash::FxHashSet::default();
+            for arm in init {
+                let t = self.body(arm, outer);
+                if (0..t.len()).filter_map(|r| keyof(&t, r, &wb.key)).any(|kk| !seen.insert(kk)) {
+                    return Err("two initial rows walk down from one key".into());
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Semi-naive fixpoint, level by level. Each level's rows are views (gathers) over the arms'
     /// sources, so a closure over a relation stores row indexes, not values. Each arm's rows read
     /// the integers of the CTE's REAL columns (`real`) as reals.
@@ -3964,7 +4170,11 @@ impl<'d, 'a> Exec<'d, 'a> {
         let mut levels: Vec<Table> = Vec::new();
         let queued = |q: &[Table]| q.iter().map(|t| t.len() as u64).sum::<u64>();
         let mut rounds = vec![queued(&queue)];
+        self.spend_round(outer, rounds[0]);
         let mut steps = 0usize;
+        // M1: a shrinking text's longest value must shrink every round (counted where it does not).
+        let shrink = if distinct { None } else { shrinking_text(batch, rec) };
+        let (mut longest, mut shrink_ok): (Option<usize>, bool) = (None, true);
         while !queue.is_empty() {
             if self.failed() {
                 break;
@@ -3975,6 +4185,19 @@ impl<'d, 'a> Exec<'d, 'a> {
                 self.fail("recursive CTE exceeded 50M rows".into());
                 break;
             }
+            if let (Some(c), true) = (shrink, shrink_ok) {
+                let lens: Option<Vec<usize>> = (0..t.len()).map(|r| match t.value(r, c as usize) {
+                    V::Text(s) => Some(s.len()),
+                    V::Null => Some(0),
+                    _ => None,
+                }).collect();
+                let m = lens.map(|l| l.into_iter().max().unwrap_or(0));
+                if m.is_none() || longest.is_some_and(|p| m.unwrap() >= p) {
+                    shrink_ok = false;
+                    self.ph.add(Phys::BoundsUnproven, 1);
+                }
+                longest = m;
+            }
             self.slots.borrow_mut()[batch] = Some(t.clone());
             // Indexes over a batch table are per batch.
             self.indexes.borrow_mut().retain(|k, _| k.0 != Rc::as_ptr(&t) as usize);
@@ -3982,6 +4205,7 @@ impl<'d, 'a> Exec<'d, 'a> {
                 admit(self.body(arm, outer), &mut queue);
             }
             rounds.push(queued(&queue));
+            self.spend_round(outer, *rounds.last().unwrap());
             self.indexes.borrow_mut().retain(|k, _| k.0 != Rc::as_ptr(&t) as usize);
             self.slots.borrow_mut()[batch] = None;
             levels.push(Rc::try_unwrap(t).unwrap_or_else(|rc| Table { schema: rc.schema.clone(), cols: rc.cols.clone(), len: rc.len }));
@@ -4212,7 +4436,9 @@ impl<'d, 'a> Exec<'d, 'a> {
         let cands: Option<&[u32]> = {
             let ctx = EvalCtx { frame: Frame { rows: rows.as_slice(), parent: outer }, aggs: None, wins: None };
             match (&s.or_probes[i], &indexes.or[i], &s.probes[i], &indexes.plain[i]) {
-                (Some(branches), Some(ixs), _, _) => {
+                // Mutant 55 (the historical OR-probe regression, G3b.2): the item is scanned and
+                // the OR re-checked on every row (same rows, same order; quadratic work).
+                (Some(branches), Some(ixs), _, _) if !crate::mutant::on(55) => {
                     let mut c: Vec<u32> = Vec::new();
                     for (p, ix) in branches.iter().zip(ixs) {
                         self.ph.add(Phys::Probes, 1);
@@ -5310,6 +5536,34 @@ mod tests {
         }
         let fired = WALKS.with(|c| c.get()) - before;
         assert!(fired >= 4 * rounds, "R19 ran {fired} times");
+    }
+
+    /// W1 (`walk_bound`, `Exec::check_walk`): a bag recursion of the walk shape over an edge
+    /// relation that is a forest is admitted (bound `n·d`); over a 3-cycle, where every node has
+    /// one parent and one child, the check must fail (the walk never ends), and so must it over
+    /// two parents and two children. Kills mutant 59 (the acyclicity check skipped).
+    #[test]
+    fn w1_walk_check_refuses_cycles() {
+        let q = "WITH RECURSIVE r(p, node) AS (SELECT p, id FROM nd UNION ALL SELECT r.p, e.dst FROM r JOIN ed e ON e.p = r.p AND e.src = r.node) SELECT * FROM r";
+        let check = |edges: &[(i64, i64)]| {
+            let mut catalog = Catalog::new();
+            let mut db = Db::new("", "");
+            let nd: Vec<Box<[V]>> = vec![vec![V::text("f"), V::Int(1)].into_boxed_slice()];
+            let ed: Vec<Box<[V]>> = edges.iter().map(|&(a, b)| vec![V::text("f"), V::Int(a), V::Int(b)].into_boxed_slice()).collect();
+            for (name, cols, rows) in [("nd", vec!["p", "id"], nd), ("ed", vec!["p", "src", "dst"], ed)] {
+                let schema = Schema { cols: cols.iter().map(|c| c.to_string()).collect(), affs: vec![Aff::None; cols.len()] };
+                catalog.insert(name.into(), schema.clone());
+                db.tables.insert(name.into(), Rc::new(Table::from_rows(schema, rows)));
+            }
+            let st = plan(q, &catalog).unwrap();
+            let Some(PCte::Recursive { init, rec, batch, .. }) = st.root.ctes.first() else { panic!("a recursive CTE") };
+            let wb = walk_bound(*batch, rec).expect("the walk shape");
+            let [PBody::Select(s)] = &rec[..] else { panic!("one step") };
+            Exec::new(&db, &st).check_walk(&wb, init, s, None)
+        };
+        assert_eq!(check(&[(1, 2), (2, 3), (1, 4)]), Ok(()));
+        assert!(check(&[(1, 2), (2, 3), (3, 1)]).is_err_and(|e| e.contains("cycle")), "a 3-cycle is not a forest");
+        assert!(check(&[(1, 2), (3, 2), (2, 4), (2, 5)]).is_err());
     }
 
     /// A FROM subquery's outer references resolve and evaluate as in SQLite: past the enclosing

@@ -2,6 +2,7 @@
 //! stages and policy documents with pattern leaves), classification (`classify`), the entry
 //! point (`compile`), the 60-rule census (`census`), and the leaf modules moved from Spike A
 //! (SQLite values and affinity, the SQL-subset parser, `$option` resolution and scopes).
+pub mod budget;
 pub mod census;
 pub mod classify;
 pub mod compile;

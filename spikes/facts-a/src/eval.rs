@@ -193,6 +193,14 @@ pub struct Clause {
     pub id: String,
     pub kind: Kind,
     pub viol: Viol,
+    /// Its plan's class (`physplan::clause_cost`, docs/facts/PHASE-3.md § P3b), and the class of
+    /// a content where a per-content check fails (`fallback`): what its algebraic budget scales
+    /// with (`crate::budget`).
+    pub class: rerail_facts::phys::Class,
+    pub fallback: rerail_facts::phys::Class,
+    /// The class overlay's declaration (`packs/data-layer/candidates/classes.json`, set by
+    /// `repo::compile_checks`): an unbounded clause without one is warned about.
+    pub declared: Option<crate::physplan::Declared>,
 }
 
 pub struct Rule {
@@ -421,7 +429,7 @@ impl Rule {
             } else {
                 return Err(format!("{cid}: clause kind"));
             };
-            clauses.push(Clause { id: cid, kind, viol });
+            clauses.push(Clause { id: cid, kind, viol, class: rerail_facts::phys::Class::Unbounded, fallback: rerail_facts::phys::Class::Unbounded, declared: None });
         }
         let last_use = last_use(&clauses, inputs.len());
         // Plan digests (`crate::memo`): the rule without its clauses, its `define` clauses, the
@@ -450,7 +458,19 @@ impl Rule {
                 crate::memo::digest(&rule_level, &defines, scope_override, cj, &reads.into_iter().map(input_text).collect::<Vec<_>>(), &stages)
             })
             .collect();
-        Ok(Rule { id, check, scope, clauses, inputs, names, last_use, preds, report_count_gt, digests })
+        let mut rule = Rule { id, check, scope, clauses, inputs, names, last_use, preds, report_count_gt, digests };
+        // Each clause's class (and fallback), and the K1 keys its relational plan checks per
+        // content (`rel::run`), from its physical plan: once per rule. A class proven without
+        // them (equal to its fallback) needs no key checked.
+        for ci in 0..rule.clauses.len() {
+            let cost = crate::physplan::clause_cost(&rule, &rule.clauses[ci]);
+            let c = &mut rule.clauses[ci];
+            (c.class, c.fallback) = (cost.class, cost.fallback);
+            if let Kind::Relational(plan) = &mut c.kind {
+                plan.checked_keys = if cost.proven() { Vec::new() } else { cost.checked_keys };
+            }
+        }
+        Ok(rule)
     }
 
     /// Keeps only the clauses `keep` selects (by id), with their digests; inputs no kept clause
@@ -711,6 +731,8 @@ impl Input {
             .collect();
         out.table = Rc::new(Table::new(schema.clone(), cols, n));
         out.counts.rows = n as u64;
+        // The leaf executor's physical work: its rule tests (`ast::Eval::steps`).
+        out.counts.pred_tests = ev.steps.get();
         out
     }
 
@@ -893,10 +915,12 @@ impl Output {
             }
         }
     }
-    /// The last `rel::run`'s counts into `c` and the stage totals.
+    /// The last `rel::run`'s counts into `c` and the stage totals (K1 keys that did not hold
+    /// count in `bounds_unproven`).
     fn add_run(&mut self, ri: usize, ci: usize, c: &mut Counts) {
         let r = rel::last_counts();
         c.leaf_rows += r.leaf_rows;
+        c.bounds_unproven += r.unproven;
         for (name, s) in r.stages {
             c.add_stage(&s);
             add_stage_counts(self.stage_counts.entry((ri, ci, name)).or_default(), &s);
@@ -947,6 +971,8 @@ pub struct BudgetRow {
 pub type BudgetRows = BTreeMap<(usize, usize), Vec<BudgetRow>>;
 
 pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut dyn crate::spill::RepoSink, budget: &mut BudgetRows) {
+    // The content's size for the algebraic budgets (G3b.3): `n` nodes, depth `d`.
+    let (n, d) = (ctx.f.len() as u64, u64::from(ctx.f.depth()));
     // The file's text, shared by every input column that reads node text.
     let source: Rc<str> = Rc::from(ctx.source);
     for (ri, rule) in rules.iter().enumerate() {
@@ -992,6 +1018,8 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
             let fail = |out: &mut Output, msg: String| {
                 out.failures.push(Failure { check: rule.check.clone(), clause: clause.id.clone(), path: ctx.path.to_owned(), message: msg });
             };
+            let limits = rerail_facts::budget::Limits::new(clause.class, clause.fallback, n, d);
+            let (f0, b0) = (out.findings.len(), budget.get(&(ri, ci)).map_or(0, Vec::len));
             match &clause.kind {
                 Kind::ForbidAst { input } => {
                     let inp = &rule.inputs[*input];
@@ -1027,6 +1055,8 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                             if let Some(u) = ev.unsupported.borrow_mut().take() {
                                 fail(out, format!("unsupported: {u}"));
                             }
+                            // The leaf executor's physical work (`steps`), as an input's.
+                            *out.input_counts.entry((ri, *input)).or_default() += &InputCounts { nodes: c.match_nodes, roots: c.match_roots, rows: c.input_rows, pred_tests: ev.steps.get(), memo_hits: 0 };
                         }
                     }
                 }
@@ -1095,7 +1125,7 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                     if let Some(u) = unsupported {
                         fail(out, format!("unsupported: {u}"));
                     } else if plan.per_file {
-                        let r = rel::run(plan, rel::Partition { inputs: tables, anchors, facts: Some((ctx.f, ctx.path)), source: ctx.source, path: ctx.path });
+                        let r = rel::run(plan, rel::Partition { inputs: tables, anchors, facts: Some((ctx.f, ctx.path)), source: ctx.source, path: ctx.path, budget: Some((limits, c.match_nodes + c.input_rows)) });
                         out.add_stages(ri, ci, r.stage_ns);
                         out.add_run(ri, ci, &mut c);
                         if let Some(m) = r.failure {
@@ -1109,6 +1139,17 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                         let rows = |t: &Table| -> Vec<Box<[V]>> { (0..t.len()).map(|r| t.row(r).into_boxed_slice()).collect() };
                         repo.push((ri, ci), crate::spill::FileRows { path: path.clone(), tables: tables.iter().map(|t| rows(t)).collect(), anchors });
                     }
+                }
+            }
+            // G3b.3: a clause without stages answers for its matcher work (a relational clause's
+            // run checked its own); over the limit it fails alone, its findings and rows dropped.
+            if !matches!(clause.kind, Kind::Relational(_)) {
+                if let Err(e) = rerail_facts::budget::verdict(c.match_nodes + c.input_rows, limits, false) {
+                    out.findings.truncate(f0);
+                    if let Some(v) = budget.get_mut(&(ri, ci)) {
+                        v.truncate(b0);
+                    }
+                    fail(out, e);
                 }
             }
             out.add_counts(ri, ci, c, true);
@@ -1223,7 +1264,7 @@ pub fn finish(rules: &[Rule], mut load: impl FnMut((usize, usize)) -> Vec<crate:
             }
             out.add_stages(ri, ci, vec![("spill:load".into(), t0.elapsed().as_nanos() as u64)]);
             let inputs = plan.input_schemas.iter().zip(input_rows).map(|(s, rows)| Rc::new(Table::from_rows(s.clone(), rows))).collect();
-            let r = rel::run(plan, rel::Partition { inputs, anchors, facts: None, source: "", path: "" });
+            let r = rel::run(plan, rel::Partition { inputs, anchors, facts: None, source: "", path: "", budget: None });
             out.add_stages(ri, ci, r.stage_ns);
             let mut c = Counts::default();
             out.add_run(ri, ci, &mut c);

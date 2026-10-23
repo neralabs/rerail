@@ -18,7 +18,10 @@
 //! content: `index_builds`/`index_rows` (hash indexes and rows inserted), `range_builds`/`range_rows`
 //! (R14's sorted indexes), `probes` (hash lookups), `rows_scanned` (candidate rows a join level
 //! visits), `rows_joined` (bindings out of a select's join pipeline), `rows_out` (rows of every
-//! select's output table), `subquery_runs` (expression subqueries evaluated, cache misses).
+//! select's output table), `subquery_runs` (expression subqueries evaluated, cache misses),
+//! `bounds_unproven` (fixpoints whose per-content bound check failed, W1: they ran under the
+//! algebraic budget, docs/facts/PHASE-3.md § P3b; not work, a deterministic fact of the plan on
+//! the content, kept with the physical counts).
 //! The matcher's physical work (`pred_tests`, nodes tested by R12's predicates; `memo_hits`,
 //! nodes R13's memo answered) is shared by a rule's inputs, so it is counted per input, not per
 //! clause (`InputCounts`).
@@ -38,8 +41,9 @@ pub enum Phys {
     RowsJoined,
     RowsOut,
     SubqueryRuns,
+    BoundsUnproven,
 }
-pub const NPHYS: usize = 9;
+pub const NPHYS: usize = 10;
 
 /// Per-execution counter cells (`sql::engine::Exec`), flushed into this thread's totals when the
 /// execution ends.
@@ -119,11 +123,13 @@ pub struct Counts {
     pub rows_joined: u64,
     pub rows_out: u64,
     pub subquery_runs: u64,
+    #[serde(default)]
+    pub bounds_unproven: u64,
 }
 
 /// The algebraic counts' names, in `Counts` order (the rest are physical).
 pub const ALGEBRAIC: [&str; 7] = ["leaf_rows", "stage_rows", "fix_rounds", "fix_rows", "match_nodes", "match_roots", "input_rows"];
-pub const PHYSICAL: [&str; NPHYS] = ["index_builds", "index_rows", "range_builds", "range_rows", "probes", "rows_scanned", "rows_joined", "rows_out", "subquery_runs"];
+pub const PHYSICAL: [&str; NPHYS] = ["index_builds", "index_rows", "range_builds", "range_rows", "probes", "rows_scanned", "rows_joined", "rows_out", "subquery_runs", "bounds_unproven"];
 
 impl Counts {
     pub fn add_phys(&mut self, p: &[u64; NPHYS]) {
@@ -136,6 +142,7 @@ impl Counts {
         self.rows_joined += p[Phys::RowsJoined as usize];
         self.rows_out += p[Phys::RowsOut as usize];
         self.subquery_runs += p[Phys::SubqueryRuns as usize];
+        self.bounds_unproven += p[Phys::BoundsUnproven as usize];
     }
 
     pub fn add_stage(&mut self, s: &StageCounts) {
@@ -174,6 +181,7 @@ impl AddAssign<&Counts> for Counts {
         self.rows_joined += o.rows_joined;
         self.rows_out += o.rows_out;
         self.subquery_runs += o.subquery_runs;
+        self.bounds_unproven += o.bounds_unproven;
     }
 }
 

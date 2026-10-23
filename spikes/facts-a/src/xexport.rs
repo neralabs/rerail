@@ -362,7 +362,7 @@ impl Exporter {
         let traced: Rc<std::cell::RefCell<Option<crate::rel::Traced>>> = Rc::default();
         let sink = traced.clone();
         crate::rel::TRACE.with(|h| *h.borrow_mut() = Some(Box::new(move |_, _, t: &crate::rel::Traced| *sink.borrow_mut() = Some(t.clone()))));
-        let r = crate::rel::run(rp, crate::rel::Partition { inputs, anchors: Default::default(), facts: f.map(|f| (f, path)), source: source.as_str(), path });
+        let r = crate::rel::run(rp, crate::rel::Partition { inputs, anchors: Default::default(), facts: f.map(|f| (f, path)), source: source.as_str(), path, budget: None });
         crate::rel::TRACE.with(|h| *h.borrow_mut() = None);
         let tables = traced.borrow_mut().take().unwrap_or_default();
         plan.stages

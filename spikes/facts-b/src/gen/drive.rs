@@ -644,6 +644,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
         };
         let out = json!({
             "arrangements": arrangements,
+            "construction": lower::construction(),
             "plans": graphs.iter().map(|(n, g)| json!({"plan": n, "nodes": g.nodes.len()})).collect::<Vec<_>>(),
             "refused_static": refusals_static,
             "runtime_refusals": runtime_refusals,

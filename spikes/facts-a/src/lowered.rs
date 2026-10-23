@@ -820,6 +820,50 @@ impl Bits {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Cost bound (docs/facts/PHASE-3.md § P3b)
+
+impl Plan {
+    /// The plan's work per content as a bound in the content's nodes `n` and depth `d`, and the
+    /// predicate that sets it. R13 evaluates every predicate once per node: `O(n)` each, except a
+    /// search over a subtree (`Descendants`, `FieldSubtree`: one interval per node, and intervals
+    /// nest, `O(n·d)`) and a regex over a node's text (node texts nest, `O(n·d)` bytes).
+    pub fn cost(&self, p: &Preds) -> (rerail_facts::phys::Bound, String) {
+        use rerail_facts::phys::{Bound, Mono};
+        let mut seen = vec![false; p.nodes.len()];
+        let mut worst: Option<String> = None;
+        let mut stack: Vec<Id> = std::iter::once(self.keep).chain(self.caps.iter().map(|c| c.inner)).collect();
+        let subtree = |ax: &Ax| matches!(ax, Ax::Descendants | Ax::FieldSubtree(_));
+        if self.caps.iter().any(|c| subtree(&c.ax)) {
+            worst = Some("a capture searched over each root's subtree".into());
+        }
+        while let Some(id) = stack.pop() {
+            if std::mem::replace(&mut seen[id as usize], true) {
+                continue;
+            }
+            match &p.nodes[id as usize] {
+                Pn::And(xs) | Pn::Or(xs) => stack.extend(xs),
+                Pn::Not(x) => stack.push(*x),
+                Pn::Exists(ax, x) => {
+                    if subtree(ax) && worst.is_none() {
+                        worst = Some(format!("EXISTS over {ax:?} (one id interval per node)"));
+                    }
+                    if let Ax::DescendantsUntil(s) | Ax::AncestorsUntil(s) = ax {
+                        stack.push(*s);
+                    }
+                    stack.push(*x);
+                }
+                Pn::TextRx(_) if worst.is_none() => worst = Some("regex over node text (texts of nested nodes overlap)".into()),
+                _ => {}
+            }
+        }
+        match worst {
+            Some(w) => (Bound::of(Mono::ND), w),
+            None => (Bound::n(), "predicates once per node (R13)".into()),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // Evaluation over one file
 
 /// A predicate's verdicts over some nodes: where it is TRUE, and where it is NULL (`None`: nowhere).

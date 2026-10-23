@@ -238,6 +238,18 @@ impl Facts {
     pub fn len(&self) -> usize {
         self.kind.len()
     }
+    /// The tree's depth: nodes on the longest root-to-leaf path (ids are preorder, so a parent's
+    /// id is below its children's). `d` of the cost bounds (docs/facts/PHASE-3.md § P3b).
+    pub fn depth(&self) -> u32 {
+        let mut at = vec![1u32; self.len()];
+        for i in 0..self.len() {
+            let p = self.parent[i] as usize;
+            if p < i {
+                at[i] = at[p] + 1;
+            }
+        }
+        at.into_iter().max().unwrap_or(0)
+    }
     pub fn children(&self, id: u32) -> &[u32] {
         let a = self.child_offsets[id as usize] as usize;
         let b = self.child_offsets[id as usize + 1] as usize;

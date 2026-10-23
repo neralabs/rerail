@@ -34,6 +34,25 @@ struct Worker {
     tally: memo::Tally,
     /// Files every in-scope clause of which the memo served (not parsed).
     memo_files: u64,
+    /// `--file-counts`: one JSON row per (file, evaluated clause), `file_count_row`.
+    file_rows: Vec<(String, String)>,
+}
+
+/// The inputs a clause reads.
+fn clause_inputs(c: &eval::Clause) -> Vec<usize> {
+    match &c.kind {
+        eval::Kind::ForbidAst { input } | eval::Kind::Budget { input, .. } => vec![*input],
+        eval::Kind::Relational(p) => p.inputs.iter().map(|(_, i)| *i).collect(),
+        eval::Kind::ForbidRegex(_) => Vec::new(),
+    }
+}
+
+/// One `--file-counts` row (docs/facts/PHASE-3.md G3b.2): the content's size (`nodes`, `depth`),
+/// the clause and its class (and fallback class), its counts on the file (`crate::counts`), and
+/// the matcher's physical work on the inputs it reads (`pred_tests`, shared by the rule's
+/// clauses: each reader sees it).
+fn file_count_row(path: &str, nodes: u64, depth: u64, rule: &eval::Rule, c: &eval::Clause, counts: &crate::counts::Counts, pred_tests: u64) -> String {
+    json!({"path": path, "nodes": nodes, "depth": depth, "clause": format!("{}/{}", rule.check, c.id), "class": c.class.name(), "fallback": c.fallback.name(), "counts": counts, "pred_tests": pred_tests}).to_string()
 }
 
 /// The worker's repository sink: the spill, and while a file's results are being memoised, a
@@ -55,14 +74,21 @@ impl crate::spill::RepoSink for Sink {
 /// The suite's call configuration for each selected check (default: batch 6): `production_scope`,
 /// no `oracle_config` (verified against the oracle by `repo-compare`). A policy that does not compile
 /// is refused by name: it becomes one failure of its check (`compile: …`) and is not evaluated.
+/// Each clause gets its class overlay entry (`physplan::overlay`, beside the rule files).
 pub(crate) fn compile_checks(policies: &str, checks: &[String]) -> (Vec<eval::Rule>, Vec<eval::Failure>) {
     let event = json!({"production_scope": true});
+    let overlay = crate::physplan::overlay(policies);
     let (mut rules, mut refused) = (Vec::new(), Vec::new());
     for check in checks {
         let doc = policy_doc(policies, check);
         let (config, scope) = call_config(&doc, &event);
         match caught(|| eval::Rule::compile(&doc, &config, scope.as_ref(), &facts::GRAMMAR)).unwrap_or_else(|p| Err(format!("compiler panic: {p}"))) {
-            Ok(r) => rules.push(r),
+            Ok(mut r) => {
+                for c in &mut r.clauses {
+                    c.declared = overlay.get(&format!("{}/{}", r.check, c.id)).cloned();
+                }
+                rules.push(r)
+            }
             Err(e) => refused.push(eval::Failure { check: check.clone(), clause: String::new(), path: String::new(), message: format!("compile: {e}") }),
         }
         if std::env::var_os("FACTS_MEMTRACE").is_some() {
@@ -109,13 +135,15 @@ pub(crate) fn in_scope(rules: &[eval::Rule], path: &str) -> Vec<(usize, usize)> 
     rules.iter().enumerate().filter(|(_, r)| r.scope.matches(path)).flat_map(|(ri, r)| (0..r.clauses.len()).map(move |ci| (ri, ci))).collect()
 }
 
-fn worker(rules: &[eval::Rule], paths: &[String], root: &Path, next: &AtomicUsize, spill_dir: &Path, wi: usize, memo: Option<&memo::Memo>) -> Worker {
+#[allow(clippy::too_many_arguments)]
+fn worker(rules: &[eval::Rule], paths: &[String], root: &Path, next: &AtomicUsize, spill_dir: &Path, wi: usize, memo: Option<&memo::Memo>, file_counts: bool) -> Worker {
     let mut out = eval::Output::default();
     let mut repo = Sink { spill: crate::spill::Spill::new(spill_dir, wi), capture: None };
     let mut budget: eval::BudgetRows = BTreeMap::new();
     let mut files = Vec::new();
     let mut tally = memo::Tally::new();
     let mut memo_files = 0u64;
+    let mut file_rows = Vec::new();
     loop {
         let index = next.fetch_add(1, Ordering::Relaxed);
         let Some(path) = paths.get(index) else { break };
@@ -163,10 +191,14 @@ fn worker(rules: &[eval::Rule], paths: &[String], root: &Path, next: &AtomicUsiz
         out.skip = hits.into_iter().collect();
         let (f0, x0) = (out.findings.len(), out.failures.len());
         let b0: BTreeMap<(usize, usize), usize> = misses.iter().map(|k| (*k, budget.get(k).map_or(0, Vec::len))).collect();
-        if fm.is_some() {
+        if fm.is_some() || file_counts {
             out.file_counts = Some(Vec::new());
+        }
+        if fm.is_some() {
             repo.capture = Some(Vec::new());
         }
+        // The matcher's physical work so far, per input (`--file-counts` reports this file's).
+        let tests0: BTreeMap<(usize, usize), u64> = if file_counts { out.input_counts.iter().map(|(k, c)| (*k, c.pred_tests)).collect() } else { BTreeMap::new() };
         let mut ns = facts::BuildNs::default();
         match facts::build_timed(path, source.clone(), &mut ns) {
             Ok(facts::Built::Facts(f)) => {
@@ -176,9 +208,18 @@ fn worker(rules: &[eval::Rule], paths: &[String], root: &Path, next: &AtomicUsiz
                 let ctx = eval::FileCtx { f: &f, path, source: &source };
                 eval::eval_file(rules, &ctx, &mut out, &mut repo, &mut budget);
                 stat.eval_ns = t_eval.elapsed().as_nanos() as u64;
+                let counts = out.file_counts.take().unwrap_or_default();
+                if file_counts {
+                    let depth = u64::from(f.depth());
+                    let tests = |ri: usize, ii: usize| out.input_counts.get(&(ri, ii)).map_or(0, |c| c.pred_tests) - tests0.get(&(ri, ii)).copied().unwrap_or(0);
+                    for ((ri, ci), c) in &counts {
+                        let (rule, clause) = (&rules[*ri], &rules[*ri].clauses[*ci]);
+                        let pred_tests = clause_inputs(clause).into_iter().map(|ii| tests(*ri, ii)).sum();
+                        file_rows.push((path.clone(), file_count_row(path, f.len() as u64, depth, rule, clause, c, pred_tests)));
+                    }
+                }
                 // Each evaluated clause's results become its memo entry.
                 if let Some(m) = fm.as_mut() {
-                    let mut counts = out.file_counts.take().unwrap_or_default();
                     let mut rows = repo.capture.take().unwrap_or_default();
                     for &(ri, ci) in &misses {
                         let (rule, clause) = (&rules[ri], &rules[ri].clauses[ci]);
@@ -197,7 +238,6 @@ fn worker(rules: &[eval::Rule], paths: &[String], root: &Path, next: &AtomicUsiz
                         };
                         m.put(ri, ci, &rule.digests[ci], &e);
                     }
-                    counts.clear();
                 }
             }
             Ok(facts::Built::Unparsed) | Err(_) => {
@@ -215,7 +255,7 @@ fn worker(rules: &[eval::Rule], paths: &[String], root: &Path, next: &AtomicUsiz
         stat.extract_ns = ns.extract;
         files.push(stat);
     }
-    Worker { out, budget, spill_bytes: repo.spill.finish(), files, tally, memo_files }
+    Worker { out, budget, spill_bytes: repo.spill.finish(), files, tally, memo_files, file_rows }
 }
 
 /// Nearest-rank percentile of sorted values.
@@ -300,11 +340,15 @@ pub fn repo(args: &[String]) {
     let compiled_rss = cur_rss().saturating_sub(rss_before_compile);
     let compiled_heap = heap_in_use().saturating_sub(heap_before_compile);
     let memo = memo::store_path(args).map(|p| memo::Memo::open(p, &rules));
+    // `--file-counts PATH`: per (file, evaluated clause) counts as JSON lines, sorted by path
+    // (the exponent lane, docs/facts/PHASE-3.md G3b.2).
+    let file_counts = arg(args, "--file-counts");
     let t_workers = Instant::now();
     let workers: Vec<Worker> = std::thread::scope(|s| {
         let handles: Vec<_> = (0..threads).map(|wi| {
             let (rules, paths, next, spill_dir, memo) = (&*rules, &paths, &next, &spill_dir, memo.as_ref());
-            s.spawn(move || worker(rules, paths, root, next, spill_dir, wi, memo))
+            let fc = file_counts.is_some();
+            s.spawn(move || worker(rules, paths, root, next, spill_dir, wi, memo, fc))
         }).collect();
         handles.into_iter().map(|h| h.join().unwrap()).collect()
     });
@@ -329,6 +373,7 @@ pub fn repo(args: &[String]) {
     let mut spill_bytes = 0u64;
     let mut tally = memo::Tally::new();
     let mut memo_files = 0u64;
+    let mut file_rows = Vec::new();
     for w in workers {
         out.merge(w.out);
         for (k, rows) in w.budget {
@@ -342,6 +387,13 @@ pub fn repo(args: &[String]) {
             t.1 += e;
         }
         memo_files += w.memo_files;
+        file_rows.extend(w.file_rows);
+    }
+    if let Some(p) = &file_counts {
+        // Stable order: by path, a file's rows in evaluation order.
+        file_rows.sort_by(|a, b| a.0.cmp(&b.0));
+        let text: String = file_rows.into_iter().map(|(_, row)| row + "\n").collect();
+        std::fs::write(p, text).unwrap_or_else(|e| panic!("{p}: {e}"));
     }
     let merge_ns = t_merge.elapsed().as_nanos() as u64;
     let rss_after_merge = max_rss();

@@ -21,9 +21,11 @@
 //! without its clauses (id, scope, options), its `define` clauses (utils, `report_when`), the
 //! call's scope, the clause as resolved (its evidence inputs included), the physical plan of every
 //! pattern input the clause reads (`lowered::Plan::digest_text`, or why it runs on the leaf
-//! executor) and the physical `EXPLAIN` of each of its relational stages (`physplan::clause`). A
-//! rewrite that changes a plan changes that plan's digest and no other. An operator whose results
-//! change while every plan's text stays the same must bump `ENGINE_VERSION`.
+//! executor) and the physical `EXPLAIN` of each of its relational stages (`physplan::clause`), and
+//! the algebraic budget's `A` (`rerail_facts::budget`: a `budget-exceeded` failure is a fact about
+//! the content and the plan under that `A`). A rewrite that changes a plan changes that plan's
+//! digest and no other. An operator whose results change while every plan's text stays the same
+//! must bump `ENGINE_VERSION`.
 //!
 //! The store: `FACTS_STORE` (a content store file), else `FACTS_MEMO_DIR`'s (default
 //! `~/rerail-bench/facts/memo`) `STORE_FILE_NAME`. The memo is off under `FACTS_MUTANT` (a seeded
@@ -41,7 +43,7 @@ use std::rc::Rc;
 
 /// Bumped when an operator's results change without any plan text changing (stale entries then
 /// never match again).
-pub const ENGINE_VERSION: u32 = 1;
+pub const ENGINE_VERSION: u32 = 2; // P3b: K1 key checks and algebraic budgets changed fixpoint and budget behaviour (plan text unchanged)
 /// Part of every plan digest: the memo key is fixed across the store move (PHASE-3.md § Rules).
 const FORMAT: &str = "rerail.facts-memo/v1";
 
@@ -89,6 +91,7 @@ pub fn digest(rule_level: &Json, defines: &[&Json], scope: Option<&Json>, clause
         "clause": clause,
         "inputs": inputs,
         "stages": stages,
+        "budget": rerail_facts::budget::A,
     });
     h.update(serde_json::to_string(&text).unwrap().as_bytes());
     *h.finalize().as_bytes()

@@ -42,6 +42,9 @@ use std::time::Instant;
 /// One relational clause as the front end lowers it.
 struct ClauseIr {
     stages: Vec<Stage<AnySource>>,
+    /// The stages, then the final query as a stage (`<final>`): what the reference evaluates, so
+    /// that its algebraic work, and its budget verdict, is the whole run's.
+    with_fin: Vec<Stage<AnySource>>,
     /// Lower-case table name per front-end input id.
     inputs: Vec<String>,
     /// Lower-case names of the syntax spec's node, edge and ownership tables.
@@ -63,6 +66,11 @@ struct Stats {
     counts_compared: u64,
     count_mismatch_total: u64,
     count_mismatches: Vec<Json>,
+    /// Budgeted runs whose budget verdicts (`rerail_facts::budget`) were compared, engine against
+    /// reference, and the differences.
+    budget_compared: u64,
+    budget_mismatch_total: u64,
+    budget_mismatches: Vec<Json>,
 }
 
 impl Stats {
@@ -80,6 +88,9 @@ impl Stats {
         self.counts_compared += o.counts_compared;
         self.count_mismatch_total += o.count_mismatch_total;
         self.count_mismatches.extend(o.count_mismatches);
+        self.budget_compared += o.budget_compared;
+        self.budget_mismatch_total += o.budget_mismatch_total;
+        self.budget_mismatches.extend(o.budget_mismatches);
         for (k, v) in o.not_compared {
             *self.not_compared.entry(k).or_default() += v;
         }
@@ -120,9 +131,11 @@ fn lower(doc: &Json, config: &serde_json::Map<String, Json>) -> BTreeMap<String,
     let Ok(f) = front(doc, config, &mut leaves) else { return out };
     let inputs: Vec<String> = f.inputs.iter().map(|i| i.name.to_ascii_lowercase()).collect();
     for c in f.clauses {
-        let Some(ClauseBody::Relational { syntax, stages, .. }) = c.body else { continue };
+        let Some(ClauseBody::Relational { syntax, stages, fin, .. }) = c.body else { continue };
         let names = syntax.as_ref().map(|s| ["name", "edges", "ownership"].map(|k| s.spec.get(k).and_then(Json::as_str).map(str::to_ascii_lowercase)));
-        out.insert(c.id, Rc::new(ClauseIr { stages, inputs: inputs.clone(), syntax: names.unwrap_or([None, None, None]) }));
+        let mut with_fin = stages.clone();
+        with_fin.push(Stage { name: "<final>".into(), schema: Vec::new(), def: StageDef::Query { rel: fin } });
+        out.insert(c.id, Rc::new(ClauseIr { stages, with_fin, inputs: inputs.clone(), syntax: names.unwrap_or([None, None, None]) }));
     }
     out
 }
@@ -145,15 +158,47 @@ fn compare(ir: &ClauseIr, label: &str, path: &str, traced: &rel::Traced, st: &mu
         }
     };
     let t0 = Instant::now();
-    let (done, fix, refusal) = reference::evaluate_stages_counted(&ir.stages, |s| if let AnySource::Stage(i) = s { Some(*i) } else { None }, &scan);
     let engine_counts = rel::last_counts();
+    // The reference under the engine's budget (G3b.3): the same limits and the same work before
+    // the stages; its rounds and stages are metered as the engine's are.
+    if let Some((limits, base)) = engine_counts.budget {
+        rerail_facts::budget::start(limits.fallback, base);
+    }
+    let (done, fix, refusal) = reference::evaluate_stages_counted(&ir.with_fin, |s| if let AnySource::Stage(i) = s { Some(*i) } else { None }, &scan);
+    rerail_facts::budget::stop();
     let e = st.per_clause.entry(label.to_owned()).or_default();
     e.0 += 1;
     e.1 += t0.elapsed().as_secs_f64();
     st.runs += 1;
-    if let Some(r) = refusal {
-        let at = ir.stages.get(done.len()).map_or("?", |s| s.name.as_str());
+    if let Some(r) = &refusal {
+        let at = ir.with_fin.get(done.len()).map_or("?", |s| s.name.as_str());
         st.skip(format!("reference refused ({label} stage {at}): {}", r.chars().take(120).collect::<String>()));
+    }
+    // The budget verdicts: the reference's is its own `budget-exceeded` refusal, or its whole
+    // run's work against the content's limit (the fallback's where the engine's per-content
+    // checks failed: they read the same tables).
+    if let Some((limits, base)) = engine_counts.budget {
+        let unproven = engine_counts.unproven + engine_counts.stages.iter().map(|(_, s)| s.phys[crate::counts::Phys::BoundsUnproven as usize]).sum::<u64>() > 0;
+        let want = match &refusal {
+            Some(r) if r.starts_with("budget-exceeded") => Some(Some(r.clone())),
+            Some(_) => None,
+            None => {
+                let work = base + done.iter().map(|r| r.len() as u64).sum::<u64>() + fix.iter().flatten().sum::<u64>();
+                Some(rerail_facts::budget::verdict(work, limits, unproven).err())
+            }
+        };
+        match want {
+            Some(want) => {
+                st.budget_compared += 1;
+                if want != engine_counts.verdict {
+                    st.budget_mismatch_total += 1;
+                    if st.budget_mismatches.len() < 50 {
+                        st.budget_mismatches.push(json!({"clause": label, "path": path, "engine": engine_counts.verdict, "reference": want}));
+                    }
+                }
+            }
+            None => st.skip("budget verdict: the reference refused the run"),
+        }
     }
     for ((stage, want), want_fix) in ir.stages.iter().zip(&done).zip(&fix) {
         let Some(t) = table(&stage.name.to_ascii_lowercase()) else {
@@ -402,6 +447,9 @@ pub fn run(args: &[String]) {
             "counts_compared": s.counts_compared,
             "count_mismatch_total": s.count_mismatch_total,
             "count_mismatches": s.count_mismatches,
+            "budget_compared": s.budget_compared,
+            "budget_mismatch_total": s.budget_mismatch_total,
+            "budget_mismatches": s.budget_mismatches,
             "not_compared": s.not_compared,
             "reference_seconds_by_clause": slowest.iter().take(20).map(|(k, (n, t))| json!([k, n, t])).collect::<Vec<_>>(),
             "wall_s": secs,
@@ -415,14 +463,16 @@ pub fn run(args: &[String]) {
         "mismatch_total": rec_stats.mismatch_total + corpus_stats.mismatch_total,
         "count_mismatch_total": rec_stats.count_mismatch_total + corpus_stats.count_mismatch_total,
         "counts_compared": rec_stats.counts_compared + corpus_stats.counts_compared,
+        "budget_compared": rec_stats.budget_compared + corpus_stats.budget_compared,
+        "budget_mismatch_total": rec_stats.budget_mismatch_total + corpus_stats.budget_mismatch_total,
         "stages_compared": rec_stats.stages_compared + corpus_stats.stages_compared,
         "wall_s": t_all.elapsed().as_secs_f64(),
     });
     std::fs::write(Path::new(&out_dir).join("results.json"), serde_json::to_string_pretty(&res).unwrap()).unwrap();
     for (what, s) in [("recorded calls", &rec_stats), ("corpus", &corpus_stats)] {
         println!(
-            "stage-check {what}: {} runs, {} stages compared ({} ordered, {} rows) in {} clauses, {} mismatches, {} not compared; counts {} compared, {} mismatches",
-            s.runs, s.stages_compared, s.ordered_compared, s.rows_compared, s.per_clause.len(), s.mismatch_total, s.not_compared.values().sum::<u64>(), s.counts_compared, s.count_mismatch_total
+            "stage-check {what}: {} runs, {} stages compared ({} ordered, {} rows) in {} clauses, {} mismatches, {} not compared; counts {} compared, {} mismatches; budget verdicts {} compared, {} mismatches",
+            s.runs, s.stages_compared, s.ordered_compared, s.rows_compared, s.per_clause.len(), s.mismatch_total, s.not_compared.values().sum::<u64>(), s.counts_compared, s.count_mismatch_total, s.budget_compared, s.budget_mismatch_total
         );
     }
 }

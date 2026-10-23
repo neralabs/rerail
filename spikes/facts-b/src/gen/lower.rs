@@ -636,6 +636,11 @@ struct Lower<'s> {
 /// nodes in id order (an operator's inputs are always added before it, so ids are topological).
 /// Linear in the graph; a recursive walk without memo visits every path of the shared DAG, which
 /// is exponential in the depth of stage reuse.
+///
+/// Construction work (docs/facts/PHASE-3.md G3b.2): each call records `(graph nodes, node visits)`
+/// in `CONSTRUCTION`, read into `greplay`'s results (`construction`). Mutant 51 re-seeds the
+/// historical regression: every node's answer by the former unmemoised `reads_var` walk, its
+/// calls counted (stopped at `WALK_CAP`; the answers are the linear pass's, which they equal).
 fn var_readers(g: &Graph, var: u32) -> Vec<bool> {
     let mut rd = vec![false; g.nodes.len()];
     for (n, op) in g.nodes.iter().enumerate() {
@@ -646,7 +651,37 @@ fn var_readers(g: &Graph, var: u32) -> Vec<bool> {
             _ => ins.iter().any(|i| rd[*i]),
         };
     }
+    let mut visits = g.nodes.len() as u64;
+    if crate::mutant::on(51) {
+        fn reads_var(g: &Graph, n: NodeId, var: u32, calls: &mut u64) -> bool {
+            *calls += 1;
+            if *calls > WALK_CAP {
+                return false;
+            }
+            match &g.nodes[n] {
+                Op::Var(v) => *v == var,
+                op => op_inputs(op).into_iter().any(|i| reads_var(g, i, var, calls)),
+            }
+        }
+        visits = 0;
+        for n in 0..g.nodes.len() {
+            reads_var(g, n, var, &mut visits);
+        }
+        visits = visits.min(WALK_CAP);
+    }
+    CONSTRUCTION.lock().push((g.nodes.len() as u64, visits));
     rd
+}
+
+/// Mutant 51's walk stops after this many calls (the linker plan's took 1.06e17): about a second.
+const WALK_CAP: u64 = 1 << 28;
+
+/// `(graph nodes, node visits)` per `var_readers` call since the process started (every worker's).
+static CONSTRUCTION: parking_lot::Mutex<Vec<(u64, u64)>> = parking_lot::Mutex::new(Vec::new());
+
+/// The construction work recorded so far (`var_readers`).
+pub(super) fn construction() -> Vec<(u64, u64)> {
+    CONSTRUCTION.lock().clone()
 }
 
 /// An operator's input nodes.

@@ -342,6 +342,9 @@ fn explain(args: &[String]) {
     if args.iter().any(|a| a == "--analyze") {
         return physplan::analyze(args);
     }
+    if args.iter().any(|a| a == "--classes") {
+        return physplan::census(args);
+    }
     let rules = arg(args, "--rules").unwrap_or_else(|| "packs/data-layer/candidates/rules".into());
     let only = arg(args, "--rule");
     let config: Map<String, Json> = arg(args, "--config").map(|c| serde_json::from_str(&c).expect("--config")).unwrap_or_default();

@@ -1766,7 +1766,9 @@ impl<'a> Eval<'a> {
             Bound::Node(n) if self.q.util_capture_free[i] && !self.each_active() => Some((i, n)),
             _ => None,
         };
-        if let Some((i, n)) = memo_key {
+        // Mutant 53 (the historical utility-memo regression, G3b.2): the memoised verdict is not
+        // read, so every use evaluates the utility again (same verdicts; quadratic work).
+        if let Some((i, n)) = memo_key.filter(|_| !crate::mutant::on(53)) {
             match self.memo.util.borrow().get(i).map_or(0, |v| v.get(n)) {
                 1 => return true,
                 2 => return false,
