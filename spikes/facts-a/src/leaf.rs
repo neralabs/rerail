@@ -1,6 +1,7 @@
 //! The leaf executors' compile check for the Phase 2 compiler (`rerail_facts::front::rule::LeafCheck`):
-//! pattern queries compile with this crate's `ast.rs`, regex clauses are checked against what
-//! `eval.rs::regex_findings` implements. Refusals name the construct.
+//! pattern queries compile with this crate's `ast.rs`, regex clauses with `ast/lines.rs::options`
+//! (every native regex option: the content gate, match-text filters and `lines`). Refusals name
+//! the construct.
 use crate::ast::{Compiler, Names};
 use rerail_facts::front::rule::LeafCheck;
 use serde_json::Value as Json;
@@ -56,19 +57,6 @@ impl LeafCheck for Leaves {
     }
 
     fn regex(&mut self, spec: &Json) -> Result<(), String> {
-        if spec.get("content").is_some() {
-            return Err("`content` gate".into());
-        }
-        if let Some(l) = spec.get("lines") {
-            for k in ["include", "exclude", "state", "indentation"] {
-                if l.get(k).is_some() {
-                    return Err(format!("`lines.{k}`"));
-                }
-            }
-            if let Some(t) = l.get("terminators").and_then(Json::as_str).filter(|t| *t != "python") {
-                return Err(format!("`lines.terminators: {t}`"));
-            }
-        }
-        Ok(())
+        crate::ast::lines::options(spec).map(drop)
     }
 }
