@@ -135,7 +135,9 @@ pub fn audit(n: &Node) -> Vec<String> {
                 }
             }
         }
-        let child_corr = matches!(n.op, Op::SemiJoin { correlated: true } | Op::AntiJoin { correlated: true } | Op::Scalar { correlated: true });
+        // A correlated subquery runs once per outer row down to its first pipeline (through the
+        // projections, sorts and groups on top of it).
+        let child_corr = matches!(n.op, Op::SemiJoin { correlated: true } | Op::AntiJoin { correlated: true } | Op::Scalar { correlated: true }) || (correlated && !matches!(n.op, Op::Pipeline { .. }));
         for (j, c) in n.children.iter().enumerate() {
             walk(c, child_corr, &format!("{path}/{j}"), out);
         }
@@ -160,6 +162,11 @@ mod tests {
         assert_eq!(audit(&bad).len(), 1);
         let corr = Node { op: Op::SemiJoin { correlated: true }, digest: "e".into(), children: vec![pipeline(vec![Item::Scan { rel: "calls".into(), pred: vec![] }])] };
         assert_eq!(audit(&corr).len(), 1);
+        // Through a projection on top of the subquery's pipeline.
+        let deep = Node { op: Op::SemiJoin { correlated: true }, digest: "e".into(), children: vec![Node { op: Op::Project { exprs: vec![] }, digest: "p".into(), children: vec![pipeline(vec![Item::Scan { rel: "calls".into(), pred: vec![] }])] }] };
+        assert_eq!(audit(&deep).len(), 1);
+        let probed = Node { op: Op::SemiJoin { correlated: true }, digest: "e".into(), children: vec![pipeline(vec![Item::IndexNestedLoop { rel: "calls".into(), key_cols: vec![0], key_affs: vec!["None".into()], residual: vec![] }])] };
+        assert!(audit(&probed).is_empty());
         let cached = Node { op: Op::SemiJoin { correlated: false }, digest: "e".into(), children: vec![pipeline(vec![Item::Scan { rel: "calls".into(), pred: vec![] }])] };
         assert!(audit(&cached).is_empty());
     }

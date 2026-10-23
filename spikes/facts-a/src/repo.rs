@@ -36,7 +36,7 @@ struct Worker {
 /// The suite's call configuration for each selected check (default: batch 6): `production_scope`,
 /// no `oracle_config` (verified against the oracle by `repo-compare`). A policy that does not compile
 /// is refused by name: it becomes one failure of its check (`compile: …`) and is not evaluated.
-fn compile_checks(policies: &str, checks: &[String]) -> (Vec<eval::Rule>, Vec<eval::Failure>) {
+pub(crate) fn compile_checks(policies: &str, checks: &[String]) -> (Vec<eval::Rule>, Vec<eval::Failure>) {
     let event = json!({"production_scope": true});
     let (mut rules, mut refused) = (Vec::new(), Vec::new());
     for check in checks {

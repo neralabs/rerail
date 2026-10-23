@@ -6,6 +6,7 @@ mod factfile;
 mod fstring;
 mod leaf;
 mod patcheck;
+mod physplan;
 mod volume;
 use rerail_facts::policy;
 mod pyvalue;
@@ -324,6 +325,9 @@ fn census(args: &[String]) {
 /// (JSON object of option values, default `{}`), its logical plans printed as stable text;
 /// refusals listed after the plans.
 fn explain(args: &[String]) {
+    if args.iter().any(|a| a == "--physical") {
+        return physplan::run(args);
+    }
     let rules = arg(args, "--rules").unwrap_or_else(|| "packs/data-layer/candidates/rules".into());
     let only = arg(args, "--rule");
     let config: Map<String, Json> = arg(args, "--config").map(|c| serde_json::from_str(&c).expect("--config")).unwrap_or_default();
