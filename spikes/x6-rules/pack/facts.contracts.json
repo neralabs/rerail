@@ -1,0 +1,788 @@
+{
+ "facts": {
+  "py_definitions": {
+   "over": "content",
+   "define": {
+    "match": {
+     "as": "row",
+     "query": {
+      "ast": {
+       "language": "python",
+       "syntax": "valid",
+       "rule": {
+        "all": [
+         {
+          "any": [
+           {
+            "kind": "class_definition"
+           },
+           {
+            "kind": "function_definition"
+           }
+          ]
+         },
+         {
+          "pattern": "$DEF"
+         },
+         {
+          "has": {
+           "pattern": "$NAME",
+           "stopBy": "neighbor",
+           "field": "name"
+          }
+         },
+         {
+          "any": [
+           {
+            "has": {
+             "pattern": "$BODY",
+             "stopBy": "neighbor",
+             "field": "body"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         },
+         {
+          "any": [
+           {
+            "inside": {
+             "all": [
+              {
+               "any": [
+                {
+                 "kind": "class_definition"
+                },
+                {
+                 "kind": "function_definition"
+                }
+               ]
+              },
+              {
+               "pattern": "$OUTER"
+              }
+             ],
+             "stopBy": "end"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         },
+         {
+          "any": [
+           {
+            "inside": {
+             "all": [
+              {
+               "any": [
+                {
+                 "kind": "block"
+                },
+                {
+                 "kind": "module"
+                }
+               ]
+              },
+              {
+               "pattern": "$CONTAINER"
+              }
+             ],
+             "stopBy": "end"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         },
+         {
+          "any": [
+           {
+            "inside": {
+             "all": [
+              {
+               "kind": "decorated_definition"
+              },
+              {
+               "pattern": "$DECORATED"
+              }
+             ],
+             "stopBy": "neighbor"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         }
+        ]
+       }
+      }
+     },
+     "project": {
+      "kind": "capture.DEF.kind",
+      "name": "capture.NAME",
+      "body": "capture.BODY.startByte",
+      "outer": "capture.OUTER.startByte",
+      "container": "capture.CONTAINER.startByte",
+      "container_kind": "capture.CONTAINER.kind",
+      "decorated": "capture.DECORATED.startByte"
+     }
+    }
+   }
+  },
+  "py_decorations": {
+   "over": "content",
+   "define": {
+    "match": {
+     "as": "row",
+     "query": {
+      "ast": {
+       "language": "python",
+       "syntax": "valid",
+       "rule": {
+        "all": [
+         {
+          "kind": "decorator"
+         },
+         {
+          "inside": {
+           "all": [
+            {
+             "kind": "decorated_definition"
+            },
+            {
+             "pattern": "$DECORATED"
+            }
+           ],
+           "stopBy": "neighbor"
+          }
+         },
+         {
+          "any": [
+           {
+            "has": {
+             "all": [
+              {
+               "kind": "call"
+              },
+              {
+               "pattern": "$CALL"
+              }
+             ],
+             "stopBy": "neighbor"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         }
+        ]
+       }
+      }
+     },
+     "project": {
+      "decorated": "capture.DECORATED.startByte",
+      "call": "capture.CALL.startByte"
+     }
+    }
+   }
+  },
+  "py_callees": {
+   "over": "content",
+   "define": {
+    "match": {
+     "as": "row",
+     "query": {
+      "ast": {
+       "language": "python",
+       "syntax": "valid",
+       "rule": {
+        "all": [
+         {
+          "any": [
+           {
+            "kind": "identifier"
+           },
+           {
+            "kind": "attribute"
+           }
+          ]
+         },
+         {
+          "pattern": "$FN"
+         },
+         {
+          "inside": {
+           "all": [
+            {
+             "kind": "call"
+            },
+            {
+             "pattern": "$CALL"
+            }
+           ],
+           "stopBy": "neighbor",
+           "field": "function"
+          }
+         },
+         {
+          "any": [
+           {
+            "has": {
+             "pattern": "$ATTR",
+             "stopBy": "neighbor",
+             "field": "attribute"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         }
+        ]
+       }
+      }
+     },
+     "project": {
+      "call": "capture.CALL.startByte",
+      "kind": "capture.FN.kind",
+      "name": "capture.FN",
+      "attribute": "capture.ATTR"
+     }
+    }
+   }
+  },
+  "py_keyword_arguments": {
+   "over": "content",
+   "define": {
+    "match": {
+     "as": "row",
+     "query": {
+      "ast": {
+       "language": "python",
+       "syntax": "valid",
+       "rule": {
+        "all": [
+         {
+          "kind": "keyword_argument"
+         },
+         {
+          "has": {
+           "pattern": "$KEY",
+           "stopBy": "neighbor",
+           "field": "name"
+          }
+         },
+         {
+          "has": {
+           "pattern": "$VALUE",
+           "stopBy": "neighbor",
+           "field": "value"
+          }
+         },
+         {
+          "any": [
+           {
+            "inside": {
+             "all": [
+              {
+               "kind": "call"
+              },
+              {
+               "pattern": "$CALL"
+              }
+             ],
+             "stopBy": "end",
+             "field": "arguments"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         }
+        ]
+       }
+      }
+     },
+     "project": {
+      "name": "capture.KEY",
+      "value": "capture.VALUE",
+      "call": "capture.CALL.startByte"
+     }
+    }
+   }
+  },
+  "py_assignments": {
+   "over": "content",
+   "define": {
+    "match": {
+     "as": "row",
+     "query": {
+      "ast": {
+       "language": "python",
+       "syntax": "valid",
+       "rule": {
+        "all": [
+         {
+          "any": [
+           {
+            "kind": "assignment"
+           },
+           {
+            "kind": "augmented_assignment"
+           }
+          ]
+         },
+         {
+          "pattern": "$ASSIGN"
+         },
+         {
+          "any": [
+           {
+            "has": {
+             "all": [
+              {
+               "kind": "identifier"
+              },
+              {
+               "pattern": "$NAME"
+              }
+             ],
+             "stopBy": "neighbor",
+             "field": "left"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         },
+         {
+          "any": [
+           {
+            "has": {
+             "pattern": "$TYPE",
+             "stopBy": "neighbor",
+             "field": "type"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         },
+         {
+          "any": [
+           {
+            "inside": {
+             "pattern": "$PARENT",
+             "stopBy": "neighbor"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         },
+         {
+          "any": [
+           {
+            "inside": {
+             "all": [
+              {
+               "any": [
+                {
+                 "kind": "block"
+                },
+                {
+                 "kind": "module"
+                }
+               ]
+              },
+              {
+               "pattern": "$CONTAINER"
+              }
+             ],
+             "stopBy": "end"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         }
+        ]
+       }
+      }
+     },
+     "project": {
+      "kind": "capture.ASSIGN.kind",
+      "name": "capture.NAME",
+      "type": "capture.TYPE",
+      "parent_kind": "capture.PARENT.kind",
+      "container": "capture.CONTAINER.startByte",
+      "container_kind": "capture.CONTAINER.kind"
+     }
+    }
+   }
+  },
+  "py_typed_parameters": {
+   "over": "content",
+   "define": {
+    "match": {
+     "as": "row",
+     "query": {
+      "ast": {
+       "language": "python",
+       "syntax": "valid",
+       "rule": {
+        "all": [
+         {
+          "any": [
+           {
+            "kind": "typed_parameter"
+           },
+           {
+            "kind": "typed_default_parameter"
+           }
+          ]
+         },
+         {
+          "any": [
+           {
+            "inside": {
+             "all": [
+              {
+               "kind": "function_definition"
+              },
+              {
+               "pattern": "$FN"
+              }
+             ],
+             "stopBy": "end"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         },
+         {
+          "any": [
+           {
+            "has": {
+             "all": [
+              {
+               "any": [
+                {
+                 "kind": "list_splat_pattern"
+                },
+                {
+                 "kind": "dictionary_splat_pattern"
+                }
+               ]
+              },
+              {
+               "pattern": "$SPLAT"
+              }
+             ],
+             "stopBy": "neighbor"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         }
+        ]
+       }
+      }
+     },
+     "project": {
+      "function": "capture.FN.startByte",
+      "splat": "capture.SPLAT.kind"
+     }
+    }
+   }
+  },
+  "py_annotation_tokens": {
+   "over": "content",
+   "define": {
+    "match": {
+     "as": "row",
+     "query": {
+      "ast": {
+       "language": "python",
+       "syntax": "valid",
+       "rule": {
+        "all": [
+         {
+          "all": [
+           {
+            "kind": "identifier"
+           },
+           {
+            "not": {
+             "inside": {
+              "kind": "attribute",
+              "stopBy": "neighbor",
+              "field": "attribute"
+             }
+            }
+           },
+           {
+            "not": {
+             "inside": {
+              "kind": "keyword_argument",
+              "stopBy": "neighbor",
+              "field": "name"
+             }
+            }
+           }
+          ]
+         },
+         {
+          "pattern": "$TOKEN"
+         },
+         {
+          "inside": {
+           "kind": "type",
+           "stopBy": "end"
+          }
+         },
+         {
+          "any": [
+           {
+            "inside": {
+             "all": [
+              {
+               "any": [
+                {
+                 "kind": "assignment"
+                },
+                {
+                 "kind": "typed_parameter"
+                },
+                {
+                 "kind": "typed_default_parameter"
+                }
+               ]
+              },
+              {
+               "pattern": "$ANNOTATED"
+              }
+             ],
+             "stopBy": "end",
+             "field": "type"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         },
+         {
+          "any": [
+           {
+            "inside": {
+             "all": [
+              {
+               "kind": "function_definition"
+              },
+              {
+               "pattern": "$RETURNS"
+              }
+             ],
+             "stopBy": "end",
+             "field": "return_type"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         }
+        ]
+       }
+      }
+     },
+     "project": {
+      "name": "capture.TOKEN",
+      "annotated": "capture.ANNOTATED.startByte",
+      "annotated_kind": "capture.ANNOTATED.kind",
+      "returns": "capture.RETURNS.startByte"
+     }
+    }
+   }
+  },
+  "py_base_tokens": {
+   "over": "content",
+   "define": {
+    "match": {
+     "as": "row",
+     "query": {
+      "ast": {
+       "language": "python",
+       "syntax": "valid",
+       "rule": {
+        "all": [
+         {
+          "all": [
+           {
+            "kind": "identifier"
+           },
+           {
+            "not": {
+             "inside": {
+              "kind": "attribute",
+              "stopBy": "neighbor",
+              "field": "attribute"
+             }
+            }
+           },
+           {
+            "not": {
+             "inside": {
+              "kind": "keyword_argument",
+              "stopBy": "neighbor",
+              "field": "name"
+             }
+            }
+           }
+          ]
+         },
+         {
+          "pattern": "$TOKEN"
+         },
+         {
+          "inside": {
+           "all": [
+            {
+             "kind": "class_definition"
+            },
+            {
+             "pattern": "$CLASS"
+            }
+           ],
+           "stopBy": "end",
+           "field": "superclasses"
+          }
+         },
+         {
+          "any": [
+           {
+            "inside": {
+             "all": [
+              {
+               "kind": "keyword_argument"
+              },
+              {
+               "pattern": "$KW"
+              }
+             ],
+             "stopBy": "end"
+            }
+           },
+           {
+            "pattern": "$_"
+           }
+          ]
+         }
+        ]
+       }
+      }
+     },
+     "project": {
+      "name": "capture.TOKEN",
+      "class": "capture.CLASS.startByte",
+      "keyword": "capture.KW.startByte"
+     }
+    }
+   }
+  },
+  "py_assigned_tokens": {
+   "over": "content",
+   "define": {
+    "match": {
+     "as": "row",
+     "query": {
+      "ast": {
+       "language": "python",
+       "syntax": "valid",
+       "rule": {
+        "all": [
+         {
+          "all": [
+           {
+            "kind": "identifier"
+           },
+           {
+            "not": {
+             "inside": {
+              "kind": "attribute",
+              "stopBy": "neighbor",
+              "field": "attribute"
+             }
+            }
+           },
+           {
+            "not": {
+             "inside": {
+              "kind": "keyword_argument",
+              "stopBy": "neighbor",
+              "field": "name"
+             }
+            }
+           }
+          ]
+         },
+         {
+          "pattern": "$TOKEN"
+         },
+         {
+          "inside": {
+           "all": [
+            {
+             "any": [
+              {
+               "kind": "assignment"
+              },
+              {
+               "kind": "augmented_assignment"
+              }
+             ]
+            },
+            {
+             "pattern": "$ASSIGN"
+            },
+            {
+             "inside": {
+              "kind": "expression_statement",
+              "stopBy": "neighbor"
+             }
+            }
+           ],
+           "stopBy": "end",
+           "field": "right"
+          }
+         }
+        ]
+       }
+      }
+     },
+     "project": {
+      "name": "capture.TOKEN",
+      "assignment": "capture.ASSIGN.startByte"
+     }
+    }
+   }
+  }
+ }
+}

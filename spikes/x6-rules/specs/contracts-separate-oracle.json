@@ -1,0 +1,9 @@
+[
+ {
+  "rule": "/Users/tim/orca/workspaces/rerail/facts-engine/.worktrees/x6-rules/spikes/x6-rules/linked/contracts-separate.json",
+  "clauses": [
+   "required-contracts"
+  ],
+  "exports": "/Users/tim/rerail-bench/facts/explore/x6-rules/exports/oracle-contracts-separate.jsonl"
+ }
+]
