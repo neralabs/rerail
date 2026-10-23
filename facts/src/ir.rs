@@ -413,14 +413,16 @@ pub enum Rel<S> {
     Filter { input: Box<Rel<S>>, pred: Expr<S> },
     Project { input: Box<Rel<S>>, exprs: Vec<Expr<S>>, schema: Vec<Column> },
     /// Groups of `keys` in first-seen order (no keys and no rows: one group). Output: the group's
-    /// representative input row (SQLite bare columns: the row a lone `min`/`max` picked, else
-    /// the group's last row; all NULL for an empty input), then the aggregates.
+    /// representative input row (SQLite bare columns: the row the one `min`/`max` picked, else
+    /// the group's last row, a bare column read with two distinct values in a group being a
+    /// refusal; all NULL for an empty input), then the aggregates (IR.md § 4).
     Aggregate { input: Box<Rel<S>>, keys: Vec<Expr<S>>, aggs: Vec<AggCall<S>> },
     /// Input columns, then one column per window function; rows stay in input order.
     Window { input: Box<Rel<S>>, funcs: Vec<WindowFn<S>> },
     /// First occurrence of each distinct value of the first `prefix` columns.
     Distinct { input: Box<Rel<S>>, prefix: u16 },
-    /// `left UNION [ALL] right`: bag concatenation, or set union keeping first occurrences.
+    /// `left UNION [ALL] right`: bag concatenation, or set union keeping, per distinctness class,
+    /// the right arm's first row of it, else the left side's, in first-seen position (IR.md § 4).
     Union { all: bool, left: Box<Rel<S>>, right: Box<Rel<S>> },
     /// Stable sort on input columns, then `OFFSET`/`LIMIT` (constant expressions).
     /// `total`: whether the keys order the input totally (matters with `limit`/`offset`, and for
