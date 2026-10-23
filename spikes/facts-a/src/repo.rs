@@ -35,7 +35,7 @@ struct Worker {
 
 /// The suite's call configuration for every batch-6 check: `production_scope`, no
 /// `oracle_config` (verified against the oracle by `repo-compare`).
-fn compile_batch6(policies: &str) -> Vec<eval::Rule> {
+pub(crate) fn compile_batch6(policies: &str) -> Vec<eval::Rule> {
     let event = json!({"production_scope": true});
     BATCH6
         .iter()
