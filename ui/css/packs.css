@@ -62,6 +62,6 @@ body[data-panel="open"] .prow2 .pend.ask{max-width:none}
 .pwrap.pack .pgrp.flat .prow{padding-left:14px}
 .pwrap.pack .pgrp.flat .prow:first-child{border-top:0}
 .pwrap.pack .pgrp.flat > .pintro{margin:12px 14px}
-.pwrap.pack .pfoot{position:sticky;bottom:0;z-index:2;margin:auto -20px 0;padding:12px 20px;border-top:1px solid var(--border);background:var(--card)}
+.pwrap.pack .pfoot{position:sticky;bottom:0;z-index:2;margin:auto -20px 0;padding:12px 20px;border-top:1px solid var(--border);background:var(--sheet-bg)}
 .pwrap.pack .pgrp.flat{margin-bottom:32px}
 .pwrap.pack .pfoot .rmask{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-start;gap:8px 10px;font-size:13px;line-height:1.5}

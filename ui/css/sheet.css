@@ -5,7 +5,7 @@
  */
 
 .pwrap{display:flex;flex-direction:column;min-height:0;height:100%}
-.phead{padding:18px 20px 20px;background:var(--card);flex:none}
+.phead{padding:18px 20px 20px;background:var(--sheet-bg);flex:none}
 .phead .ptop{display:flex;align-items:flex-start;gap:10px}
 .phead .ptop > div{flex:1;min-width:0}
 .phead .ptop .picon{margin-top:2px}
@@ -20,7 +20,7 @@
 .pact{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin-top:12px;font-size:13px}
 .pact .grow{flex:1}
 .pact .muted{font-size:12.5px}
-.pask{margin-top:12px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--background);padding:10px 12px}
+.pask{margin-top:12px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--box);padding:10px 12px}
 .pask .lbl{font-size:12px;font-weight:600;color:var(--muted-foreground);margin:0 0 8px}
 .pask .why{margin:12px 0 0;font-size:13px;color:var(--muted-foreground);max-width:none}
 .pask textarea{display:block;width:100%;min-height:74px;resize:vertical;font-family:var(--font-mono);font-size:12.5px;line-height:1.5;color:var(--foreground);background:var(--card);border:1px solid var(--border);border-radius:var(--radius-md);padding:8px 10px}
@@ -47,7 +47,7 @@
 .psec .h3row .btn{margin:-6px 0}
 .pbody .note2{margin-top:6px;font-size:13px}
 .sees-edit{margin-top:0}
-.enf{margin:0 0 24px;padding:24px 18px;border-radius:var(--radius-xl);background:var(--background)}
+.enf{margin:0 0 24px;padding:24px 18px;border-radius:var(--radius-xl);background:var(--inset)}
 .enf .lbl{font-size:14px;font-weight:600;letter-spacing:-.005em;color:var(--foreground);margin-bottom:14px}
 .enf .modes{display:flex;width:max-content}
 .enf .modes button:disabled{cursor:default}
@@ -57,7 +57,7 @@
 .pbody .enf > p{margin:14px 0 0;font-size:13px;line-height:1.5;color:var(--muted-foreground)}
 /* Three separate cards. */
 .pstats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:6px}
-.pstats div{padding:12px 14px;min-width:0;background:var(--background);border-radius:var(--radius-xl)}
+.pstats div{padding:12px 14px;min-width:0;background:var(--inset);border-radius:var(--radius-xl)}
 .pstats b{display:block;font-size:18px;font-weight:600;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pstats span{display:block;font-size:12px;color:var(--muted-foreground);margin-top:2px}
 .psec{margin-top:38px}
@@ -81,7 +81,7 @@
 /* Delete: a footer pinned to the sheet's bottom while the content runs past it, resting at the end when it does not. */
 .pbody:has(> .pfoot:not([hidden])){display:flex;flex-direction:column;padding-bottom:0}
 .pbody:has(> .pfoot:not([hidden])) > *{flex:none}
-.pbody .pfoot{position:sticky;bottom:0;z-index:2;margin:auto -20px 0;padding:12px 20px;border-top:1px solid var(--border);background:var(--card)}
+.pbody .pfoot{position:sticky;bottom:0;z-index:2;margin:auto -20px 0;padding:12px 20px;border-top:1px solid var(--border);background:var(--sheet-bg)}
 .pbody > :has(+ .pfoot:not([hidden])){margin-bottom:32px}
 .pfoot .pask{margin-top:0}
 .pdelbox{border-color:var(--danger)}
@@ -93,7 +93,7 @@
 .pintro{margin:12px 0 0;font-size:13.5px;line-height:1.5}
 .pbody > .pintro:first-child{margin-top:20px}
 .pbody .pintro + .pintro{margin-top:12px}
-.cmd{display:flex;align-items:center;gap:10px;margin:10px 0 0;padding:8px 8px 8px 12px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--background)}
+.cmd{display:flex;align-items:center;gap:10px;margin:10px 0 0;padding:8px 8px 8px 12px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--box)}
 .cmd code{flex:1;min-width:0;background:none;padding:0;font-size:13px;overflow-wrap:anywhere}
 .cmd + .pintro{margin-top:22px}
 .pgrp{border:1px solid var(--border);border-radius:var(--radius-lg);margin-top:12px;overflow:hidden}
