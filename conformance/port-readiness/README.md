@@ -31,8 +31,9 @@ that each is true to that rule. A rule that is not a port (complexity's) is done
 A rule's verdict is the first blocking gate it fails. The summary (summary.ts) holds one verdict per rule document, the
 first step of `STEPS` the rule fails, and every count it and the pull request comment (comment.ts) show comes from
 those verdicts, so each rule is counted once. The steps are the conformance gates, then, for a port: `mapping` (a
-conformance.json entry maps it), `set-up` (its tool has a gates.yaml; a shipped port of a tool without one fails), the
-tool-pack checks, `loads`'s `in-scope` check (it compares a rule with the files upstream lints, so it judges the port),
+conformance.json entry maps it), `set-up` (its tool has a gates.yaml; a shipped port of a tool without one fails),
+`licence` (the tool-pack checks about upstream's licence, recorded-adapter.ts `LICENSE_CHECKS`: the kept licence is
+upstream's, the package declares it, and it is on the repository's allowlist), the other tool-pack checks, `loads`'s `in-scope` check (it compares a rule with the files upstream lints, so it judges the port),
 `not-overfit` and `matches-upstream-tests`. `matches-upstream-tests` includes `engine-reads-goldens`: a golden
 that differs where the engine reported `source-partial`, `source-incomplete` or `budget-exceeded` fails the rule; the
 fix belongs in the engine. It also includes `no-real-code-gap`: a rule `gates.yaml` lists under
