@@ -148,3 +148,93 @@ Ordered by the rules each one unblocked in the census:
 5. **Cleanup:**
    - Dead-code warnings in `ast/*.rs` (unused `sub_rules`/`reads` helpers) and `ast.rs` (`Names::get`, `Unsupported`, `trial`).
    - The census JSON's leaf pass still reports through `leaf.rs`; only compile is checked there.
+
+## 8. Wave 3 (S6Leaf-2): `binds`, budget evidence `closure`, `printf`
+
+Run dirs under `~/rerail-bench/facts/phase-2/s6-leaf/runs/`: `20261022T230348-w3-replay-b45` (first), `…T230914-w3-replay-b45b`, `…T231417-w3-replay-b45c` (latest). Load 5.7–18 (shared machine; no timing row owned).
+
+### 8.1 Replay `--engine facts`, batches 4–5 (latest build, `…T231417-w3-replay-b45c`)
+
+| batch | calls | FP | FN | failures | remaining (named) |
+|---|--:|--:|--:|--:|---|
+| 4 | 573 | 0 | 0 | 0 | — (all 10 checks exact; the 3 closure checks newly exact) |
+| 5 | 312 | 2 | 207 | 116 | `imperative_private_functions`: `calls` atom (S3). `internal_dead_code`: `binds` now compiles; next refusal input `raw_modules` projection `file.module` (membership-dependent, S3 agreed), then `references` (S3). `public_api_triples`: compiles and runs (printf, json_group_array, json_array, min() OVER); 2 FP / 2 FN on two relational probes (`signature-exempts-legacy`, `inherited-distinct-family`), open: suspected correlated derived table `FROM (SELECT … WHERE p.symbol=d.id)` in the `traits` stage's `params` subquery |
+
+Suite (`suite.ts --engine facts`) for b4/b5 not run this wave (budget); S5's lane `suite-b4/b5` covers it on merge.
+
+### 8.2 Constructs
+
+- **`binds`** (`bindings.rs`, `ast.rs` `Rule::Binds`): native's scope table (`ScopeTable::build_in`, Python, default reading) extracted per content as `py_binding(node, form, scope_kind, index, chain_len, outer)` (SCHEMA § 1.3), name sites mapped to fact nodes by `(start, end, kind id)` as native `Usage::named_at`. Filters `form`, `scope`, `latest`, `outer`, `bindings.{min,max}`; usage filters, `within`, sub-rules, `builtin`/`directives` refused by name. Declaration-only binds read no values (native `reads_values`), so the query stays two-valued. Native changes: visibility only (`ScopeKind`, `Form`, `Site{form}`, `Binding.site/outer`, `Scope.kind`, `NodeRef.kind`).
+- **Budget evidence `closure`** (`closure.rs`, hooks in `eval.rs`): port of `query/name_closure.rs` `derive` and `compile/evidence.rs` `compile_closure`. Budget rows of closure clauses keep their projected values; `finish` derives the outputs over every file's rows, then applies `where` (which may read outputs; `Where` gained boolean literals) and groups. Native's clause-wide failures reproduced: `source-incomplete` when some file's rows failed, `budget-exceeded` when the step count (computed exactly; order independent) exceeds `maxVisitedNodes` of `native/src/code_rule_dsl/capabilities.json`. **Classification:** `captured-return` partitions by `[path, owner]` and groups by path → per file (S1's classifier says File: agrees); `constructor-arg` (no partition) and `unsafe-parameter` (no partition, seeds from options) → repository (S1 agrees). **Finding for the decider:** native's two clause-wide failure conditions (any file incomplete; the step allowance summed over all files) make even the per-file closure clause's *failure* membership-dependent; its findings are per file. The per-file plan needs a repository side condition (sum of per-file steps ≤ allowance, no incomplete file) to be exact in failures.
+- **Budget findings at the evidence anchor** (native `reported`): was the witness line; fixed `sql_grammar_escape_hatches` (`anchor: capture.PARAMETER`).
+- **`report_when`** (`define.report_when.count.gt`) was silently ignored by `eval::Rule::compile` (I9 gap): now compiled and applied at the end of `finish` (native `evaluate_code_rule`).
+- **`printf`**: moved verbatim from `rerail_facts::reference` to `rerail_facts::sql::value::printf` (one implementation; reference calls it), plus a refusal for `%s` width/precision over non-ASCII (SQLite counts bytes). Spike engine `Func::Printf` calls it.
+- **Spike SQL engine** (needed by `public_api_triples` after printf): `json_array` and `json_group_array` with SQLite's JSON subtype for directly nested JSON functions (`json_extract`/`json_quote` subtype cases refused at plan time); `min`/`max(x) OVER (PARTITION BY …)` without ORDER BY.
+
+### 8.3 Interface changes
+
+`eval::BudgetRows` is `BTreeMap<(rule, clause), Vec<BudgetRow>>` (`path, key, line, values`); `Kind::Budget` gains `closure`; `eval::Rule` gains `report_count_gt`; `Operand::Literal` holds `closure::Val`; `facts::Facts` gains `bindings` + `bindings()`; `sql::engine::WinSpec` gains `func`; `rerail_facts::sql::value::printf` is pub.
+
+### 8.4 Resume notes
+
+1. ~~`public_api_triples` 2 FP / 2 FN~~: closed in § 9 (derived-table correlation depth).
+2. S5: add `grammar_callable_constructors`, `grammar_fragment_usage`, `sql_grammar_escape_hatches` to `GATED` after confirming suite-b4.
+3. S3: `calls`, `references`, `file.module` for the two batch-5 rules.
+4. Note to S7: the reference's `json_group_array`/`json_array` render nested JSON-function results as strings (SQLite embeds them); the spike engine now embeds.
+
+## 9. S6b (S6bTriples): `public_api_triples` wrong answer — derived-table correlation depth
+
+Run dir: `~/rerail-bench/facts/phase-2/s6-leaf/runs/20261023T000501-s6b-b5` (batch-5 replay and suite, fixed build). Resume note 8.4.1 is closed.
+
+### 9.1 Root cause
+
+Confirmed S6's suspicion. `FACTS_DEBUG=1` stage dump on `batch-05-relational:signature-exempts-legacy`: `parameters` holds `x, y` for `read` and `read_async` and `x` for `read_lazy`, but `traits.params` was `[]` on every row. SQLite 3.51 on the same `traits` text over the same input rows gives `["x","y"]`, `["x","y"]`, `["x"]`. With `[]` everywhere, every sync/async member "has the lazy member's signature", so `missing_legacy_sync`/`missing_legacy_async` fired (the 2 FP), and `inherited-distinct-family`'s families collapsed (the 2 FN). The suite's 23 FP came from the same column.
+
+Mechanism (`spikes/facts-a/src/sql/engine.rs`): `Planner::select` pushes its scope before it plans its FROM items. `source_schema` then planned a FROM subquery with that partial scope still on the stack. As a result:
+
+- **Planning:** inside `(SELECT name FROM parameters p WHERE p.symbol=d.id …)`, `d` resolved at depth 2, counting the enclosing select's own scope, which is still empty.
+- **Running:** `Exec::table_of` runs a derived table with the enclosing select's outer frame, so depth 2 walked one frame past `d`. `Exec::col` returns NULL when no parent frame exists, so `p.symbol = NULL` matched nothing and the result was `[]`. That is a wrong answer with no refusal.
+- **Siblings:** the derived table could also see the select's earlier FROM siblings, which SQLite rejects (`no such column: s.id`).
+
+The scalar, `EXISTS` and `IN` subqueries in expressions were unaffected, because they are planned after the FROM items and run with the select's own frame.
+
+### 9.2 Fix
+
+This is general for every statement shape. A FROM subquery is planned with the enclosing select's scope popped (`Planner::source_schema`, `Source::Sub`), so its scope chain is the one it runs under: the enclosing select's outer scopes, at any nesting depth, with no FROM siblings. Lateral `json_each` keeps seeing earlier items. Correlation and cacheability (`SubBound`) follow, since `scope_depth` is taken after the pop.
+
+### 9.3 Test and mutant
+
+- **Unit test:** `sql::engine::tests::derived_table_correlation_follows_sqlite_scoping` checks five statements, with expected rows taken from SQLite 3.51 on the same tables:
+  - the `traits` shape;
+  - a derived table after a FROM sibling;
+  - an unqualified outer name that skips the invisible sibling;
+  - derived tables nested two deep;
+  - a sibling reference that must fail to plan.
+- **Mutant:** **22** (`sql-derived-scope`, `mutant::on(22)` keeps the scope visible, which is exactly the pre-fix planner). It is allocated with S5Gate-3, which is registering it with family `[facts-a-unit, harness-b5, suite-b5]` and adding the `facts-a-unit` check.
+- **Results:** clean build, test passes. `FACTS_MUTANT=22`, the test fails on the first assertion (`[]` for every row, the field symptom).
+
+### 9.4 Results (`--engine facts`, fixed build)
+
+| run | `public_api_triples` | before (8.1) |
+|---|---|---|
+| replay, batch 5 (5 recordings) | 38 calls (23 positive, 15 clean): 0 FP, 0 FN, 0 failures | 2 FP, 2 FN |
+| suite `suite-b5.json`, `--cold-only` | 0 expected, 0 actual: exact | 23 FP |
+
+The other batch-5 checks are unchanged: 8 of 10 are exact in replay. `imperative_private_functions` (`calls`) and `internal_dead_code` (`file.module`) are still refused, as in 8.1.
+
+Gate: `just facts-gate` (build plus checks) at `2431fa338` passed 25/25 checks in 1,533 s (run `~/rerail-bench/facts/phase-2/s5-gate/runs/20261023T000948-gate`, load 65 at start, so the timing is not reliable). Results:
+
+- `harness-b5`: 8 of 10 checks exact, 0 FP, 205 FN (207 before), 116 failures, all in the two refused checks.
+- `suite-b5`: 0 FP.
+- Batches 1–4, batch 6 (`a-replay`, `harness-replay`, `a-repo`), A3 and the reference lanes are unchanged and pass.
+
+`public_api_triples` can join `GATED`.
+
+### 9.5 Reference evaluator
+
+The reference was right and the spike engine was wrong. I ran the same five statements through `rerail_facts::front::sql::lower_query` and `reference::Evaluator` in a throwaway test, not kept:
+
+- the four valid statements give SQLite's rows;
+- the sibling reference is refused (`lateral reference s.id`).
+
+`Lowerer::resolve` sees only the top-most scope of each subquery level, which is the same rule as the fix. The gate's `a-reference` lane compares facts-a's rewritten and unrewritten plans over the subset; it never compares the spike SQL engine with `reference.rs` on relational stages, so it could not have caught this.
