@@ -215,11 +215,11 @@ function verdicts(reports: GatesReport[], conformance: ConformanceReport | null)
 
 /**
  * Why no port readiness gate ran on a port the conformance job judged: origins.json declares it and no conformance.json
- * entry maps it yet, or its linter has no gates.yaml.
+ * entry maps it yet (the reason its origins.json entry gives), or its linter has no gates.yaml.
  */
 function unjudgedPortStep(pack: string, origin: Extract<Origin, { kind: "port" }>): Failure {
-  const { tool, rule } = origin.upstream;
-  if (origin.unmapped !== undefined) return { stoppedAt: "mapping", check: "conformance-entry", why: `no conformance.json entry maps it to ${tool}'s ${rule}, so no port readiness gate can run: ${origin.unmapped}` };
+  const { tool } = origin.upstream;
+  if (origin.unmapped !== undefined) return { stoppedAt: "mapping", check: "conformance-entry", why: origin.unmapped };
   return { stoppedAt: "set-up", check: "gates-yaml", why: `${tool} has no packs/${pack}/upstream/${tool}/gates.yaml yet, so no port readiness gate can run on its ports` };
 }
 

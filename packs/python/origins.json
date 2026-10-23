@@ -5,7 +5,7 @@
       "tool": "ruff",
       "rule": "A005"
     },
-    "unmapped": "no recording covers A005: Ruff's only fixtures for it are GPL-derived, so Rerail does not record them"
+    "unmapped": "Ruff's only fixtures for A005 are GPL-derived, so Rerail does not record them"
   },
   {
     "document": "candidates/rules/ruff-inp001-implicit-namespace-package.json",
@@ -13,6 +13,6 @@
       "tool": "ruff",
       "rule": "INP001"
     },
-    "unmapped": "no recording covers INP001: Ruff tests it only with a namespace-packages option set"
+    "unmapped": "Ruff tests INP001 only with its namespace-packages option set, so Rerail has no recording of it"
   }
 ]

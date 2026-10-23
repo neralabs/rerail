@@ -10,7 +10,8 @@
  * A comment is limited to 65,536 characters, so its lists are capped; the job summary, summary.json and the uploaded
  * reports always have everything.
  */
-import { stepLabel, STEPS, type RuleVerdict, type StepId, type Summary } from "./summary.js";
+import { failureLabel, failurePoint } from "./failure-points.js";
+import { STEPS, type RuleVerdict, type StepId, type Summary } from "./summary.js";
 
 /** Starts every rule gates comment, so CI finds the earlier ones to minimize. */
 export const COMMENT_MARKER = "<!-- rerail-port-readiness -->";
@@ -88,80 +89,109 @@ function originRows(origins: string[], rules: RuleVerdict[], cells: (rules: Rule
 }
 
 const stageOf = (id: StepId): string => STEPS.find((step) => step.id === id)!.stage;
+const stepIndex = (rule: RuleVerdict): number => STEPS.findIndex((step) => step.id === rule.stoppedAt);
+
+/** A failing rule's failure, as the tables group it: its stage and what is wrong. */
+const failureOf = (rule: RuleVerdict): string => failureLabel(rule.stoppedAt!, rule.check);
+
+/** The distinct failures of failing `rules`, in the order a rule meets them, with their fixes. */
+function failuresOf(rules: RuleVerdict[]): { label: string; fix: string }[] {
+  const seen = new Map<string, string>();
+  for (const rule of [...rules].sort((a, b) => stepIndex(a) - stepIndex(b))) seen.set(failureOf(rule), failurePoint(rule.stoppedAt!, rule.check).fix);
+  return [...seen].map(([label, fix]) => ({ label, fix }));
+}
+
+/**
+ * The steps that mean no port readiness gate could judge a port: no conformance.json entry maps the port origins.json
+ * declares (its reason is that entry's), or its linter is not set up. A document that declares no origin fails
+ * conformance instead, and is counted with the other failures.
+ */
+const UNJUDGED: readonly StepId[] = ["mapping", "set-up"];
 
 interface Limits {
   failing: number | null;
   promote: number | null;
   why: number | null;
-  /** List each failing candidate, its gate and why, under its pack (the job summary does; the comment does not). */
+  /** List each failing candidate, its failure and why, under its pack (the job summary does; the comment does not). */
   candidateLines: boolean;
 }
 
-function render(summary: Summary, context: CommentContext, limits: Limits, marker: boolean): string {
-  const why = (text: string): string => {
-    const line = oneLine(text);
-    return limits.why === null || line.length <= limits.why ? line : `${line.slice(0, limits.why - 3)}...`;
-  };
+interface Render {
+  limits: Limits;
+  why: (text: string) => string;
+}
+
+function shippedSection(summary: Summary, { limits, why }: Render): string[] {
   const blocking = summary.failing.length + summary.otherFailures.length;
-  const ready = summary.promotable.length;
-  const commit = context.commit === undefined || context.commit === "" ? "" : `At \`${context.commit.slice(0, 10)}\``;
-  const run = context.runUrl === undefined || context.runUrl === "" ? "" : `[job summary and reports](${context.runUrl})`;
   const shipped = summary.rules.filter((rule) => rule.location === "shipped");
-  const candidates = summary.rules.filter((rule) => rule.location === "candidate");
   const failingIn = (rules: RuleVerdict[]) => rules.filter((rule) => rule.stoppedAt !== null).length;
-
-  const shippedPacks = byPack(shipped).flatMap(({ pack, rules, origins }) => details(
-    `${pack}: ${rules.length}`,
-    table(["Origin", "✅ Pass", "❌ Fail", "Total"], originRows(origins, rules, (members) => [members.length - failingIn(members), failingIn(members), members.length])),
-    failingIn(rules) > 0,
-  ));
-
-  const candidatePacks = byPack(candidates).flatMap(({ pack, rules, origins }) => {
-    const inStage = (members: RuleVerdict[], stage: string) => members.filter((rule) => rule.stoppedAt !== null && stageOf(rule.stoppedAt) === stage).length;
-    const failing = rules.filter((rule) => rule.stoppedAt !== null);
-    const gates = STEPS.filter((step) => failing.some((rule) => rule.stoppedAt === step.id));
-    return details(`${pack}: ${rules.length}`, [
-      ...table(["Origin", "🟢 Ready", "❌ Conformance", "❌ Port readiness", "Total"], originRows(origins, rules, (members) => [
-        members.filter((rule) => rule.stoppedAt === null).length, inStage(members, "conformance"), inStage(members, "port"), members.length,
-      ])),
-      ...(gates.length === 0
-        ? []
-        : ["", ...table(["Fails at", ...origins], gates.map((step) => [stepLabel(step.id), ...origins.map((origin) => {
-            const count = failing.filter((rule) => rule.stoppedAt === step.id && originOf(rule) === origin).length;
-            return count === 0 ? "" : String(count);
-          })]))]),
-      ...(!limits.candidateLines || failing.length === 0
-        ? []
-        : ["", ...details(`Each failing ${pack} candidate (${failing.length})`, gates.flatMap((step) => [
-            `**${stepLabel(step.id)}**`,
-            "",
-            ...failing.filter((rule) => rule.stoppedAt === step.id).map((rule) => `- ${ruleName(rule)}: ${why(rule.why)}`),
-            "",
-          ]))]),
-    ]);
-  });
-
-  const lines = [
-    ...(marker ? [COMMENT_MARKER] : []),
-    `## Rule gates: ${blocking === 0 ? "✅" : "❌"} ${summary.shipped.pass}/${summary.shipped.rules} shipped rules pass${summary.otherFailures.length === 0 ? "" : ` · ${plural(summary.otherFailures.length, "other blocking failure")}`} · 🟢 ${ready} ready to promote`,
-    "",
-    ...(commit === "" && run === "" ? [] : [[commit, run].filter((part) => part !== "").join(" · "), ""]),
-    "- **Conformance** checks every rule.",
-    "- **Port readiness** checks ports, once they pass conformance. A port is a rule that comes from an upstream linter, such as Ruff or ESLint; these checks make sure it is true to the rule it comes from.",
-    "",
-    ...(summary.notJudged.length === 0 ? [] : [`Not re-run on this change, since nothing their ports read changed: ${summary.notJudged.join(", ")}. Main's results stand for them, and the counts leave them out.`, ""]),
+  const sentence = (text: string) => why(text).replace(/\.$/u, "");
+  return [
     `### ${blocking === 0 ? "✅" : "❌"} Shipped Rule Summary: ${summary.shipped.pass}/${summary.shipped.rules} pass, ${blocking} blocking`,
     "",
     ...(blocking === 0
       ? []
       : [
-          "Fix the rule, or move it to `candidates/`.",
+          "A shipped rule that fails blocks the merge: fix it, or move it to `candidates/`.",
           "",
-          ...capped(summary.failing, limits.failing, (rule) => `- ❌ ${ruleName(rule)}: **${stepLabel(rule.stoppedAt!)}**: ${why(rule.why)}`),
+          ...capped(summary.failing, limits.failing, (rule) => `- ❌ ${ruleName(rule)}: **${failureOf(rule)}.** ${sentence(rule.why)}. **Fix:** ${failurePoint(rule.stoppedAt!, rule.check).fix}.`),
           ...capped(summary.otherFailures, limits.failing, (entry) => `- ❌ ${entry.what}: ${entry.check}: ${why(entry.why)}`),
           "",
         ]),
-    ...shippedPacks,
+    ...byPack(shipped).flatMap(({ pack, rules, origins }) => details(
+      `${pack}: ${rules.length}`,
+      table(["Origin", "✅ Pass", "❌ Fail", "Total"], originRows(origins, rules, (members) => [members.length - failingIn(members), failingIn(members), members.length])),
+      failingIn(rules) > 0,
+    )),
+  ];
+}
+
+/** The candidates no port readiness gate could judge, and why: each one nothing maps, and each linter not set up. */
+function unjudgedLines(failing: RuleVerdict[], why: (text: string) => string): string[] {
+  const unmapped = failing.filter((rule) => rule.stoppedAt === "mapping");
+  const byTool = new Map<string, RuleVerdict[]>();
+  for (const rule of failing.filter((entry) => entry.stoppedAt === "set-up")) byTool.set(rule.upstream!.tool, [...(byTool.get(rule.upstream!.tool) ?? []), rule]);
+  if (unmapped.length + byTool.size === 0) return [];
+  return [
+    "",
+    "Not judged against upstream:",
+    "",
+    ...unmapped.map((rule) => `- \`${rule.id}\`: ${why(rule.why)}`),
+    ...[...byTool].map(([tool, rules]) => `- ${plural(rules.length, `${tool} candidate`)}: ${why(rules[0]!.why)}`),
+  ];
+}
+
+function candidatePack(pack: string, rules: RuleVerdict[], origins: string[], { limits, why }: Render): string[] {
+  const inStage = (members: RuleVerdict[], stage: string) => members.filter((rule) => rule.stoppedAt !== null && stageOf(rule.stoppedAt) === stage).length;
+  const failing = rules.filter((rule) => rule.stoppedAt !== null);
+  const failures = failuresOf(failing);
+  return details(`${pack}: ${rules.length}`, [
+    ...table(["Origin", "🟢 Ready", "❌ Conformance", "❌ Port readiness", "Total"], originRows(origins, rules, (members) => [
+      members.filter((rule) => rule.stoppedAt === null).length, inStage(members, "conformance"), inStage(members, "port"), members.length,
+    ])),
+    ...(failures.length === 0
+      ? []
+      : ["", ...table(["Fails because", ...origins], failures.map(({ label }) => [label, ...origins.map((origin) => {
+          const count = failing.filter((rule) => failureOf(rule) === label && originOf(rule) === origin).length;
+          return count === 0 ? "" : String(count);
+        })]))]),
+    ...unjudgedLines(failing.filter((rule) => UNJUDGED.includes(rule.stoppedAt!)), why),
+    ...(!limits.candidateLines || failing.length === 0
+      ? []
+      : ["", ...details(`Each failing ${pack} candidate (${failing.length})`, failures.flatMap(({ label }) => [
+          `**${label}**`,
+          "",
+          ...failing.filter((rule) => failureOf(rule) === label).map((rule) => `- ${ruleName(rule)}: ${why(rule.why)}`),
+          "",
+        ]))]),
+  ]);
+}
+
+function candidateSection(summary: Summary, render: Render): string[] {
+  const candidates = summary.rules.filter((rule) => rule.location === "candidate");
+  const ready = summary.promotable.length;
+  const failures = failuresOf(candidates.filter((rule) => rule.stoppedAt !== null));
+  return [
     `### Candidate Rule Summary: ${plural(candidates.length, "candidate")}, 🟢 ${ready} ready to promote`,
     "",
     ...(ready === 0
@@ -169,11 +199,49 @@ function render(summary: Summary, context: CommentContext, limits: Limits, marke
       : [
           "Ready to promote: each passes every gate it must. Move it into `rules/` and `pack.json`; a reviewer still decides, and a port's default is what upstream recommends.",
           "",
-          ...capped(summary.promotable, limits.promote, (rule) => `- 🟢 ${ruleName(rule)}${rule.onByDefault === undefined ? "" : rule.onByDefault ? ": on by default" : ": off by default"}`),
+          ...capped(summary.promotable, render.limits.promote, (rule) => `- 🟢 ${ruleName(rule)}${rule.onByDefault === undefined ? "" : rule.onByDefault ? ": on by default" : ": off by default"}`),
           "",
         ]),
-    ...candidatePacks,
+    ...byPack(candidates).flatMap(({ pack, rules, origins }) => candidatePack(pack, rules, origins, render)),
+    ...(failures.length === 0 ? [] : details("How to fix each failure", failures.map(({ label, fix }) => `- **${label}:** ${fix}.`))),
   ];
+}
+
+/** `text` on one line, shortened to `limits.why` characters when the limit is set. */
+function shortener(limits: Limits): (text: string) => string {
+  return (text) => {
+    const line = oneLine(text);
+    return limits.why === null || line.length <= limits.why ? line : `${line.slice(0, limits.why - 3)}...`;
+  };
+}
+
+/** The commit the gates judged and the run, on one line; empty when CI set neither. */
+function whereLines(context: CommentContext): string[] {
+  const commit = context.commit ?? "";
+  const runUrl = context.runUrl ?? "";
+  const where = [commit === "" ? "" : `At \`${commit.slice(0, 10)}\``, runUrl === "" ? "" : `[job summary and reports](${runUrl})`].filter((part) => part !== "");
+  return where.length === 0 ? [] : [where.join(" · "), ""];
+}
+
+/** The heading, the commit and run, one line on each stage, and the upstream linters the plan did not re-run. */
+function header(summary: Summary, context: CommentContext): string[] {
+  const blocking = summary.failing.length + summary.otherFailures.length;
+  const others = summary.otherFailures.length === 0 ? "" : ` · ${plural(summary.otherFailures.length, "other blocking failure")}`;
+  const notRerun = `Not re-run on this change, since nothing their ports read changed: ${summary.notJudged.join(", ")}. Main's results stand for them, and the counts leave them out.`;
+  return [
+    `## Rule gates: ${blocking === 0 ? "✅" : "❌"} ${summary.shipped.pass}/${summary.shipped.rules} shipped rules pass${others} · 🟢 ${summary.promotable.length} ready to promote`,
+    "",
+    ...whereLines(context),
+    "- **Conformance** checks every rule.",
+    "- **Port readiness** checks ports, once they pass conformance. A port is a rule that comes from an upstream linter, such as Ruff or ESLint; these checks make sure it is true to the rule it comes from.",
+    "",
+    ...(summary.notJudged.length === 0 ? [] : [notRerun, ""]),
+  ];
+}
+
+function render(summary: Summary, context: CommentContext, limits: Limits, marker: boolean): string {
+  const options = { limits, why: shortener(limits) };
+  const lines = [...(marker ? [COMMENT_MARKER] : []), ...header(summary, context), ...shippedSection(summary, options), ...candidateSection(summary, options)];
   return `${lines.join("\n").trimEnd()}\n`;
 }
 

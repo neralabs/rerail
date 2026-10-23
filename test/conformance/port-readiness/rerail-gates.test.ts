@@ -95,7 +95,8 @@ describe("location-based blocking", () => {
     const unmapped: Origin = { kind: "port", upstream: { tool: "ruff", rule: "A005" }, unmapped: "Ruff's only fixtures for it are GPL-derived" };
     const summary = summarize([report([rule("a", "candidate")])], [bandit], undefined, conformanceReport([unported("x", "python", "candidate", unmapped), unported("y", "python", "shipped", unmapped)], [pythonPack]));
     assert.deepEqual(summary.rules.map((entry) => [entry.id, entry.origin, entry.upstream?.rule ?? null, entry.stoppedAt]), [["a", "port", "X1", null], ["x", "port", "A005", "mapping"], ["y", "port", "A005", "mapping"]]);
-    assert.equal(summary.rules[1]!.why, "no conformance.json entry maps it to ruff's A005, so no port readiness gate can run: Ruff's only fixtures for it are GPL-derived");
+    // The reason is the origins.json entry's own, so the comment can show it as it is.
+    assert.equal(summary.rules[1]!.why, "Ruff's only fixtures for it are GPL-derived");
     assert.deepEqual(summary.failing.map((entry) => entry.id), ["y"]);
     assert.equal(summary.pass, false);
   });

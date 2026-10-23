@@ -137,7 +137,9 @@ recordings from `upstream/` unless `conformance.json` sets `oracles`:
   declares the rest. It is a list of entries, each naming a pack-relative `document`:
   - an **original**, Rerail's own rule, with `original`: what it is, and what it is modelled on, if anything;
   - a **port not mapped yet**, with `upstream` (`tool`, one of the pack's `conformance.json` tools, and `rule`) and
-    `unmapped`: why no `conformance.json` entry maps it, typically that no recording covers its upstream rule.
+    `unmapped`: why no `conformance.json` entry maps it, typically that no recording covers its upstream rule. The
+    rule gates comment shows it as written, after the rule's id, so it reads on its own: "Ruff's only fixtures for
+    A005 are GPL-derived, so Rerail does not record them".
 
   ```json
   [
@@ -145,7 +147,7 @@ recordings from `upstream/` unless `conformance.json` sets `oracles`:
     {
       "document": "candidates/rules/typescript-eslint-prefer-optional-chain.json",
       "upstream": { "tool": "typescript-eslint", "rule": "@typescript-eslint/prefer-optional-chain" },
-      "unmapped": "it requires type information, which the recordings do not have"
+      "unmapped": "it needs type information, which the recordings do not have"
     }
   ]
   ```
