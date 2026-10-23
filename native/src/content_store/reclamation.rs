@@ -352,6 +352,16 @@ impl ContentStore {
              ORDER BY h.hash_id LIMIT ?1)",
             [limit],
         )?;
+        // Facts memo rows cascade from their sources; a plan set no completion row names any
+        // more is dead (facts_memo.rs writes a set in the transaction that first names it).
+        execute_collect(
+            &transaction,
+            "DELETE FROM facts_plan_sets WHERE set_digest IN (\
+             SELECT DISTINCT p.set_digest FROM facts_plan_sets p \
+             WHERE NOT EXISTS (SELECT 1 FROM facts_completions c WHERE c.set_digest=p.set_digest) \
+             ORDER BY p.set_digest LIMIT ?1)",
+            [limit],
+        )?;
         execute_collect(
             &transaction,
             "UPDATE store_state SET generation=generation+1 WHERE singleton=1",

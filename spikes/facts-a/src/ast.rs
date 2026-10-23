@@ -1162,6 +1162,33 @@ fn reads_values(rule: &Rule, utils: &[Rule], seen: &mut BTreeSet<usize>) -> bool
     }
 }
 
+/// Whether a query's verdicts can depend on the file's path (a `filePath` term, through its
+/// utilities and every sub-rule): the memo stores a clause whose inputs do not as content-pure
+/// (`crate::memo`).
+pub fn reads_path(q: &Query) -> bool {
+    fn walk(rule: &Rule, utils: &[Rule], seen: &mut BTreeSet<usize>) -> bool {
+        let stop = |s: &Stop, seen: &mut BTreeSet<usize>| matches!(s, Stop::Rule(r) if walk(r, utils, seen));
+        match rule {
+            Rule::FilePath { .. } => true,
+            Rule::All(v) | Rule::Any(v) => v.iter().any(|r| walk(r, utils, seen)),
+            Rule::Not(r) => walk(r, utils, seen),
+            Rule::Has { rule, stop: s } | Rule::Inside { rule, stop: s } | Rule::Precedes { rule, stop: s } | Rule::Follows { rule, stop: s } | Rule::Field { rule, stop: s, .. } => {
+                walk(rule, utils, seen) || stop(s, seen)
+            }
+            Rule::NthChild { of_rule, .. } => of_rule.as_ref().is_some_and(|r| walk(r, utils, seen)),
+            Rule::Count { relation, .. } => walk(relation, utils, seen),
+            Rule::Util(i) | Rule::Call { util: i, .. } => seen.insert(*i) && walk(&utils[*i], utils, seen),
+            Rule::Layout(l) => l.sub_rules().into_iter().any(|r| walk(r, utils, seen)),
+            Rule::Pattern(p) => p.sub_rules().into_iter().any(|r| walk(r, utils, seen)),
+            Rule::Arguments(a) => a.sub_rules().into_iter().any(|r| walk(r, utils, seen)),
+            Rule::Host(h) => h.sub_rules().into_iter().any(|r| walk(r, utils, seen)),
+            Rule::Parse(p) => walk(&p.rule, utils, seen),
+            Rule::Kind(_) | Rule::Regex(_) | Rule::MetaVar { .. } | Rule::Literal { .. } | Rule::Value(_) | Rule::Compare { .. } | Rule::Binds(_) | Rule::Capture(_) | Rule::Never => false,
+        }
+    }
+    walk(&q.rule, &q.utils, &mut BTreeSet::new())
+}
+
 /// Kinds every match's root must have, when the rule's top-level `all` fixes them.
 fn root_kinds(rule: &Rule, utils: &[Rule], seen: &mut BTreeSet<usize>) -> Option<Vec<u32>> {
     match rule {

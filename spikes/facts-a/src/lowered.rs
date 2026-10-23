@@ -260,6 +260,40 @@ impl Plan {
         s.push_str(&format!("\nrefuse_syntax {} escape_refusal {}", self.refuse_syntax, self.escape_refusal));
         s
     }
+
+    /// Whether the plan's rows depend on the file's path beyond their first column (which is the
+    /// path by construction): a path-regex predicate or a path output. The memo stores an input
+    /// that does not as content-pure (`crate::memo`).
+    pub fn reads_path(&self, preds: &Preds) -> bool {
+        fn pn(p: &Preds, id: Id) -> bool {
+            match &p.nodes[id as usize] {
+                Pn::PathRx(_) => true,
+                Pn::And(xs) | Pn::Or(xs) => xs.iter().any(|x| pn(p, *x)),
+                Pn::Not(x) => pn(p, *x),
+                Pn::Exists(ax, x) => axis(p, ax) || pn(p, *x),
+                Pn::Const(_) | Pn::Kind(_) | Pn::KindIn(_) | Pn::Named | Pn::TextEq(_) | Pn::TextRx(_) | Pn::SyntaxError(_) | Pn::Value(..) => false,
+            }
+        }
+        fn axis(p: &Preds, ax: &Ax) -> bool {
+            match ax {
+                Ax::DescendantsUntil(s) | Ax::AncestorsUntil(s) => pn(p, *s),
+                Ax::Children | Ax::Descendants | Ax::Parent | Ax::Ancestors | Ax::FieldChild(_) | Ax::FieldSubtree(_) | Ax::InsideField(_) | Ax::InsideFieldEnd(_) => false,
+            }
+        }
+        fn o(x: &Out) -> bool {
+            match x {
+                Out::Path => true,
+                Out::Coalesce(a, b) => o(a) || o(b),
+                Out::RxExtract(a, ..) => o(a),
+                Out::Int(_) | Out::Node(..) | Out::Text(_) | Out::Line(_) | Out::Decoded => false,
+            }
+        }
+        pn(preds, self.keep)
+            || self.caps.iter().any(|c| axis(preds, &c.ax) || pn(preds, c.inner))
+            || o(&self.anchor.0)
+            || o(&self.anchor.1)
+            || self.outs.iter().any(o)
+    }
 }
 
 fn is_col(e: &E, c: u16) -> bool {
