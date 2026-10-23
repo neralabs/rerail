@@ -1888,6 +1888,10 @@ impl<'d, 'a> Exec<'d, 'a> {
     /// the same order (level by level; within a level by the previous row, then the edge
     /// relation's order), without evaluating the step as a select per level: a row is (seed,
     /// node source), carried values are the seed's, and the result columns are gathers.
+    ///
+    /// Keys: a row's distinctness is `(carried id, node id)` as one `u64` (the carried columns'
+    /// tuple interned once per seed, the node value once per seed and per edge row); the edge
+    /// lookup for a `(carried probe values, node)` pair is made once and cached.
     /// `None` when the plan is not of that shape.
     fn closure(&self, batch: usize, init: &[PBody], rec: &[PBody], distinct: bool, schema: &Schema, outer: Option<&Frame<'_>>) -> Option<Table> {
         let w = schema.cols.len();
@@ -1905,25 +1909,66 @@ impl<'d, 'a> Exec<'d, 'a> {
         }
         let ix = self.index(&e, probe, matches!(ei.src, Src::Global(_)));
         let mut seen = Distinct::new(w);
-        // Per admitted seed: its row and its values' ids.
+        // The carried columns' tuples (every column but `node`), interned.
+        let mut carried_ids: FxHashMap<Vec<u32>, u32> = FxHashMap::default();
+        // The carried probe values (the probe columns read from `w` but `node`), interned.
+        let mut probe_ids: FxHashMap<Vec<Key>, u32> = FxHashMap::default();
+        let mut rows_seen: rustc_hash::FxHashSet<u64> = Default::default();
+        // Per admitted seed: its row, carried id, carried probe id (`u32::MAX`: a NULL part) and
+        // node id.
         let mut seed_rows: Vec<u32> = Vec::new();
-        let mut seed_ids: Vec<Vec<u32>> = Vec::new();
+        let mut seed_carried: Vec<u32> = Vec::new();
+        let mut seed_probe: Vec<u32> = Vec::new();
+        let mut seed_node: Vec<u32> = Vec::new();
         // Walk rows: (seed, node source: `u32::MAX` = the seed's own node, else an edge row).
         let mut level: Vec<(u32, u32)> = Vec::new();
+        let pos_nj = from_w.iter().position(|&c| c == nj).expect("closure probe reads `node`");
         for r in 0..seeds.len() {
-            let key: Vec<u32> = (0..w).map(|c| seen.intern(c, &seeds.value(r, c))).collect();
-            if seen.insert_key(&key) {
+            let ids: Vec<u32> = (0..w).map(|c| seen.intern(c, &seeds.value(r, c))).collect();
+            let carried: Vec<u32> = ids.iter().enumerate().filter(|&(c, _)| c != nj).map(|(_, &x)| x).collect();
+            let n_c = carried_ids.len() as u32;
+            let cid = *carried_ids.entry(carried).or_insert(n_c);
+            if rows_seen.insert((cid as u64) << 32 | ids[nj] as u64) {
+                let mut pk = Vec::with_capacity(from_w.len() - 1);
+                let mut null = false;
+                for (k, (&c, a)) in from_w.iter().zip(&probe.expr_affs).enumerate() {
+                    if k == pos_nj {
+                        continue;
+                    }
+                    match sv::key(&sv::compare_affinity(&seeds.value(r, c), *a)) {
+                        Some(x) => pk.push(x),
+                        None => null = true,
+                    }
+                }
+                let pid = if null {
+                    u32::MAX
+                } else {
+                    let n_p = probe_ids.len() as u32;
+                    *probe_ids.entry(pk).or_insert(n_p)
+                };
                 level.push((seed_rows.len() as u32, u32::MAX));
                 seed_rows.push(r as u32);
-                seed_ids.push(key);
+                seed_carried.push(cid);
+                seed_probe.push(pid);
+                seed_node.push(ids[nj]);
             }
         }
-        let node_value = |sr: u32, src: u32| if src == u32::MAX { seeds.value(seed_rows[sr as usize] as usize, nj) } else { e.value(src as usize, dst) };
+        // The probe keys of a carried probe id (inverse of `probe_ids`).
+        let mut probe_keys: Vec<Vec<Key>> = vec![Vec::new(); probe_ids.len()];
+        for (k, &i) in &probe_ids {
+            probe_keys[i as usize] = k.clone();
+        }
+        // Per edge row: its `dst` value's node id (`u32::MAX`: not yet interned).
+        let mut dst_id: Vec<u32> = vec![u32::MAX; e.len()];
+        // Per node id: its value and probe key part (the node values met, in id order).
+        let mut node_key: FxHashMap<u32, Option<Key>> = FxHashMap::default();
+        let node_aff = probe.expr_affs[pos_nj];
+        // Edge rows per (carried probe id, node id), looked up once.
+        let mut hits_of: FxHashMap<u64, Option<&[u32]>> = FxHashMap::default();
         // A seed expands when `w`'s filters hold on its (carried) values.
         let mut expands: Vec<Option<bool>> = vec![None; seed_rows.len()];
         let mut all: Vec<(u32, u32)> = Vec::new();
         let mut steps = 0usize;
-        let mut key = vec![0u32; w];
         while !level.is_empty() {
             if self.failed() {
                 break;
@@ -1944,18 +1989,22 @@ impl<'d, 'a> Exec<'d, 'a> {
                 if !ok {
                     continue;
                 }
-                let mut pk = Vec::with_capacity(from_w.len());
-                for (&c, a) in from_w.iter().zip(&probe.expr_affs) {
-                    let v = if c == nj { node_value(sr, src) } else { seed.value(c as u16) };
-                    match sv::key(&sv::compare_affinity(&v, *a)) {
-                        Some(k) => pk.push(k),
-                        None => break,
-                    }
-                }
-                if pk.len() != from_w.len() {
+                let pid = seed_probe[sr as usize];
+                if pid == u32::MAX {
                     continue;
                 }
-                let Some(hits) = ix.get(&pk) else { continue };
+                let node = if src == u32::MAX { seed_node[sr as usize] } else { dst_id[src as usize] };
+                let hits = *hits_of.entry((pid as u64) << 32 | node as u64).or_insert_with(|| {
+                    let nk = node_key.entry(node).or_insert_with(|| {
+                        let v = if src == u32::MAX { seeds.value(seed_rows[sr as usize] as usize, nj) } else { e.value(src as usize, dst) };
+                        sv::key(&sv::compare_affinity(&v, node_aff))
+                    });
+                    let nk = nk.clone()?;
+                    let mut pk = probe_keys[pid as usize].clone();
+                    pk.insert(pos_nj, nk);
+                    ix.get(&pk)
+                });
+                let Some(hits) = hits else { continue };
                 for &er in hits {
                     if !s.level[1].is_empty() {
                         let rows = [seed, RowRef { t: Some(&e), r: er }];
@@ -1964,9 +2013,11 @@ impl<'d, 'a> Exec<'d, 'a> {
                             continue;
                         }
                     }
-                    key.copy_from_slice(&seed_ids[sr as usize]);
-                    key[nj] = seen.intern(nj, &e.value(er as usize, dst));
-                    if seen.insert_key(&key) {
+                    let d = &mut dst_id[er as usize];
+                    if *d == u32::MAX {
+                        *d = seen.intern(nj, &e.value(er as usize, dst));
+                    }
+                    if rows_seen.insert((seed_carried[sr as usize] as u64) << 32 | *d as u64) {
                         next.push((sr, er));
                     }
                 }

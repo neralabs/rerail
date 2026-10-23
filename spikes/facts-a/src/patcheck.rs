@@ -1,19 +1,24 @@
 //! `pattern-check`: the pattern front end's differential (INVARIANTS I3/I4). Every matcher input of
 //! the policies that the leaf executor compiles and `rerail_facts::front::pattern` lowers is
-//! evaluated both ways over each corpus file: the leaf executor (`ast.rs` through
-//! `eval::Input::rows`, exact against native) and the reference evaluator over the lowered
-//! algebra and the content's core relations (`views::core_tables`, plus `string_value` and
-//! `string_value_unknown` from `pyvalue::decode`). Rows (values and order) and run-time refusals
-//! must be identical.
+//! evaluated three ways over each corpus file:
+//!
+//! - the leaf executor (`ast.rs` through `eval::Input::rows`, exact against native): the truth;
+//! - the physical plan of the lowered algebra (`lowered.rs`, what `facts-a repo` runs), on every
+//!   file;
+//! - the reference evaluator over the lowered algebra and the content's core relations
+//!   (`views::core_rows`, `string_value` included), on files of at most `--max-nodes` nodes (it
+//!   evaluates correlated subqueries naively, O(nodes²) per relation search).
+//!
+//! Rows (values and order), anchors, witnesses and run-time refusals must be identical.
 //!
 //! `facts-a pattern-check --root DIR --out-dir DIR [--rules DIR] [--input NAME] [--threads N]
 //! [--limit N] [--max-nodes N] [--config JSON]`
 use crate::ast::{Compiler, FileMemo, Names};
-use crate::eval::{Anchor as EAnchor, FileCtx, Input, Proj};
+use crate::eval::{Anchor as EAnchor, FileCtx, Input, Proj, Rows};
 use crate::facts::{self, Facts};
 use crate::sql::engine::Schema;
 use crate::sql::value::{Aff, V};
-use crate::{arg, leaf, views};
+use crate::{arg, leaf, lowered, views};
 use rerail_facts::ir::{Anchor, CoreRel, FileSource, InputDef, InputKind, Projection};
 use rerail_facts::reference::{Evaluator, Row};
 use serde_json::{Map, Value as Json};
@@ -33,15 +38,20 @@ struct Stat {
     files: u64,
     rows: u64,
     refused_files: u64,
-    mismatches: u64,
+    /// The physical plan: `None` when the input does not plan (it runs on the leaf executor).
+    physical: Option<String>,
+    phys_files: u64,
+    phys_mismatches: u64,
+    ref_files: u64,
+    ref_mismatches: u64,
     examples: Vec<String>,
 }
 
-fn cases(rules: &str, config: &Map<String, Json>) -> (Vec<Case>, BTreeMap<String, u64>) {
+fn cases(rules: &str, config: &Map<String, Json>) -> (Vec<Case>, BTreeMap<String, Vec<String>>) {
     let mut paths: Vec<_> = std::fs::read_dir(rules).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
     paths.sort();
     let mut out = Vec::new();
-    let mut refused: BTreeMap<String, u64> = BTreeMap::new();
+    let mut refused: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut leaves = leaf::Leaves::new();
     for p in paths {
         let doc: Json = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
@@ -59,7 +69,7 @@ fn cases(rules: &str, config: &Map<String, Json>) -> (Vec<Case>, BTreeMap<String
             }
             match &def.algebra {
                 Ok(_) => out.push(Case { rule: c.program.rule.clone(), def, utils: utils.clone() }),
-                Err(e) => *refused.entry(e.clone()).or_default() += 1,
+                Err(e) => refused.entry(e.clone()).or_default().push(format!("{}/{}", c.program.rule, def.name)),
             }
         }
     }
@@ -94,7 +104,7 @@ fn leaf_input(c: &Case, names: &mut Names) -> Result<Input, String> {
         Anchor::Capture(n) => EAnchor::Capture(names.id(n)),
         a => return Err(format!("anchor {a:?}")),
     };
-    Ok(Input { query: q, fields: c.def.fields.iter().map(|(f, _)| f.clone()).collect(), projs, each: None, anchor, paths: None, node_regexes: Vec::new() })
+    Ok(Input { query: q, fields: c.def.fields.iter().map(|(f, _)| f.clone()).collect(), projs, each: None, anchor, paths: None, node_regexes: Vec::new(), phys: Err("pattern-check".into()) })
 }
 
 /// The content's core relations, as the reference evaluator reads them (`views::core_rows`).
@@ -104,6 +114,16 @@ fn core(f: &Facts, path: &str) -> BTreeMap<CoreRel, Vec<Row>> {
 
 fn show(v: &V) -> String {
     format!("{v:?}")
+}
+
+fn table_rows(r: &Rows) -> Vec<Vec<String>> {
+    (0..r.table.len()).map(|i| r.table.row(i).iter().map(show).collect()).collect()
+}
+
+fn note(st: &mut Stat, path: &str, what: String) {
+    if st.examples.len() < 5 {
+        st.examples.push(format!("{path}: {what}"));
+    }
 }
 
 pub fn run(args: &[String]) {
@@ -132,41 +152,82 @@ pub fn run(args: &[String]) {
             .map(|_| {
                 let (paths, next, keep, skipped, rules, config) = (&paths, &next, &keep, &skipped, &rules, &config);
                 s.spawn(move || {
-                    // Per thread: the inputs (the leaf executor's values are `Rc`-based).
+                    // Per thread: the inputs (the leaf executor's values are `Rc`-based) and their
+                    // physical plans, all over one predicate table.
                     let (cs, _) = cases(rules, config);
                     let mut names = Names::default();
                     let leafs: Vec<Option<Input>> = keep.iter().map(|&i| leaf_input(&cs[i], &mut names).ok()).collect();
-                    let mut stats = vec![Stat::default(); keep.len()];
+                    let mut preds = lowered::Preds::default();
+                    let plans: Vec<Result<lowered::Plan, String>> = keep.iter().map(|&i| lowered::plan(cs[i].def.algebra.as_ref().unwrap(), &mut preds)).collect();
+                    let mut stats: Vec<Stat> = plans.iter().map(|p| Stat { physical: Some(p.as_ref().err().cloned().unwrap_or_else(|| "planned".into())), ..Stat::default() }).collect();
                     loop {
                         let i = next.fetch_add(1, Ordering::Relaxed);
                         let Some(path) = paths.get(i) else { break };
                         let Ok(src) = String::from_utf8(std::fs::read(root.join(path)).unwrap()) else { continue };
                         let source = Arc::new(src);
                         let Ok(facts::Built::Facts(f)) = facts::build(path, source.clone()) else { continue };
-                        if f.len() > max_nodes {
+                        let small = f.len() <= max_nodes;
+                        if !small {
                             skipped.fetch_add(1, Ordering::Relaxed);
-                            continue;
                         }
-                        let core = core(&f, path);
+                        let core: Option<BTreeMap<CoreRel, std::rc::Rc<Vec<Row>>>> = if small { Some(core(&f, path).into_iter().map(|(k, v)| (k, std::rc::Rc::new(v))).collect()) } else { None };
                         let scan = |s: &FileSource| -> Result<Vec<Row>, String> {
                             match s {
-                                FileSource::Core(c) => Ok(core[c].clone()),
+                                FileSource::Core(c) => Ok((*core.as_ref().unwrap()[c]).clone()),
                                 o => Err(format!("{o:?} in a lowered input")),
                             }
                         };
-                        let ev = Evaluator::with_content(&scan, path, &source);
+                        // Core relations are lent by reference (not copied per correlated scan).
+                        let lend = |s: &FileSource| -> Option<std::rc::Rc<Vec<Row>>> {
+                            match s {
+                                FileSource::Core(c) => core.as_ref().map(|m| m[c].clone()),
+                                _ => None,
+                            }
+                        };
+                        let ev = Evaluator::with_shared_content(&scan, &lend, path, &source);
                         let ctx = FileCtx { f: &f, path, source: &source };
                         let rc: std::rc::Rc<str> = std::rc::Rc::from(source.as_str());
+                        let memo = FileMemo::default();
+                        let mut phys_state = lowered::FileState::new(&f, path);
                         for (k, &ci) in keep.iter().enumerate() {
                             let Some(input) = &leafs[k] else { continue };
                             let c = &cs[ci];
                             let lowered = c.def.algebra.as_ref().unwrap();
                             let schema = Schema { cols: c.def.schema.iter().map(|c| c.name.clone()).collect(), affs: vec![Aff::None; c.def.schema.len()] };
-                            let memo = FileMemo::default();
                             let a = input.rows(&ctx, &schema, &memo, &rc);
                             let st = &mut stats[k];
                             st.files += 1;
-                            // The lowered side: the first non-empty refusal, else the rows.
+                            st.rows += a.table.len() as u64;
+                            if a.unsupported.is_some() {
+                                st.refused_files += 1;
+                            }
+                            let rows_a = table_rows(&a);
+                            // The physical plan, on every file.
+                            if let Some(b) = plans[k].as_ref().ok().and_then(|plan| lowered::rows(plan, &preds, &mut phys_state, &schema, &rc)) {
+                                st.phys_files += 1;
+                                let why = if a.unsupported != b.unsupported {
+                                    Some(format!("refusal leaf {:?} vs physical {:?}", a.unsupported, b.unsupported))
+                                } else if a.unsupported.is_some() {
+                                    None
+                                } else if rows_a.len() != b.table.len() {
+                                    Some(format!("{} rows vs physical {}", rows_a.len(), b.table.len()))
+                                } else if let Some((r, (x, y))) = rows_a.iter().zip(table_rows(&b)).enumerate().find(|(_, (x, y))| **x != *y) {
+                                    Some(format!("row {r}: {x:?} vs physical {y:?}"))
+                                } else if a.anchors != b.anchors || a.witnesses != b.witnesses {
+                                    Some("anchors or witnesses differ from the physical plan's".into())
+                                } else {
+                                    None
+                                };
+                                if let Some(w) = why {
+                                    st.phys_mismatches += 1;
+                                    note(st, path, w);
+                                }
+                            }
+                            if !small {
+                                continue;
+                            }
+                            // The reference: the first non-empty refusal, else the rows.
+                            st.ref_files += 1;
                             let mut b_refusal = None;
                             for (r, msg) in &lowered.refuse_if {
                                 match ev.rel(r, &[]) {
@@ -178,38 +239,24 @@ pub fn run(args: &[String]) {
                                     Err(e) => b_refusal = Some(format!("reference error: {e}")),
                                 }
                             }
-                            let mismatch = |st: &mut Stat, what: String| {
-                                st.mismatches += 1;
-                                if st.examples.len() < 5 {
-                                    st.examples.push(format!("{path}: {what}"));
-                                }
+                            let why = match (&a.unsupported, &b_refusal) {
+                                (Some(x), Some(y)) if x == y => None,
+                                (None, None) => match ev.rel(&lowered.rows, &[]) {
+                                    Err(e) => Some(format!("reference error: {e}")),
+                                    Ok(rows_b) => {
+                                        let rows_b: Vec<Vec<String>> = rows_b.iter().map(|r| r.iter().map(show).collect()).collect();
+                                        if rows_a.len() != rows_b.len() {
+                                            Some(format!("{} rows vs reference {}", rows_a.len(), rows_b.len()))
+                                        } else {
+                                            rows_a.iter().zip(&rows_b).enumerate().find(|(_, (x, y))| x != y).map(|(r, (x, y))| format!("row {r}: {x:?} vs reference {y:?}"))
+                                        }
+                                    }
+                                },
+                                (x, y) => Some(format!("refusal leaf {x:?} vs reference {y:?}")),
                             };
-                            match (&a.unsupported, &b_refusal) {
-                                (Some(x), Some(y)) if x == y => {
-                                    st.refused_files += 1;
-                                    continue;
-                                }
-                                (None, None) => {}
-                                (x, y) => {
-                                    mismatch(st, format!("refusal leaf {x:?} vs lowered {y:?}"));
-                                    continue;
-                                }
-                            }
-                            let rows_b = match ev.rel(&lowered.rows, &[]) {
-                                Ok(r) => r,
-                                Err(e) => {
-                                    mismatch(st, format!("reference error: {e}"));
-                                    continue;
-                                }
-                            };
-                            let rows_a: Vec<Vec<V>> = (0..a.table.len()).map(|r| a.table.row(r)).collect();
-                            st.rows += rows_a.len() as u64;
-                            if rows_a.len() != rows_b.len() {
-                                mismatch(st, format!("{} rows vs {}", rows_a.len(), rows_b.len()));
-                                continue;
-                            }
-                            if let Some((r, (x, y))) = rows_a.iter().zip(&rows_b).enumerate().find(|(_, (x, y))| x.iter().map(show).collect::<Vec<_>>() != y.iter().map(show).collect::<Vec<_>>()) {
-                                mismatch(st, format!("row {r}: {x:?} vs {y:?}"));
+                            if let Some(w) = why {
+                                st.ref_mismatches += 1;
+                                note(st, path, w);
                             }
                         }
                     }
@@ -219,29 +266,53 @@ pub fn run(args: &[String]) {
             .collect();
         hs.into_iter().map(|h| h.join().unwrap()).collect()
     });
-    let mut total = vec![Stat::default(); keep.len()];
+    let mut total: Vec<Stat> = vec![Stat::default(); keep.len()];
     for o in outs {
         for (t, s) in total.iter_mut().zip(o) {
+            t.physical = s.physical.clone();
             t.files += s.files;
             t.rows += s.rows;
             t.refused_files += s.refused_files;
-            t.mismatches += s.mismatches;
+            t.phys_files += s.phys_files;
+            t.phys_mismatches += s.phys_mismatches;
+            t.ref_files += s.ref_files;
+            t.ref_mismatches += s.ref_mismatches;
             t.examples.extend(s.examples);
         }
     }
     let per: BTreeMap<String, Stat> = keep.iter().zip(&total).map(|(&i, s)| (names[i].clone(), s.clone())).collect();
-    let mismatches: u64 = total.iter().map(|s| s.mismatches).sum();
+    let phys_mismatches: u64 = total.iter().map(|s| s.phys_mismatches).sum();
+    let ref_mismatches: u64 = total.iter().map(|s| s.ref_mismatches).sum();
     let rows: u64 = total.iter().map(|s| s.rows).sum();
+    let planned = total.iter().filter(|s| s.physical.as_deref() == Some("planned")).count();
+    let mut not_planned: BTreeMap<String, u64> = BTreeMap::new();
+    for s in &total {
+        if let Some(p) = s.physical.as_deref().filter(|p| *p != "planned") {
+            *not_planned.entry(p.to_owned()).or_default() += 1;
+        }
+    }
     let report = serde_json::json!({
         "lowered_inputs": all.len(),
         "checked_inputs": keep.len(),
+        "planned_inputs": planned,
         "files": paths.len(),
-        "skipped_over_max_nodes": skipped.load(Ordering::Relaxed),
+        "reference_skipped_over_max_nodes": skipped.load(Ordering::Relaxed),
         "rows": rows,
-        "mismatches": mismatches,
+        "phys_mismatches": phys_mismatches,
+        "ref_mismatches": ref_mismatches,
         "not_lowered": refused,
+        "not_planned": not_planned,
         "per_input": per,
     });
     std::fs::write(Path::new(&out_dir).join("pattern-check.json"), serde_json::to_string_pretty(&report).unwrap()).unwrap();
-    println!("pattern-check: {} inputs, {} files, {} rows, {} mismatches", keep.len(), paths.len(), rows, mismatches);
+    println!(
+        "pattern-check: {} inputs ({} planned), {} files, {} rows, {} physical mismatches, {} reference mismatches ({} files over --max-nodes skipped by the reference)",
+        keep.len(),
+        planned,
+        paths.len(),
+        rows,
+        phys_mismatches,
+        ref_mismatches,
+        skipped.load(Ordering::Relaxed)
+    );
 }

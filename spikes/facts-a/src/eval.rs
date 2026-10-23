@@ -42,6 +42,9 @@ pub struct Input {
     pub paths: Option<Scope>,
     /// Same-node regexes with named groups (for `capture.GROUP` and regex `each`).
     pub node_regexes: Vec<Regex>,
+    /// The input lowered by the pattern front end and planned physically (`lowered.rs`), or why
+    /// not (then the leaf executor evaluates it, `Input::rows`).
+    pub phys: Result<crate::lowered::Plan, String>,
 }
 
 pub struct Viol {
@@ -197,6 +200,8 @@ pub struct Rule {
     pub names: Names,
     /// Per input, the last clause that reads it: its rows are dropped after that clause.
     pub last_use: Vec<usize>,
+    /// The physical predicates of the rule's lowered inputs (memoised per file, shared by them).
+    pub preds: crate::lowered::Preds,
     /// `define.report_when.count.gt`: the rule's findings are reported only when there are more
     /// than this many over the evaluation (native eval/mod.rs `evaluate_code_rule`).
     pub report_count_gt: Option<u64>,
@@ -291,6 +296,7 @@ impl Rule {
         let mut clauses = Vec::new();
         // One compiled utility table for every input query without local utilities.
         let mut util_table: Option<ast::UtilTable> = None;
+        let mut preds = crate::lowered::Preds::default();
         let mut add_input = |ev: &Json, names: &mut Names, inputs: &mut Vec<Input>| -> Result<(usize, Vec<String>), String> {
             let key = serde_json::to_string(ev).unwrap();
             let project = ev.get("project").and_then(Json::as_object).cloned().unwrap_or_default();
@@ -328,7 +334,8 @@ impl Rule {
                     names.id(g);
                 }
             }
-            inputs.push(Input { query, fields: fields.clone(), projs, each, anchor, paths, node_regexes: nr });
+            let phys = crate::lowered::lower_and_plan(ev, ast_json, &fields, &utils, grammar, &mut preds);
+            inputs.push(Input { query, fields: fields.clone(), projs, each, anchor, paths, node_regexes: nr, phys });
             keys.insert(key, inputs.len() - 1);
             Ok((inputs.len() - 1, fields))
         };
@@ -416,7 +423,7 @@ impl Rule {
                 Kind::ForbidRegex(_) => {}
             }
         }
-        Ok(Rule { id, check, scope, clauses, inputs, names, last_use, report_count_gt })
+        Ok(Rule { id, check, scope, clauses, inputs, names, last_use, preds, report_count_gt })
     }
 }
 
@@ -824,7 +831,7 @@ fn capture_range(ev: &ast::Eval<'_>, env: &Env, groups: &[(Name, (u32, u32), Str
     groups.iter().find(|(g, _, _)| *g == n).map(|(_, r, _)| *r)
 }
 
-fn project(p: &Proj, ev: &ast::Eval<'_>, env: &Env, groups: &[(Name, (u32, u32), String)], ctx: &FileCtx<'_>, q: &Query) -> V {
+pub(crate) fn project(p: &Proj, ev: &ast::Eval<'_>, env: &Env, groups: &[(Name, (u32, u32), String)], ctx: &FileCtx<'_>, q: &Query) -> V {
     let f = ctx.f;
     match p {
         Proj::Path => V::text(ctx.path),
@@ -969,6 +976,8 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
         });
         // Memoised verdicts shared by the rule's queries over this file.
         let memo = ast::FileMemo::default();
+        // The physical predicates' truths, shared by the rule's lowered inputs over this file.
+        let phys_state = std::cell::RefCell::new(crate::lowered::FileState::new(ctx.f, ctx.path));
         let cache: std::cell::RefCell<BTreeMap<usize, Rc<Rows>>> = Default::default();
         let get = |i: usize, out: &mut Output| -> Option<Rc<Rows>> {
             let inp = &rule.inputs[i];
@@ -980,7 +989,11 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
             }
             let t0 = Instant::now();
             let schema = rel::input_schema(&inp.fields);
-            let r = Rc::new(inp.rows(ctx, &schema, &memo, &source));
+            let phys = inp.phys.as_ref().ok().and_then(|plan| crate::lowered::rows(plan, &rule.preds, &mut phys_state.borrow_mut(), &schema, &source));
+            let r = Rc::new(match phys {
+                Some(rows) => rows,
+                None => inp.rows(ctx, &schema, &memo, &source),
+            });
             let e = out.input_ns.entry((ri, i)).or_default();
             e.0 += 1;
             e.1 += t0.elapsed().as_nanos() as u64;
