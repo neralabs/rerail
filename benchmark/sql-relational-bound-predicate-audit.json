@@ -1,0 +1,64 @@
+{
+  "scope": "Frozen B023 only; neither the original 818-clause workload nor the complete-job execution budget.",
+  "artifactSha256": "ed8306badf8ef38061768d3ec680db189397f151b8820a930ea579af6e6d9e6b",
+  "querySha256": "f1ffb7eb4f48dcf2552ae0b7569f736330b0fe4be99842a666f4e01488c76c73",
+  "executableSha256": "c120a6b7597cc8228ba7c122ad8a1f989141dbb8864546ec79d2e9a6fa7e29da",
+  "existingGates": {
+    "maxVmSteps": 4649592,
+    "generatedVmSteps": [
+      2804023,
+      2804023,
+      2804023
+    ],
+    "generatedMedianColdKernelCpuNs": 124714834,
+    "referenceMedianColdKernelCpuNs": 68140376,
+    "cpuRatio": 1.8302633669059882,
+    "vmPassed": true,
+    "cpuPassed": true
+  },
+  "medianPhases": {
+    "generated": {
+      "generationCpuNs": 972292,
+      "prepareCpuNs": 47613042,
+      "executeCpuNs": 73578125,
+      "coldKernelCpuNs": 124714834
+    },
+    "reference": {
+      "generationCpuNs": 520917,
+      "prepareCpuNs": 3244958,
+      "executeCpuNs": 64109667,
+      "coldKernelCpuNs": 68140376
+    }
+  },
+  "pairedGapAttribution": [
+    {
+      "coldCpuGapNs": 45261040,
+      "prepareCpuGapNs": 37177875,
+      "prepareShareOfColdGap": 0.8214100913279943
+    },
+    {
+      "coldCpuGapNs": 57629041,
+      "prepareCpuGapNs": 44093375,
+      "prepareShareOfColdGap": 0.765124219228288
+    },
+    {
+      "coldCpuGapNs": 61493625,
+      "prepareCpuGapNs": 46770250,
+      "prepareShareOfColdGap": 0.7605707095654224
+    }
+  ],
+  "newPreparationGate": {
+    "introducedBy": "Post-phase validation audit; this was not a gate for the accepted change.",
+    "maxPrepareCpuNs": 6489916,
+    "actualPrepareCpuNs": 47613042,
+    "ratioToReference": 14.672930127292865,
+    "passed": false
+  },
+  "limitations": [
+    "Stage attribution identifies preparation as the main measured CPU gap, not its internal SQLite cause.",
+    "Independent medians are not additive; gap shares use paired samples.",
+    "Preparation and execution timers are disjoint thread CPU spans in whole_call/run.rs.",
+    "The 2x preparation threshold is a new engineering target, not a conclusion derived from wrapper counts.",
+    "An implementation must also preserve semantics and avoid execution-work regressions."
+  ]
+}

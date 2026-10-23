@@ -773,29 +773,33 @@ This phase leaves 33 materialization sites, 54,156 automatic-index rows, and 35,
 Correlated subquery sites rise from 34 to 60 because Boolean alternatives now expose separate witness queries.
 Constant-row scans fall from 58 to 46. Fewer wrappers do not establish that the remaining SQL work is efficient.
 
-## Next implementation action
+## Next implementation action — preparation cost first
 
-Attribute the remaining B023 work to its generated producers before changing another SQL expression.
-The existing diagnostics count answer relations but omit the upstream binding and recursive set producers.
-Extend compiler metadata with generated CTE names and producer families.
-Extend the existing diagnostic measurement to record rows, VM instructions, node filters/advances, automatic-index rows, and EXPLAIN for each producer.
-Consume the complete producer rows; a `COUNT(*)` query can prune expressions whose cost we need to measure.
-Run each diagnostic with fresh execution state, outside the timed full-query samples.
-These separate queries describe dependency costs and may use different plans. Do not add their counters as whole-query attribution.
+The validation audit found a priority error in the preceding plan.
+For frozen B023, median preparation CPU is 47.613 ms for generated SQL and 3.245 ms for the reference.
+Execution medians are 73.578 ms and 64.110 ms.
+Across paired samples, excess preparation accounts for 76–82% of the cold-CPU gap.
+The earlier plan to begin with producer execution counters did not target that measured gap.
 
-Start with `needed14`, `r14`, `walk7`, `pairs7`, `regions7`, `r15`, `r16`, `binding_seeds`, `binding_walk`, `binding_choices`, and `capture_demand`.
-Include the answer producers so upstream and downstream costs can be compared.
-Keep the complete query at one matching statement. Diagnostic executions must be labeled and counted separately.
-Record row amplification across each dependency edge and identify the largest measured source of repeated work.
-Require any resulting optimization to reduce full-query work below this phase's 2,804,023-instruction baseline.
+The new preparation gate requires generated median preparation CPU at most twice the reference median.
+The saved baseline fails at 14.67×. `benchmark/relational-phase-audit.py` records this failure separately from the original passing gates.
+This is a new engineering target. No retrospective gate change alters the recorded qualification.
 
-A concrete candidate is repeated parent lookups inside structural alternatives.
-A union of `parent.kind = A` and `parent.kind = B` can probe the parent once and test `kind IN (A,B)`.
-If measurements justify this change, combine typed set expressions or physical arms before SQL formatting.
-Start with arms that have identical edges, references, and all predicates except one kind set.
-Preserve independent witnesses when edge graphs or other predicates differ.
-Test overlapping kind sets, negation, missing parents, multiple files, and branching children with different witnesses.
-Keep recursive reference placement, file identity, admission limits, and failure/capture publication unchanged.
+Profile `sqlite3_prepare_v2` on the exact frozen generated and reference queries with registered virtual tables.
+Keep parsing, terminal installation, preparation, and execution in separate measured spans.
+Record preparation CPU, virtual-table index-selection calls, bytecode size, and query-plan size.
+Use stack samples or equivalent attribution to distinguish expansion, planning, index selection, and bytecode generation.
+Do not infer the cause from SQL length or static subquery counts.
 
-Retain full SQL, EXPLAIN, source hashes, and the CPU gate. Repeat the 54-profile matrix and 231 preceding controls.
+Run controlled query-shape experiments against that baseline, changing one mechanism at a time.
+Test shared dependency boundaries and materialization choices where the preparation profile identifies repeated expansion.
+If a small number of statements is required, count setup and execution against the complete-job budget.
+A cached warm run cannot substitute for the cold preparation gate.
+Record failed candidates and retain the exact source, executable, SQL, and corpus hashes.
+
+Promote a change only after it passes the preparation target, improves the measured cold kernel, and preserves semantic results.
+Keep full-query VM work at or below 2,804,023 and repeat the 54-profile matrix and 231 preceding controls.
+Do not use an arbitrary one-instruction improvement to claim that the bottleneck was addressed.
+After preparation is addressed, use producer diagnostics to locate the remaining execution gap.
+
 Production integration, deadlines, native depth limits, general recursive outcomes, and the complete cold-job 100-execution gate remain open.

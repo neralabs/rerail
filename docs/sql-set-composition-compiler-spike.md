@@ -5129,3 +5129,51 @@ Reproduce the frozen run with `benchmark/relational-complete-spike.py`, the froz
 Pass that run's `evidence.json` to `benchmark/relational-bound-predicate.py` through `--frozen-evidence`, alongside `--binary` and a new output directory.
 
 The compiler remains test-only. Production integration and the complete cold-job 100-execution gate remain open.
+
+### 2026-10-23 — Audit of the bound-predicate performance claim
+
+The user challenged whether the preceding phase had gates tied to its observed performance problem.
+The audit confirms that the shape and correctness gates existed before implementation.
+The performance gate required only a strict VM decrease. A one-instruction decrease would pass.
+The existing 2× cold-CPU gate also passed before the change.
+Neither gate required evidence that the eight wrappers caused a substantial part of the CPU gap.
+
+All 285 unchanged profile queries were regression controls. They did not exercise the changed SQL shape as a performance target.
+The new 38 SQL comparisons checked set semantics. They did not measure wrapper cost.
+The phase also combined wrapper removal with union-membership rewriting without separate cost experiments.
+The observed 8,232-instruction saving therefore cannot be attributed solely to wrapper removal.
+
+**The overlooked measurement.** The frozen artifact already contains separate preparation and execution CPU times.
+`whole_call/run.rs::execute_statement` stops the preparation timer before it starts the execution timer.
+Both timers measure thread CPU time. The recorded execution time excludes preparation.
+
+| Median CPU phase | Generated SQL | Reference SQL |
+| --- | ---: | ---: |
+| SQL generation | 0.972 ms | 0.521 ms |
+| SQLite preparation | 47.613 ms | 3.245 ms |
+| Execution | 73.578 ms | 64.110 ms |
+| Complete cold kernel | 124.715 ms | 68.140 ms |
+
+Independent medians are not additive. In the three paired samples, excess preparation accounts for 82.1%, 76.5%, and 76.1% of the cold-CPU gap.
+The preceding query already showed the same problem: median preparation was 48.275 ms versus 3.040 ms.
+The preceding work selected an execution micro-optimization while the main measured gap was preparation.
+The subsequent plan to start with producer execution counters repeated that priority error.
+
+This evidence identifies the costly phase. It does not identify the internal cause within SQLite preparation.
+CTE expansion, planning, virtual-table index selection, and bytecode generation remain hypotheses to test.
+Static subquery counts cannot select among them. The captured `EXPLAIN QUERY PLAN` is not a per-operator runtime profile.
+
+**Corrected status.** The change passes correctness and shape qualification and provides a small measured VM reduction.
+It does not qualify as a demonstrated solution to the structural CPU bottleneck.
+The original evidence stays unchanged. The new audit records this distinction explicitly.
+
+`benchmark/relational-phase-audit.py` reproduces the phase breakdown from the saved evidence.
+It introduces a separate preparation target: generated median preparation CPU must be at most twice the reference median.
+This target is new; it was not an acceptance gate for the preceding change.
+The retained baseline fails: 47.613 ms exceeds 6.490 ms, at 14.67× reference preparation time.
+`benchmark/sql-relational-bound-predicate-audit.json` retains the failure and the original passing gates.
+The audit command exits unsuccessfully as intended. No benchmark rerun replaces any prior result.
+
+The transition plan now starts with preparation-only profiling and controlled query-shape experiments.
+Execution counters and full semantic comparisons remain regression gates.
+This diagnosis covers frozen B023, not the original 818-clause workload or the complete-job 100-execution requirement.
