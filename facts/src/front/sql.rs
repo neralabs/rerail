@@ -11,7 +11,7 @@
 //! arm stays on its level. Only the top-most scope of each level is visible (a derived table
 //! cannot see its FROM siblings: no lateral subqueries). A column found `d` levels out is
 //! `Col { depth: d }`.
-use crate::ir::{AggCall, AggFn, AnySource, ArithOp, Binding, CmpOp, Column, Expr, Func, JoinKind, Lit, LocalId, Rel, WindowFn, WindowKind};
+use crate::ir::{AggCall, AggFn, AnySource, ArithOp, Binding, CmpOp, Column, Expr, Func, JoinKind, Lit, LocalId, Rel, WindowFn, WindowKind, Total};
 use crate::sql::parse::{self, Body, Expr as P, Query, SelItem, SetOp, Source};
 use crate::sql::value::{self as sv, Aff, V};
 use std::collections::HashMap;
@@ -288,7 +288,7 @@ impl Lowerer<'_> {
         let offset = q.offset.as_ref().map(|e| self.const_expr(e)).transpose()?;
         let mut rel = body;
         if !keys.is_empty() || limit.is_some() || offset.is_some() {
-            rel = Rel::Sort { input: Box::new(rel), keys, limit, offset };
+            rel = Rel::Sort { input: Box::new(rel), keys, limit, offset, total: Total::InputOrder };
         }
         if n_keys > 0 {
             let exprs = (0..out.len()).map(|i| Expr::Col { depth: 0, col: i as u16 }).collect();
@@ -714,7 +714,7 @@ impl Lowerer<'_> {
                 };
                 let partition = w.partition.iter().map(|p| self.expr(p).map(|x| x.0)).collect::<Result<Vec<_>, _>>()?;
                 let order = w.order.iter().map(|(o, d)| Ok((self.expr(o)?.0, *d))).collect::<Result<Vec<_>, String>>()?;
-                Ok(WindowFn { kind, partition, order })
+                Ok(WindowFn { kind, partition, order, total: Total::InputOrder })
             })();
             self.top().allow_agg = save;
             let wf = r?;
@@ -743,7 +743,7 @@ impl Lowerer<'_> {
             let sep = args.get(1).map(|a| self.expr(a).map(|x| x.0)).transpose();
             self.top().allow_agg = true;
             let sc = self.top();
-            sc.aggs.push(AggCall { f, arg: arg?, sep: sep?, distinct });
+            sc.aggs.push(AggCall { f, arg: arg?, sep: sep?, distinct, total: Total::InputOrder });
             let col = (sc.width + sc.aggs.len() - 1) as u16;
             return Ok((Expr::Col { depth: 0, col }, Aff::None));
         }

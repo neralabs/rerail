@@ -113,20 +113,84 @@ Per-content claim and its condition:
 - The table reads one file and never crosses files.
 - It is built with no module path. Native qualifies `Relative`/`Definition` import bindings through the module path, and such a binding can only resolve to `typing`, `_typeshed` or `typing_extensions` when the file's module path starts with one of those names. The corpus has none. A binder must refuse otherwise (SCHEMA § 1.3).
 
+## W2. Wave 2
+
+Base: integration `caceb656f`, plus S1's `0ea181a84` (pattern front end) merged locally. Machine: shared by six agents. The 1-minute load was 20–71 during every run below, so all times are **untrusted**. Rows, bytes and exactness do not depend on load. Run dirs are under `~/rerail-bench/facts/phase-2/s4-schema/runs/`.
+
+### W2.1 Results
+
+| Id | Target | Measured | Pass/fail | Run dir |
+|---|---|---|---|---|
+| Unresolved call-graph views (SCHEMA § 3.3: `cg_scope`, `cg_def`, `cg_call`, `cg_import`, `cg_refusal`), content-keyed, agreed with S3 | 0 differences against native | **0 differences** over 9,010 files:<br>• `cg_def`, 194,281 rows, against native `Summary::extract` defs (name, kind, span);<br>• `cg_import`, 235,250 rows, against native scope-table import bindings;<br>• `cg_call`, 1,056,492 rows, and `cg_import.scope`, against native's context rule.<br>`cg_refusal`: 0 rows; a crafted file shows both refusal constructs firing exactly where the raw text differs from native. | **pass** | `20261022T211538-cg-differential` |
+| Native call summary per content (SCHEMA § 3.4, `cgn_*`, S3's ask): symbolic module path, real one substituted on the membership side | 0 differences after substitution | **0 differences, 0 refusals** over 9,010 files (variants: module 6,695 / init 482 / unpackaged 1,833). Covers 13 relations, both `summary` and `as_references` (no links, and batch 6's links). Export: 8,957 contents × 3 variants, 64.6 MB zstd JSONL. | **pass** | `20261022T212451-cg-native` |
+| `string_value` as a core fact; § 2.4 views runnable (`string_values`, `special_attributes`, `return_kinds`, `direct_events`) | 0 differences | See W2.2 | see W2.2 | `…-derived-check-w2-shard{0,1}of2` |
+| Costs, A/B, 3 runs each, back-to-back under `bench-lock` | reported | Table W2.3 | reported | `20261022T2125…–2128…` |
+| `inspect` reads v0, v1 and `.xfacts` | 0 failures | v1 store: 8,957 `.facts`. Old store: 8,957 v0 `.facts` and 19,772 `.xfacts`. 0 failures. | pass | `20261022T213340-inspect` |
+| `just facts-gate` (after milestone 1: native visibility, views, derived-check) | 13/13 | **13/13 pass**, 671 s, load 16.6. `views-derived`: bag 0, including the § 2.4 compositions. | pass | `~/rerail-bench/facts/phase-2/s5-gate/runs/20261022T205508-gate` |
+
+### W2.2 § 2.4 compositions and `string_value`
+
+**`string_value`.**
+
+- `string_value(id, value)` and `string_value_unknown(id, named_escape)` are core relations (SCHEMA § 1.2/1.3), built by `views::string_values` from `pyvalue::decode`.
+- `views::core_rows` provides them, with the rest of the core, as `rerail_facts::reference` reads them. S1's `pattern-check` now calls it instead of its own copy.
+- S1's `value` and `DECODED` lowering reads them.
+
+**Composition differential (`facts-a derived-check`).**
+
+- Reference side: the clause's own stages, with the gate forced `true` and the matcher inputs gate-free (`gate_free`) from the leaf executor.
+- View side: the same stage texts, where each stage a § 2.2 view stands for is replaced by the rendered view, and the matcher inputs come from S1's lowered algebra evaluated over `core_rows`.
+- The inputs themselves are also compared, as rows `input <name>`.
+
+**Bound.** S1's reference evaluator is naive and clones a core relation per scan. A first unbounded shard (1,126 files) hit the 900 s cap (`20261022T213335-derived-check-shard0of8`). On a 113-file sample the inputs cost 969 s and every other check under 15 s. So `--input-max-nodes 3000` evaluates the lowered inputs for files of at most 3,000 nodes (p50 is 1,455). Larger files take the leaf inputs on both sides and are counted as `inputs unchecked`. For those files the composition is still checked; the inputs' own differential is S1's `pattern-check`. Full-corpus results: W2.4.
+
+### W2.3 Costs (median of 3, untrusted load 20–45)
+
+- A is `facts-a-rows-bd01951bc`: the pre-columnar engine at integration's S4 merge, 15 views.
+- B is `facts-a-s4-145cd8f96`: S2's columnar layer at `caceb656f` plus this wave, 20 views.
+- Both run `derived-check --no-check --typedefs --threads 4`.
+
+| measure | A rows | B columnar |
+|---|--:|--:|
+| parse + extract p50 / p99 ms | 0.77 / 14.7 | 0.75 / 14.6 |
+| `string_type_definition` p50 / p99 ms; sum s | 0.061 / 1.26; 1.28 | 0.061 / 1.27; 1.25 |
+| core tables p50 / p99 ms (B only) | — | 0.20 / 3.0 (3.3 s summed) |
+| `string_value` + `string_value_unknown` p50 / p99 ms (B only) | — | 0.012 / 0.20 (0.23 s summed) |
+| the 15 wave-1 views, summed s | 68.7 | 42.0 |
+| all views per file p50 / p99 ms | 2.67 / 81.8 (15 views) | 2.51 / 75.4 (20 views) |
+| process user s / peak RSS MB | 88.2 / 625 | 90.1 / 925 |
+
+Per view, s (A → B): `py_node` 6.4 → 4.3, `py_field` 4.0 → 2.5, `py_owner` 6.8 → 5.7, `py_named` 6.1 → 2.9, `py_owner_named` 7.8 → 6.3, `py_function` 1.3 → 1.3, `py_class` 2.4 → 0.8, `py_method` 3.3 → 1.8, `py_attribute` 1.4 → 0.2, `py_call` 2.7 → 0.4, `py_parameter` 4.5 → 1.6, `py_assignment` 3.6 → 0.4, `py_decorator` 4.8 → 1.3, `py_import_identifier` 8.7 → **10.3 (slower)**, `py_context` 4.9 → 2.2.
+
+The new views cost 19.5 s summed: `cg_scope` 2.8, `cg_def` 2.7, `cg_call` 4.8 and `cg_import` 5.7 (both correlated `max` subqueries per row: an interval-containment probe, I5), and `cg_refusal` 3.5 (`rx_matches` on every identifier).
+
+- Runs, A then B, interleaved: `212540-rows`/`212604-columnar`, `212628`/`212651`, `212715`/`212737`.
+- S2 was told these run dirs, so the per-view columnar costs are not measured twice.
+
+**Fact files v1** (`factfile-bench`, 3 runs `212800`, `212812`, `212825`): the bytes are identical to wave 1 (zstd 3: 186.4 MB, 1.35 B per source byte, p50 9,574 B). Timings, write p50/p99 and read p50/p99: v1+zstd3 0.122/2.12 and 0.091/2.02 ms; v0 0.047/0.62 and 0.052/1.00 ms. Round-trip failures: 0. `string_value` is not stored. It is recomputed on read from `node` and the source, at p50 0.012 ms.
+
+### W2.4 Full-corpus differential (wave 2)
+
+Filled from `…-derived-check-w2-shard{0,1}of2` below.
+
 ## 7. Resume notes
 
 - **Commits** (local, not pushed):
-  - `04c3c957b` SCHEMA v1;
-  - `ed0459c71` views re-steer;
-  - `5f6b7ec12` merge of integration;
-  - `275b016d1` differential, `string_type_definition`, fact files v1, `run-repo.sh`;
-  - `c9b341b10` typedefs timing and § 2.4;
-  - final commit: zstd 3 as v1, SCHEMA § 5, this report.
-- **Merge note.** S2's `4b14dfe7e` removes `Db.regexes`. When integration carries it, drop the `regexes:` initialiser in `derived_check.rs` (reference `Db`) and `views.rs::evaluate` (S5 did the same in its merge).
-- **Next, in order.**
-  1. Re-run the three cost rows and the fact-file bench on an idle machine (load < 8).
-  2. S3's § 3.1: extract native's python call `Summary` by calling `calls::summary::Summary::extract(root, Some(&ScopeTable::build_in(…, module)), module, has_errors)` (visibility: `calls::summary`, `calls::names::Name`, a `ModulePath` constructor). Key it by (content, module path). The module path depends on package structure (`__init__.py` presence), so it is membership-dependent: tell S3.
-  3. Move `.xfacts` (Spike B's writer, S3-owned) to v1 when S3 extends the exported relations.
-  4. Add `string_value(id, value)` as a core SQL relation in `views.rs` once S1's pattern front end compiles state-flow's `raw_strings_*` (SCHEMA § 2.4).
-  5. Debug-build structural checks for § 1.2.1's declarations.
-- **Not done.** Views for `special_attributes`, `return_kinds` and `direct_events` are specified as a composition (SCHEMA § 2.4) but not executed. They need S1's pattern front end for the three `raw_strings_*` inputs.
+  - wave 1: `04c3c957b`, `ed0459c71`, `5f6b7ec12`, `275b016d1`, `c9b341b10` and the final wave-1 commit;
+  - wave 2: `85548d354` (string_value, § 3.3 views, `--cg`, § 2.4 compositions), `145cd8f96` (`cg-native`, § 3.4), and the last commit on the branch (merge of S1's `0ea181a84`, S1's lowered inputs in the composition, `core_rows`, this report).
+- **Interfaces:**
+  - SCHEMA § 1.2/1.3 (`string_value`, `string_value_unknown`), § 3.3 (`cg_*` views), § 3.4 (`cgn_*` export and its substitution rule);
+  - `views::core_rows`;
+  - `cgnative::{compact, substitute}`, the reference S3 mirrors as IR;
+  - the export file `~/rerail-bench/facts/phase-2/s4-schema/cgn-export.jsonl.zst`.
+- **Native:** visibility only: `calls`, `calls::summary` (Summary/Def fields, `extract`, `as_references`), `calls::contracts::{Key, compile}`, `calls::summarize`, the `scope` import bindings, `NodeRef`, `ModulePath` (`segments`, `names`, `dotted`, `stem`, `qualified`, `last`, `in_package`) and `model::python_module_path_on_disk`.
+- **Merge notes.**
+  - Integration `8960a5db7` (S6) is not merged yet. Merge it next: it touches `main.rs`, `leaf.rs` and `eval.rs`.
+  - `derived_check.rs` still depends on `subst::DumpGroup`. When S2 deletes `subst.rs`, the dump with a forced gate needs another source, such as S1's plans.
+- **Next, in order:**
+  1. Re-run W2.3 and the wave-1 cost rows on a quiet machine (load < 8).
+  2. The lowered inputs for files above 3,000 nodes, once a non-naive evaluator for `Plan<FileSource>` exists (S2), or S1's reference evaluator stops cloning a core relation per scan.
+  3. `cg_call`/`cg_import` as interval probes (S2's operator) and `cg_refusal` without a regex per identifier.
+  4. `py_import_identifier` regressed under the columnar layer (8.7 → 10.3 s): give S2 the plan.
+  5. Debug-build structural checks for § 1.2.1.
+  6. `.xfacts` to v1 when S3 settles its export set.

@@ -58,6 +58,9 @@ struct Target {
     run: Vec<usize>,
     /// Plan inputs the run reads outside the dump (matcher inputs), gate-free (`gate_free`).
     extra: Vec<usize>,
+    /// Per `extra` input: its lowering by the pattern front end (`rerail_facts::front::pattern`),
+    /// the view side of a § 2.4 composition (`view_inputs`).
+    lowered: Vec<(usize, Result<rerail_facts::ir::Lowered, String>)>,
 }
 
 /// A matcher input's rule over all of `N`, as the dump's gate is forced `true`: its nested `all`s
@@ -147,6 +150,28 @@ fn compile(policies: &str, shared: &BTreeMap<String, (String, Vec<(String, Strin
             }
             rule = eval::Rule::compile(&resolved, &config, scope.as_ref(), &facts::GRAMMAR).unwrap();
             found = rule_targets(&mut rule, ri, check, shared);
+            // The same gate-free inputs through the pattern front end (S1), matched by evidence.
+            let program = rerail_facts::compile::compile_report(&resolved, &config, &mut crate::leaf::Leaves::new()).map(|c| c.program);
+            for t in found.iter_mut() {
+                let Kind::Relational(plan) = &rule.clauses[t.clause].kind else { unreachable!() };
+                let clause = resolved["clauses"].as_array().unwrap().iter().find(|c| c["id"] == t.clause_id.as_str()).unwrap();
+                t.lowered = t
+                    .extra
+                    .iter()
+                    .map(|&pi| {
+                        let ast = &clause["relational"]["inputs"][plan.inputs[pi].0.as_str()]["evidence"]["query"]["ast"];
+                        let lowered = match &program {
+                            Ok(p) => p
+                                .inputs
+                                .iter()
+                                .find(|d| matches!(&d.kind, rerail_facts::ir::InputKind::Pattern { query } if query == ast))
+                                .map_or(Err("input not in the compiled program".to_string()), |d| d.algebra.clone()),
+                            Err(e) => Err(format!("compile: {e}")),
+                        };
+                        (pi, lowered)
+                    })
+                    .collect();
+            }
         }
         targets.extend(found);
         rules.push(rule);
@@ -217,7 +242,7 @@ fn rule_targets(rule: &mut Rule, ri: usize, check: &str, shared: &BTreeMap<Strin
                 }
             }
         }
-        targets.push(Target { rule: ri, clause: ci, clause_id: cid, stages, composite, run: need.into_iter().collect(), extra: extra.into_iter().collect() });
+        targets.push(Target { rule: ri, clause: ci, clause_id: cid, stages, composite, run: need.into_iter().collect(), extra: extra.into_iter().collect(), lowered: Vec::new() });
     }
     targets
 }
@@ -240,6 +265,8 @@ struct Out {
     per_file: Vec<(u32, u32, u32, u64, u64, u64, u64, u64, u64)>,
     /// The last file's core-table and string-value ns (`views::evaluate`).
     last_core_ns: [u64; 2],
+    /// Check-side time per (side, stage): `reference <stage>`, `view <stage>`, view-side inputs.
+    stage_ns: BTreeMap<String, u64>,
     view_ns: Vec<u64>,
     view_rows: Vec<u64>,
     skipped_errors: u64,
@@ -595,7 +622,10 @@ fn key(row: &[V]) -> String {
     format!("{row:?}")
 }
 
-fn check_file(rules: &[Rule], targets: &[Target], views_c: &Views, f: &Facts, path: &str, source: &str, out: &mut Out, check: bool, cg: bool) -> u64 {
+/// `input_max_nodes`: above it, a § 2.4 composition takes its matcher inputs from the leaf
+/// executor on both sides (the reference evaluator of the lowered inputs is naive); such files
+/// are counted as `inputs unchecked` (the inputs' own differential is `facts-a pattern-check`).
+fn check_file(rules: &[Rule], targets: &[Target], views_c: &Views, f: &Facts, path: &str, source: &str, out: &mut Out, check: bool, cg: bool, input_max_nodes: usize) -> u64 {
     let mut vns = Vec::new();
     let t0 = Instant::now();
     let vdb = match views::evaluate(views_c, f, &mut vns, &mut out.last_core_ns) {
@@ -636,6 +666,8 @@ fn check_file(rules: &[Rule], targets: &[Target], views_c: &Views, f: &Facts, pa
         }
     }
     let pathrc: Rc<str> = Rc::from(path);
+    let mut core = None;
+    let mut input_cache = BTreeMap::new();
     for tg in targets {
         let rule = &rules[tg.rule];
         let Kind::Relational(plan) = &rule.clauses[tg.clause].kind else { unreachable!() };
@@ -681,7 +713,10 @@ fn check_file(rules: &[Rule], targets: &[Target], views_c: &Views, f: &Facts, pa
         }
         for &si in &tg.run {
             let StagePlan::Query { name, stmt, .. } = &plan.stages[si] else { unreachable!() };
-            match engine::execute(&db, stmt) {
+            let t0 = Instant::now();
+            let result = engine::execute(&db, stmt);
+            *out.stage_ns.entry(format!("reference {name}")).or_default() += t0.elapsed().as_nanos() as u64;
+            match result {
                 Ok(t) => {
                     let t = views::store(t, stmt.schema());
                     db.tables.insert(name.to_ascii_lowercase(), Rc::new(t));
@@ -763,19 +798,36 @@ fn check_file(rules: &[Rule], targets: &[Target], views_c: &Views, f: &Facts, pa
         // § 2.4: the same stages over the views rendered in place of the stages they stand for,
         // and the matcher inputs from the view side (`view_inputs`).
         let mut vdb2 = Db::new(source, path);
-        let inputs = match view_inputs(rule, plan, tg, f, path, &leaf_inputs) {
+        let t0 = Instant::now();
+        let inputs = if f.len() <= input_max_nodes {
+            view_inputs(plan, tg, f, path, &mut core, &mut input_cache)
+        } else {
+            out.stats.entry(("inputs unchecked (file above --input-max-nodes)".into(), tg.clause_id.clone())).or_default().files += 1;
+            Ok(leaf_inputs.clone())
+        };
+        *out.stage_ns.entry("view-side inputs (reference evaluator)".into()).or_default() += t0.elapsed().as_nanos() as u64;
+        let inputs = match inputs {
             Ok(t) => t,
             Err(e) => {
                 out.failures.push(format!("{path}: {}: view-side inputs: {e}", tg.clause_id));
                 continue;
             }
         };
+        // The matcher inputs themselves: lowered algebra against the leaf executor.
+        for (n, t) in &inputs {
+            let Some((_, l)) = leaf_inputs.iter().find(|(m, _)| m == n) else { continue };
+            let st = out.stats.entry((format!("input {n}"), tg.clause_id.clone())).or_default();
+            st.files += 1;
+            st.rows += l.len() as u64;
+            compare_rows(st, path, (0..t.len()).map(|i| key(&t.row(i))).collect(), (0..l.len()).map(|i| key(&l.row(i))).collect());
+        }
         for (n, t) in base.iter().chain(&inputs) {
             vdb2.tables.insert(n.clone(), t.clone());
         }
         let mut failed = false;
         for &si in &tg.run {
             let StagePlan::Query { name, stmt, .. } = &plan.stages[si] else { unreachable!() };
+            let t0 = Instant::now();
             let t = if let Some((_, sname)) = tg.stages.iter().find(|(i, _)| *i == si) {
                 let view_stage = if all_named && sname == "ownership" { "ownership_named" } else { sname.as_str() };
                 let mut rows = render(view_stage, &vdb, &r);
@@ -792,6 +844,7 @@ fn check_file(rules: &[Rule], targets: &[Target], views_c: &Views, f: &Facts, pa
                     }
                 }
             };
+            *out.stage_ns.entry(format!("view {name}")).or_default() += t0.elapsed().as_nanos() as u64;
             vdb2.tables.insert(name.to_ascii_lowercase(), Rc::new(t));
         }
         if failed {
@@ -831,9 +884,46 @@ fn compare_rows(st: &mut Stat, path: &str, mut a: Vec<String>, mut b: Vec<String
     }
 }
 
-/// The view side's matcher inputs for a § 2.4 composition (`tg.extra`, gate-free).
-fn view_inputs(_rule: &Rule, _plan: &crate::rel::RelPlan, _tg: &Target, _f: &Facts, _path: &str, leaf: &[(String, Rc<Table>)]) -> Result<Vec<(String, Rc<Table>)>, String> {
-    Ok(leaf.to_vec())
+/// The view side's matcher inputs for a § 2.4 composition (`tg.extra`, gate-free): each input's
+/// algebra from the pattern front end (`tg.lowered`), evaluated by `rerail_facts::reference` over
+/// the content's core relations (`views::core_rows`, `string_value` included; built once per
+/// file in `core`). Identical algebra is evaluated once per file (`cache`). A run-time refusal of
+/// the algebra (`refuse_if`) must equal the leaf executor's, which `check_file` already surfaced;
+/// here it is an error.
+fn view_inputs(
+    plan: &crate::rel::RelPlan,
+    tg: &Target,
+    f: &Facts,
+    path: &str,
+    core: &mut Option<BTreeMap<rerail_facts::ir::CoreRel, Vec<rerail_facts::reference::Row>>>,
+    cache: &mut BTreeMap<String, Vec<rerail_facts::reference::Row>>,
+) -> Result<Vec<(String, Rc<Table>)>, String> {
+    use rerail_facts::ir::FileSource;
+    let core = core.get_or_insert_with(|| views::core_rows(f, path));
+    let scan = |s: &FileSource| -> Result<Vec<rerail_facts::reference::Row>, String> {
+        match s {
+            FileSource::Core(c) => Ok(core[c].clone()),
+            o => Err(format!("{o:?} in a lowered input")),
+        }
+    };
+    let ev = rerail_facts::reference::Evaluator::with_content(&scan, path, f.source.as_str());
+    let mut out = Vec::new();
+    for (pi, lowered) in &tg.lowered {
+        let (name, _) = &plan.inputs[*pi];
+        let lowered = lowered.as_ref().map_err(|e| format!("input {name} not lowered: {e}"))?;
+        let key = format!("{lowered:?}");
+        if !cache.contains_key(&key) {
+            for (r, msg) in &lowered.refuse_if {
+                if !ev.rel(r, &[])?.is_empty() {
+                    return Err(format!("input {name}: lowered refusal {msg}"));
+                }
+            }
+            cache.insert(key.clone(), ev.rel(&lowered.rows, &[])?);
+        }
+        let rows = cache[&key].iter().map(|r| r.clone().into_boxed_slice()).collect();
+        out.push((name.to_ascii_lowercase(), Rc::new(Table::from_rows(plan.input_schemas[*pi].clone(), rows))));
+    }
+    Ok(out)
 }
 
 pub fn run(args: &[String]) {
@@ -848,6 +938,8 @@ pub fn run(args: &[String]) {
     let typedefs = args.iter().any(|a| a == "--typedefs");
     // `--cg`: SCHEMA § 3.3's call-graph views against native (`cg_check`).
     let cg = args.iter().any(|a| a == "--cg");
+    // `--input-max-nodes N`: the § 2.4 inputs' reference-evaluator bound (`check_file`).
+    let input_max_nodes: usize = arg(args, "--input-max-nodes").map_or(usize::MAX, |n| n.parse().unwrap());
     std::fs::create_dir_all(&out_dir).unwrap();
     let root = Path::new(&root);
     let mut paths = walk(root);
@@ -880,7 +972,7 @@ pub fn run(args: &[String]) {
                         let source = Arc::new(src);
                         let mut ns = facts::BuildNs::default();
                         let Ok(facts::Built::Facts(f)) = facts::build_timed(path, source.clone(), &mut ns) else { continue };
-                        let vns = check_file(&rules, &targets, &vc, &f, path, &source, &mut out, check, cg);
+                        let vns = check_file(&rules, &targets, &vc, &f, path, &source, &mut out, check, cg, input_max_nodes);
                         let mut tns = 0;
                         if typedefs {
                             let t = Instant::now();
@@ -907,6 +999,7 @@ pub fn run(args: &[String]) {
     let mut view_rows = vec![0u64; vc.stmts.len()];
     let (mut skipped, mut collisions, mut annotations) = (0, 0, 0u64);
     let mut cg_stats: BTreeMap<&'static str, Stat> = BTreeMap::new();
+    let mut stage_ns: BTreeMap<String, u64> = BTreeMap::new();
     let (mut nodes_mismatch, mut failures) = (Vec::new(), Vec::new());
     let mut extra_nodes: BTreeMap<String, u64> = BTreeMap::new();
     for o in outs {
@@ -932,6 +1025,9 @@ pub fn run(args: &[String]) {
             *extra_nodes.entry(k).or_default() += v;
         }
         failures.extend(o.failures);
+        for (k, v) in o.stage_ns {
+            *stage_ns.entry(k).or_default() += v;
+        }
         for (k, v) in o.cg {
             let e = cg_stats.entry(k).or_default();
             e.files += v.files;
@@ -971,6 +1067,7 @@ pub fn run(args: &[String]) {
         "core_tables_ns": summary(per_file.iter().map(|p| p.7).collect()),
         "string_value_ns": summary(per_file.iter().map(|p| p.8).collect()),
         "annotations": annotations,
+        "check_stage_s": stage_ns.iter().map(|(k, v)| (k.clone(), *v as f64 / 1e9)).collect::<BTreeMap<_, _>>(),
         "cg": cg_stats.iter().map(|(k, v)| (k.to_string(), json!({"files": v.files, "rows": v.rows, "files_differing": v.bag_mismatch, "examples": v.bag_examples}))).collect::<BTreeMap<_, _>>(),
     });
     std::fs::write(Path::new(&out_dir).join("results.json"), serde_json::to_string_pretty(&res).unwrap()).unwrap();

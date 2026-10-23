@@ -225,6 +225,8 @@ Their shared texts (state-flow-1, state-flow-project-1) are rule logic over the 
 
 `string_value(id, value)` and `string_value_unknown(id, named_escape)` are core relations (§ 1.2, § 1.3), the leaf the three inputs read for `value: {regex}` and `DECODED`.
 
+**Runnable (wave 2).** The composition runs in `facts-a derived-check` for `string_values`, `special_attributes`, `return_kinds` and `direct_events` (state-flow-1, state-flow-project-1; `string_values` also state-projection-recovery-2). Each stage text runs as written, and each stage a § 2.2 view stands for is replaced by that view, rendered. The matcher inputs are taken **gate-free**, as the dump's gate is forced `true`: nested `all`s are flattened and the conjuncts that read `matches` or `filePath` are dropped (`derived_check::gate_free`). They come from S1's pattern front end (`Program.inputs[i].algebra`, `rerail_facts::front::pattern`), which `rerail_facts::reference` evaluates over `views::core_rows`. The reference side is the clause's own stages with the leaf executor's inputs. Results: report § W2.
+
 ## 3. Exported relations (per content; Spike B § 5.1, v1)
 
 Schema-level exports from Spike B v0 (`spikes/facts-b/src/facts.rs`), unchanged: `def(name:sym, kind:sym, qualname:sym, line:u32)`, `ref(name:sym)` distinct, `import(module:sym, name:opt_sym, local:sym, top:u8, module_scope:u8)`, `call_edge(caller:sym, callee:sym)` distinct, `def_decorator(qualname:sym, name:sym)`, `dunder_all(literal:u8)`, `dunder_all_name(name:sym)`, `seed(qualname:sym, family:sym)`, `syntax_error()`. Definitions in Spike B § 5.1.
@@ -337,7 +339,7 @@ They are exported twice:
 
 ## 4. Exactness (the differential)
 
-`facts-a derived-check` evaluates the views per corpus file and, for every clause that holds one of the stage texts of § 2.2, runs the reference: the clause's own `nodes` (dump inputs with the gate and ancestor predicate forced `true`, or its syntax-spec tables) and its stages up to the target, by the SQL engine. Each target stage's rows are compared with the view's rows rendered into the stage's columns (§ 2.2 "renders"): values, types, and order after the § 2.3 reordering. Results and per-file cost: report § 2.
+`facts-a derived-check` evaluates the views per corpus file and, for every clause that holds one of the stage texts of § 2.2, runs the reference: the clause's own `nodes` (dump inputs with the gate and ancestor predicate forced `true`, or its syntax-spec tables) and its stages up to the target, by the SQL engine. Each target stage's rows are compared with the view's rows rendered into the stage's columns (§ 2.2 "renders"): values, types, and order after the § 2.3 reordering. It does the same for the § 2.4 compositions; there the gate-free matcher inputs are compared too (lowered algebra against the leaf executor, rows `input <name>`). With `--cg`, it also checks § 3.3's views against native. § 3.4 has its own differential (`facts-a cg-native`). Results and per-file cost: report § 2 and § W2.
 
 ## 5. Fact files v1
 

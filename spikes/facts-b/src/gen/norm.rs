@@ -408,7 +408,7 @@ impl<'a> Ctx<'a> {
                 let c = self.add(Op::Concat { inputs: vec![l, r] }, w, Vec::new());
                 Ok(if *all { c } else { self.add(Op::Distinct { input: c }, w, Vec::new()) })
             }
-            Rel::Sort { input, keys, limit, offset } => {
+            Rel::Sort { input, keys, limit, offset, .. } => {
                 let n = self.rel(input)?;
                 if limit.is_none() && offset.is_none() {
                     return Ok(n);
@@ -807,7 +807,7 @@ impl<'a> Ctx<'a> {
                 }
                 let keyed = self.add(Op::Map { input: b, exprs: ck.iter().cloned().chain((0..wb).map(col)).collect() }, ck.len() + wb, self.g.poison[b].iter().map(|c| c + ck.len()).collect());
                 let gk: Key = corr.iter().enumerate().map(|(i, (_, _, (_, fi)))| (col(i), KeyMode::Eq(*fi))).collect();
-                let aggs2: Vec<AggCall<RepoSource>> = aggs.iter().map(|a| AggCall { f: a.f, arg: a.arg.as_ref().map(|e| shift(e, ck.len() as isize)), sep: a.sep.as_ref().map(|e| shift(e, ck.len() as isize)), distinct: a.distinct }).collect();
+                let aggs2: Vec<AggCall<RepoSource>> = aggs.iter().map(|a| AggCall { f: a.f, arg: a.arg.as_ref().map(|e| shift(e, ck.len() as isize)), sep: a.sep.as_ref().map(|e| shift(e, ck.len() as isize)), distinct: a.distinct, total: a.total }).collect();
                 let g = self.group_eq(keyed, gk, aggs2)?;
                 // The value per group: HAVING then the projection, both over (rep ++ aggs) of the
                 // original aggregate, i.e. columns shifted by the correlation keys.
@@ -834,7 +834,7 @@ impl<'a> Ctx<'a> {
                 let empty = super::scalar::eval(&ev, &empty_row, &[]).map_err(|m| Refused { at: self.at.clone(), construct: format!("scalar subquery empty value: {m}") })?;
                 self.attach(n, wn, pn, vals, &corr, empty)
             }
-            Rel::Sort { input, keys, limit: Some(l), offset: None } if matches!(super::scalar::eval(l, &[], &[]), Ok(V::Int(1))) => {
+            Rel::Sort { input, keys, limit: Some(l), offset: None, .. } if matches!(super::scalar::eval(l, &[], &[]), Ok(V::Int(1))) => {
                 // (SELECT first FROM (SELECT sel…, keys… FROM corr-filtered) ORDER BY keys LIMIT 1):
                 // per correlation key, the row first in the (checked total) order.
                 let (sel, inner) = match &**input {

@@ -15,8 +15,9 @@
 use crate::front::rule::{ClauseBody, Front};
 use crate::front::sql::visit_expr;
 use crate::ir::{
-    AggFn, AnySource, Binding, CmpOp, ExportId, ExportedRelation, Expr, FileSource, Func, LocalId, Partition, Plan, Projection, Refusal, Rel, RepoSource, Sink, Stage, StageDef, WindowKind, map_rel,
+    AggFn, AnySource, Binding, CmpOp, ExportId, ExportedRelation, Expr, FileSource, Func, LocalId, Partition, Plan, Projection, Refusal, Rel, RepoSource, Sink, Stage, StageDef, Total, WindowKind, map_rel,
 };
+use crate::sql::value::Aff;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 // ---------------------------------------------------------------------------------------------
@@ -535,6 +536,16 @@ impl KeySource for FileSource {
             FileSource::Syntax(crate::ir::SyntaxTable::Edges) => col("dst").map(|c| vec![BTreeSet::from([c])]).unwrap_or_default(),
             FileSource::Stage(s) => stages[*s as usize].clone(),
             FileSource::Input(_) => vec![],
+            // SCHEMA § 1.2.1: the declared keys of the core relations.
+            FileSource::Core(c) => {
+                let key: &[&str] = match c {
+                    crate::ir::CoreRel::Node | crate::ir::CoreRel::Identifier | crate::ir::CoreRel::StringValue | crate::ir::CoreRel::StringValueUnknown => &["id"],
+                    crate::ir::CoreRel::Child | crate::ir::CoreRel::Field => &["child"],
+                    crate::ir::CoreRel::Line => &["no"],
+                    crate::ir::CoreRel::File | crate::ir::CoreRel::SyntaxError => &[],
+                };
+                key.iter().filter_map(|k| col(k)).map(|c| BTreeSet::from([c])).collect()
+            }
         }
     }
 }
@@ -546,18 +557,39 @@ struct KeyEnv {
 }
 
 impl KeyEnv {
-    fn keys<S: KeySource>(&mut self, r: &Rel<S>) -> Keys {
+    fn keys<S: KeySource + Clone>(&mut self, r: &Rel<S>) -> Keys {
         let all = |w: usize| vec![(0..w as u16).collect::<BTreeSet<u16>>()];
         match r {
             Rel::Scan { src, schema } => src.keys(schema, &self.stages, &self.exports),
             Rel::Local { id, .. } => self.locals.get(id).cloned().unwrap_or_default(),
             Rel::Unit => all(0),
-            Rel::Filter { input, .. } | Rel::Sort { input, .. } => self.keys(input),
+            Rel::Sort { input, .. } => self.keys(input),
+            // K3/K4: a column pinned by an equality to a constant or to the enclosing row (no
+            // affinity conversion, so every kept row's value is equal to the others' under the
+            // key notion, DKey equality) drops out of every key: `rn = 1` over `row_number()`
+            // partitioned by p leaves p a key.
+            Rel::Filter { input, pred } => {
+                let pinned = pinned_cols(pred);
+                let mut ks = self.keys(input);
+                if !pinned.is_empty() {
+                    let more: Keys = ks.iter().map(|k| k.difference(&pinned).copied().collect()).collect();
+                    ks.extend(more);
+                }
+                ks
+            }
             Rel::Project { input, exprs, .. } => {
-                let ki = self.keys(input);
-                ki.into_iter()
-                    .filter_map(|k| k.iter().map(|c| exprs.iter().position(|e| col_of(e) == Some(*c)).map(|j| j as u16)).collect::<Option<BTreeSet<u16>>>())
-                    .collect()
+                // A key survives at every choice of output position for each of its columns (a
+                // column projected twice, e.g. as an output and as an ORDER BY key).
+                let mut out: Keys = Vec::new();
+                for k in self.keys(input) {
+                    let mut variants: Vec<BTreeSet<u16>> = vec![BTreeSet::new()];
+                    for c in &k {
+                        let pos: Vec<u16> = exprs.iter().enumerate().filter(|(_, e)| col_of(e) == Some(*c)).map(|(j, _)| j as u16).collect();
+                        variants = variants.iter().flat_map(|v| pos.iter().map(move |p| v.iter().copied().chain([*p]).collect())).take(16).collect();
+                    }
+                    out.extend(variants);
+                }
+                out
             }
             Rel::Distinct { input, prefix } => {
                 let mut k: Keys = self.keys(input).into_iter().filter(|k| k.iter().all(|c| c < prefix)).collect();
@@ -586,15 +618,35 @@ impl KeyEnv {
                 }
                 k
             }
-            Rel::Join { left, right, kind, .. } => {
+            Rel::Join { left, right, kind, on } => {
                 let wl = width(left) as u16;
                 let (kl, kr) = (self.keys(left), self.keys(right));
-                let _ = kind;
                 let mut out = Vec::new();
                 for a in &kl {
                     for b in &kr {
                         out.push(a.iter().copied().chain(b.iter().map(|c| c + wl)).collect());
                     }
+                }
+                // K2: a side whose key is equated, column for column without affinity
+                // conversion, to the other side's columns matches at most one row per row of the
+                // other side, which keeps the other side's keys (a left join only on the right:
+                // null-extended rows share the right columns).
+                let (lk, rk, _) = crate::ir::equi_keys(on.as_ref(), wl as usize);
+                let mut leq = BTreeSet::new();
+                let mut req = BTreeSet::new();
+                for (l, r) in lk.iter().zip(&rk) {
+                    if let (Some(a), Some(b)) = (col_of(&l.e), col_of(&r.e)) {
+                        if crate::sql::value::comparison_affinity(l.affs.0, l.affs.1) == (Aff::None, Aff::None) {
+                            leq.insert(a);
+                            req.insert(b);
+                        }
+                    }
+                }
+                if kr.iter().any(|k| k.is_subset(&req)) {
+                    out.extend(kl.iter().cloned());
+                }
+                if *kind == crate::ir::JoinKind::Inner && kl.iter().any(|k| k.is_subset(&leq)) {
+                    out.extend(kr.iter().map(|k| k.iter().map(|c| c + wl).collect()));
                 }
                 out
             }
@@ -612,50 +664,95 @@ impl KeyEnv {
         }
     }
 
+    /// K1, K6: the order keys' plain columns contain a candidate key of the input (extra
+    /// expression keys only refine the order), or cover every input column (ties are then only
+    /// between identical rows, which are interchangeable).
     fn total(&mut self, input: &Rel<RepoSource>, cols: &BTreeSet<u16>) -> bool {
-        self.keys(input).iter().any(|k| k.is_subset(cols))
+        if crate::mutant::on(10) {
+            // Mutant 10 (planner audit): every order is taken as proven total.
+            return true;
+        }
+        (0..width(input) as u16).all(|c| cols.contains(&c)) || self.keys(input).iter().any(|k| k.is_subset(cols))
     }
 
-    /// Order-dependent constructs without a proven total order.
-    fn audit(&mut self, r: &Rel<RepoSource>, at: &str, out: &mut Vec<Refusal>, clause: &str) {
-        let mut refuse = |what: String| out.push(Refusal { clause: clause.into(), at: at.into(), construct: format!("order-dependent in a repository plan: {what}") });
+    /// Marks every order-dependent construct `Proven` or `Checked` (decider, 2026-10-22: an
+    /// order not proven total is checked at run time, never refused) and records it; refuses
+    /// bag recursion (no set fixpoint for the dataflow).
+    fn mark(&mut self, r: &mut Rel<RepoSource>, at: &str, marks: &mut Vec<OrderMark>, refusals: &mut Vec<Refusal>, clause: &str) {
+        let verdict = |p: bool| if p { Total::Proven } else { Total::Checked };
         match r {
             Rel::Window { input, funcs } => {
-                for f in funcs {
+                for f in funcs.iter_mut() {
                     if matches!(f.kind, WindowKind::RowNumber) {
-                        let cols: Option<BTreeSet<u16>> = f.partition.iter().chain(f.order.iter().map(|o| &o.0)).map(col_of).collect();
-                        if !cols.is_some_and(|c| self.total(input, &c)) {
-                            refuse("row_number() whose PARTITION BY + ORDER BY is not a key (ties broken by input order)".into());
-                        }
+                        let cols: BTreeSet<u16> = f.partition.iter().chain(f.order.iter().map(|o| &o.0)).filter_map(col_of).collect();
+                        f.total = verdict(self.total(input, &cols));
+                        marks.push(OrderMark { at: at.into(), construct: "row_number()".into(), total: f.total });
                     }
                 }
             }
-            Rel::Sort { input, keys, limit, offset } if limit.is_some() || offset.is_some() => {
+            Rel::Sort { input, keys, limit, offset, total } => {
                 let cols: BTreeSet<u16> = keys.iter().map(|k| k.0).collect();
-                if !self.total(input, &cols) {
-                    refuse(if keys.is_empty() { "LIMIT without ORDER BY".into() } else { "LIMIT under an ORDER BY that is not a key (ties broken by input order)".into() });
+                *total = verdict(self.total(input, &cols));
+                if limit.is_some() || offset.is_some() {
+                    marks.push(OrderMark { at: at.into(), construct: if keys.is_empty() { "LIMIT without ORDER BY".into() } else { "ORDER BY … LIMIT".into() }, total: *total });
                 }
             }
             Rel::With { bindings, .. } => {
-                for (_, b) in bindings {
+                for (_, b) in bindings.iter() {
                     if let Binding::Fix { set: false, .. } = b {
-                        refuse("bag (UNION ALL) recursion: no set fixpoint for the dataflow".into());
+                        refusals.push(Refusal { clause: clause.into(), at: at.into(), construct: "order-dependent in a repository plan: bag (UNION ALL) recursion: no set fixpoint for the dataflow".into() });
                     }
                 }
             }
             Rel::Aggregate { input, aggs, .. } => {
-                for a in aggs {
-                    let total = sorted_input(input).is_some_and(|(sin, keys)| self.total(sin, &keys));
-                    if matches!(a.f, AggFn::GroupConcat | AggFn::JsonGroupArray) && !total {
-                        refuse(format!("{:?} over an input without a total order", a.f));
+                if aggs.iter().any(|a| matches!(a.f, AggFn::GroupConcat | AggFn::JsonGroupArray)) {
+                    let t = match sorted_input(input) {
+                        Some((sin, keys)) => self.total(sin, &keys),
+                        None => false,
+                    };
+                    for a in aggs.iter_mut().filter(|a| matches!(a.f, AggFn::GroupConcat | AggFn::JsonGroupArray)) {
+                        a.total = verdict(t);
+                        marks.push(OrderMark { at: at.into(), construct: format!("{:?}", a.f), total: a.total });
                     }
                 }
             }
             _ => {}
         }
-        each_expr(r, &mut |e| subqueries(e, &mut |s| self.audit(s, at, out, clause)));
-        each_child(r, &mut |c| self.audit(c, at, out, clause));
+        crate::ir::children_mut(r, &mut |c| self.mark(c, at, marks, refusals, clause));
     }
+}
+
+/// An order-dependent construct of a repository plan and whether its order is proven total.
+#[derive(Clone, Debug)]
+pub struct OrderMark {
+    pub at: String,
+    pub construct: String,
+    pub total: Total,
+}
+
+/// Columns a filter pins: conjuncts `col = x` where `x` reads no column of the filtered row and
+/// holds no subquery (a literal, or the enclosing row of a correlated subquery), compared with
+/// no affinity conversion.
+fn pinned_cols<S: Clone>(pred: &Expr<S>) -> BTreeSet<u16> {
+    let mut out = BTreeSet::new();
+    for c in crate::ir::conjuncts(pred) {
+        if let Expr::Cmp(crate::ir::CmpOp::Eq, a, b, (fa, fb)) = &c {
+            if crate::sql::value::comparison_affinity(*fa, *fb) != (Aff::None, Aff::None) {
+                continue;
+            }
+            let constant = |x: &Expr<S>| {
+                let mut own = false;
+                crate::ir::cols_read(x, &mut |_| own = true);
+                !own && !crate::ir::has_subquery(x)
+            };
+            if let (Some(k), true) = (col_of(a), constant(b)) {
+                out.insert(k);
+            } else if let (Some(k), true) = (col_of(b), constant(a)) {
+                out.insert(k);
+            }
+        }
+    }
+    out
 }
 
 /// The sort an aggregate's input arrives in (through filters and projections, which keep row
@@ -847,7 +944,7 @@ impl Cut<'_> {
                 let keys = keys.into_iter().map(|e| sub(self, env, e)).collect();
                 let aggs = aggs
                     .into_iter()
-                    .map(|a| crate::ir::AggCall { f: a.f, arg: a.arg.map(|e| sub(self, env, e)), sep: a.sep.map(|e| sub(self, env, e)), distinct: a.distinct })
+                    .map(|a| crate::ir::AggCall { f: a.f, arg: a.arg.map(|e| sub(self, env, e)), sep: a.sep.map(|e| sub(self, env, e)), distinct: a.distinct, total: a.total })
                     .collect();
                 Rel::Aggregate { input: Box::new(input), keys, aggs }
             }
@@ -873,6 +970,7 @@ impl Cut<'_> {
                         },
                         partition: f.partition.into_iter().map(|e| sub(self, env, e)).collect(),
                         order: f.order.into_iter().map(|(e, d)| (sub(self, env, e), d)).collect(),
+                        total: f.total,
                     })
                     .collect();
                 Rel::Window { input: Box::new(input), funcs }
@@ -891,12 +989,12 @@ impl Cut<'_> {
                 let right = self.rel(env, *right, n, c, outer);
                 Rel::Union { all, left: Box::new(left), right: Box::new(right) }
             }
-            Rel::Sort { input, keys, limit, offset } => {
+            Rel::Sort { input, keys, limit, offset, total } => {
                 let n: BTreeSet<u16> = need.into_iter().chain(keys.iter().map(|k| k.0)).collect();
                 let limited = limit.is_some() || offset.is_some();
                 let c = Ctx { set: ctx.set && !limited, ordered: ctx.ordered || limited };
                 let input = self.rel(env, *input, Some(n), c, outer);
-                Rel::Sort { input: Box::new(input), keys, limit: limit.map(|e| sub(self, env, e)), offset: offset.map(|e| sub(self, env, e)) }
+                Rel::Sort { input: Box::new(input), keys, limit: limit.map(|e| sub(self, env, e)), offset: offset.map(|e| sub(self, env, e)), total }
             }
             Rel::With { bindings, body } => {
                 let mut out = Vec::new();
@@ -996,6 +1094,8 @@ pub struct ClauseReport {
     pub file_stages: usize,
     pub repo_stages: usize,
     pub exports: Vec<ExportId>,
+    /// Order-dependent constructs of the repository plan, `Proven` or `Checked`.
+    pub order: Vec<OrderMark>,
 }
 
 pub struct Classified {
@@ -1038,7 +1138,7 @@ pub fn classify(front: Front) -> Classified {
         match body {
             ClauseBody::Forbid { input, violation } => {
                 let inferred = if cross[input as usize].is_some() { Partition::Repository } else { Partition::File };
-                out.reports.push(ClauseReport { clause: c.id.clone(), form: "forbid", declared: None, inferred: Some(inferred), file_stages: 0, repo_stages: 0, exports: vec![] });
+                out.reports.push(ClauseReport { clause: c.id.clone(), form: "forbid", declared: None, inferred: Some(inferred), file_stages: 0, repo_stages: 0, exports: vec![], order: vec![] });
                 match file_source(AnySource::Input(input), cross) {
                     Ok(_) => out.per_file.push(Plan { clause: c.id, syntax: None, stages: vec![], sink: Sink::Witnesses { input, violation } }),
                     Err(e) => refuse("forbid", format!("{e}; a forbid clause is per file"), &mut out),
@@ -1054,7 +1154,7 @@ pub fn classify(front: Front) -> Classified {
                 let schema = inputs[input as usize].schema.clone();
                 let scan = Rel::Scan { src: AnySource::Input(input), schema: schema.clone() };
                 if per_file {
-                    out.reports.push(ClauseReport { clause: c.id.clone(), form: "budget", declared, inferred: Some(Partition::File), file_stages: 0, repo_stages: 0, exports: vec![] });
+                    out.reports.push(ClauseReport { clause: c.id.clone(), form: "budget", declared, inferred: Some(Partition::File), file_stages: 0, repo_stages: 0, exports: vec![], order: vec![] });
                     match to_file(scan, cross, &|s| s) {
                         Ok(rel) => out.per_file.push(Plan { clause: c.id, syntax: None, stages: vec![], sink: Sink::Budget { rel, closure, condition, group_by, distinct, lte, violation } }),
                         Err(e) => refuse("budget", e, &mut out),
@@ -1065,13 +1165,13 @@ pub fn classify(front: Front) -> Classified {
                     match to_file(scan, cross, &|s| s) {
                         Err(e) => {
                             refuse("budget", format!("{e} (a budget spanning files exports its rows; this input cannot be computed per content)"), &mut out);
-                            out.reports.push(ClauseReport { clause: c.id.clone(), form: "budget", declared, inferred: Some(Partition::Repository), file_stages: 0, repo_stages: 0, exports: vec![] });
+                            out.reports.push(ClauseReport { clause: c.id.clone(), form: "budget", declared, inferred: Some(Partition::Repository), file_stages: 0, repo_stages: 0, exports: vec![], order: vec![] });
                         }
                         Ok(rel) => {
                             out.per_file.push(Plan { clause: c.id.clone(), syntax: None, stages: vec![], sink: Sink::Export(vec![(exp, rel)]) });
                             out.exported.push(ExportedRelation { id: exp, name: format!("{}/rows", c.id), schema: schema.clone(), distinct: false, ordered: true, producer });
                             out.repository.push(Plan { clause: c.id.clone(), syntax: None, stages: vec![], sink: Sink::Budget { rel: Rel::Scan { src: RepoSource::Exported(exp), schema }, closure, condition, group_by, distinct, lte, violation } });
-                            out.reports.push(ClauseReport { clause: c.id.clone(), form: "budget", declared, inferred: Some(Partition::Repository), file_stages: 0, repo_stages: 0, exports: vec![exp] });
+                            out.reports.push(ClauseReport { clause: c.id.clone(), form: "budget", declared, inferred: Some(Partition::Repository), file_stages: 0, repo_stages: 0, exports: vec![exp], order: vec![] });
                         }
                     }
                 }
@@ -1106,6 +1206,7 @@ pub fn classify(front: Front) -> Classified {
                         file_stages: fstages.len(),
                         repo_stages: 0,
                         exports: vec![],
+                        order: vec![],
                     });
                     if let (true, Some(fin)) = (ok, fin) {
                         out.per_file.push(Plan { clause: c.id, syntax, stages: fstages, sink: Sink::Findings { rel: fin, key, code, locations, violation } });
@@ -1290,21 +1391,23 @@ fn split(
     let fin = renumber(fin);
     // Order audit over the repository side.
     let mut kenv = KeyEnv { stages: vec![], locals: HashMap::new(), exports: all_export_keys };
-    let mut audit = Vec::new();
-    for st in &rstages {
-        match &st.def {
+    let (mut marks, mut audit) = (Vec::new(), Vec::new());
+    let mut rstages = rstages;
+    for st in &mut rstages {
+        match &mut st.def {
             StageDef::Query { rel } => {
-                kenv.audit(rel, &format!("stages/{}", st.name), &mut audit, clause);
+                kenv.mark(rel, &format!("stages/{}", st.name), &mut marks, &mut audit, clause);
                 let k = kenv.keys(rel);
                 kenv.stages.push(k);
             }
             StageDef::Reach { .. } => kenv.stages.push(vec![(0..3).collect()]),
         }
     }
-    kenv.audit(&fin, "query", &mut audit, clause);
+    let mut fin = fin;
+    kenv.mark(&mut fin, "query", &mut marks, &mut audit, clause);
     out.refusals.extend(audit);
     let (nf, nr) = (fstages.len(), rstages.len());
-    out.reports.push(ClauseReport { clause: clause.into(), form: "relational", declared: Some(Partition::Repository), inferred: Some(Partition::Repository), file_stages: nf, repo_stages: nr, exports: export_ids });
+    out.reports.push(ClauseReport { clause: clause.into(), form: "relational", declared: Some(Partition::Repository), inferred: Some(Partition::Repository), file_stages: nf, repo_stages: nr, exports: export_ids, order: marks });
     out.per_file.push(Plan { clause: clause.into(), syntax, stages: fstages, sink: Sink::Export(sinks) });
     out.repository.push(Plan { clause: clause.into(), syntax: None, stages: rstages, sink: Sink::Findings { rel: fin, key, code, locations, violation } });
 }
@@ -1421,6 +1524,49 @@ mod tests {
         assert!(found.iter().all(|s| matches!(s, RepoSource::Exported(_) | RepoSource::Stage(_))), "{found:?}");
         assert!(p.exported.iter().any(|e| e.distinct), "the EXISTS side is read as a set");
         let _ = Partition::File;
+    }
+
+    /// Order proofs on repository plans (K1, K2, K4, K6) mark `Proven`; an order without a
+    /// proof compiles marked `Checked` (mutant 10 proves everything).
+    #[test]
+    fn order_marks_proven_and_checked() {
+        use crate::ir::Total;
+        // A cross-file selection: the repository side.
+        let x = "(SELECT a.__path AS p, a.__start AS s, a.__end AS e, a.name AS n FROM names a WHERE EXISTS (SELECT 1 FROM names b WHERE b.name = a.name AND b.__path <> a.__path))";
+        let d = format!("(SELECT DISTINCT p, n FROM {x})");
+        let cases: Vec<(String, Total)> = vec![
+            // K6: partition + order cover every input column.
+            (format!("SELECT p AS __path, s AS __start, e AS __end, row_number() OVER (PARTITION BY p ORDER BY n, s, e) AS rn FROM {x}"), Total::Proven),
+            // Not total: ties on `n` between distinct rows are possible.
+            (format!("SELECT p AS __path, s AS __start, e AS __end, row_number() OVER (PARTITION BY p ORDER BY n) AS rn FROM {x}"), Total::Checked),
+            (format!("SELECT p AS __path, s AS __start, e AS __end FROM {x} ORDER BY n LIMIT 1"), Total::Checked),
+            // K1: the plain columns (p, n) are the DISTINCT key; `length(n)` only refines.
+            (format!("SELECT p AS __path, 0 AS __start, 0 AS __end, row_number() OVER (PARTITION BY p ORDER BY length(n), n) AS rn FROM {d}"), Total::Proven),
+            // K4: `rn = 1` over row_number() partitioned by p leaves p a key.
+            (format!("SELECT p AS __path, 0 AS __start, 0 AS __end FROM (SELECT p, n, row_number() OVER (PARTITION BY p ORDER BY n) AS rn FROM {d}) WHERE rn = 1 ORDER BY p LIMIT 5"), Total::Proven),
+            // K2: the right side's key (n) is equated to the left: the left key (p, n) stays.
+            (format!("SELECT l.p AS __path, 0 AS __start, 0 AS __end FROM {d} l JOIN (SELECT DISTINCT n FROM {x}) r ON r.n = l.n ORDER BY l.p, l.n LIMIT 3"), Total::Proven),
+            // K3: inside a correlated subquery, `d2.p = l.p` pins p, so (n) orders it totally.
+            (format!("SELECT l.p AS __path, 0 AS __start, 0 AS __end, (SELECT d2.n FROM {d} d2 WHERE d2.p = l.p ORDER BY d2.n LIMIT 1) AS first FROM {d} l"), Total::Proven),
+        ];
+        for (k, (stage, want)) in cases.iter().enumerate() {
+            let doc = relational(json!(null), json!({}), stage);
+            let c = crate::compile::compile_report(&doc, &Default::default(), &mut Accept).unwrap();
+            assert!(c.refusals.is_empty(), "case {k}: {:?}", c.refusals);
+            let marks: Vec<_> = c.reports.iter().flat_map(|r| r.order.iter()).collect();
+            assert!(!marks.is_empty(), "case {k}: no order construct marked");
+            // The case's construct is the last one marked (K4's inner row_number is not total).
+            assert_eq!(marks.last().unwrap().total, *want, "case {k}: {marks:?}");
+            let mut found = false;
+            for p in &c.program.repository {
+                for st in &p.stages {
+                    if let StageDef::Query { rel } = &st.def {
+                        found |= format!("{rel:?}").contains(&format!("total: {want:?}"));
+                    }
+                }
+            }
+            assert!(found, "case {k}: the IR node carries the mark");
+        }
     }
 
     /// Mutant 15: a join of two per-content relations without a path equality spans files.

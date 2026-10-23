@@ -6,6 +6,8 @@ use crate::facts::{self, Facts, NONE};
 use crate::pyvalue;
 use crate::sql::engine::{self, Catalog, Db, Schema, Statement, Table};
 use crate::sql::value::{Aff, V};
+use rerail_facts::ir::CoreRel;
+use rerail_facts::reference::Row;
 use std::rc::Rc;
 use std::sync::LazyLock;
 
@@ -129,6 +131,29 @@ pub fn core_tables(f: &Facts, string_value_ns: &mut u64) -> Vec<(&'static str, T
         t("string_value", string_value),
         t("string_value_unknown", string_value_unknown),
     ]
+}
+
+/// The core relations of one content as `rerail_facts::reference` reads them
+/// (`FileSource::Core`): the tables of `core_tables`, `file(path)` and `syntax_error()`.
+pub fn core_rows(f: &Facts, path: &str) -> std::collections::BTreeMap<CoreRel, Vec<Row>> {
+    let mut ns = 0;
+    let mut m = std::collections::BTreeMap::new();
+    for (name, t) in core_tables(f, &mut ns) {
+        let rel = match name {
+            "node" => CoreRel::Node,
+            "child" => CoreRel::Child,
+            "field" => CoreRel::Field,
+            "identifier" => CoreRel::Identifier,
+            "line" => CoreRel::Line,
+            "string_value" => CoreRel::StringValue,
+            "string_value_unknown" => CoreRel::StringValueUnknown,
+            other => unreachable!("core table {other}"),
+        };
+        m.insert(rel, (0..t.len()).map(|r| t.row(r)).collect());
+    }
+    m.insert(CoreRel::File, vec![vec![V::text(path)]]);
+    m.insert(CoreRel::SyntaxError, if f.syntax_errors { vec![vec![]] } else { vec![] });
+    m
 }
 
 /// `string_value` and `string_value_unknown` (SCHEMA.md § 1.2, § 1.3): every `string` /
