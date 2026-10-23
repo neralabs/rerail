@@ -163,3 +163,43 @@ Remaining: generator 1.66M records at ~150 B per record, against 40 B per record
   5. Narrowed clauses on the engine once S6's `precedes`/`binds` leaves exist.
   6. Switch `norm.rs` decorrelation to S1's `ir::semi_join`/`equi_keys`, as S1 asked.
 - Generator code map: `gen/norm.rs` (IR → delta operators, decorrelation, refusals, hash-consing), `gen/lower.rs` (delta expansions, shared arrangements, fixpoint per touched view with entered boundary arrangements, retractable refusals), `gen/tags.rs`, `membership.rs`, `gen/real.rs`, `gen/vectors.rs` (R1, R3, RT as IR), `gen/drive.rs` (greplay).
+
+## 9. Wave 3 (S3CrossFile-3)
+
+Status: **partial** (run budget reached). The linker and `file.module` compile through the front end; with `narrow.py`'s policies all four narrowed rules compile with the leaf executor (0 refused constructs, census `/tmp`-free copy below); the linker plan normalises on the generator with 0 refusals; its generator parity run and every G2.4 protocol row are not finished.
+
+### 9.1 Results
+
+| Gate / item | Target | Measured | Result | Run directory |
+|---|---|---|---|---|
+| Linker SQL in IR form (per-content inputs, scope as a relation, module stages split out, no scalar subqueries / non-equality correlations / `digit` joins) | = native | SQLite harness over the per-content form: **145,431 = 145,431, 0 differences**, 0 refusals, after each rewrite step | pass (SQL) | `linker/20261022T225909-ir-form-…`, `…T231744-ir-form-scope-…`, `…T232415-views-split-…`, `…T235216-genform-2b1504adc` |
+| Linker through `rerail_facts::compile` | compiles | `references` lowers to `views/*` stages (module_path.sql + reference_edges.sql) over `FileSource::Summary` and `file(path)`; classifier cuts 14 exports; generator: **0 refusals** after the rewrites (before: scalar-subquery shapes ×2, non-equality correlations ×5, subquery in ON) | pass (compile) | probe rule `exports/w3/probe/linker-probe.json`, exports `exports/w3/oracle-linker-probe.jsonl` (9,010 jobs, 0 failures, 11.5 s) |
+| Linker on the generator, parity 2b1504adc | 145,431 edges | **did not finish**: the base load of one 9,010-file worktree ran 3 h 8 min without reaching `loaded` and was terminated (exit 143). The generator's fixpoint per touched view is the suspect, with `link_reach` (264,716 rows; 54 s even in SQLite) as the largest recursion; needs profiling (per-stage arrangement sizes) before any rerun | **open, too slow** | `runs/20261023-002532-linker-parity` |
+| Narrowed clauses compile (leaf executor, after S6's `binds` merge `d47f859c4`) | 8/8 | `unreachable-internal-symbols`, `exported-families`, `quality-conditional-1`, `state-flow-project-1`: compile, 0 refused constructs; `required-contracts`, `quality-project-taxonomy` as wave 1 | compile pass | census of `narrow.py` output (re-run: `facts-a census --rules <narrow.py OUT>`) |
+| Narrowed clauses: exports | 0 failures | `exported-families` oracle 9,010 / replay 19,801 jobs, 0 failures; `state-flow-project-1` 9,010 / 19,801, 0 failures; `quality-conditional-1` 460 s per 200 jobs through the reference evaluator (too slow for 28,811 jobs) | partial | `exports/w3/{oracle,replay}-{exported-families,state-flow-project-1}.jsonl` |
+| Generator memory, R1+R3 vectors at edit 1,000 (3 locked pairs, generator then hand-written back to back) | ≤ 300 MB (≤ 1.5× of hand) | generator 283.4 / 281.1 / 273.6 MB vs hand-written 199.7 / 200.7 / 199.9 MB = **1.42× / 1.40× / 1.37×** (load 8–24); r1/r3/rt exactness 0 differences, 280/280 refusals; full 1,000-event r1/r3 oracle run 0/1,576; mutants 4/5/6/9 caught (`e8384e84b`: 8-byte `Val`, 24-byte `Row`, one string table) | **pass** | `runs/20261023-003548-mem-vec-r1r3-tip-p1` + `…-004057-mem-hand-clusters-tip-p1`, `…-004101`/`…-004111` (p2), `…-004115`/`…-004125` (p3); `…-003443-exact-vec-r1r3rt-tip`; `…-002638-exactness-vectors-packed`; `…-0043xx/0044xx/0045xx mutant-*-tip` |
+| G2.4 protocol rows (3× locked) | rows | not run | open | — |
+
+### 9.2 Interface changes
+
+- `ir::FileSource::Summary { rel: SummaryRel, links }` / `AnySource::Summary`, `AnySource::Core`; `ir::SummaryRel` (`cgn_module`, `cgn_def`, `cgn_edge`, `cgn_alias`, `cgn_reference_alias`, `cgn_opaque`, `cgn_open`). `AnySource::ReferenceEdges` removed: `reference_edges` is a view.
+- `ir::Func::Refuse` (`rerail_refuse(construct)`): a named refusal raised by evaluation; `reference_edges` unions it over `linker_refusal` and `reference_graph_incomplete`.
+- `facts/src/front/module_path.sql` (`module_of(path, module, package)` over member paths and the rule's scope) and `facts/src/front/reference_edges.sql` (moved from `spikes/facts-b/linker/`), compiled ahead of a clause's stages by `front::rule::Views`; relational inputs projecting `file.module`/`file.package` become `inputs/<name>` stages = leaf without those fields ⟕ `module_of` (membership side).
+- `xexport`: serves `file(path)` for every member (in or out of scope) and `cgn_*` via `cgnative::{summary, links_key, compacted}`.
+- `linker_check.py`: per-content inputs, `rule_scope`, `--sql` list.
+- Generator (`norm.rs`): EXISTS anywhere in an expression as `count(*) > 0` / `= 0` over the correlated body; a refused stage gets an empty stand-in so all refusals are named.
+
+### 9.3 Decisions received (decider)
+
+- Budget-evidence `closure`: per-content export `<clause>/closure_cost(path, incomplete, steps)`; repository aggregate `any(incomplete) ∨ sum(steps) > maxVisitedNodes` (2,000,000, `capabilities.json`) → clause-level retractable refusal through the runtime-refusal record. S3 owns the IR export and the aggregate (S6: `spikes/facts-a/src/closure.rs` `Closure::derive` counts steps, must return them; native `query/name_closure.rs:69-157`, `eval/mod.rs:581-594`, `workspace/global.rs:157-170` — a syntax-error file is incomplete on the workspace path).
+- `constructor-arg`, `unsafe-parameter`: repository plans outright.
+
+## 10. Resume notes (wave 3)
+
+- Commits: `c697a1721` (views, summary source, Refuse, generator EXISTS), merge of integration `d47f859c4`, this report. GenMemory commits `gen/{val,lower,drive,real,vectors}.rs` separately (its working copies are in this worktree, uncommitted at hand-off). `just facts-gate` **not run** on wave 3.
+- Next, in order:
+  1. Read `runs/*-linker-parity/results.json`; compare `parity_rows` with `linker/native-ground-truth/reference_edges.tsv`. If the base load is too slow, the cost is `link_reach` (264,716 rows, 54 s in SQLite): candidate is the per-view fixpoint over the 3,110 in-scope files.
+  2. `calls{graph: references, at: definition}` atom (`imperative-private-functions/caller`): native `calls/mod.rs:1380-1400` answers at a definition by `def_at(path, node.start)`, then `verdict_of([def])`: reach = backward BFS from seeds over callers whose flags `through` allows (`closure.rs:1152 reach`, `close` 2579); `open` (a callee unknown or file open) → Unknown (no finding). Lowering: split the input at its top-level `calls` conjunct into residual + seed inputs, repository plan = residual ⋉ (reflexive closure over `reference_edges` restricted to allowed defs, reaching a seed) minus open. Not started.
+  3. Run the 6 narrowed/compiled clauses on greplay (oracle + replay specs, exports in `exports/w3/`); `unreachable-internal-symbols` exports need the merged binary; `quality-conditional-1` needs a faster per-file executor than the reference evaluator.
+  4. Closure-cost export + aggregate (§ 9.3).
+  5. G2.4 rows 3× locked; message S5Gate-3 the command and `results.json` fields.
