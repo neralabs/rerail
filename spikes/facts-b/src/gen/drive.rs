@@ -243,9 +243,14 @@ pub fn run(run_dir: &Path, opts: Opts) {
 
         let probe = timely::dataflow::operators::probe::Handle::new();
         let sizes = crate::flow::register_logging(worker);
+        let t_dataflow = Instant::now();
         let mut built = lower::build(worker, graphs.clone(), src, &probe, opts.track);
+        let dataflow_s = t_dataflow.elapsed().as_secs_f64();
+        eprintln!("dataflow built: {:.2}s, {} plan nodes", dataflow_s, graphs.iter().map(|(_, g)| g.nodes.len()).sum::<usize>());
         let mut resident = Resident::default();
         let mut epoch: T = 0;
+        let prof_dir = run_dir.clone();
+        let prof_sizes = sizes.clone();
         let offer = |built: &mut lower::Built, resident: &mut Resident, ups: Vec<((W, (Sym, Cid)), i32)>, epoch: &mut T, worker: &mut timely::worker::Worker| {
             let (mut acq, mut rel) = (Vec::new(), Vec::new());
             for ((w, (p, c)), d) in &ups {
@@ -257,7 +262,15 @@ pub fn run(run_dir: &Path, opts: Opts) {
             *epoch += 1;
             built.files.advance_to(*epoch);
             built.files.flush();
-            worker.step_while(|| probe.less_than(epoch));
+            if super::prof::on() {
+                while probe.less_than(epoch) {
+                    worker.step();
+                    super::prof::tick(&prof_dir, &prof_sizes.borrow(), false);
+                }
+                super::prof::tick(&prof_dir, &prof_sizes.borrow(), true);
+            } else {
+                worker.step_while(|| probe.less_than(epoch));
+            }
             rel
         };
         let t_build = Instant::now();
@@ -555,7 +568,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
             "missing_expected_refusals": missing_expected_refusals,
             "events": events.len(),
             "model": {"clusters": model.clusters.iter().map(|(t, (ws, m))| json!({"tag": t, "worktrees": ws, "paths": m.len()})).collect::<Vec<_>>(), "cost": model.cost, "flat_cost": model.flat_cost, "seconds": model_s, "base_paths": model.base.len()},
-            "load": {"store_seconds": load_store_s, "levels_and_deltas_seconds": load_s, "rss_store_mb": mb(rss_store.0), "rss_loaded_mb": mb(rss_loaded.0), "per_level_ms": per_level_ms},
+            "load": {"store_seconds": load_store_s, "dataflow_build_seconds": dataflow_s, "levels_and_deltas_seconds": load_s, "rss_store_mb": mb(rss_store.0), "rss_loaded_mb": mb(rss_loaded.0), "per_level_ms": per_level_ms},
             "divergence_initial": divergence,
             "latency": lat_summary,
             "fact_load_seconds_total": fact_load_s,

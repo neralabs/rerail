@@ -193,10 +193,16 @@ pub enum AnySource {
     Input(InputId),
     Syntax(SyntaxTable),
     Stage(StageId),
-    /// A per-content core relation (`file(path)`: the member path of the content).
-    Core(CoreRel),
-    /// A per-content summary relation ([`FileSource::Summary`]).
-    Summary { rel: SummaryRel, links: Box<str> },
+    /// A membership relation (I6): the union over the worktree's member contents of a
+    /// per-content core relation (`member(__path)`: every member's path, which `file.module`'s
+    /// package chain reads). Only the views defined over the worktree read it. A per-file plan
+    /// cannot (`classify::file_source` refuses it); a repository clause exports the per-content
+    /// [`FileSource::Core`] it is the union of.
+    Members(CoreRel),
+    /// A membership relation (I6): the union over the members of a per-content summary relation
+    /// ([`FileSource::Summary`]: every member's `cgn_*`, which `reference_edges` links). Read and
+    /// classified as [`AnySource::Members`].
+    Summaries { rel: SummaryRel, links: Box<str> },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

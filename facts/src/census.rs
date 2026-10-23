@@ -125,8 +125,8 @@ fn stage_digests(inputs: &[crate::ir::InputDef], front_stages: &[(String, Rel<An
                     format!("input:{}", blake3::hash(format!("{:?}{:?}{:?}{:?}{:?}", d.kind, d.fields, d.anchor, d.each, d.paths).as_bytes()).to_hex())
                 }
                 AnySource::Syntax(t) => format!("syntax:{t:?}"),
-                AnySource::Core(c) => format!("core:{}", c.name()),
-                AnySource::Summary { rel, links } => format!("summary:{}:{links}", rel.name()),
+                AnySource::Members(c) => format!("members:{}", c.name()),
+                AnySource::Summaries { rel, links } => format!("summaries:{}:{links}", rel.name()),
             })
         })
         .unwrap();
@@ -159,8 +159,8 @@ fn stage_shapes(front_stages: &[(String, Rel<AnySource>)], inputs: &[crate::ir::
                 AnySource::Stage(i) => format!("stage:{}", digests[i as usize]),
                 AnySource::Input(i) => format!("input[{}]", inputs[i as usize].schema.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(",")),
                 AnySource::Syntax(t) => format!("syntax:{t:?}"),
-                AnySource::Core(c) => format!("core:{}", c.name()),
-                AnySource::Summary { rel, links } => format!("summary:{}:{links}", rel.name()),
+                AnySource::Members(c) => format!("members:{}", c.name()),
+                AnySource::Summaries { rel, links } => format!("summaries:{}:{links}", rel.name()),
             })
         })
         .unwrap();

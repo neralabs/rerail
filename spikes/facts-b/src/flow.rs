@@ -495,7 +495,8 @@ pub fn register_logging(worker: &mut timely::worker::Worker) -> Rc<RefCell<Sizes
         reg.insert::<timely::logging::TimelyEventBuilder, _>("timely", move |_time, data| {
             if let Some(data) = data {
                 let mut s = s2.borrow_mut();
-                for (_, e) in data.iter() {
+                for (t, e) in data.iter() {
+                    crate::gen::prof::timely_event(t, e);
                     if let timely::logging::TimelyEvent::Operates(o) = e {
                         s.names.insert(o.id, o.name.clone());
                     }

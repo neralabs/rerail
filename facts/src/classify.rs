@@ -23,19 +23,31 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 // ---------------------------------------------------------------------------------------------
 // Per-file mapping
 
-/// The only way a source enters a per-file plan: every cross-file leaf is refused here.
+/// The only way a source enters a per-file plan: every cross-file leaf is refused here, i.e. a
+/// cross-file input and every membership relation (I6: the per-file plan's handle has none).
 pub fn file_source(src: AnySource, input_cross: &[Option<String>]) -> Result<FileSource, String> {
     match src {
         AnySource::Input(i) => match &input_cross[i as usize] {
-            // Mutant 7: a per-file plan accepts a cross-file input.
+            // Mutant 7: a per-file plan accepts a cross-file input or a membership relation.
             Some(_) if crate::mutant::on(7) => Ok(FileSource::Input(i)),
             Some(c) => Err(format!("cross-file read in a per-file plan: {c}")),
             None => Ok(FileSource::Input(i)),
         },
         AnySource::Syntax(t) => Ok(FileSource::Syntax(t)),
         AnySource::Stage(s) => Ok(FileSource::Stage(s)),
-        AnySource::Core(c) => Ok(FileSource::Core(c)),
-        AnySource::Summary { rel, links } => Ok(FileSource::Summary { rel, links }),
+        m @ (AnySource::Members(_) | AnySource::Summaries { .. }) if crate::mutant::on(7) => member_leaf(m),
+        AnySource::Members(c) => Err(format!("cross-file read in a per-file plan: {} of every member (file.module, file.package and reference_edges depend on the worktree)", c.name())),
+        AnySource::Summaries { rel, .. } => Err(format!("cross-file read in a per-file plan: {} of every member (reference_edges links the worktree's summaries)", rel.name())),
+    }
+}
+
+/// A membership leaf as the per-content relation it is the union of: what an exported subtree of
+/// a repository clause computes per content.
+fn member_leaf(src: AnySource) -> Result<FileSource, String> {
+    match src {
+        AnySource::Members(c) => Ok(FileSource::Core(c)),
+        AnySource::Summaries { rel, links } => Ok(FileSource::Summary { rel, links }),
+        o => unreachable!("not a membership leaf: {o:?}"),
     }
 }
 
@@ -46,10 +58,27 @@ fn to_file(r: Rel<AnySource>, cross: &[Option<String>], stage_map: &dyn Fn(u32) 
     })
 }
 
-fn stage_to_file(st: Stage<AnySource>, cross: &[Option<String>], stage_map: &dyn Fn(u32) -> u32) -> Result<Stage<FileSource>, String> {
+/// An exported subtree's per-content definition (`Cut::export`): as [`to_file`], except that a
+/// membership leaf, being the union over contents of a per-content relation, is that relation
+/// (the locality analysis has proven the subtree file-local).
+fn export_to_file(r: Rel<AnySource>, cross: &[Option<String>], stage_map: &dyn Fn(u32) -> u32) -> Result<Rel<FileSource>, String> {
+    map_rel(r, &mut |s| match s {
+        m @ (AnySource::Members(_) | AnySource::Summaries { .. }) => member_leaf(m),
+        s => match file_source(s, cross)? {
+            FileSource::Stage(i) => Ok(FileSource::Stage(stage_map(i))),
+            o => Ok(o),
+        },
+    })
+}
+
+type ToFile = fn(Rel<AnySource>, &[Option<String>], &dyn Fn(u32) -> u32) -> Result<Rel<FileSource>, String>;
+
+/// A stage as a per-content stage: `map` is [`to_file`] in a per-file plan, [`export_to_file`] on
+/// the file side of a repository clause.
+fn stage_to_file(st: Stage<AnySource>, cross: &[Option<String>], stage_map: &dyn Fn(u32) -> u32, map: ToFile) -> Result<Stage<FileSource>, String> {
     let def = match st.def {
-        StageDef::Query { rel } => StageDef::Query { rel: to_file(rel, cross, stage_map)? },
-        StageDef::Reach { roots, edges, graph } => StageDef::Reach { roots: to_file(roots, cross, stage_map)?, edges: edges.map(|e| to_file(e, cross, stage_map)).transpose()?, graph },
+        StageDef::Query { rel } => StageDef::Query { rel: map(rel, cross, stage_map)? },
+        StageDef::Reach { roots, edges, graph } => StageDef::Reach { roots: map(roots, cross, stage_map)?, edges: edges.map(|e| map(e, cross, stage_map)).transpose()?, graph },
     };
     Ok(Stage { name: st.name, schema: st.schema, def })
 }
@@ -178,9 +207,9 @@ impl Env<'_> {
         match r {
             Rel::Scan { src, .. } => match src {
                 AnySource::Input(i) if self.cross[*i as usize].is_some() => Loc::Global,
-                AnySource::Input(_) | AnySource::Syntax(_) | AnySource::Summary { .. } | AnySource::Core(crate::ir::CoreRel::File) => Loc::Local(vec![0]),
+                AnySource::Input(_) | AnySource::Syntax(_) | AnySource::Summaries { .. } | AnySource::Members(crate::ir::CoreRel::File) => Loc::Local(vec![0]),
                 AnySource::Stage(s) => self.stages[*s as usize].clone(),
-                AnySource::Core(_) => Loc::Local(vec![]),
+                AnySource::Members(_) => Loc::Local(vec![]),
             },
             Rel::Local { id, .. } => self.locals.get(id).cloned().unwrap_or(Loc::Global),
             Rel::Unit => Loc::Const,
@@ -794,7 +823,7 @@ impl Cut<'_> {
     fn export(&mut self, r: Rel<AnySource>, needed: Option<&BTreeSet<u16>>, ctx: Ctx, path: &[u16]) -> Rel<RepoSource> {
         let schema = r.schema();
         let file_index = self.file_index;
-        let def = match to_file(r, self.cross, &|s| file_index[&s]) {
+        let def = match export_to_file(r, self.cross, &|s| file_index[&s]) {
             Ok(d) => d,
             Err(e) => {
                 self.refusals.push(e);
@@ -870,7 +899,7 @@ impl Cut<'_> {
                     });
                     Rel::Unit
                 }
-                AnySource::Syntax(_) | AnySource::Core(_) | AnySource::Summary { .. } => {
+                AnySource::Syntax(_) | AnySource::Members(_) | AnySource::Summaries { .. } => {
                     self.refusals.push("per-content fact relation read with an outer correlation from a repository plan".into());
                     Rel::Unit
                 }
@@ -1180,7 +1209,7 @@ pub fn classify(front: Front) -> Classified {
                     let mut fstages = Vec::new();
                     for st in stages {
                         let name = st.name.clone();
-                        match stage_to_file(st, cross, &|s| s) {
+                        match stage_to_file(st, cross, &|s| s, to_file) {
                             Ok(s) => fstages.push(s),
                             Err(e) => {
                                 refuse(&format!("stages/{name}"), e, &mut out);
@@ -1231,6 +1260,9 @@ fn split(
     violation: crate::ir::Violation,
 ) {
     let refuse = |out: &mut Classified, at: &str, construct: String| out.refusals.push(Refusal { clause: clause.into(), at: at.into(), construct });
+    // A refused clause yields no plan: the relations stood in for its refused parts (`Rel::Unit`
+    // in `Cut`) only let the split go on naming every refusal; they never reach an executor.
+    let (refusals_at, exported_at) = (out.refusals.len(), out.exported.len());
     let mut env = Env { cross, stages: vec![], locals: HashMap::new() };
     for st in &stages {
         let l = match &st.def {
@@ -1287,7 +1319,7 @@ fn split(
         let st = if in_file && in_repo { stages[i as usize].clone() } else { stages[i as usize].take() };
         let Some(st) = st else { continue };
         if in_file {
-            match stage_to_file(st.clone(), cross, &|s| file_index[&s]) {
+            match stage_to_file(st.clone(), cross, &|s| file_index[&s], export_to_file) {
                 Ok(s) => fstages.push(s),
                 Err(e) => refuse(out, &format!("stages/{}", st.name), e),
             }
@@ -1404,6 +1436,11 @@ fn split(
     kenv.mark(&mut fin, "query", &mut marks, &mut audit, clause);
     out.refusals.extend(audit);
     let (nf, nr) = (fstages.len(), rstages.len());
+    if out.refusals.len() > refusals_at {
+        out.exported.truncate(exported_at);
+        out.reports.push(ClauseReport { clause: clause.into(), form: "relational", declared: Some(Partition::Repository), inferred: Some(Partition::Repository), file_stages: nf, repo_stages: nr, exports: vec![], order: marks });
+        return;
+    }
     out.reports.push(ClauseReport { clause: clause.into(), form: "relational", declared: Some(Partition::Repository), inferred: Some(Partition::Repository), file_stages: nf, repo_stages: nr, exports: export_ids, order: marks });
     out.per_file.push(Plan { clause: clause.into(), syntax, stages: fstages, sink: Sink::Export(sinks) });
     out.repository.push(Plan { clause: clause.into(), syntax: None, stages: rstages, sink: Sink::Findings { rel: fin, key, code, locations, violation } });
@@ -1488,6 +1525,38 @@ mod tests {
         doc["clauses"][0]["relational"]["inputs"]["names"] = evidence(json!({ "name": "capture.N", "module": "file.module" }));
         let r = refused(&doc);
         assert!(r.iter().any(|c| c.contains("cross-file read in a per-file plan") && c.contains("file.module")), "{r:?}");
+    }
+
+    /// The same reads in a repository clause compile: the membership leaves are cut into
+    /// per-content exports (every member's summaries and path).
+    #[test]
+    fn repository_clause_over_reference_edges_exports_its_membership_leaves() {
+        use crate::ir::{CoreRel, FileSource};
+        let doc = relational(json!(null), json!({ "references": { "language": "python" } }), "SELECT n.* FROM names n JOIN reference_edges e ON e.target_name = n.name");
+        let p = compile(&doc, &Default::default(), &mut Accept).unwrap();
+        assert_eq!(p.repository.len(), 1);
+        assert!(!p.exported.is_empty());
+        fn walk(r: &Rel<FileSource>, out: &mut Vec<FileSource>) {
+            if let Rel::Scan { src, .. } = r {
+                out.push(src.clone());
+            }
+            crate::census::visit_children(r, &mut |c| walk(c, out));
+        }
+        let mut leaves = Vec::new();
+        for pf in &p.per_file {
+            for st in &pf.stages {
+                if let StageDef::Query { rel } = &st.def {
+                    walk(rel, &mut leaves);
+                }
+            }
+            if let Sink::Export(sinks) = &pf.sink {
+                for (_, rel) in sinks {
+                    walk(rel, &mut leaves);
+                }
+            }
+        }
+        assert!(leaves.iter().any(|s| matches!(s, FileSource::Summary { .. })), "{leaves:?}");
+        assert!(leaves.iter().any(|s| matches!(s, FileSource::Core(CoreRel::File))), "{leaves:?}");
     }
 
     /// A repository clause joining names across files: the per-file side exports the names

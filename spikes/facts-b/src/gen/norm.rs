@@ -76,6 +76,8 @@ pub struct Graph {
     pub poison: Vec<Vec<usize>>,
     /// Final relation of each sink: (clause, node, column names).
     pub outputs: Vec<(String, NodeId, Vec<String>)>,
+    /// The stage each node was first built for (`clause/stage`): profiles and EXPLAIN.
+    pub labels: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -313,6 +315,7 @@ impl<'a> Ctx<'a> {
         self.g.nodes.push(op);
         self.g.widths.push(width);
         self.g.poison.push(poison);
+        self.g.labels.push(self.at.clone());
         let n = self.g.nodes.len() - 1;
         self.seen.insert(sig, n);
         n

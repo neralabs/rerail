@@ -13,9 +13,9 @@
 //! - semijoin = left ⋈ presence(right keys); antijoin = left − semijoin (bilinear in ±1).
 //! - group recompute (GROUP BY, windows, DISTINCT on a prefix): per key, out(t) = logic(view(t))
 //!   − logic(view(parent(t))) for every tag with members at the key; the base emits logic(base).
-//! - fixpoint: per view, semi-naive (differential `iterate`) over view-tagged records, materialised
-//!   only for the views whose delta touches the fixpoint's inputs; results re-enter delta mode as
-//!   R_v − R_parent-view.
+//! - fixpoint: differential `iterate` (semi-naive) in delta mode: the body is the same base +
+//!   delta expansion at the iteration's timestamp, each round's distinct the count-based presence;
+//!   a base load is a plain semi-naive evaluation, a worktree iterates only its differences.
 use super::norm::{Graph, Key, KeyMode, NodeId, Op, X};
 use super::tags::{self, W, BASE};
 use super::val::{self, Kind, Row, Val};
@@ -555,6 +555,8 @@ struct Lower<'s> {
     g: Rc<Graph>,
     files: VecCollection<'s, T, (W, (Sym, Cid)), R>,
     src: Source,
+    /// The plan's name (profiles).
+    name: String,
     done: Vec<Option<C<'s, T>>>,
     /// `Some(graph offset)`: count every operator output's live records per tag.
     track: Option<usize>,
@@ -565,36 +567,89 @@ struct Lower<'s> {
     refused: Vec<C<'s, T>>,
 }
 
-/// Does node `n` read the fixpoint variable `var` (directly or below)?
-fn reads_var(g: &Graph, n: NodeId, var: u32) -> bool {
-    match &g.nodes[n] {
-        Op::Var(v) => *v == var,
-        Op::Exported(_) | Op::Const(_) => false,
-        Op::Map { input, .. } | Op::Filter { input, .. } | Op::Distinct { input } | Op::Group { input, .. } | Op::Window { input, .. } | Op::DistinctPrefix { input, .. } | Op::Affinity { input, .. } => reads_var(g, *input, var),
-        Op::Join { l, r, .. } | Op::Semi { l, r, .. } => reads_var(g, *l, var) || reads_var(g, *r, var),
-        Op::Concat { inputs } => inputs.iter().any(|i| reads_var(g, *i, var)),
-        Op::Fix { init, step, .. } => init.iter().chain(step).any(|i| reads_var(g, *i, var)),
+/// The nodes of `g` that read the fixpoint variable `var`, directly or below: one pass over the
+/// nodes in id order (an operator's inputs are always added before it, so ids are topological).
+/// Linear in the graph; a recursive walk without memo visits every path of the shared DAG, which
+/// is exponential in the depth of stage reuse.
+fn var_readers(g: &Graph, var: u32) -> Vec<bool> {
+    let mut rd = vec![false; g.nodes.len()];
+    for (n, op) in g.nodes.iter().enumerate() {
+        let ins = op_inputs(op);
+        assert!(ins.iter().all(|i| *i < n), "node {n}: inputs not topological");
+        rd[n] = match op {
+            Op::Var(v) => *v == var,
+            _ => ins.iter().any(|i| rd[*i]),
+        };
+    }
+    rd
+}
+
+/// An operator's input nodes.
+fn op_inputs(op: &Op) -> Vec<NodeId> {
+    match op {
+        Op::Var(_) | Op::Exported(_) | Op::Const(_) => Vec::new(),
+        Op::Map { input, .. } | Op::Filter { input, .. } | Op::Distinct { input } | Op::Group { input, .. } | Op::Window { input, .. } | Op::DistinctPrefix { input, .. } | Op::Affinity { input, .. } => vec![*input],
+        Op::Join { l, r, .. } | Op::Semi { l, r, .. } => vec![*l, *r],
+        Op::Concat { inputs } => inputs.clone(),
+        Op::Fix { init, step, .. } => init.iter().chain(step).copied().collect(),
     }
 }
 
-/// Delta-mode nodes a fixpoint body reads (the boundary of the recursive part).
-fn boundary(g: &Graph, n: NodeId, var: u32, out: &mut Vec<NodeId>) {
-    if !reads_var(g, n, var) {
-        if !out.contains(&n) {
-            out.push(n);
+/// Calls the former unmemoised `reads_var(n)` made (profiles: the cost of the old walk), with
+/// the readers known: 1 + its children's calls up to the first child that reads the variable.
+fn walk_calls(g: &Graph, n: NodeId, rd: &[bool], memo: &mut FxHashMap<NodeId, f64>) -> f64 {
+    if let Some(c) = memo.get(&n) {
+        return *c;
+    }
+    let mut c = 1.0;
+    if !matches!(g.nodes[n], Op::Var(_)) {
+        for i in op_inputs(&g.nodes[n]) {
+            c += walk_calls(g, i, rd, memo);
+            if rd[i] {
+                break;
+            }
         }
+    }
+    memo.insert(n, c);
+    c
+}
+
+/// Delta-mode nodes a fixpoint body reads (the boundary of the recursive part), each once.
+fn boundary(g: &Graph, rd: &[bool], n: NodeId, seen: &mut Vec<bool>, out: &mut Vec<NodeId>) {
+    if seen[n] {
         return;
     }
-    match &g.nodes[n] {
-        Op::Var(_) => {}
-        Op::Map { input, .. } | Op::Filter { input, .. } | Op::Distinct { input } | Op::Group { input, .. } | Op::Window { input, .. } | Op::DistinctPrefix { input, .. } | Op::Affinity { input, .. } => boundary(g, *input, var, out),
-        Op::Join { l, r, .. } | Op::Semi { l, r, .. } => {
-            boundary(g, *l, var, out);
-            boundary(g, *r, var, out)
+    seen[n] = true;
+    if !rd[n] {
+        out.push(n);
+        return;
+    }
+    if !matches!(g.nodes[n], Op::Var(_)) {
+        for i in op_inputs(&g.nodes[n]) {
+            boundary(g, rd, i, seen, out);
         }
-        Op::Concat { inputs } => inputs.iter().for_each(|i| boundary(g, *i, var, out)),
-        Op::Fix { init, step, .. } => init.iter().chain(step).for_each(|i| boundary(g, *i, var, out)),
-        Op::Exported(_) | Op::Const(_) => {}
+    }
+}
+
+/// The operator's kind (profiles).
+fn op_kind(op: &Op) -> &'static str {
+    match op {
+        Op::Exported(_) => "exported",
+        Op::Const(_) => "const",
+        Op::Var(_) => "var",
+        Op::Map { .. } => "map",
+        Op::Filter { .. } => "filter",
+        Op::Join { lk, .. } if lk.is_empty() => "join(cross)",
+        Op::Join { .. } => "join",
+        Op::Semi { anti: true, .. } => "antijoin",
+        Op::Semi { .. } => "semijoin",
+        Op::Distinct { .. } => "distinct",
+        Op::Concat { .. } => "concat",
+        Op::Group { .. } => "group",
+        Op::Window { .. } => "window",
+        Op::DistinctPrefix { .. } => "distinct-prefix",
+        Op::Affinity { .. } => "affinity",
+        Op::Fix { .. } => "fix",
     }
 }
 
@@ -603,6 +658,16 @@ impl<'s> Lower<'s> {
         if let Some(c) = &self.done[n] {
             return c.clone();
         }
+        if !super::prof::on() {
+            return self.node_raw(n);
+        }
+        let lo = super::prof::begin(self.scope.worker());
+        let c = self.node_raw(n);
+        super::prof::end(self.scope.worker(), lo, &self.name, n, "delta", op_kind(&self.g.nodes[n]), &self.g.labels[n]);
+        c
+    }
+
+    fn node_raw(&mut self, n: NodeId) -> C<'s, T> {
         let g = self.g.clone();
         let c: C<'s, T> = match &g.nodes[n] {
             Op::Exported(id) => {
@@ -748,17 +813,17 @@ impl<'s> Lower<'s> {
 
     /// The delta-mode arrangements a fixpoint body joins with (view × delta), built here and
     /// entered into the iteration, so the body shares them with the operators outside it.
-    fn boundary_arrs(&mut self, var: u32, n: NodeId, arrs: &mut Vec<((NodeId, String), Arr<'s, T, Row>)>, press: &mut Vec<((NodeId, String), Arr<'s, T, ()>)>, seen: &mut Vec<NodeId>) {
+    fn boundary_arrs(&mut self, rd: &[bool], n: NodeId, arrs: &mut Vec<((NodeId, String), Arr<'s, T, Row>)>, press: &mut Vec<((NodeId, String), Arr<'s, T, ()>)>, seen: &mut Vec<bool>) {
         let g = self.g.clone();
-        if !reads_var(&g, n, var) || seen.contains(&n) {
+        if !rd[n] || seen[n] {
             return;
         }
-        seen.push(n);
+        seen[n] = true;
         match &g.nodes[n] {
             Op::Join { l, r, lk, rk } => {
                 for (s, k) in [(*l, lk), (*r, rk)] {
-                    if reads_var(&g, s, var) {
-                        self.boundary_arrs(var, s, arrs, press, seen);
+                    if rd[s] {
+                        self.boundary_arrs(rd, s, arrs, press, seen);
                     } else {
                         let a = self.arr(s, k);
                         arrs.push(((s, format!("{k:?}")), a));
@@ -766,68 +831,63 @@ impl<'s> Lower<'s> {
                 }
             }
             Op::Semi { l, r, lk, rk, .. } => {
-                if reads_var(&g, *l, var) {
-                    self.boundary_arrs(var, *l, arrs, press, seen);
+                if rd[*l] {
+                    self.boundary_arrs(rd, *l, arrs, press, seen);
                 } else {
                     let a = self.arr(*l, lk);
                     arrs.push(((*l, format!("{lk:?}")), a));
                 }
-                if reads_var(&g, *r, var) {
-                    self.boundary_arrs(var, *r, arrs, press, seen);
+                if rd[*r] {
+                    self.boundary_arrs(rd, *r, arrs, press, seen);
                 } else {
                     let a = self.pres(*r, rk);
                     press.push(((*r, format!("{rk:?}")), a));
                 }
             }
-            Op::Map { input, .. } | Op::Filter { input, .. } | Op::Distinct { input } | Op::Group { input, .. } | Op::Window { input, .. } | Op::DistinctPrefix { input, .. } | Op::Affinity { input, .. } => self.boundary_arrs(var, *input, arrs, press, seen),
-            Op::Concat { inputs } => inputs.iter().for_each(|i| self.boundary_arrs(var, *i, arrs, press, seen)),
-            Op::Fix { init, step, .. } => init.iter().chain(step).for_each(|i| self.boundary_arrs(var, *i, arrs, press, seen)),
+            Op::Map { input, .. } | Op::Filter { input, .. } | Op::Distinct { input } | Op::Group { input, .. } | Op::Window { input, .. } | Op::DistinctPrefix { input, .. } | Op::Affinity { input, .. } => self.boundary_arrs(rd, *input, arrs, press, seen),
+            Op::Concat { inputs } => inputs.iter().for_each(|i| self.boundary_arrs(rd, *i, arrs, press, seen)),
+            Op::Fix { init, step, .. } => init.iter().chain(step).for_each(|i| self.boundary_arrs(rd, *i, arrs, press, seen)),
             Op::Var(_) | Op::Exported(_) | Op::Const(_) => {}
         }
     }
 
-    /// Set fixpoint, materialised per touched view.
+    /// Set fixpoint in delta mode: differential `iterate` (semi-naive) over tagged records, the
+    /// body lowered with the same base + delta expansions as outside (`IterLower`), the distinct
+    /// of each round the count-based presence. With base records only (a base load) every product
+    /// is base and presence is a threshold: a plain semi-naive evaluation. A worktree's delta
+    /// iterates only its own signed differences against the entered base arrangements, so
+    /// per-worktree state is proportional to the divergence of its fixpoint, not to its size.
     fn fix(&mut self, var: u32, init: Vec<NodeId>, step: Vec<NodeId>) -> C<'s, T> {
         let g = self.g.clone();
+        let rd = Rc::new(var_readers(&g, var));
+        if super::prof::on() {
+            // The former walk called reads_var at least once per view node and per input of it
+            // (ViewLower::is_view), each call visiting every path below the node.
+            let mut memo = FxHashMap::default();
+            let calls: f64 = (0..g.nodes.len()).filter(|n| rd[*n]).map(|v| walk_calls(&g, v, &rd, &mut memo) + op_inputs(&g.nodes[v]).iter().map(|c| walk_calls(&g, *c, &rd, &mut memo)).sum::<f64>()).sum();
+            let view_nodes = rd.iter().filter(|x| **x).count();
+            super::prof::note(&format!("{}:{}#fix{var}", self.name, g.labels[step[0]]), serde_json::json!({"nodes": g.nodes.len(), "view_nodes": view_nodes, "old_reads_var_calls_lower_bound": calls}));
+        }
         // Delta-mode inputs of the body.
         let mut bnd = Vec::new();
+        let mut seen = vec![false; g.nodes.len()];
         for &s in &step {
-            boundary(&g, s, var, &mut bnd);
+            boundary(&g, &rd, s, &mut seen, &mut bnd);
         }
         let bnd_cols: Vec<(NodeId, C<'s, T>)> = bnd.iter().map(|&b| (b, self.node(b))).collect();
-        let (mut outer_arrs, mut outer_press, mut seen) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut outer_arrs, mut outer_press, mut seen) = (Vec::new(), Vec::new(), vec![false; g.nodes.len()]);
         for &s in &step {
-            self.boundary_arrs(var, s, &mut outer_arrs, &mut outer_press, &mut seen);
+            self.boundary_arrs(&rd, s, &mut outer_arrs, &mut outer_press, &mut seen);
         }
         let init_d: C<'s, T> = {
             let mut it = init.iter();
             let first = self.node(*it.next().unwrap());
             it.fold(first, |a, i| a.concat(self.node(*i)))
         };
-        // Views materialised: every tag holding a delta of the worktree's file set (a superset of
-        // the tags whose delta reaches the fixpoint's inputs; a view equal to its parent's
-        // contributes R_v − R_pv = 0, so the superset is exact).
-        let touched = self
-            .files
-            .clone()
-            .filter(|(w, _)| *w != BASE)
-            .threshold_named(&format!("fix{var}:touched-1"), |_, c| if *c != 0 { 1 } else { 0 })
-            .map(|(w, _)| w)
-            .threshold_named(&format!("fix{var}:touched-2"), |_, c| if *c > 0 { 1 } else { 0 });
-        // View seeds: the base view reads base records; a touched view v reads its chain.
-        let base_seed = init_d.clone().filter(|(w, _)| *w == BASE);
-        let chain_pairs = touched.clone().flat_map(|v| tags::chain(v).into_iter().map(move |t| (Row::from([Val::int(t as i64)]), (BASE, Val::int(v as i64)))));
-        let by_tag = init_d.clone().map(|(w, row)| (Row::from([Val::int(w as i64)]), (BASE, row))).arrange_by_key_named(&format!("fix{var}:init-by-tag"));
-        let view_seed = chain_pairs
-            .map(|(k, (b, v))| (k, (b, Row::from([v]))))
-            .arrange_by_key_named(&format!("fix{var}:chain"))
-            .join_core(by_tag, |_t, (_, v), (_, row)| match v[0].kind() {
-                Kind::Int(v) => Some((v as W, row.clone())),
-                _ => None,
-            });
-        let seeds = base_seed.concat(view_seed);
+        let seeds = init_d;
         // The boundary relations' arrangements are the delta-mode ones built above, entered.
         let g2 = g.clone();
+        let gname = self.name.clone();
         let result = seeds.clone().iterate(|inner, rec| {
             let mut env: FxHashMap<NodeId, C<'_, IT>> = FxHashMap::default();
             for (b, c) in &bnd_cols {
@@ -835,40 +895,40 @@ impl<'s> Lower<'s> {
             }
             let earrs = outer_arrs.iter().map(|(k, a)| (k.clone(), a.clone().enter(inner))).collect();
             let epress = outer_press.iter().map(|(k, a)| (k.clone(), a.clone().enter(inner))).collect();
-            let mut vl = ViewLower { g: g2.clone(), var, rec: rec.clone(), env, earrs, epress, done: FxHashMap::default() };
+            let mut vl = IterLower { g: g2.clone(), gname: gname.clone(), rd: rd.clone(), rec: rec.clone(), env, earrs, epress, done: FxHashMap::default() };
             let mut out = seeds.clone().enter(inner);
-            for &s in &step {
+            let fix_label = format!("{gname}:{}#fix{var}", g2.labels[step[0]]);
+            for (ai, &s) in step.iter().enumerate() {
                 let mut d = vl.node(s);
                 if crate::mutant::on(6) {
                     d = TFilter::filter(d.inner, |(_, t, _): &((W, Row), IT, R)| t.inner < 2).as_collection();
                 }
+                if super::prof::on() {
+                    let (fl, arm) = (fix_label.clone(), format!("arm{ai}:n{s}"));
+                    d = d.inspect(move |(_, t, r)| super::prof::iter(&fl, &arm, t.inner, *r as i64));
+                }
                 out = out.concat(d);
             }
-            out.threshold_named(&format!("fix{var}:iterate-distinct"), |_, c| if *c > 0 { 1 } else { 0 })
+            let out = presence(out.map(|(w, row)| (row, (w, ()))), &format!("fix{var}:iterate-distinct")).as_collection(|row, (w, ())| (*w, row.clone()));
+            if super::prof::on() {
+                let fl = fix_label.clone();
+                out.clone().inspect(move |(_, t, r)| super::prof::iter(&fl, "distinct", t.inner, *r as i64));
+            }
+            out
         });
-        // Back to delta mode: base view under 0; a touched view v: R_v − R_pv, pv its parent view
-        // if touched, else the base view.
-        let par = touched.clone().map(|v| (Row::from([Val::int(tags::parent(v) as i64)]), (BASE, Row::from([Val::int(v as i64)]))));
-        let tset = touched.clone().map(|v| (Row::from([Val::int(v as i64)]), (BASE, ()))).arrange_by_key_named(&format!("fix{var}:tset"));
-        let par_arr = par.clone().arrange_by_key_named(&format!("fix{var}:parent"));
-        let with_parent = par_arr.join_core(tset, |p, (_, v), _| Some((p.clone(), v.clone())));
-        let without = par.concat(with_parent.clone().map(|(p, v)| (p, (BASE, v))).negate()).map(|(_, (_, v))| (Row::from([Val::int(0)]), v));
-        let pv_pairs = with_parent.concat(without).map(|(pv, v)| (pv, (BASE, v))).arrange_by_key_named(&format!("fix{var}:pv-pairs"));
-        let res_by_view = result.clone().map(|(v, row)| (Row::from([Val::int(v as i64)]), (BASE, row))).arrange_by_key_named(&format!("fix{var}:result-by-view"));
-        let minus = res_by_view.join_core(pv_pairs, |_pv, (_, row), (_, v)| match v[0].kind() {
-            Kind::Int(v) => Some((v as W, row.clone())),
-            _ => None,
-        });
-        result.concat(minus.negate())
+        result
     }
 }
 
 type EArr<'i, V2> = Arranged<'i, TraceEnter<TraceAgent<ValSpine<Row, (W, V2), T, R>>, IT>>;
 
-/// View-mode lowering inside a fixpoint: records `(view, row)` are full rows of a view.
-struct ViewLower<'i> {
+/// Delta-mode lowering inside a fixpoint: records `(t, row)` are signed differences of view t
+/// from its parent's, as outside; the operators are the same expansions at the iteration's time.
+struct IterLower<'i> {
     g: Rc<Graph>,
-    var: u32,
+    gname: String,
+    /// Nodes reading this fixpoint's variable (`var_readers`).
+    rd: Rc<Vec<bool>>,
     rec: C<'i, IT>,
     /// Delta-mode boundary collections, entered.
     env: FxHashMap<NodeId, C<'i, IT>>,
@@ -878,9 +938,9 @@ struct ViewLower<'i> {
     done: FxHashMap<NodeId, C<'i, IT>>,
 }
 
-impl<'i> ViewLower<'i> {
+impl<'i> IterLower<'i> {
     fn is_view(&self, n: NodeId) -> bool {
-        reads_var(&self.g, n, self.var)
+        self.rd[n]
     }
 
     fn node(&mut self, n: NodeId) -> C<'i, IT> {
@@ -890,6 +950,17 @@ impl<'i> ViewLower<'i> {
         if !self.is_view(n) {
             return self.env[&n].clone();
         }
+        if !super::prof::on() {
+            return self.node_raw(n);
+        }
+        let w = self.rec.scope().worker();
+        let lo = super::prof::begin(w);
+        let c = self.node_raw(n);
+        super::prof::end(w, lo, &self.gname, n, "iter", op_kind(&self.g.nodes[n]), &self.g.labels[n]);
+        c
+    }
+
+    fn node_raw(&mut self, n: NodeId) -> C<'i, IT> {
         let g = self.g.clone();
         let c = match &g.nodes[n] {
             Op::Var(_) => self.rec.clone(),
@@ -916,85 +987,68 @@ impl<'i> ViewLower<'i> {
                 let first = self.node(it.next().unwrap());
                 it.fold(first, |a, i| a.concat(self.node(i)))
             }
-            Op::Distinct { input } => self.node(*input).threshold_named(&format!("n{n}:view-distinct"), |_, c| if *c > 0 { 1 } else { 0 }),
+            Op::Distinct { input } => {
+                let keys = self.node(*input).map(|(w, row)| (row, (w, ())));
+                presence(keys, &format!("n{n}:iter-distinct")).as_collection(|k, (w, ())| (*w, k.clone()))
+            }
             Op::Join { l, r, lk, rk } => {
                 let (lv, rv) = (self.is_view(*l), self.is_view(*r));
-                // view×view: same view; view×delta: the delta record must be visible in the view.
-                let pair = move |w1: &W, a: &Row, w2: &W, b: &Row| -> Option<(W, Row)> {
-                    let w = match (lv, rv) {
-                        (true, true) => (w1 == w2).then_some(*w1),
-                        (true, false) => tags::visible(*w2, *w1).then_some(*w1),
-                        (false, true) => tags::visible(*w1, *w2).then_some(*w2),
-                        (false, false) => unreachable!(),
-                    }?;
-                    if lv && rv && *w1 == *w2 && *w1 != BASE && crate::mutant::on(4) {
-                        return None;
-                    }
-                    Some((w, Row::concat(a, b)))
-                };
+                // The bilinear expansion, as outside: a pair (t1, t2) yields product(t1, t2).
+                let pair = |_k: &Row, (w1, a): &(W, Row), (w2, b): &(W, Row)| tags::product(*w1, *w2).map(|w| (w, Row::concat(a, b)));
                 match (lv, rv) {
                     (true, true) => {
-                        let la = keyed(self.node(*l), lk.clone(), &format!("n{n}:view-join-l"));
-                        let ra = keyed(self.node(*r), rk.clone(), &format!("n{n}:view-join-r"));
-                        la.join_core(ra, move |_k, (w1, a), (w2, b)| pair(w1, a, w2, b))
+                        let la = keyed(self.node(*l), lk.clone(), &format!("n{n}:iter-join-l"));
+                        let ra = keyed(self.node(*r), rk.clone(), &format!("n{n}:iter-join-r"));
+                        la.join_core(ra, pair)
                     }
                     (true, false) => {
-                        let la = keyed(self.node(*l), lk.clone(), &format!("n{n}:view-join-l"));
+                        let la = keyed(self.node(*l), lk.clone(), &format!("n{n}:iter-join-l"));
                         let ra = self.earrs[&(*r, format!("{rk:?}"))].clone();
-                        la.join_core(ra, move |_k, (w1, a), (w2, b)| pair(w1, a, w2, b))
+                        la.join_core(ra, pair)
                     }
                     (false, true) => {
                         let la = self.earrs[&(*l, format!("{lk:?}"))].clone();
-                        let ra = keyed(self.node(*r), rk.clone(), &format!("n{n}:view-join-r"));
-                        la.join_core(ra, move |_k, (w1, a), (w2, b)| pair(w1, a, w2, b))
+                        let ra = keyed(self.node(*r), rk.clone(), &format!("n{n}:iter-join-r"));
+                        la.join_core(ra, pair)
                     }
-                    (false, false) => unreachable!("delta-mode join in view mode"),
+                    (false, false) => unreachable!("join of two non-recursive relations inside the recursion"),
                 }
             }
             Op::Semi { l, r, lk, rk, anti } => {
                 let lv = self.is_view(*l);
                 let rv = self.is_view(*r);
-                if !lv && *anti {
-                    refuse("antijoin of a non-recursive relation by a recursive one inside the recursion (not stratified)");
+                if *anti && rv {
+                    refuse("antijoin by a recursive relation inside the recursion (not stratified)");
                     return self.rec.clone().filter(|_| false);
                 }
                 let left = self.node(*l);
-                let vis = move |w1: &W, w2: &W| -> Option<W> {
-                    match (lv, rv) {
-                        (true, true) => (w1 == w2).then_some(*w1),
-                        (true, false) => tags::visible(*w2, *w1).then_some(*w1),
-                        (false, true) => tags::visible(*w1, *w2).then_some(*w2),
-                        (false, false) => unreachable!(),
-                    }
-                };
-                // A view right side: presence per (key, view), built here. A delta right side:
-                // the count-based delta presence (shared with the delta-mode operators); summed
-                // over the tags visible in a view it gives the view's presence (0 or 1).
-                let view_pres = |s: &mut Self| {
-                    let rk = rk.clone();
-                    s.node(*r)
-                        .flat_map(move |(w, row)| {
-                            let mut vr = None;
-                            key_of(&row, &rk, &mut vr).map(|k| (k, (w, ())))
-                        })
-                        .threshold_named(&format!("n{n}:view-semi-r"), |_, c| if *c > 0 { 1 } else { 0 })
-                        .arrange_by_key_named(&format!("n{n}:view-semi-r-arr"))
-                };
+                let hit_of = |_k: &Row, (w1, a): &(W, Row), (w2, ()): &(W, ())| tags::product(*w1, *w2).map(|w| (w, a.clone()));
+                // The right side's count-based presence: built here over the recursive relation,
+                // or the delta-mode one shared with the operators outside, entered.
                 let hit = match (lv, rv) {
                     (true, true) => {
-                        let la = keyed(left.clone(), lk.clone(), &format!("n{n}:view-semi-l"));
-                        la.join_core(view_pres(self), move |_k, (w1, a), (w2, ())| vis(w1, w2).map(|w| (w, a.clone())))
+                        let rk = rk.clone();
+                        let keys = self.node(*r).flat_map(move |(w, row)| {
+                            let mut vr = None;
+                            key_of(&row, &rk, &mut vr).map(|k| (k, (w, ())))
+                        });
+                        let pres = presence(keys, &format!("n{n}:iter-semi-r"));
+                        keyed(left.clone(), lk.clone(), &format!("n{n}:iter-semi-l")).join_core(pres, hit_of)
                     }
                     (true, false) => {
-                        let la = keyed(left.clone(), lk.clone(), &format!("n{n}:view-semi-l"));
                         let pres = self.epress[&(*r, format!("{rk:?}"))].clone();
-                        la.join_core(pres, move |_k, (w1, a), (w2, ())| vis(w1, w2).map(|w| (w, a.clone())))
+                        keyed(left.clone(), lk.clone(), &format!("n{n}:iter-semi-l")).join_core(pres, hit_of)
                     }
                     (false, true) => {
-                        let la = self.earrs[&(*l, format!("{lk:?}"))].clone();
-                        la.join_core(view_pres(self), move |_k, (w1, a), (w2, ())| vis(w1, w2).map(|w| (w, a.clone())))
+                        let rk = rk.clone();
+                        let keys = self.node(*r).flat_map(move |(w, row)| {
+                            let mut vr = None;
+                            key_of(&row, &rk, &mut vr).map(|k| (k, (w, ())))
+                        });
+                        let pres = presence(keys, &format!("n{n}:iter-semi-r"));
+                        self.earrs[&(*l, format!("{lk:?}"))].clone().join_core(pres, hit_of)
                     }
-                    (false, false) => unreachable!("delta-mode semijoin in view mode"),
+                    (false, false) => unreachable!("semijoin of two non-recursive relations inside the recursion"),
                 };
                 if *anti { left.concat(hit.negate()) } else { hit }
             }
@@ -1039,7 +1093,7 @@ pub fn build(worker: &mut timely::worker::Worker, graphs: Vec<(String, Rc<Graph>
         for (name, g) in graphs {
             let n = g.nodes.len();
             let gi = outputs.len();
-            let mut lw = Lower { scope, g: g.clone(), files: files.clone(), src: src.clone(), done: vec![None; n], track: track_on.then_some(gi * 100_000), arrs: FxHashMap::default(), press: FxHashMap::default(), refused: Vec::new() };
+            let mut lw = Lower { scope, g: g.clone(), files: files.clone(), src: src.clone(), name: name.clone(), done: vec![None; n], track: track_on.then_some(gi * 100_000), arrs: FxHashMap::default(), press: FxHashMap::default(), refused: Vec::new() };
             for (clause, node, _) in &g.outputs {
                 let c = lw.node(*node);
                 outputs.push((format!("{name}:{clause}"), capture(c, probe)));

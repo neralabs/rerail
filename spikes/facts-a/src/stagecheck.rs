@@ -128,7 +128,7 @@ fn compare(ir: &ClauseIr, label: &str, path: &str, traced: &rel::Traced, st: &mu
         let name = match s {
             AnySource::Input(i) => ir.inputs.get(*i as usize).cloned(),
             AnySource::Syntax(t) => ir.syntax[*t as usize].clone(),
-            AnySource::Core(_) | AnySource::Summary { .. } => return Err("per-content core and summary relations are not traced".into()),
+            AnySource::Members(_) | AnySource::Summaries { .. } => return Err("membership relations (member paths, summaries) are not traced".into()),
             AnySource::Stage(_) => unreachable!("stages resolve first"),
         };
         let name = name.ok_or_else(|| format!("{s:?} has no table name"))?;

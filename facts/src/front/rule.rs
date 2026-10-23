@@ -303,7 +303,7 @@ struct Views {
 impl Views {
     fn new() -> Views {
         let mut catalog = Catalog::default();
-        catalog.insert("member", AnySource::Core(CoreRel::File), vec![Column::new("__path", Aff::Text)]);
+        catalog.insert("member", AnySource::Members(CoreRel::File), vec![Column::new("__path", Aff::Text)]);
         Views { catalog, module_of: None }
     }
 
@@ -343,8 +343,10 @@ impl Views {
     }
 
     /// The stages defining `reference_edges` for a clause's `references` declaration; the id of
-    /// the stage that is `reference_edges`. Its leaves are the per-content summaries under the
-    /// declaration's links and the module stages; the classifier cuts it like any clause.
+    /// the stage that is `reference_edges`. Its leaves are membership relations (every member's
+    /// summaries under the declaration's links, `AnySource::Summaries`) and the module stages
+    /// (over `AnySource::Members`): a per-file plan reading it is refused; a repository clause is
+    /// cut like any other, its file-local subtrees exported per content.
     fn reference_edges(&mut self, refs: &Json, scope: &Json, stages: &mut Vec<Stage<AnySource>>, next_local: &mut LocalId) -> Result<u32, String> {
         let o = obj(refs, "references")?;
         check_keys(o, &["language", "siblingLinks", "constructorFields"], "references")?;
@@ -363,7 +365,7 @@ impl Views {
         let links: Box<str> = Json::Object(links).to_string().into();
         self.modules(scope, stages, next_local)?;
         for rel in SummaryRel::ALL {
-            self.catalog.insert(rel.name(), AnySource::Summary { rel, links: links.clone() }, rel.schema());
+            self.catalog.insert(rel.name(), AnySource::Summaries { rel, links: links.clone() }, rel.schema());
         }
         let ("reference_edges", id) = self.lower(REFERENCE_EDGES_SQL, stages, next_local)? else { return Err("reference_edges.sql must end with the stage reference_edges".into()) };
         // Native's table declares its columns' affinities (relational.rs:640-679).

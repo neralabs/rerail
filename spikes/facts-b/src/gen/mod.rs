@@ -6,6 +6,7 @@
 pub mod drive;
 pub mod lower;
 pub mod norm;
+pub mod prof;
 pub mod real;
 pub mod scalar;
 pub mod tags;
