@@ -322,7 +322,7 @@ Per-stage sizes on the generator (`FACTS_STAGE_OUTPUTS=1`) against the SQLite ha
 
 ## 15. Wave 6 (S3CrossFile-6)
 
-Status: **partial, closer**.
+Status: **items 1–4 done; item 5 partial** (R36 done; `quality-conditional-1`, `captured-return` and `calls` still open).
 
 - Dead code is exact: 4,931 = 4,931, with 0 refusals.
 - Incremental ≡ from-scratch holds for all 5 running clauses: 0 differences. The comparison covers every stage, not only the findings. It ran over the 300-event prefix with sampled checks; the reason is below.
