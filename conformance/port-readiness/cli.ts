@@ -20,7 +20,7 @@ import { parseShard, shardName } from "./shard.js";
 import { parsePlanned, writeSummary } from "./summary.js";
 
 const USAGE = `usage:
-  npm run port-readiness -- [--pack <id>] [--tool <tool>] [--shard <i>/<n>] [--cache dir] [--no-cache | --refresh-cache] [--out dir]
+  npm run port-readiness -- [--pack <id>] [--tool <tool>] [--shard <i>/<n>] [--cache dir] [--no-cache | --refresh-cache] [--conformance-in-own-job] [--out dir]
   npm run port-readiness -- fetch [--pack <id>] [--tool <tool>] [--cache dir]
   npm run port-readiness -- conformance [--out dir]
   npm run port-readiness -- merge <dir>
@@ -49,7 +49,7 @@ function parse(args: string[], valued: string[], flags: string[]): Record<string
 }
 
 async function gates(args: string[]): Promise<number> {
-  const flags = parse(args, ["--pack", "--tool", "--shard", "--cache", "--out"], ["--no-cache", "--refresh-cache"]);
+  const flags = parse(args, ["--pack", "--tool", "--shard", "--cache", "--out"], ["--no-cache", "--refresh-cache", "--conformance-in-own-job"]);
   const root = PACKAGE_ROOT;
   const shard = typeof flags["--shard"] === "string" ? parseShard(flags["--shard"]) : undefined;
   const selected = gatedToolPacks(root).filter(({ pack, tool }) => (flags["--pack"] === undefined || flags["--pack"] === pack) && (flags["--tool"] === undefined || flags["--tool"] === tool));
@@ -66,9 +66,11 @@ async function gates(args: string[]): Promise<number> {
   const cacheRoot = resolve(typeof flags["--cache"] === "string" ? flags["--cache"] : DEFAULT_CACHE_ROOT);
   await mkdir(out, { recursive: true });
   const runner = new ProcessCommandRunner();
+  // --conformance-in-own-job: CI's conformance job runs each pack's conformance check once, so the legs skip it.
+  const leaveConformanceToJob = flags["--conformance-in-own-job"] === true;
   let failing = 0;
   for (const { pack, tool } of selected) {
-    const report = await runToolPack({ root, pack, tool, cacheRoot, readCache, writeCache, runner, ...(shard === undefined ? {} : { shard }) });
+    const report = await runToolPack({ root, pack, tool, cacheRoot, readCache, writeCache, runner, leaveConformanceToJob, ...(shard === undefined ? {} : { shard }) });
     const name = `${pack}--${tool}`;
     await writeFile(join(out, `${name}.json`), `${JSON.stringify(report, null, 2)}\n`);
     await writeFile(join(out, `${name}.md`), renderMarkdown(report));

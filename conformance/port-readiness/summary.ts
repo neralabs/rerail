@@ -10,8 +10,9 @@ import { join } from "node:path";
 
 import { renderComment, renderJobSummary } from "./comment.js";
 import { CONFORMANCE_REPORT_FILE, CONFORMANCE_REPORT_FORMAT, type ConformanceReport } from "./conformance-gates.js";
+import { LEFT_TO_CONFORMANCE_JOB } from "./checks/passes-conformance.js";
 import { gateTitle } from "./report.js";
-import { blockingFailures, gatedToolPacks, REPORT_FORMAT, unusedGapLine, type GateReport, type GatesReport, type RuleReport } from "./run.js";
+import { gatedToolPacks, REPORT_FORMAT, unusedGapLine, type GateReport, type GatesReport, type RuleReport } from "./run.js";
 import type { Check } from "./types.js";
 
 export const SUMMARY_FORMAT = "rerail.port-readiness-summary/v3" as const;
@@ -157,6 +158,18 @@ export function gatedStep(rule: RuleReport): Failure | null {
   return null;
 }
 
+/**
+ * A gated tool-pack's rule with its `passes-conformance` from the conformance job, which runs the pack's conformance
+ * check once for every tool-pack (the CI legs leave it to that job). A rule the leg left to the job and the job did not
+ * report fails closed.
+ */
+function withPackConformance(rule: RuleReport, fromJob: ReadonlyMap<string, GateReport>): RuleReport {
+  const gate = fromJob.get(rule.file);
+  if (gate !== undefined) return { ...rule, gates: { ...rule.gates, "passes-conformance": gate } };
+  if (!rule.gates["passes-conformance"].checks.some((check) => check.id === LEFT_TO_CONFORMANCE_JOB)) return rule;
+  return { ...rule, gates: { ...rule.gates, "passes-conformance": { pass: false, checks: [{ id: "conformance-job", ok: false, detail: "the conformance job's report has no result for it, and its tool-pack run left the pack's conformance check to that job" }] } } };
+}
+
 const verdictOf = (base: Omit<RuleVerdict, "stoppedAt" | "check" | "why">, failure: Failure | null): RuleVerdict => ({ ...base, stoppedAt: failure?.stoppedAt ?? null, check: failure?.check ?? "", why: failure?.why ?? "" });
 
 /**
@@ -164,18 +177,19 @@ const verdictOf = (base: Omit<RuleVerdict, "stoppedAt" | "check" | "why">, failu
  * gated linter unless a pull request's plan left some out): each needs a report, and the gated linters outside it are
  * listed as not judged, which blocks nothing. A missing conformance report blocks.
  */
-export function summarize(reports: GatesReport[], gated: { pack: string; tool: string }[], planned = gated, conformance: ConformanceReport | null = { format: CONFORMANCE_REPORT_FORMAT, engine: { sha256: "" }, packs: [], rules: [] }): Summary {
+export function summarize(reports: GatesReport[], gated: { pack: string; tool: string }[], planned = gated, conformance: ConformanceReport | null = { format: CONFORMANCE_REPORT_FORMAT, engine: { sha256: "" }, packs: [], rules: [], passesConformance: [] }): Summary {
   const have = new Set(reports.map((report) => report.toolPack));
   const gatedNames = gated.map(({ pack, tool }) => `${pack}/${tool}`);
   const plannedNames = new Set(planned.map(({ pack, tool }) => `${pack}/${tool}`));
   const missingReports = gatedNames.filter((toolPack) => plannedNames.has(toolPack) && !have.has(toolPack));
   const notJudged = gatedNames.filter((toolPack) => !plannedNames.has(toolPack));
   const portPacks = new Set((conformance?.packs ?? []).filter((entry) => entry.hasConformanceJson).map((entry) => entry.pack));
+  const fromJob = new Map((conformance?.passesConformance ?? []).map((entry) => [entry.file, entry.gate]));
 
   const rules: RuleVerdict[] = [];
   for (const report of reports) {
     for (const rule of report.rules) {
-      rules.push(verdictOf({ id: rule.id, file: rule.file, pack: report.pack, location: rule.location, port: true, upstream: { tool: report.tool, rule: rule.upstreamRule }, onByDefault: rule.defaultOn }, gatedStep(rule)));
+      rules.push(verdictOf({ id: rule.id, file: rule.file, pack: report.pack, location: rule.location, port: true, upstream: { tool: report.tool, rule: rule.upstreamRule }, onByDefault: rule.defaultOn }, gatedStep(withPackConformance(rule, fromJob))));
     }
   }
   // The conformance report judges every rule no gated linter does: one that is not a port, a port no entry maps, and a
@@ -218,7 +232,8 @@ export function summarize(reports: GatesReport[], gated: { pack: string; tool: s
     otherFailures,
     promotable: rules.filter((rule) => rule.location === "candidate" && rule.stoppedAt === null),
     notJudged,
-    pass: failingRules.length === 0 && otherFailures.length === 0 && reports.every((report) => blockingFailures(report) === 0),
+    // Every rule's verdict is the summary's own: a tool-pack run's pass leaves out what it left to the conformance job.
+    pass: failingRules.length === 0 && otherFailures.length === 0,
   };
 }
 

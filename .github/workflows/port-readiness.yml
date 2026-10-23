@@ -10,8 +10,11 @@ name: Port readiness
 # the goldens name and upstream's pinned test files are fetched, and they are cached by their pins.
 #
 # The conformance job runs the conformance gates (loads, compact, passes-conformance) on every rule no gated tool-pack
-# judges (complexity, the packs whose tools have no gates.yaml, unmapped documents), on every run: the legs run the same
-# gates on their own rules, so together they cover every rule of every pack. It reads no recording and takes seconds.
+# judges (complexity, the packs whose tools have no gates.yaml, unmapped documents), on every run: the legs run loads and
+# compact on their own rules, so together they cover every rule of every pack. passes-conformance is each pack's
+# conformance check, which scores every rule of the pack at once, so the conformance job runs it once per pack for every
+# rule, the legs' too, and the legs skip it (--conformance-in-own-job); the summary takes each rule's result from the
+# conformance job. It reads no recording and takes about a minute.
 #
 # The plan job builds the legs (conformance/port-readiness/plan.mjs, which also holds the shard counts). A pull request
 # (`select`) judges only the tool-packs of the packs it touches, and every one when it touches the engine, the gate
@@ -347,7 +350,7 @@ jobs:
           REFRESH: ${{ inputs.no-cache && '--refresh-cache' || '' }}
         run: |
           set +e
-          npm run port-readiness -- --pack "$PACK" --tool "$TOOL" ${SHARD:+--shard "$SHARD"} --out "$RUNNER_TEMP/gates" $REFRESH
+          npm run port-readiness -- --pack "$PACK" --tool "$TOOL" ${SHARD:+--shard "$SHARD"} --conformance-in-own-job --out "$RUNNER_TEMP/gates" $REFRESH
           echo "status=$?" >> "$GITHUB_OUTPUT"
 
       # Pull requests restore main's corpus (by exact key, or by prefix when the pull request changes a pin) and never
@@ -392,8 +395,9 @@ jobs:
           STATUS: ${{ steps.gates.outputs.status }}
         run: exit "$STATUS"
 
-  # The conformance gates on every rule document no gated tool-pack judges (conformance-gates.ts), from the built
-  # engine and the tree alone: no recording, corpus or upstream runtime, so nothing to fetch or cache.
+  # The conformance gates on every rule document no gated tool-pack judges (conformance-gates.ts), and each pack's
+  # conformance check once, for every rule it maps, from the built engine and the tree alone: no recording, corpus or
+  # upstream runtime, so nothing to fetch or cache.
   conformance:
     name: Conformance gates (every rule no tool-pack judges)
     runs-on: ubuntu-24.04

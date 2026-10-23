@@ -6,7 +6,7 @@ import { join, relative, resolve } from "node:path";
 import { dependencyDigest, ruleKey, readCached, toolPackKey, trackedDigest, writeCached, GATE_CODE, type SharedKeyInputs } from "./cache.js";
 import { upstreamStatusChecks, defaultOn } from "./checks/upstream-status.js";
 import { loadAsBundled, loadsGate } from "./checks/loads.js";
-import { packConformance, passesConformanceChecks } from "./checks/passes-conformance.js";
+import { LEFT_TO_CONFORMANCE_JOB, packConformance, passesConformanceChecks } from "./checks/passes-conformance.js";
 import { notOverfitGate, type ClassifiedLiteral } from "./checks/not-overfit.js";
 import { canonicalJson, compactGate, NESTING_RUN_LIMIT, REPEATED_SHARE_LIMIT, SIZE_FLAG_BYTES, type SizeMetrics } from "./checks/compact.js";
 import { classifyParsers, goldensGate, MATCHES_UPSTREAM_TESTS_METHOD, matchesUpstreamTestsGate, outsideInScope, provenGaps, realCodeGapCheck, staysSilentCheck, type CaseResult, type GapCandidate, type GoldenResult, type MatchesUpstreamTestsResult, type UnparsedFile } from "./checks/matches-upstream-tests.js";
@@ -161,6 +161,11 @@ export interface RunOptions {
   runner: CommandRunner;
   /** Judge only this shard's rules (shard.ts); every rule still counts for the tool-pack checks. */
   shard?: Shard;
+  /**
+   * Leave `passes-conformance` to the conformance job, which runs the pack's conformance check once per CI run; the
+   * summary takes each rule's result from that job's report. Without it, the run runs the check itself.
+   */
+  leaveConformanceToJob?: boolean;
 }
 
 function gate(checks: Check[]): GateReport {
@@ -597,15 +602,18 @@ export async function runToolPack(options: RunOptions): Promise<GatesReport> {
     if (save) await writeCached(cacheRoot, pack, tool, `pack-${packKey}`, packResult, shard);
   }
 
-  // passes-conformance: the pack's own conformance check reads every rule of the pack, so it runs on every run.
-  const conformance = await packConformance(root, pack);
-  pinChecks.push({ id: "conformance-runs", ok: conformance.errors.length === 0, detail: conformance.errors.length === 0 ? "the pack's conformance check runs without errors" : conformance.errors.slice(0, 3).join("; ") });
+  // passes-conformance: the pack's own conformance check reads every rule of the pack, so it is never cached. In CI the
+  // conformance job runs it once for the pack instead of every tool-pack run and shard repeating it.
+  const conformance = options.leaveConformanceToJob === true ? null : await packConformance(root, pack);
+  if (conformance !== null) pinChecks.push({ id: "conformance-runs", ok: conformance.errors.length === 0, detail: conformance.errors.length === 0 ? "the pack's conformance check runs without errors" : conformance.errors.slice(0, 3).join("; ") });
   const toolPack = gate(pinChecks);
   const blockedBy = toolPack.pass ? null : toolPack.checks.filter((check) => !check.ok).map((check) => `${check.id}: ${check.detail}`).join("; ");
 
   const reports = judged.map((entry) => {
     const report = structuredClone(results.get(entry.key)!.report);
-    report.gates["passes-conformance"] = gate(passesConformanceChecks(conformance, report.id));
+    report.gates["passes-conformance"] = conformance === null
+      ? gate([{ id: LEFT_TO_CONFORMANCE_JOB, ok: true, detail: "not run here: the conformance job runs the pack's conformance check once, and the summary takes this rule's result from its report" }])
+      : gate(passesConformanceChecks(conformance, report.id));
     Object.assign(report, verdict(report.gates));
     // A failing tool-pack check (a stale recording, an incomplete corpus, shipped rules that do not load together) fails
     // every rule, whatever its gates say: a shipped rule blocks, and a candidate is not ready to promote.
