@@ -378,6 +378,12 @@
       "on": false
     },
     {
+      "id": "eslint-no-self-assign",
+      "document": "rules/eslint-no-self-assign.json",
+      "title": "ESLint no-self-assign: Disallow assignments where both sides are exactly the same",
+      "group": "ESLint"
+    },
+    {
       "id": "eslint-no-self-compare",
       "document": "rules/eslint-no-self-compare.json",
       "title": "ESLint no-self-compare: Disallow comparisons where both sides are exactly the same",

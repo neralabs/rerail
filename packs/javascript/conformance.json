@@ -1520,7 +1520,7 @@
         "tool": "eslint",
         "rule": "no-self-assign"
       },
-      "policy": "candidates/rules/eslint-no-self-assign.json",
+      "policy": "rules/eslint-no-self-assign.json",
       "capabilities": [
         "syntax",
         "value",
