@@ -55,6 +55,14 @@ pub enum Column {
     /// the eligible nodes of its subtree in preorder. `node` selects the column: the reached
     /// node, or the root. O(roots + nodes) bytes for O(roots × depth) rows.
     Interval { roots: Rc<[u32]>, lo: Rc<[u32]>, offs: Rc<[u32]>, eligible: Rc<[u32]>, node: bool },
+    /// R16, a text node id `kind || ':' || start || ':' || end` projected from three columns,
+    /// kept as its parts: every row reads that concatenation's value, but keys and comparisons
+    /// read the parts (`Cell::Tid`), and nothing per row is stored or formatted unless the text
+    /// itself is read.
+    Tid { kind: Rc<Column>, start: Rc<Column>, end: Rc<Column> },
+    /// R16, a node id column whose parts are a symbol and two offsets on every row, stored flat
+    /// (`facts::NONE` kind: a NULL id): 12 bytes a row, read without indirection.
+    TidFlat { kind: Vec<u32>, start: Vec<u32>, end: Vec<u32> },
 }
 
 /// `Column::U32`'s NULL.
@@ -122,6 +130,15 @@ impl Column {
                 let k = offs.partition_point(|&o| o <= r) - 1;
                 V::Int(if *node { eligible[(lo[k] + (r - offs[k])) as usize] } else { roots[k] } as i64)
             }
+            Column::Tid { kind, start, end } => {
+                let parts = [kind.get(r), start.get(r), end.get(r)];
+                let [Some(k), Some(s), Some(e)] = parts.map(|v| sv::to_text(&v)) else { return V::Null };
+                V::text(&format!("{k}:{s}:{e}"))
+            }
+            Column::TidFlat { kind, start, end } => match kind[r as usize] {
+                crate::facts::NONE => V::Null,
+                k => tid_text(&TidKind::Sym(k), start[r as usize] as i64, end[r as usize] as i64, V::text),
+            },
         }
     }
 
@@ -132,6 +149,9 @@ impl Column {
         }
         match &**col {
             Column::Gather { src, idx, aff: Aff::None } => Rc::new(Column::Gather { src: src.clone(), idx: idx.clone(), aff }),
+            // A node id is NULL or a text holding `:`, which no affinity converts (a well-formed
+            // number has no `:`; text affinity leaves a text alone).
+            Column::Tid { .. } | Column::TidFlat { .. } => col.clone(),
             _ => Rc::new(Column::Gather { src: col.clone(), idx: None, aff }),
         }
     }
@@ -149,16 +169,530 @@ impl Column {
             Column::Const(_) => std::mem::size_of::<V>(),
             Column::U32(v) | Column::Sym(v) => v.len() * 4,
             Column::Interval { roots, lo, offs, eligible, .. } => (roots.len() + lo.len() + offs.len() + eligible.len()) * 4,
+            Column::Tid { .. } => 0,
+            Column::TidFlat { kind, .. } => kind.len() * 12,
         }
     }
 
     /// Levels of indirection a read goes through.
     fn depth(&self) -> usize {
         match self {
-            Column::Vals(_) | Column::Text { .. } | Column::Const(_) | Column::U32(_) | Column::Sym(_) | Column::Interval { .. } => 0,
+            Column::Vals(_) | Column::Text { .. } | Column::Const(_) | Column::U32(_) | Column::Sym(_) | Column::Interval { .. } | Column::TidFlat { .. } => 0,
             Column::Gather { src, .. } => 1 + src.depth(),
             Column::Chain(p) => 1 + p.iter().map(|(_, c)| c.depth()).max().unwrap_or(0),
+            Column::Tid { kind, start, end } => 1 + kind.depth().max(start.depth()).max(end.depth()),
         }
+    }
+
+    /// Row `r`'s value as a borrowed cell: what `get` returns, without cloning or allocating
+    /// (a node's text is a slice of the source; a symbol stays an id).
+    pub(crate) fn cell(&self, r: u32) -> Cell<'_> {
+        match self {
+            Column::Vals(v) => vcell(&v[r as usize]),
+            Column::Gather { src, idx, aff } => {
+                let s = match idx {
+                    Some(i) => i[r as usize],
+                    None => r,
+                };
+                if s == NULL_ROW {
+                    return Cell::Null;
+                }
+                let c = src.cell(s);
+                if *aff == Aff::None { c } else { cell_aff(c, *aff) }
+            }
+            Column::Chain(parts) => {
+                let p = parts.partition_point(|(start, _)| *start <= r) - 1;
+                parts[p].1.cell(r - parts[p].0)
+            }
+            Column::Text { source, cells, vals, .. } => match cells[r as usize] {
+                (TEXT_VAL, i) => vcell(&vals[i as usize]),
+                (s, e) => Cell::Text(&source[s as usize..e as usize]),
+            },
+            Column::Const(v) => vcell(v),
+            Column::U32(v) => match v[r as usize] {
+                U32_NULL => Cell::Null,
+                x => Cell::Int(x as i64),
+            },
+            Column::Sym(v) => match v[r as usize] {
+                crate::facts::NONE => Cell::Null,
+                s => Cell::Sym(s),
+            },
+            Column::Interval { .. } => vcell_own(self.get(r)),
+            Column::Tid { kind, start, end } => match (kind.cell(r), start.cell(r), end.cell(r)) {
+                (Cell::Null, _, _) | (_, Cell::Null, _) | (_, _, Cell::Null) => Cell::Null,
+                (Cell::Text(k), Cell::Int(s), Cell::Int(e)) => Cell::Tid(TidKind::Text(k), s, e),
+                (Cell::RcT(k), Cell::Int(s), Cell::Int(e)) => Cell::Tid(TidKind::Text(k), s, e),
+                (Cell::Sym(k), Cell::Int(s), Cell::Int(e)) => Cell::Tid(TidKind::Sym(k), s, e),
+                _ => Cell::Own(self.get(r)),
+            },
+            Column::TidFlat { kind, start, end } => match kind[r as usize] {
+                crate::facts::NONE => Cell::Null,
+                k => Cell::Tid(TidKind::Sym(k), start[r as usize] as i64, end[r as usize] as i64),
+            },
+        }
+    }
+
+    /// A node id over `n` rows of `kind`, `start` and `end` (R16): flat when every row's parts are
+    /// a symbol and two offsets in `u32` (or a NULL part), else kept as its parts.
+    fn tid(kind: Rc<Column>, start: Rc<Column>, end: Rc<Column>, n: usize) -> Column {
+        let (mut k, mut s, mut e) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
+        let off = |c: Cell<'_>| match c {
+            Cell::Int(i) if (0..U32_NULL as i64).contains(&i) => Some(Some(i as u32)),
+            Cell::Null => Some(None),
+            _ => None,
+        };
+        for r in 0..n as u32 {
+            let (kc, sc, ec) = (kind.cell(r), off(start.cell(r)), off(end.cell(r)));
+            let (Some(sc), Some(ec)) = (sc, ec) else { return Column::Tid { kind, start, end } };
+            match (kc, sc, ec) {
+                (Cell::Null, _, _) | (_, None, _) | (_, _, None) => {
+                    k.push(crate::facts::NONE);
+                    s.push(0);
+                    e.push(0);
+                }
+                (Cell::Sym(y), Some(a), Some(b)) => {
+                    k.push(y);
+                    s.push(a);
+                    e.push(b);
+                }
+                _ => return Column::Tid { kind, start, end },
+            }
+        }
+        Column::TidFlat { kind: k, start: s, end: e }
+    }
+
+    /// The value every row holds, when the column's structure shows it is one value (a constant,
+    /// gathered without null rows, or chained from equal constants). Asked of non-empty columns.
+    fn konst(&self) -> Option<V> {
+        match self {
+            Column::Const(v) => Some(v.clone()),
+            Column::Gather { src, idx, aff } => {
+                let v = src.konst()?;
+                if idx.as_ref().is_some_and(|i| i.contains(&NULL_ROW)) {
+                    return None;
+                }
+                Some(sv::apply_affinity(v, *aff))
+            }
+            Column::Chain(parts) => {
+                let first = parts.first()?.1.konst()?;
+                for (_, p) in &parts[1..] {
+                    if sv::dkey(&p.konst()?) != sv::dkey(&first) || std::mem::discriminant(&p.konst()?) != std::mem::discriminant(&first) {
+                        return None;
+                    }
+                }
+                Some(first)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// A value read without cloning (`Column::cell`): text borrowed from its column, a symbol by
+/// id (its name read only where bytes are compared), numbers by value, a text node id by its
+/// parts (`Column::Tid`), and `Own` where a storage affinity converted the value.
+#[derive(Clone, Debug)]
+pub(crate) enum Cell<'c> {
+    Null,
+    Int(i64),
+    Real(f64),
+    Text(&'c str),
+    /// Text shared by its column (a stored value): owning it is a count bump.
+    RcT(&'c Rc<str>),
+    Sym(u32),
+    /// The text `kind:start:end`.
+    Tid(TidKind<'c>, i64, i64),
+    Own(V),
+}
+
+/// The kind part of a text node id: borrowed text, a symbol, or owned text.
+#[derive(Clone, Debug)]
+pub(crate) enum TidKind<'c> {
+    Text(&'c str),
+    Sym(u32),
+    Own(Rc<str>),
+}
+
+impl TidKind<'_> {
+    fn with<R>(&self, f: impl FnOnce(&str) -> R) -> R {
+        match self {
+            TidKind::Text(s) => f(s),
+            TidKind::Sym(y) => f(&crate::facts::name(*y)),
+            TidKind::Own(s) => f(s),
+        }
+    }
+    fn owned(&self) -> TidKind<'static> {
+        match self {
+            TidKind::Text(s) => TidKind::Own(Rc::from(*s)),
+            TidKind::Sym(y) => TidKind::Sym(*y),
+            TidKind::Own(s) => TidKind::Own(s.clone()),
+        }
+    }
+    fn eq(&self, o: &TidKind<'_>) -> bool {
+        match (self, o) {
+            (TidKind::Sym(a), TidKind::Sym(b)) => a == b,
+            _ => self.with(|a| o.with(|b| a == b)),
+        }
+    }
+}
+
+/// The text of node id `kind:start:end` (`value::to_text` of each part, joined by `:`), passed
+/// to `f` from a stack buffer (a heap string only for a kind longer than the buffer).
+fn tid_text<R>(k: &TidKind<'_>, s: i64, e: i64, f: impl FnOnce(&str) -> R) -> R {
+    fn push_int(buf: &mut [u8], at: &mut usize, v: i64) {
+        let mut digits = [0u8; 20];
+        let mut n = 0;
+        let mut u = v.unsigned_abs();
+        loop {
+            digits[n] = b'0' + (u % 10) as u8;
+            n += 1;
+            u /= 10;
+            if u == 0 {
+                break;
+            }
+        }
+        if v < 0 {
+            buf[*at] = b'-';
+            *at += 1;
+        }
+        for d in digits[..n].iter().rev() {
+            buf[*at] = *d;
+            *at += 1;
+        }
+    }
+    k.with(|k| {
+        let mut buf = [0u8; 160];
+        if k.len() > 160 - 2 * 21 - 2 {
+            return f(&format!("{k}:{s}:{e}"));
+        }
+        buf[..k.len()].copy_from_slice(k.as_bytes());
+        let mut at = k.len();
+        buf[at] = b':';
+        at += 1;
+        push_int(&mut buf, &mut at, s);
+        buf[at] = b':';
+        at += 1;
+        push_int(&mut buf, &mut at, e);
+        // SAFETY: a UTF-8 kind, ASCII separators and ASCII digits.
+        f(unsafe { std::str::from_utf8_unchecked(&buf[..at]) })
+    })
+}
+
+impl Cell<'_> {
+    fn to_v(&self) -> V {
+        match self {
+            Cell::Null => V::Null,
+            Cell::Int(i) => V::Int(*i),
+            Cell::Real(f) => V::Real(*f),
+            Cell::Text(s) => V::text(s),
+            Cell::RcT(s) => V::Text((*s).clone()),
+            Cell::Sym(y) => V::Text(crate::facts::name(*y)),
+            Cell::Tid(k, s, e) => tid_text(k, *s, *e, V::text),
+            Cell::Own(v) => v.clone(),
+        }
+    }
+}
+
+fn vcell(v: &V) -> Cell<'_> {
+    match v {
+        V::Null => Cell::Null,
+        V::Int(i) => Cell::Int(*i),
+        V::Real(f) => Cell::Real(*f),
+        V::Text(s) => Cell::RcT(s),
+    }
+}
+
+/// Whether a numeric affinity may turn text `s` into a number: `value::text_to_number` reads
+/// only a text whose first character after leading spaces is a sign, a digit or `.`; any other
+/// text stays text.
+fn maybe_numeric(s: &str) -> bool {
+    s.trim_start_matches([' ', '\t', '\n', '\r', '\x0c', '\x0b']).as_bytes().first().is_some_and(|b| b.is_ascii_digit() || matches!(b, b'+' | b'-' | b'.'))
+}
+
+/// `value::apply_affinity` on a cell (a `Gather`'s storage affinity). The cases it leaves
+/// unchanged stay borrowed; every other case is the owned conversion itself.
+fn cell_aff(c: Cell<'_>, aff: Aff) -> Cell<'_> {
+    let unchanged = match (&c, aff) {
+        (_, Aff::None) | (Cell::Null, _) => true,
+        (Cell::Text(_) | Cell::RcT(_) | Cell::Sym(_) | Cell::Tid(..), Aff::Text) => true,
+        (Cell::Int(_), Aff::Numeric | Aff::Integer) | (Cell::Real(_), Aff::Real) => true,
+        (Cell::Text(_) | Cell::RcT(_) | Cell::Sym(_) | Cell::Tid(..), Aff::Numeric | Aff::Integer | Aff::Real) => !text_may_be_numeric(&c),
+        _ => false,
+    };
+    if unchanged { c } else { Cell::Own(sv::apply_affinity(c.to_v(), aff)) }
+}
+
+/// `maybe_numeric` of a text cell (a node id's text starts with its kind; an empty or blank
+/// kind is followed by `:`, which is not numeric).
+fn text_may_be_numeric(c: &Cell<'_>) -> bool {
+    match c {
+        Cell::Text(s) => maybe_numeric(s),
+        Cell::RcT(s) => maybe_numeric(s),
+        Cell::Sym(y) => maybe_numeric(&crate::facts::name(*y)),
+        Cell::Tid(k, ..) => k.with(maybe_numeric),
+        _ => true,
+    }
+}
+
+/// `value::compare_affinity` on a cell, borrowed where it leaves the value unchanged.
+fn cell_cmp_aff(c: Cell<'_>, aff: Aff) -> Cell<'_> {
+    let unchanged = match (&c, aff) {
+        (_, Aff::None) | (Cell::Null, _) => true,
+        (Cell::Own(_), _) => false,
+        (Cell::Int(_) | Cell::Real(_), Aff::Text) => false,
+        (_, Aff::Text) => true,
+        (Cell::Text(_) | Cell::RcT(_) | Cell::Sym(_) | Cell::Tid(..), _) => !text_may_be_numeric(&c),
+        (Cell::Int(_) | Cell::Real(_), _) => true,
+    };
+    if unchanged { c } else { vcell_own(sv::compare_affinity(&c.to_v(), aff)) }
+}
+
+fn vcell_own(v: V) -> Cell<'static> {
+    match v {
+        V::Null => Cell::Null,
+        V::Int(i) => Cell::Int(i),
+        V::Real(f) => Cell::Real(f),
+        t => Cell::Own(t),
+    }
+}
+
+/// An equality key part (`value::key` of a compared value), borrowed where the column holds
+/// it: integers (and integral reals), other reals by bits, text by bytes (a symbol by id and a
+/// node id by its parts; each compares and hashes as its text).
+#[derive(Clone, Debug)]
+pub(crate) enum KCell<'c> {
+    Int(i64),
+    Real(u64),
+    Text(&'c str),
+    RcT(&'c Rc<str>),
+    Sym(u32),
+    Tid(TidKind<'c>, i64, i64),
+    Own(Rc<str>),
+}
+
+/// `value::key(value::compare_affinity(c, aff))` on a cell; `None` for NULL.
+fn cell_key(c: Cell<'_>, aff: Aff) -> Option<KCell<'_>> {
+    Some(match cell_cmp_aff(c, aff) {
+        Cell::Null => return None,
+        Cell::Int(i) => KCell::Int(i),
+        Cell::Real(f) => real_key(f),
+        Cell::Text(s) => KCell::Text(s),
+        Cell::RcT(s) => KCell::RcT(s),
+        Cell::Sym(y) => KCell::Sym(y),
+        Cell::Tid(k, s, e) => KCell::Tid(k, s, e),
+        Cell::Own(v) => KCell::of(sv::key(&v)?),
+    })
+}
+
+fn real_key(f: f64) -> KCell<'static> {
+    match sv::key(&V::Real(f)) {
+        Some(Key::Int(i)) => KCell::Int(i),
+        Some(Key::Real(b)) => KCell::Real(b),
+        _ => unreachable!("a real's key is a number"),
+    }
+}
+
+/// A probe's key parts: up to four inline, more on the heap.
+pub(crate) enum KeyBuf<'a> {
+    Inline(usize, [KCell<'a>; 4]),
+    Heap(Vec<KCell<'a>>),
+}
+
+impl<'a> std::ops::Deref for KeyBuf<'a> {
+    type Target = [KCell<'a>];
+    fn deref(&self) -> &[KCell<'a>] {
+        match self {
+            KeyBuf::Inline(n, a) => &a[..*n],
+            KeyBuf::Heap(v) => v,
+        }
+    }
+}
+
+/// Combines key part hashes (FxHash's step).
+#[inline]
+fn mix(h: u64, part: u64) -> u64 {
+    (h.rotate_left(5) ^ part).wrapping_mul(0xf135_7aea_2e62_a9c5)
+}
+
+fn raw_hash(b: &str) -> u64 {
+    use std::hash::Hasher;
+    let mut h = rustc_hash::FxHasher::default();
+    h.write(b.as_bytes());
+    mix(3, h.finish())
+}
+
+/// The hash of a text key. A text of node-id form `kind:start:end` (both offsets canonical
+/// decimal integers, as `value::to_text` writes them) hashes by its parts, so a node id kept as
+/// parts (R16) hashes without formatting its text; the hash is still a function of the bytes.
+fn text_hash(s: &str) -> u64 {
+    match split_tid(s) {
+        Some((k, a, b)) => tid_hash(raw_hash(k), a, b),
+        None => raw_hash(s),
+    }
+}
+
+fn tid_hash(kind: u64, s: i64, e: i64) -> u64 {
+    mix(mix(mix(4, kind), s as u64), e as u64)
+}
+
+/// `kind:start:end` split at its last two `:` when both offsets are canonical decimal integers
+/// (no leading zero but `0`, no `-0`, within `i64`).
+fn split_tid(s: &str) -> Option<(&str, i64, i64)> {
+    fn int_back(b: &[u8]) -> Option<(usize, i64)> {
+        // The canonical integer ending `b`: (its start, value).
+        let mut i = b.len();
+        while i > 0 && b[i - 1].is_ascii_digit() {
+            i -= 1;
+        }
+        let digits = &b[i..];
+        if digits.is_empty() || digits.len() > 19 || (digits.len() > 1 && digits[0] == b'0') {
+            return None;
+        }
+        let mut v: i64 = 0;
+        for d in digits {
+            v = v.checked_mul(10)?.checked_add((d - b'0') as i64)?;
+        }
+        if i > 0 && b[i - 1] == b'-' {
+            if v == 0 {
+                return None;
+            }
+            return Some((i - 1, -v));
+        }
+        Some((i, v))
+    }
+    let b = s.as_bytes();
+    if !b.last()?.is_ascii_digit() {
+        return None;
+    }
+    let (i, e) = int_back(b)?;
+    if i == 0 || b[i - 1] != b':' {
+        return None;
+    }
+    let (j, st) = int_back(&b[..i - 1])?;
+    if j == 0 || b[j - 1] != b':' {
+        return None;
+    }
+    Some((&s[..j - 1], st, e))
+}
+
+thread_local! {
+    /// Per symbol, (`raw_hash`, `text_hash`) of its name, once computed.
+    static SYM_HASH: std::cell::RefCell<Vec<Option<(u64, u64)>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// A symbol's (`raw_hash`, `text_hash`) of its name.
+fn sym_hash(y: u32) -> (u64, u64) {
+    SYM_HASH.with(|c| {
+        if let Some(Some(h)) = c.borrow().get(y as usize) {
+            return *h;
+        }
+        let name = crate::facts::name(y);
+        let h = (raw_hash(&name), text_hash(&name));
+        let mut c = c.borrow_mut();
+        if c.len() <= y as usize {
+            c.resize(y as usize + 1, None);
+        }
+        c[y as usize] = Some(h);
+        h
+    })
+}
+
+impl KCell<'_> {
+    fn of(k: Key) -> KCell<'static> {
+        match k {
+            Key::Int(i) => KCell::Int(i),
+            Key::Real(b) => KCell::Real(b),
+            Key::Text(s) => KCell::Own(s),
+        }
+    }
+    fn owned(&self) -> KCell<'static> {
+        match self {
+            KCell::Int(i) => KCell::Int(*i),
+            KCell::Real(b) => KCell::Real(*b),
+            KCell::Text(s) => KCell::Own(Rc::from(*s)),
+            KCell::RcT(s) => KCell::Own((*s).clone()),
+            KCell::Sym(y) => KCell::Sym(*y),
+            KCell::Tid(k, s, e) => KCell::Tid(k.owned(), *s, *e),
+            KCell::Own(s) => KCell::Own(s.clone()),
+        }
+    }
+    /// The hash of the key part; equal parts (`eq`) hash equally whatever their form.
+    fn hash(&self) -> u64 {
+        match self {
+            KCell::Int(i) => mix(1, *i as u64),
+            KCell::Real(b) => mix(2, *b),
+            KCell::Sym(y) => sym_hash(*y).1,
+            KCell::Tid(k, s, e) => tid_hash(
+                match k {
+                    TidKind::Sym(y) => sym_hash(*y).0,
+                    TidKind::Text(t) => raw_hash(t),
+                    TidKind::Own(t) => raw_hash(t),
+                },
+                *s,
+                *e,
+            ),
+            _ => self.with_text(text_hash),
+        }
+    }
+    /// `Key` equality: numbers by value, texts by bytes. Two node ids are equal exactly when
+    /// their parts are: `kind:start:end` with decimal `start` and `end` (no `:` in either) is
+    /// split back by its last two `:`.
+    fn eq(&self, o: &KCell<'_>) -> bool {
+        match (self, o) {
+            (KCell::Int(a), KCell::Int(b)) => a == b,
+            (KCell::Real(a), KCell::Real(b)) => a == b,
+            (KCell::Int(_) | KCell::Real(_), _) | (_, KCell::Int(_) | KCell::Real(_)) => false,
+            (KCell::Sym(a), KCell::Sym(b)) => a == b,
+            (KCell::Tid(ka, sa, ea), KCell::Tid(kb, sb, eb)) => sa == sb && ea == eb && ka.eq(kb),
+            _ => self.with_text(|a| o.with_text(|b| a == b)),
+        }
+    }
+    fn with_text<R>(&self, f: impl FnOnce(&str) -> R) -> R {
+        match self {
+            KCell::Text(s) => f(s),
+            KCell::RcT(s) => f(s),
+            KCell::Own(s) => f(s),
+            KCell::Sym(y) => f(&crate::facts::name(*y)),
+            KCell::Tid(k, s, e) => tid_text(k, *s, *e, f),
+            KCell::Int(_) | KCell::Real(_) => unreachable!("not a text key"),
+        }
+    }
+}
+
+/// `value::compare` on cells: `None` when either is NULL.
+fn compare_cells(a: Cell<'_>, b: Cell<'_>, aff: (Aff, Aff)) -> Option<Ordering> {
+    if matches!(a, Cell::Null) || matches!(b, Cell::Null) {
+        return None;
+    }
+    Some(cmp_cells(&cell_cmp_aff(a, aff.0), &cell_cmp_aff(b, aff.1)))
+}
+
+/// `value::cmp` on cells: NULL < numbers < text (bytes).
+fn cmp_cells(a: &Cell<'_>, b: &Cell<'_>) -> Ordering {
+    fn class(c: &Cell<'_>) -> u8 {
+        match c {
+            Cell::Null | Cell::Own(V::Null) => 0,
+            Cell::Int(_) | Cell::Real(_) | Cell::Own(V::Int(_) | V::Real(_)) => 1,
+            Cell::Text(_) | Cell::RcT(_) | Cell::Sym(_) | Cell::Tid(..) | Cell::Own(V::Text(_)) => 2,
+        }
+    }
+    fn with_text<R>(c: &Cell<'_>, f: impl FnOnce(&str) -> R) -> R {
+        match c {
+            Cell::Text(s) => f(s),
+            Cell::RcT(s) => f(s),
+            Cell::Sym(y) => f(&crate::facts::name(*y)),
+            Cell::Own(V::Text(s)) => f(s),
+            Cell::Tid(k, s, e) => tid_text(k, *s, *e, f),
+            _ => unreachable!("not a text"),
+        }
+    }
+    match (a, b) {
+        (Cell::Int(x), Cell::Int(y)) => x.cmp(y),
+        (Cell::Sym(x), Cell::Sym(y)) if x == y => Ordering::Equal,
+        _ => match (class(a), class(b)) {
+            (2, 2) => with_text(a, |x| with_text(b, |y| x.as_bytes().cmp(y.as_bytes()))),
+            (ca, cb) if ca != cb => ca.cmp(&cb),
+            _ => sv::cmp(&a.to_v(), &b.to_v()),
+        },
     }
 }
 
@@ -180,13 +714,32 @@ fn gather(src: &Rc<Column>, idx: &Rc<[u32]>, memo: &mut FxHashMap<(usize, usize)
             };
             Rc::new(Column::Gather { src: s2.clone(), idx: Some(composed), aff: *aff })
         }
+        // A gathered node id is the node id of the gathered parts (a null row's parts are NULL,
+        // and so is its id).
+        Column::Tid { kind, start, end } => Rc::new(Column::Tid { kind: gather(kind, idx, memo), start: gather(start, idx, memo), end: gather(end, idx, memo) }),
         _ if src.depth() >= MAX_DEPTH => Rc::new(Column::Vals(idx.iter().map(|&k| if k == NULL_ROW { V::Null } else { src.get(k) }).collect())),
         _ => Rc::new(Column::Gather { src: src.clone(), idx: Some(idx.clone()), aff: Aff::None }),
     }
 }
 
-/// UNION ALL of columns of `n` rows each. Adjacent gathers of one source merge into one.
+/// UNION ALL of columns of `n` rows each. Adjacent gathers of one source merge into one; a
+/// union of node ids (R16) is the node id of the unions of their parts, so the parts stay
+/// shallow gathers through unions and recursion levels.
 fn chain(cols: &[(&Rc<Column>, usize)]) -> Rc<Column> {
+    let live: Vec<&(&Rc<Column>, usize)> = cols.iter().filter(|(_, n)| *n > 0).collect();
+    if live.len() > 1 && live.iter().all(|(c, _)| matches!(&***c, Column::Tid { .. })) {
+        let part = |j: usize| {
+            let ps: Vec<(&Rc<Column>, usize)> = live
+                .iter()
+                .map(|(c, n)| match &***c {
+                    Column::Tid { kind, start, end } => ([kind, start, end][j], *n),
+                    _ => unreachable!("every part is a node id"),
+                })
+                .collect();
+            chain(&ps)
+        };
+        return Rc::new(Column::Tid { kind: part(0), start: part(1), end: part(2) });
+    }
     let mut parts: Vec<(u32, Rc<Column>)> = Vec::new();
     let mut start = 0u32;
     let mut push = |parts: &mut Vec<(u32, Rc<Column>)>, s: u32, c: &Rc<Column>| {
@@ -227,23 +780,56 @@ fn concat(schema: Schema, w: usize, parts: &[Table]) -> Table {
     Table { schema, cols, len }
 }
 
-/// Set semantics over rows (UNION, recursive UNION): each column's values interned by their
-/// distinctness key, rows compared as tuples of interned ids.
+/// Set semantics over rows (UNION, recursive UNION, DISTINCT): each column's values interned by
+/// their distinctness key (`value::dkey`: NULLs equal, numbers by value, texts by bytes), read
+/// as key cells; rows compared as tuples of interned ids.
 struct Distinct {
-    ids: Vec<FxHashMap<DKey, u32>>,
+    ids: Vec<Interner>,
     narrow: rustc_hash::FxHashSet<[u32; 4]>,
     wide: rustc_hash::FxHashSet<Box<[u32]>>,
 }
 
+/// Ids for distinctness keys (`None`: NULL), in first-seen order; each key stored once, owned.
+#[derive(Default)]
+struct Interner {
+    heads: FxHashMap<u64, u32>,
+    keys: Vec<(Option<KCell<'static>>, u32)>,
+}
+
+impl Interner {
+    fn id(&mut self, k: Option<KCell<'_>>) -> u32 {
+        let h = k.as_ref().map_or(0, KCell::hash);
+        let mut i = self.heads.get(&h).copied().unwrap_or(u32::MAX);
+        while i != u32::MAX {
+            let (rep, next) = &self.keys[i as usize];
+            let same = match (rep, &k) {
+                (None, None) => true,
+                (Some(a), Some(b)) => a.eq(b),
+                _ => false,
+            };
+            if same {
+                return i;
+            }
+            i = *next;
+        }
+        let id = self.keys.len() as u32;
+        let next = self.heads.insert(h, id).unwrap_or(u32::MAX);
+        self.keys.push((k.map(|k| k.owned()), next));
+        id
+    }
+    /// The id of a value's distinctness key.
+    fn of(&mut self, c: Cell<'_>) -> u32 {
+        self.id(cell_key(c, Aff::None))
+    }
+}
+
 impl Distinct {
     fn new(width: usize) -> Distinct {
-        Distinct { ids: (0..width).map(|_| FxHashMap::default()).collect(), narrow: Default::default(), wide: Default::default() }
+        Distinct { ids: (0..width).map(|_| Interner::default()).collect(), narrow: Default::default(), wide: Default::default() }
     }
     /// Column `c`'s id for value `v`.
-    fn intern(&mut self, c: usize, v: &V) -> u32 {
-        let ids = &mut self.ids[c];
-        let n = ids.len() as u32;
-        *ids.entry(sv::dkey(v)).or_insert(n)
+    fn intern(&mut self, c: usize, v: Cell<'_>) -> u32 {
+        self.ids[c].of(v)
     }
     /// Whether the row of interned ids `key` is new; records it.
     fn insert_key(&mut self, key: &[u32]) -> bool {
@@ -257,7 +843,15 @@ impl Distinct {
     }
     /// Whether row `r` of `t` (its first `width` columns) is new; records it.
     fn insert(&mut self, t: &Table, r: usize) -> bool {
-        let key: Vec<u32> = (0..self.ids.len()).map(|c| self.intern(c, &t.value(r, c))).collect();
+        let w = self.ids.len();
+        if w <= 4 {
+            let mut key = [0u32; 4];
+            for (c, k) in key.iter_mut().enumerate().take(w) {
+                *k = self.intern(c, t.cell(r, c));
+            }
+            return self.narrow.insert(key);
+        }
+        let key: Vec<u32> = (0..w).map(|c| self.intern(c, t.cell(r, c))).collect();
         self.insert_key(&key)
     }
 }
@@ -299,6 +893,10 @@ impl Table {
     }
     pub fn value(&self, r: usize, c: usize) -> V {
         self.cols.get(c).map_or(V::Null, |col| col.get(r as u32))
+    }
+    /// Row `r`'s value in column `c` as a borrowed cell.
+    pub(crate) fn cell(&self, r: usize, c: usize) -> Cell<'_> {
+        self.cols.get(c).map_or(Cell::Null, |col| col.cell(r as u32))
     }
     /// One row's values over the schema's columns.
     pub fn row(&self, r: usize) -> Vec<V> {
@@ -1512,10 +2110,17 @@ impl<'a> Db<'a> {
 /// key, each group's rows ascending and contiguous in `rows`. Keys are not stored: a group is
 /// found by its key's hash and confirmed against its first row, so the index costs 4 bytes a row
 /// plus ~32 bytes a distinct key. A row with a NULL key part equals nothing and is left out.
+///
+/// Keys are read as borrowed cells (`Column::cell`, `cell_key`): no value is cloned or
+/// allocated per row. A key column that holds one value on every row (`Column::konst`, e.g. a
+/// partition's `__path`) is checked once per lookup instead of hashed per row.
 struct Index {
     table: Rc<Table>,
-    cols: Vec<u16>,
-    affs: Vec<Aff>,
+    /// Key positions read per row: (position in the key, column, affinity).
+    var: Vec<(usize, u16, Aff)>,
+    /// Key positions whose column holds one non-NULL value on every row: (position, its key).
+    /// A constant NULL leaves the index empty.
+    konst: Vec<(usize, KCell<'static>)>,
     /// Key hash → first group with that hash.
     heads: FxHashMap<u64, u32>,
     groups: Vec<Group>,
@@ -1531,34 +2136,55 @@ struct Group {
     next: u32,
 }
 
-fn key_hash(key: &[Key]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = rustc_hash::FxHasher::default();
-    key.hash(&mut h);
-    h.finish()
-}
-
 impl Index {
     fn build(table: &Rc<Table>, cols: &[u16], affs: &[Aff]) -> Index {
-        let mut ix = Index { table: table.clone(), cols: cols.to_vec(), affs: affs.to_vec(), heads: FxHashMap::default(), groups: Vec::new(), rows: Vec::new() };
-        // Pass 1: each row's group (`u32::MAX`: a NULL key part).
-        let mut of_row: Vec<u32> = Vec::with_capacity(table.len());
-        let mut key = Vec::with_capacity(cols.len());
-        for ri in 0..table.len() as u32 {
-            if !ix.row_key(ri, &mut key) {
-                of_row.push(u32::MAX);
-                continue;
+        let mut ix = Index { table: table.clone(), var: Vec::new(), konst: Vec::new(), heads: FxHashMap::default(), groups: Vec::new(), rows: Vec::new() };
+        let n = table.len();
+        if n == 0 {
+            return ix;
+        }
+        for (p, (&c, &a)) in cols.iter().zip(affs).enumerate() {
+            // R17: a constant key column is checked once per lookup (not under FACTS_REWRITES=0).
+            match crate::lowered::rewrites().then(|| table.cols[c as usize].konst()).flatten() {
+                Some(v) => match cell_key(vcell(&v), a) {
+                    Some(k) => ix.konst.push((p, k.owned())),
+                    // Every row has a NULL key part.
+                    None => return ix,
+                },
+                None => ix.var.push((p, c, a)),
             }
-            let h = key_hash(&key);
-            let g = match ix.find(h, &key) {
-                Some(g) => g,
-                None => {
-                    let g = ix.groups.len() as u32;
-                    let next = ix.heads.insert(h, g).unwrap_or(u32::MAX);
-                    ix.groups.push(Group { rep: ri, start: 0, len: 0, next });
-                    g
+        }
+        // Pass 1: each row's group (`u32::MAX`: a NULL key part).
+        let mut of_row: Vec<u32> = Vec::with_capacity(n);
+        let mut cur: Vec<KCell<'_>> = Vec::with_capacity(ix.var.len());
+        'rows: for ri in 0..n as u32 {
+            cur.clear();
+            let mut h = 0u64;
+            for &(_, c, a) in &ix.var {
+                match cell_key(table.cols[c as usize].cell(ri), a) {
+                    Some(k) => {
+                        h = mix(h, k.hash());
+                        cur.push(k);
+                    }
+                    None => {
+                        of_row.push(u32::MAX);
+                        continue 'rows;
+                    }
                 }
-            };
+            }
+            let mut g = ix.heads.get(&h).copied().unwrap_or(u32::MAX);
+            while g != u32::MAX {
+                let grp = &ix.groups[g as usize];
+                if ix.rep_is(grp.rep, &cur) {
+                    break;
+                }
+                g = grp.next;
+            }
+            if g == u32::MAX {
+                g = ix.groups.len() as u32;
+                let next = ix.heads.insert(h, g).unwrap_or(u32::MAX);
+                ix.groups.push(Group { rep: ri, start: 0, len: 0, next });
+            }
             ix.groups[g as usize].len += 1;
             of_row.push(g);
         }
@@ -1580,28 +2206,22 @@ impl Index {
         ix
     }
 
-    /// Row `r`'s key into `out`; false when a part is NULL.
-    fn row_key(&self, r: u32, out: &mut Vec<Key>) -> bool {
-        out.clear();
-        for (&c, &a) in self.cols.iter().zip(&self.affs) {
-            match sv::key(&sv::compare_affinity(&self.table.cols[c as usize].get(r), a)) {
-                Some(k) => out.push(k),
-                None => return false,
-            }
+    /// Whether row `r`'s key equals `cur` (one part per `var` entry, in order).
+    fn rep_is(&self, r: u32, cur: &[KCell<'_>]) -> bool {
+        self.var.iter().zip(cur).all(|(&(_, c, a), k)| cell_key(self.table.cols[c as usize].cell(r), a).is_some_and(|x| x.eq(k)))
+    }
+
+    /// The group whose key equals `key` (one part per key column).
+    fn group(&self, key: &[KCell<'_>]) -> Option<u32> {
+        // Mutant 26 (R17, dropped side condition): the constant key parts are not compared.
+        if !crate::mutant::on(26) && !self.konst.iter().all(|(p, k)| key[*p].eq(k)) {
+            return None;
         }
-        true
-    }
-
-    /// Whether row `r`'s key equals `key`.
-    fn row_is(&self, r: u32, key: &[Key]) -> bool {
-        self.cols.iter().zip(&self.affs).zip(key).all(|((&c, &a), k)| sv::key(&sv::compare_affinity(&self.table.cols[c as usize].get(r), a)).as_ref() == Some(k))
-    }
-
-    fn find(&self, h: u64, key: &[Key]) -> Option<u32> {
+        let h = self.var.iter().fold(0u64, |h, &(p, _, _)| mix(h, key[p].hash()));
         let mut g = *self.heads.get(&h)?;
         while g != u32::MAX {
             let grp = &self.groups[g as usize];
-            if self.row_is(grp.rep, key) {
+            if self.var.iter().all(|&(p, c, a)| cell_key(self.table.cols[c as usize].cell(grp.rep), a).is_some_and(|x| x.eq(&key[p]))) {
                 return Some(g);
             }
             g = grp.next;
@@ -1610,8 +2230,8 @@ impl Index {
     }
 
     /// The rows whose key equals `key`, ascending.
-    fn get(&self, key: &[Key]) -> Option<&[u32]> {
-        let g = &self.groups[self.find(key_hash(key), key)? as usize];
+    fn get(&self, key: &[KCell<'_>]) -> Option<&[u32]> {
+        let g = &self.groups[self.group(key)? as usize];
         Some(&self.rows[g.start as usize..(g.start + g.len) as usize])
     }
 
@@ -1763,14 +2383,35 @@ impl Kept {
 
 /// A select's output under construction: per output column, either the (item, column) it reads
 /// — recorded as one row index per binding per item, shared by every column of that item — or a
-/// literal (one value for every row), or the values its expression evaluated to.
+/// text node id over three such columns (R16, `tid_parts`), or a literal (one value for every
+/// row), or the values its expression evaluated to.
 struct Out<'p> {
     exprs: Vec<&'p PE>,
     src: Vec<Option<(usize, usize)>>,
+    tid: Vec<Option<[(usize, usize); 3]>>,
     konst: Vec<Option<V>>,
     idx: Vec<Option<Vec<u32>>>,
     vals: Vec<Vec<V>>,
     n: usize,
+}
+
+/// R16: the projection `a || ':' || b || ':' || c` of three columns of non-lateral FROM items
+/// (the policies' text node ids `kind || ':' || start || ':' || end`), as (item, column) parts.
+fn tid_parts(p: &PE, s: &PSelect, texts: &[Box<str>]) -> Option<[(usize, usize); 3]> {
+    let col = |e: &PE| match e {
+        PE::Col { depth: 0, item, col } if !s.items[*item as usize].lateral => Some((*item as usize, *col as usize)),
+        _ => None,
+    };
+    // Mutant 25 (R16, dropped side condition): any text literal taken for the `':'` separator.
+    let colon = |e: &PE| matches!(e, PE::Lit(Lit::Text(i)) if &*texts[*i as usize] == ":" || crate::mutant::on(25));
+    let PE::Concat(l, c) = p else { return None };
+    let PE::Concat(l, sep2) = &**l else { return None };
+    let PE::Concat(l, b) = &**l else { return None };
+    let PE::Concat(a, sep1) = &**l else { return None };
+    if !(colon(sep1) && colon(sep2)) || !crate::lowered::rewrites() {
+        return None;
+    }
+    Some([col(a)?, col(b)?, col(c)?])
 }
 
 impl<'p> Out<'p> {
@@ -1783,6 +2424,7 @@ impl<'p> Out<'p> {
                 _ => None,
             })
             .collect();
+        let tid: Vec<Option<[(usize, usize); 3]>> = exprs.iter().map(|p| tid_parts(p, s, &ex.stmt.texts)).collect();
         let konst = exprs
             .iter()
             .map(|p| match p {
@@ -1794,11 +2436,11 @@ impl<'p> Out<'p> {
             })
             .collect();
         let mut idx: Vec<Option<Vec<u32>>> = vec![None; s.items.len()];
-        for (item, _) in src.iter().flatten() {
+        for (item, _) in src.iter().flatten().chain(tid.iter().flatten().flatten()) {
             idx[*item] = Some(Vec::new());
         }
         let vals = exprs.iter().map(|_| Vec::new()).collect();
-        Out { exprs, src, konst, idx, vals, n: 0 }
+        Out { exprs, src, tid, konst, idx, vals, n: 0 }
     }
 
     fn push(&mut self, ex: &Exec<'_, '_>, ctx: &EvalCtx<'_>) {
@@ -1807,8 +2449,8 @@ impl<'p> Out<'p> {
                 ix.push(ctx.frame.rows[item].r);
             }
         }
-        for (j, (src, k)) in self.src.iter().zip(&self.konst).enumerate() {
-            if src.is_none() && k.is_none() {
+        for (j, ((src, k), tid)) in self.src.iter().zip(&self.konst).zip(&self.tid).enumerate() {
+            if src.is_none() && k.is_none() && tid.is_none() {
                 self.vals[j].push(ex.eval(self.exprs[j], ctx));
             }
         }
@@ -1819,18 +2461,21 @@ impl<'p> Out<'p> {
         let idx: Vec<Option<Rc<[u32]>>> = self.idx.into_iter().map(|i| i.map(Rc::from)).collect();
         let mut memo = FxHashMap::default();
         let n = self.n;
+        let mut read = |(item, col): (usize, usize)| match tables[item].cols.get(col) {
+            Some(c) => gather(c, idx[item].as_ref().unwrap(), &mut memo),
+            None => Rc::new(Column::Const(V::Null)),
+        };
         let cols = self
             .src
             .iter()
+            .zip(self.tid)
             .zip(self.konst)
             .zip(self.vals)
-            .map(|((src, k), vals)| match (src, k) {
-                (Some((item, col)), _) => match tables[*item].cols.get(*col) {
-                    Some(c) => gather(c, idx[*item].as_ref().unwrap(), &mut memo),
-                    None => Rc::new(Column::Const(V::Null)),
-                },
-                (None, Some(v)) => Rc::new(Column::Const(v)),
-                (None, None) => Rc::new(Column::Vals(vals)),
+            .map(|(((src, tid), k), vals)| match (src, tid, k) {
+                (Some(p), _, _) => read(*p),
+                (None, Some([a, b, c]), _) => Rc::new(Column::tid(read(a), read(b), read(c), n)),
+                (None, None, Some(v)) => Rc::new(Column::Const(v)),
+                (None, None, None) => Rc::new(Column::Vals(vals)),
             })
             .collect();
         Table { schema, cols, len: n }
@@ -2069,8 +2714,10 @@ impl<'d, 'a> Exec<'d, 'a> {
         let mut seen = Distinct::new(w);
         // The carried columns' tuples (every column but `node`), interned.
         let mut carried_ids: FxHashMap<Vec<u32>, u32> = FxHashMap::default();
-        // The carried probe values (the probe columns read from `w` but `node`), interned.
-        let mut probe_ids: FxHashMap<Vec<Key>, u32> = FxHashMap::default();
+        // The carried probe values (the probe columns read from `w` but `node`), interned: per
+        // id its key parts, found by their combined hash.
+        let mut probe_keys: Vec<Vec<KCell<'static>>> = Vec::new();
+        let mut probe_heads: FxHashMap<u64, Vec<u32>> = FxHashMap::default();
         let mut rows_seen: rustc_hash::FxHashSet<u64> = Default::default();
         // Per admitted seed: its row, carried id, carried probe id (`u32::MAX`: a NULL part) and
         // node id.
@@ -2082,27 +2729,35 @@ impl<'d, 'a> Exec<'d, 'a> {
         let mut level: Vec<(u32, u32)> = Vec::new();
         let pos_nj = from_w.iter().position(|&c| c == nj).expect("closure probe reads `node`");
         for r in 0..seeds.len() {
-            let ids: Vec<u32> = (0..w).map(|c| seen.intern(c, &seeds.value(r, c))).collect();
+            let ids: Vec<u32> = (0..w).map(|c| seen.intern(c, seeds.cell(r, c))).collect();
             let carried: Vec<u32> = ids.iter().enumerate().filter(|&(c, _)| c != nj).map(|(_, &x)| x).collect();
             let n_c = carried_ids.len() as u32;
             let cid = *carried_ids.entry(carried).or_insert(n_c);
             if rows_seen.insert((cid as u64) << 32 | ids[nj] as u64) {
-                let mut pk = Vec::with_capacity(from_w.len() - 1);
+                let mut pk: Vec<KCell<'static>> = Vec::with_capacity(from_w.len() - 1);
                 let mut null = false;
                 for (k, (&c, a)) in from_w.iter().zip(&probe.expr_affs).enumerate() {
                     if k == pos_nj {
                         continue;
                     }
-                    match sv::key(&sv::compare_affinity(&seeds.value(r, c), *a)) {
-                        Some(x) => pk.push(x),
+                    match cell_key(seeds.cell(r, c), *a) {
+                        Some(x) => pk.push(x.owned()),
                         None => null = true,
                     }
                 }
                 let pid = if null {
                     u32::MAX
                 } else {
-                    let n_p = probe_ids.len() as u32;
-                    *probe_ids.entry(pk).or_insert(n_p)
+                    let h = pk.iter().fold(0u64, |h, k| mix(h, k.hash()));
+                    let cands = probe_heads.entry(h).or_default();
+                    match cands.iter().find(|&&i| probe_keys[i as usize].iter().zip(&pk).all(|(a, b)| a.eq(b))) {
+                        Some(&i) => i,
+                        None => {
+                            cands.push(probe_keys.len() as u32);
+                            probe_keys.push(pk);
+                            probe_keys.len() as u32 - 1
+                        }
+                    }
                 };
                 level.push((seed_rows.len() as u32, u32::MAX));
                 seed_rows.push(r as u32);
@@ -2111,15 +2766,10 @@ impl<'d, 'a> Exec<'d, 'a> {
                 seed_node.push(ids[nj]);
             }
         }
-        // The probe keys of a carried probe id (inverse of `probe_ids`).
-        let mut probe_keys: Vec<Vec<Key>> = vec![Vec::new(); probe_ids.len()];
-        for (k, &i) in &probe_ids {
-            probe_keys[i as usize] = k.clone();
-        }
         // Per edge row: its `dst` value's node id (`u32::MAX`: not yet interned).
         let mut dst_id: Vec<u32> = vec![u32::MAX; e.len()];
-        // Per node id: its value and probe key part (the node values met, in id order).
-        let mut node_key: FxHashMap<u32, Option<Key>> = FxHashMap::default();
+        // Per node id: its probe key part.
+        let mut node_key: FxHashMap<u32, Option<KCell<'static>>> = FxHashMap::default();
         let node_aff = probe.expr_affs[pos_nj];
         // Edge rows per (carried probe id, node id), looked up once.
         let mut hits_of: FxHashMap<u64, Option<&[u32]>> = FxHashMap::default();
@@ -2154,11 +2804,11 @@ impl<'d, 'a> Exec<'d, 'a> {
                 let node = if src == u32::MAX { seed_node[sr as usize] } else { dst_id[src as usize] };
                 let hits = *hits_of.entry((pid as u64) << 32 | node as u64).or_insert_with(|| {
                     let nk = node_key.entry(node).or_insert_with(|| {
-                        let v = if src == u32::MAX { seeds.value(seed_rows[sr as usize] as usize, nj) } else { e.value(src as usize, dst) };
-                        sv::key(&sv::compare_affinity(&v, node_aff))
+                        let c = if src == u32::MAX { seeds.cell(seed_rows[sr as usize] as usize, nj) } else { e.cell(src as usize, dst) };
+                        cell_key(c, node_aff).map(|k| k.owned())
                     });
                     let nk = nk.clone()?;
-                    let mut pk = probe_keys[pid as usize].clone();
+                    let mut pk: Vec<KCell<'_>> = probe_keys[pid as usize].clone();
                     pk.insert(pos_nj, nk);
                     ix.get(&pk)
                 });
@@ -2173,7 +2823,7 @@ impl<'d, 'a> Exec<'d, 'a> {
                     }
                     let d = &mut dst_id[er as usize];
                     if *d == u32::MAX {
-                        *d = seen.intern(nj, &e.value(er as usize, dst));
+                        *d = seen.intern(nj, e.cell(er as usize, dst));
                     }
                     if rows_seen.insert((seed_carried[sr as usize] as u64) << 32 | *d as u64) {
                         next.push((sr, er));
@@ -2380,8 +3030,47 @@ impl<'d, 'a> Exec<'d, 'a> {
     }
 
     /// The probe's key for the current binding; `None` when a key part is NULL (no row equals).
-    fn probe_key(&self, p: &Probe, ctx: &EvalCtx<'_>) -> Option<Vec<Key>> {
-        p.exprs.iter().zip(&p.expr_affs).map(|(e, a)| sv::key(&sv::compare_affinity(&self.eval(e, ctx), *a))).collect()
+    fn probe_key<'s>(&'s self, p: &Probe, ctx: &'s EvalCtx<'_>) -> Option<KeyBuf<'s>> {
+        if p.exprs.len() <= 4 {
+            let mut a = [KCell::Int(0), KCell::Int(0), KCell::Int(0), KCell::Int(0)];
+            for (j, (e, aff)) in p.exprs.iter().zip(&p.expr_affs).enumerate() {
+                a[j] = self.key_of(e, *aff, ctx)?;
+            }
+            return Some(KeyBuf::Inline(p.exprs.len(), a));
+        }
+        p.exprs.iter().zip(&p.expr_affs).map(|(e, a)| self.key_of(e, *a, ctx)).collect::<Option<Vec<_>>>().map(KeyBuf::Heap)
+    }
+
+    /// `value::key(value::compare_affinity(e, aff))`, borrowed when `e` is a column or literal.
+    fn key_of<'s>(&'s self, e: &PE, aff: Aff, ctx: &'s EvalCtx<'_>) -> Option<KCell<'s>> {
+        match self.cell_of(e, ctx) {
+            Some(c) => cell_key(c, aff),
+            None => sv::key(&sv::compare_affinity(&self.eval(e, ctx), aff)).map(KCell::of),
+        }
+    }
+
+    /// A column's or literal's value as a borrowed cell; `None` for any other expression.
+    fn cell_of<'s>(&'s self, e: &PE, ctx: &'s EvalCtx<'_>) -> Option<Cell<'s>> {
+        Some(match e {
+            PE::Col { depth, item, col } => {
+                let mut f = &ctx.frame;
+                for _ in 0..*depth {
+                    match f.parent {
+                        Some(p) => f = p,
+                        None => return Some(Cell::Null),
+                    }
+                }
+                match f.rows.get(*item as usize) {
+                    Some(RowRef { t: Some(t), r }) if *r != NULL_ROW => t.cols.get(*col as usize).map_or(Cell::Null, |c| c.cell(*r)),
+                    _ => Cell::Null,
+                }
+            }
+            PE::Lit(Lit::Null) => Cell::Null,
+            PE::Lit(Lit::Int(i)) => Cell::Int(*i),
+            PE::Lit(Lit::Real(f)) => Cell::Real(*f),
+            PE::Lit(Lit::Text(i)) => vcell(self.texts[*i as usize].get_or_init(|| V::text(&self.stmt.texts[*i as usize]))),
+            _ => return None,
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2445,7 +3134,7 @@ impl<'d, 'a> Exec<'d, 'a> {
                     // R14: the equality group (if any), then the rows within the bounds.
                     let (rp, rix) = (s.ranges[i].as_ref().expect("range probe"), indexes.range[i].as_ref().unwrap());
                     let group = match (p, eq) {
-                        (Some(p), Some(ix)) => self.probe_key(p, &ctx).and_then(|k| ix.find(key_hash(&k), &k)),
+                        (Some(p), Some(ix)) => self.probe_key(p, &ctx).and_then(|k| ix.group(&k)),
                         _ => Some(0),
                     };
                     // `None`: a NULL bound (no row compares true); `Some(None)`: unbounded (absent,
@@ -2519,12 +3208,22 @@ impl<'d, 'a> Exec<'d, 'a> {
         let Some(tables) = self.item_tables(s, outer) else { return Table::empty(s.out.clone()) };
         let mut out = Out::new(s, self);
         if s.grouped {
-            // Groups in first-seen order: key -> (agg states, representative binding).
-            let mut groups: FxHashMap<Vec<DKey>, usize> = FxHashMap::default();
+            // Groups in first-seen order: key (interned ids of the group values' distinctness
+            // keys) -> (agg states, representative binding).
+            let mut gids: Vec<Interner> = s.group_by.iter().map(|_| Interner::default()).collect();
+            let mut groups: FxHashMap<Vec<u32>, usize> = FxHashMap::default();
             let mut states: Vec<(Vec<AggState>, Vec<Kept>)> = Vec::new();
             self.join(s, &tables, outer, &mut |f| {
                 let ctx = EvalCtx { frame: *f, aggs: None, wins: None };
-                let key: Vec<DKey> = s.group_by.iter().map(|g| sv::dkey(&self.eval(g, &ctx))).collect();
+                let key: Vec<u32> = s
+                    .group_by
+                    .iter()
+                    .zip(gids.iter_mut())
+                    .map(|(g, ids)| match self.cell_of(g, &ctx) {
+                        Some(c) => ids.of(c),
+                        None => ids.of(vcell_own(self.eval(g, &ctx))),
+                    })
+                    .collect();
                 let gi = *groups.entry(key).or_insert_with(|| {
                     states.push((s.aggs.iter().map(|_| AggState::default()).collect(), Vec::new()));
                     states.len() - 1
@@ -2573,40 +3272,63 @@ impl<'d, 'a> Exec<'d, 'a> {
             let binding = |bi: usize| -> Vec<RowRef<'_>> { bound[bi * w_items..(bi + 1) * w_items].iter().map(Kept::row).collect() };
             let mut wins = vec![vec![V::Null; s.wins.len()]; nb];
             for (wi, w) in s.wins.iter().enumerate() {
-                let mut keyed: Vec<(Vec<V>, Vec<V>, usize)> = (0..nb)
-                    .map(|bi| {
-                        let refs = binding(bi);
-                        let ctx = EvalCtx { frame: Frame { rows: &refs, parent: outer }, aggs: None, wins: None };
-                        (w.partition.iter().map(|e| self.eval(e, &ctx)).collect(), w.order.iter().map(|(e, _)| self.eval(e, &ctx)).collect(), bi)
-                    })
-                    .collect();
-                keyed.sort_by(|a, b| {
-                    for (x, y) in a.0.iter().zip(&b.0) {
-                        let o = sv::cmp(x, y);
+                // Each binding's key cells (partition, then order), borrowed from the tables the
+                // bindings name (held by `tables` or `keep` until the select ends). A key on a
+                // column that holds one value on every row of an inner-joined item is equal for
+                // every binding and is left out.
+                let constant = |e: &PE| match e {
+                    PE::Col { depth: 0, item, col } => {
+                        let it = &s.items[*item as usize];
+                        crate::lowered::rewrites() && nb > 0 && !it.left && !it.lateral && tables[*item as usize].cols.get(*col as usize).is_some_and(|c| c.konst().is_some())
+                    }
+                    _ => false,
+                };
+                let part: Vec<&PE> = w.partition.iter().filter(|e| !constant(e)).collect();
+                let order: Vec<(&PE, bool)> = w.order.iter().filter(|(e, _)| !constant(e)).map(|(e, d)| (e, *d)).collect();
+                let nk = part.len() + order.len();
+                let mut kc: Vec<Cell<'_>> = Vec::with_capacity(nb * nk);
+                for bi in 0..nb {
+                    let refs = binding(bi);
+                    let ctx = EvalCtx { frame: Frame { rows: &refs, parent: outer }, aggs: None, wins: None };
+                    for e in part.iter().copied().chain(order.iter().map(|(e, _)| *e)) {
+                        kc.push(match e {
+                            PE::Col { depth: 0, item, col } if !s.items[*item as usize].lateral => {
+                                let k = bound[bi * w_items + *item as usize];
+                                let RowRef { t, r } = k.row();
+                                match t {
+                                    Some(t) if r != NULL_ROW => t.cols.get(*col as usize).map_or(Cell::Null, |c| c.cell(r)),
+                                    _ => Cell::Null,
+                                }
+                            }
+                            _ => vcell_own(self.eval(e, &ctx)),
+                        });
+                    }
+                }
+                let key = |bi: usize| &kc[bi * nk..(bi + 1) * nk];
+                let np = part.len();
+                let mut keyed: Vec<usize> = (0..nb).collect();
+                keyed.sort_by(|&a, &b| {
+                    let (ka, kb) = (key(a), key(b));
+                    for j in 0..nk {
+                        let o = cmp_cells(&ka[j], &kb[j]);
                         if o != Ordering::Equal {
-                            return o;
+                            return if j >= np && order[j - np].1 { o.reverse() } else { o };
                         }
                     }
-                    for (k, (x, y)) in a.1.iter().zip(&b.1).enumerate() {
-                        let o = sv::cmp(x, y);
-                        if o != Ordering::Equal {
-                            return if w.order[k].1 { o.reverse() } else { o };
-                        }
-                    }
-                    a.2.cmp(&b.2)
+                    a.cmp(&b)
                 });
-                let same = |a: &Vec<V>, b: &Vec<V>| a.iter().zip(b).all(|(x, y)| sv::cmp(x, y) == Ordering::Equal);
+                let same = |a: usize, b: usize| key(a)[..np].iter().zip(&key(b)[..np]).all(|(x, y)| cmp_cells(x, y) == Ordering::Equal);
                 if let Some((max, arg)) = &w.func {
                     // The aggregate over each partition (its rows are consecutive in `keyed`):
                     // NULLs skipped, NULL when none is left (as the aggregate `min`/`max`).
                     let mut start = 0;
                     while start < keyed.len() {
                         let mut end = start + 1;
-                        while end < keyed.len() && same(&keyed[start].0, &keyed[end].0) {
+                        while end < keyed.len() && same(keyed[start], keyed[end]) {
                             end += 1;
                         }
                         let mut best: Option<V> = None;
-                        for (_, _, bi) in &keyed[start..end] {
+                        for bi in &keyed[start..end] {
                             let refs = binding(*bi);
                             let v = self.eval(arg, &EvalCtx { frame: Frame { rows: &refs, parent: outer }, aggs: None, wins: None });
                             if v.is_null() {
@@ -2621,7 +3343,7 @@ impl<'d, 'a> Exec<'d, 'a> {
                             }
                         }
                         let best = best.unwrap_or(V::Null);
-                        for (_, _, bi) in &keyed[start..end] {
+                        for bi in &keyed[start..end] {
                             wins[*bi][wi] = best.clone();
                         }
                         start = end;
@@ -2629,11 +3351,11 @@ impl<'d, 'a> Exec<'d, 'a> {
                     continue;
                 }
                 let mut n = 0i64;
-                let mut prev: Option<&Vec<V>> = None;
-                for (p, _, bi) in &keyed {
-                    n = if prev.is_some_and(|q| same(q, p)) { n + 1 } else { 1 };
-                    prev = Some(p);
-                    wins[*bi][wi] = V::Int(n);
+                let mut prev: Option<usize> = None;
+                for &bi in &keyed {
+                    n = if prev.is_some_and(|q| same(q, bi)) { n + 1 } else { 1 };
+                    prev = Some(bi);
+                    wins[bi][wi] = V::Int(n);
                 }
             }
             for (bi, w) in wins.iter().enumerate() {
@@ -2650,9 +3372,8 @@ impl<'d, 'a> Exec<'d, 'a> {
         }
         let t = out.finish(&tables, s.out.clone());
         if s.distinct {
-            let mut seen = rustc_hash::FxHashSet::default();
-            let w = s.proj.len();
-            let keep: Vec<u32> = (0..t.len()).filter(|&r| seen.insert((0..w).map(|c| sv::dkey(&t.value(r, c))).collect::<Vec<_>>())).map(|r| r as u32).collect();
+            let mut seen = Distinct::new(s.proj.len());
+            let keep: Vec<u32> = (0..t.len()).filter(|&r| seen.insert(&t, r)).map(|r| r as u32).collect();
             if keep.len() != t.len() {
                 return t.select(keep.into());
             }
@@ -2745,9 +3466,15 @@ impl<'d, 'a> Exec<'d, 'a> {
                 Some(_) => V::Null,
             },
             PE::Cmp(op, l, r, aff) => {
-                let lv = self.eval(l, ctx);
-                let rv = self.eval(r, ctx);
-                match sv::compare(&lv, &rv, *aff) {
+                let o = match (self.cell_of(l, ctx), self.cell_of(r, ctx)) {
+                    (Some(a), Some(b)) => compare_cells(a, b, *aff),
+                    _ => {
+                        let lv = self.eval(l, ctx);
+                        let rv = self.eval(r, ctx);
+                        sv::compare(&lv, &rv, *aff)
+                    }
+                };
+                match o {
                     None => V::Null,
                     Some(o) => V::bool(match op {
                         Cmp::Eq => o == Ordering::Equal,
@@ -2812,14 +3539,28 @@ impl<'d, 'a> Exec<'d, 'a> {
             }
             PE::Cast(x, a) => sv::cast(&self.eval(x, ctx), *a),
             PE::InList { e, list, not } => {
-                let v = self.eval(e, ctx);
-                if v.is_null() {
+                let held: V;
+                let v = match self.cell_of(e, ctx) {
+                    Some(c) => c,
+                    None => {
+                        held = self.eval(e, ctx);
+                        vcell(&held)
+                    }
+                };
+                if matches!(v, Cell::Null) {
                     return if list.is_empty() { V::bool(*not) } else { V::Null };
                 }
                 let mut null = false;
                 for (x, aff) in list {
-                    let xv = self.eval(x, ctx);
-                    match sv::compare(&v, &xv, *aff) {
+                    let xv: V;
+                    let xc = match self.cell_of(x, ctx) {
+                        Some(c) => c,
+                        None => {
+                            xv = self.eval(x, ctx);
+                            vcell(&xv)
+                        }
+                    };
+                    match compare_cells(v.clone(), xc, *aff) {
                         Some(Ordering::Equal) => return V::bool(!*not),
                         None => null = true,
                         _ => {}
@@ -2853,7 +3594,7 @@ impl<'d, 'a> Exec<'d, 'a> {
                 let SubResult::Scalar(v) = &*r else { unreachable!() };
                 v.clone()
             }
-            PE::IsNull(x, not) => V::bool(self.eval(x, ctx).is_null() != *not),
+            PE::IsNull(x, not) => V::bool(self.cell_of(x, ctx).map_or_else(|| self.eval(x, ctx).is_null(), |c| matches!(c, Cell::Null)) != *not),
             PE::Is(l, r, not) => {
                 let (a, b) = (self.eval(l, ctx), self.eval(r, ctx));
                 let eq = match (&a, &b) {
@@ -3392,5 +4133,202 @@ mod tests {
             }
         }
         assert!(fired >= 60 * queries.len(), "range probes planned {fired}");
+    }
+
+    /// Borrowed cells and key cells (`Column::cell`, `cell_key`, `Index`, `compare_cells`):
+    /// equality joins, constant key columns, IN lists, comparisons and correlated probes return
+    /// SQLite's rows. Random tables mix integers, integral and fractional reals, numeric and
+    /// non-numeric texts and NULLs under every declared affinity, stored in each representation
+    /// the engine reads (values, CTAS gathers, symbols, integer fact columns, source spans,
+    /// constants, chains).
+    #[test]
+    fn key_cells_match_sqlite() {
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut rnd = |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        let affs = [(Aff::None, ""), (Aff::Integer, "INT"), (Aff::Text, "TEXT"), (Aff::Real, "REAL"), (Aff::Numeric, "NUMERIC")];
+        let queries = [
+            "SELECT a.k, b.k FROM a JOIN b ON b.k = a.k",
+            "SELECT a.k, b.v FROM a JOIN b ON b.p = a.p AND b.k = a.v",
+            "SELECT a.k, b.v FROM a JOIN b ON b.p = a.p",
+            "SELECT a.k, b.k FROM a, b WHERE a.v = b.v AND a.k <> b.k",
+            "SELECT a.k, b.k FROM a LEFT JOIN b ON b.k = a.v",
+            "SELECT a.k, b.k FROM a JOIN b ON b.k = CAST(a.v AS TEXT)",
+            "SELECT a.k, b.k FROM a JOIN b ON b.v = a.k + 0",
+            "SELECT a.k, b.k FROM a JOIN b ON a.k < b.v",
+            "SELECT a.k FROM a WHERE a.k IN ('1', 1, 1.5, 'a', '', a.v)",
+            "SELECT a.k FROM a WHERE a.v NOT IN ('x1', 2, 2.0)",
+            "SELECT a.k, a.v FROM a WHERE a.v = '1' OR a.v = 1 OR a.v > 'a' OR a.k >= 2.5",
+            "SELECT a.k, EXISTS(SELECT 1 FROM b WHERE b.k = a.k AND b.p = a.p) FROM a",
+            "SELECT a.k, (SELECT count(*) FROM b WHERE b.v = a.k) FROM a",
+            "SELECT b.k, b.p FROM b WHERE b.p = 'p' OR b.p = 7",
+            // R16 node ids: projected, joined to node ids and to plain text, deduplicated.
+            "WITH t AS (SELECT kd || ':' || s || ':' || e AS id, kd FROM c) SELECT t.id, u.id FROM t JOIN t AS u ON u.id = t.id AND u.kd <> 'a'",
+            "WITH t AS (SELECT kd || ':' || s || ':' || e AS id FROM c) SELECT id, count(*) FROM t GROUP BY id",
+            "SELECT DISTINCT kd || ':' || s || ':' || e FROM c",
+            "WITH t AS (SELECT kd || ':' || s || ':' || e AS id FROM c), u AS (SELECT kd || ':' || e || ':' || s AS id FROM c) SELECT t.id FROM t JOIN u ON u.id = t.id",
+            "SELECT kd || '/' || s || '/' || e, kd || ':' || s || '' || e FROM c",
+            "WITH t AS (SELECT kd || ':' || s || ':' || e AS id FROM c UNION ALL SELECT kd || ':' || e || ':' || s FROM c WHERE s > 0), u AS (SELECT CAST(t.id AS TEXT) AS id FROM t) SELECT t.id, u.id FROM t LEFT JOIN u ON u.id = t.id",
+            "WITH t AS (SELECT k || ':' || v || ':' || p AS id, k FROM a), u AS (SELECT k || ':' || v || ':' || p AS id, v FROM b) SELECT t.id, u.id, t.id = u.id, t.id < u.id FROM t JOIN u ON u.id = t.id OR u.v = t.k",
+            "WITH t AS (SELECT k || ':' || v || ':' || p AS id FROM a) SELECT t.id, b.k FROM t JOIN b ON b.k = t.id",
+            "WITH t AS (SELECT k || ':' || v || ':' || p AS id FROM a) SELECT t.id, b.k FROM b JOIN t ON t.id = b.k || ''",
+            "WITH RECURSIVE w(id, n) AS (SELECT k || ':' || v || ':' || p, 0 FROM a UNION SELECT id, n + 1 FROM w WHERE n < 2) SELECT id, n FROM w",
+            "SELECT DISTINCT k || ':' || v || ':' || p FROM a",
+            // (Within one typed column: across columns SQLite keeps a different one of two equal
+            // values `2` and `2.0` than the engine's first seen; that is older and outside this
+            // test, `phase-2-s8-perfile.md` § 6.)
+            "SELECT v FROM a UNION SELECT v FROM a WHERE k IS NOT NULL",
+            "SELECT DISTINCT a.k, a.p FROM a",
+            "SELECT a.v, count(*), min(a.k) FROM a GROUP BY a.v",
+            "SELECT k || ':' || v || ':' || p, count(*) FROM a GROUP BY k || ':' || v || ':' || p",
+            "SELECT a.k, row_number() OVER (PARTITION BY a.p, a.v ORDER BY a.k) FROM a",
+            "SELECT a.k, a.v, row_number() OVER (PARTITION BY a.p ORDER BY a.p, a.v DESC, a.k) FROM a",
+        ];
+        let render = |v: &V| match v {
+            V::Null => "N".to_string(),
+            V::Int(i) => format!("I{i}"),
+            V::Real(f) => format!("R{f}"),
+            V::Text(s) => format!("T{s}"),
+        };
+        for round in 0..80 {
+            let conn = rusqlite::Connection::open_in_memory().unwrap();
+            let mut catalog = Catalog::new();
+            let mut db = Db::new("", "");
+            let mut desc = String::new();
+            let value = |rnd: &mut dyn FnMut(u64) -> u64| match rnd(9) {
+                0 => V::Null,
+                1 | 2 | 3 => V::Int(rnd(6) as i64),
+                4 => V::Real(rnd(6) as f64),
+                5 => V::Real(rnd(12) as f64 / 2.0),
+                6 => V::text(&rnd(6).to_string()),
+                7 => V::text(&format!("{}.5", rnd(3))),
+                _ => V::text(["a", "b", "", "x1", "1e1", " 2"][rnd(6) as usize]),
+            };
+            for name in ["a", "b"] {
+                let cols = ["k", "v", "p"];
+                // Declared types only: the planner reads an untyped column as having no affinity
+                // (an expression's), where SQLite gives it BLOB affinity, so a BLOB column compared
+                // with a TEXT column converts in the engine and not in SQLite. That difference is
+                // older than the cells and outside this test (`phase-2-s8-perfile.md` § 6).
+                let decl: Vec<(Aff, &str)> = cols.iter().map(|_| affs[1 + rnd(4) as usize]).collect();
+                let n = rnd(12) as usize;
+                let konst = [V::Null, V::text("p"), V::Int(7), V::text("7")][rnd(4) as usize].clone();
+                let raw: Vec<Vec<V>> = (0..n).map(|_| vec![value(&mut rnd), value(&mut rnd), konst.clone()]).collect();
+                conn.execute(&format!("CREATE TABLE {name}({})", cols.iter().zip(&decl).map(|(c, (_, t))| format!("{c} {t}")).collect::<Vec<_>>().join(", ")), []).unwrap();
+                for r in &raw {
+                    let sql_v = |v: &V| match v {
+                        V::Null => rusqlite::types::Value::Null,
+                        V::Int(i) => rusqlite::types::Value::Integer(*i),
+                        V::Real(f) => rusqlite::types::Value::Real(*f),
+                        V::Text(s) => rusqlite::types::Value::Text(s.to_string()),
+                    };
+                    conn.execute(&format!("INSERT INTO {name} VALUES (?1, ?2, ?3)"), rusqlite::params_from_iter(r.iter().map(sql_v))).unwrap();
+                }
+                // The engine's columns: each in a random representation reading the stored value.
+                let mut source = String::new();
+                let ecols: Vec<Rc<Column>> = (0..3)
+                    .map(|c| {
+                        let aff = decl[c].0;
+                        let stored: Vec<V> = raw.iter().map(|r| sv::apply_affinity(r[c].clone(), aff)).collect();
+                        let texts = stored.iter().all(|v| matches!(v, V::Text(_) | V::Null));
+                        let small = stored.iter().all(|v| matches!(v, V::Int(i) if (0..1000).contains(i)) || v.is_null());
+                        match rnd(6) {
+                            0 => Column::with_aff(&Rc::new(Column::Vals(raw.iter().map(|r| r[c].clone()).collect())), aff),
+                            1 if texts => Rc::new(Column::Sym(stored.iter().map(|v| if let V::Text(s) = v { crate::facts::intern(s) } else { crate::facts::NONE }).collect())),
+                            2 if small => Rc::new(Column::U32(stored.iter().map(|v| if let V::Int(i) = v { *i as u32 } else { U32_NULL }).collect())),
+                            3 if texts => {
+                                let cells = stored
+                                    .iter()
+                                    .map(|v| match v {
+                                        V::Text(s) => {
+                                            let s0 = source.len() as u32;
+                                            source.push_str(s);
+                                            TextCell::Span(s0, source.len() as u32)
+                                        }
+                                        _ => TextCell::Val(V::Null),
+                                    })
+                                    .collect();
+                                Rc::new(Column::text(Rc::from(source.as_str()), cells))
+                            }
+                            4 if c == 2 && n > 0 => Rc::new(Column::Const(stored[0].clone())),
+                            5 if n > 1 => {
+                                let h = n / 2;
+                                let (x, y) = (Rc::new(Column::Vals(stored[..h].to_vec())), Rc::new(Column::Vals(stored[h..].to_vec())));
+                                chain(&[(&x, h), (&y, n - h)])
+                            }
+                            _ => Rc::new(Column::Vals(stored)),
+                        }
+                    })
+                    .collect();
+                let schema = Schema { cols: cols.iter().map(|c| c.to_string()).collect(), affs: decl.iter().map(|d| d.0).collect() };
+                desc.push_str(&format!("{name}: {:?} {:?}; ", decl.iter().map(|d| d.1).collect::<Vec<_>>(), ecols.iter().map(|c| format!("{c:?}").chars().take(60).collect::<String>()).collect::<Vec<_>>()));
+                catalog.insert(name.into(), schema.clone());
+                db.tables.insert(name.into(), Rc::new(Table::new(schema, ecols, n)));
+            }
+            // `c`: node-id parts as the policies store them (a kind as a symbol or a source span,
+            // offsets as integer fact columns or values), from small domains so that ids of
+            // different kinds share offsets.
+            {
+                let n = rnd(10) as usize;
+                let rows: Vec<(Option<&str>, i64, i64)> = (0..n).map(|_| ([None, Some("a"), Some("b"), Some("ab")][rnd(4) as usize], rnd(3) as i64, rnd(3) as i64)).collect();
+                conn.execute("CREATE TABLE c(kd TEXT, s INT, e INT)", []).unwrap();
+                for (k, s, e) in &rows {
+                    conn.execute("INSERT INTO c VALUES (?1, ?2, ?3)", rusqlite::params![k, s, e]).unwrap();
+                }
+                let kd = if rnd(2) == 0 {
+                    Column::Sym(rows.iter().map(|r| r.0.map_or(crate::facts::NONE, crate::facts::intern)).collect())
+                } else {
+                    let source: String = rows.iter().filter_map(|r| r.0).collect();
+                    let mut at = 0u32;
+                    let cells = rows
+                        .iter()
+                        .map(|r| match r.0 {
+                            Some(k) => {
+                                at += k.len() as u32;
+                                TextCell::Span(at - k.len() as u32, at)
+                            }
+                            None => TextCell::Val(V::Null),
+                        })
+                        .collect();
+                    Column::text(Rc::from(source.as_str()), cells)
+                };
+                let mut ints = |f: &dyn Fn(&(Option<&str>, i64, i64)) -> i64| if rnd(2) == 0 { Column::U32(rows.iter().map(|r| f(r) as u32).collect()) } else { Column::Vals(rows.iter().map(|r| V::Int(f(r))).collect()) };
+                let ecols = vec![Rc::new(kd), Rc::new(ints(&|r| r.1)), Rc::new(ints(&|r| r.2))];
+                let schema = Schema { cols: vec!["kd".into(), "s".into(), "e".into()], affs: vec![Aff::Text, Aff::Integer, Aff::Integer] };
+                catalog.insert("c".into(), schema.clone());
+                db.tables.insert("c".into(), Rc::new(Table::new(schema, ecols, n)));
+            }
+            for q in queries {
+                let t = execute(&db, &plan(q, &catalog).unwrap()).unwrap();
+                let mut got: Vec<String> = (0..t.len()).map(|r| t.row(r).iter().map(render).collect::<Vec<_>>().join(",")).collect();
+                let mut stmt = conn.prepare(q).unwrap();
+                let w = stmt.column_count();
+                let mut want: Vec<String> = stmt
+                    .query_map([], |row| {
+                        Ok((0..w)
+                            .map(|i| {
+                                render(&match row.get::<_, rusqlite::types::Value>(i).unwrap() {
+                                    rusqlite::types::Value::Null => V::Null,
+                                    rusqlite::types::Value::Integer(i) => V::Int(i),
+                                    rusqlite::types::Value::Real(f) => V::Real(f),
+                                    rusqlite::types::Value::Text(s) => V::text(&s),
+                                    rusqlite::types::Value::Blob(_) => unreachable!(),
+                                })
+                            })
+                            .collect::<Vec<_>>()
+                            .join(","))
+                    })
+                    .unwrap()
+                    .map(Result::unwrap)
+                    .collect();
+                got.sort();
+                want.sort();
+                assert_eq!(got, want, "round {round}: {q}; {desc}");
+            }
+        }
     }
 }
