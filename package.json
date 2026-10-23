@@ -138,7 +138,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@ast-grep/cli": "0.45.3",
+    "@ast-grep/cli": "0.51.0",
     "@babel/types": "^7.29.8",
     "@changesets/cli": "3.0.3",
     "@earendil-works/pi-agent-core": "0.85.1",
