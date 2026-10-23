@@ -600,6 +600,16 @@ fn key2(a: &V, b: &V) -> Option<(sv::Key, sv::Key)> {
     Some((sv::key(a)?, sv::key(b)?))
 }
 
+/// The stored tables a kernel reads by name (beyond its stage's own SQL reads).
+pub fn kernel_reads(k: &Kernel) -> Vec<String> {
+    match k {
+        Kernel::Absorbed => Vec::new(),
+        Kernel::Nodes { arms, .. } => arms.iter().map(|a| a.table.to_ascii_lowercase()).collect(),
+        Kernel::Edges => vec!["nodes".into()],
+        Kernel::Ownership | Kernel::Descendants { .. } => vec!["nodes".into(), "edges".into()],
+    }
+}
+
 pub fn run(k: &Kernel, db: &Db<'_>, out_schema: &Schema) -> Result<Table, String> {
     let rows = match k {
         Kernel::Absorbed => Vec::new(),

@@ -1242,13 +1242,14 @@ pub struct Eval<'a> {
     depth: std::cell::Cell<u32>,
 }
 
-/// Memoised verdicts over one file's nodes. Capture-free utility verdicts by (utility, node);
-/// relation memos (`RelMemo`) by the rule's address. Both are pure functions of the node for
-/// one utility table and one valuedness (unknown verdicts are never stored as definite), so
-/// queries that share those share the memo.
+/// Memoised verdicts over one file's nodes. Capture-free utility verdicts per utility, dense over
+/// the nodes (0 not yet, 1 true, 2 false; one byte a node, allocated on the utility's first
+/// verdict); relation memos (`RelMemo`) by the rule's address. Both are pure functions of the
+/// node for one utility table and one valuedness (unknown verdicts are never stored as definite),
+/// so queries that share those share the memo.
 #[derive(Default)]
 pub struct MemoSet {
-    util: std::cell::RefCell<rustc_hash::FxHashMap<(usize, u32), bool>>,
+    util: std::cell::RefCell<Vec<crate::trits::Trits>>,
     /// `inside`/`has` with `stopBy: end` over a rule that mentions no capture and parses
     /// nothing, memoised per node, keyed by the rule's address.
     rel: std::cell::RefCell<rustc_hash::FxHashMap<usize, RelMemo>>,
@@ -1265,11 +1266,11 @@ pub struct FileMemo {
 #[derive(Default)]
 struct RelMemo {
     ok: bool,
-    at: Vec<u8>,
-    inside: Vec<u8>,
-    has: Vec<u8>,
+    at: crate::trits::Trits,
+    inside: crate::trits::Trits,
+    has: crate::trits::Trits,
     /// `inside {rule, field, stopBy: end}` (the field is fixed by the `Field` rule holding it).
-    finside: Vec<u8>,
+    finside: crate::trits::Trits,
 }
 
 const T: u8 = 1;
@@ -1712,9 +1713,11 @@ impl<'a> Eval<'a> {
             Bound::Node(n) if self.q.util_capture_free[i] && !self.each_active() => Some((i, n)),
             _ => None,
         };
-        if let Some(k) = memo_key {
-            if let Some(&v) = self.memo.util.borrow().get(&k) {
-                return v;
+        if let Some((i, n)) = memo_key {
+            match self.memo.util.borrow().get(i).map_or(0, |v| v.get(n)) {
+                1 => return true,
+                2 => return false,
+                _ => {}
             }
         }
         // Whether this evaluation itself was unknown decides memoization, not an unknown the
@@ -1722,9 +1725,13 @@ impl<'a> Eval<'a> {
         let saved = self.three && self.unknown.replace(false);
         let t0 = self.taint();
         let r = self.m(&self.q.utils[i], node, env);
-        if let Some(k) = memo_key {
+        if let Some((i, n)) = memo_key {
             if !(self.three && self.unknown.get()) && self.taint() == t0 {
-                self.memo.util.borrow_mut().insert(k, r);
+                let mut util = self.memo.util.borrow_mut();
+                if util.len() <= i {
+                    util.resize_with(i + 1, Default::default);
+                }
+                util[i].set(self.f.len(), n, if r { 1 } else { 2 });
             }
         }
         if saved {
@@ -1908,10 +1915,9 @@ impl<'a> Eval<'a> {
     /// The rule's verdict at one node (true, false, unknown), as a relation search tests a
     /// candidate: evaluated once per node, with the caller's unknown flag set aside.
     fn verdict_at(&self, key: usize, rule: &Rule, n: u32) -> u8 {
-        if let Some(&v) = self.memo.rel.borrow()[&key].at.get(n as usize) {
-            if v != 0 {
-                return v;
-            }
+        let v = self.memo.rel.borrow()[&key].at.get(n);
+        if v != 0 {
+            return v;
         }
         let saved = self.unknown.replace(false);
         let mut env = Env::default();
@@ -1923,12 +1929,7 @@ impl<'a> Eval<'a> {
         if self.taint() != t0 {
             return v;
         }
-        let mut memo = self.memo.rel.borrow_mut();
-        let at = &mut memo.get_mut(&key).unwrap().at;
-        if at.is_empty() {
-            at.resize(self.f.len(), 0);
-        }
-        at[n as usize] = v;
+        self.memo.rel.borrow_mut().get_mut(&key).unwrap().at.set(self.f.len(), n, v);
         v
     }
 
@@ -1942,7 +1943,7 @@ impl<'a> Eval<'a> {
         let t0 = self.taint();
         let mut c = n;
         let mut v = loop {
-            let known = self.memo.rel.borrow()[&key].inside.get(c as usize).copied().unwrap_or(0);
+            let known = self.memo.rel.borrow()[&key].inside.get(c);
             if known != 0 {
                 break known;
             }
@@ -1960,13 +1961,10 @@ impl<'a> Eval<'a> {
         let clean = self.taint() == t0;
         let mut memo = self.memo.rel.borrow_mut();
         let inside = &mut memo.get_mut(&key).unwrap().inside;
-        if inside.is_empty() {
-            inside.resize(self.f.len(), 0);
-        }
         for &(c, r) in chain.iter().rev() {
             v = combine(r, v);
             if clean {
-                inside[c as usize] = v;
+                inside.set(self.f.len(), c, v);
             }
         }
         v
@@ -1975,7 +1973,7 @@ impl<'a> Eval<'a> {
     /// `has {rule, stopBy: end}` at `n`: the descendants in preorder until the first true
     /// verdict; a descendant whose own answer is known is not entered again.
     fn has_end_memo(&self, key: usize, rule: &Rule, n: u32) -> u8 {
-        let known = self.memo.rel.borrow()[&key].has.get(n as usize).copied().unwrap_or(0);
+        let known = self.memo.rel.borrow()[&key].has.get(n);
         if known != 0 {
             return known;
         }
@@ -1991,7 +1989,7 @@ impl<'a> Eval<'a> {
                 break;
             }
             unknown |= r == U;
-            match self.memo.rel.borrow()[&key].has.get(i as usize).copied().unwrap_or(0) {
+            match self.memo.rel.borrow()[&key].has.get(i) {
                 0 => i += 1,
                 T => {
                     res = T;
@@ -2009,12 +2007,7 @@ impl<'a> Eval<'a> {
         if self.taint() != t0 {
             return res;
         }
-        let mut memo = self.memo.rel.borrow_mut();
-        let has = &mut memo.get_mut(&key).unwrap().has;
-        if has.is_empty() {
-            has.resize(self.f.len(), 0);
-        }
-        has[n as usize] = res;
+        self.memo.rel.borrow_mut().get_mut(&key).unwrap().has.set(self.f.len(), n, res);
         res
     }
 
@@ -2136,7 +2129,7 @@ impl<'a> Eval<'a> {
         let t0 = self.taint();
         let mut c = n;
         let mut v = loop {
-            let known = self.memo.rel.borrow()[&key].finside.get(c as usize).copied().unwrap_or(0);
+            let known = self.memo.rel.borrow()[&key].finside.get(c);
             if known != 0 {
                 break known;
             }
@@ -2155,13 +2148,10 @@ impl<'a> Eval<'a> {
         let clean = self.taint() == t0;
         let mut memo = self.memo.rel.borrow_mut();
         let fi = &mut memo.get_mut(&key).unwrap().finside;
-        if fi.is_empty() {
-            fi.resize(self.f.len(), 0);
-        }
         for &(c, r) in chain.iter().rev() {
             v = combine(r, v);
             if clean {
-                fi[c as usize] = v;
+                fi.set(self.f.len(), c, v);
             }
         }
         v

@@ -14,6 +14,7 @@ mod repo;
 mod rx;
 mod spill;
 mod sql;
+mod trits;
 mod subst;
 mod xexport;
 mod typedefs;

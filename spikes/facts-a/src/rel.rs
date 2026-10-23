@@ -139,15 +139,18 @@ impl SyntaxSpec {
         out
     }
 
-    /// The node, edge and ownership tables of one file.
+    /// The node, edge and ownership tables of one file, as columns over the facts: integers 4
+    /// bytes a row, kinds as symbols, texts as spans of the source read on first use, the path
+    /// once.
     pub fn tables(&self, f: &Facts, path: &str) -> Vec<(String, Table)> {
+        use engine::{Column, TextCell, U32_NULL};
         let schemas = self.schemas();
         let cols = self.node_columns();
-        let p: Rc<str> = Rc::from(path);
+        let path_col = || Rc::new(Column::Const(V::Text(Rc::from(path))));
         let n = f.len();
         // Selection: named rows not excluded, ordinals per raw parent.
-        let mut ordinals: rustc_hash::FxHashMap<u32, i64> = Default::default();
-        let mut selected = Vec::new();
+        let mut ordinals: rustc_hash::FxHashMap<u32, u32> = Default::default();
+        let mut selected: Vec<(u32, u32)> = Vec::new();
         for id in 0..n as u32 {
             if !f.named(id) {
                 continue;
@@ -159,64 +162,60 @@ impl SyntaxSpec {
             selected.push((id, *o));
             *o += 1;
         }
-        let field_child = |id: u32, code: u16| -> Option<u32> {
-            if code == 0 {
-                return None;
-            }
-            f.children(id).iter().copied().find(|&c| f.field[c as usize] == code)
-        };
-        let kind_v = |id: u32| V::Text(facts::name(f.kind[id as usize]));
-        let mut node_rows = Vec::with_capacity(selected.len());
-        for &(id, ord) in &selected {
-            let parent = f.parent(id);
-            let row: Vec<V> = cols
-                .iter()
-                .map(|(_, c)| match c {
-                    SynCol::Path => V::Text(p.clone()),
-                    SynCol::Start => V::Int(f.start[id as usize] as i64),
-                    SynCol::End => V::Int(f.end[id as usize] as i64),
-                    SynCol::Id => V::Int(id as i64),
-                    SynCol::Parent => parent.map_or(V::Null, |x| V::Int(x as i64)),
-                    SynCol::Kind => kind_v(id),
-                    SynCol::Line => V::Int(f.start_line[id as usize] as i64 - 1),
-                    SynCol::Text => {
-                        if self.empty_text.contains(&f.kind[id as usize]) {
-                            V::text("")
-                        } else {
-                            V::text(f.text(id))
-                        }
+        let source: Rc<str> = Rc::from(f.source.as_str());
+        let span = |id: u32| TextCell::Span(f.start[id as usize], f.end[id as usize]);
+        // Per field, each selected row's first child with that field (`facts::NONE`: none).
+        let field_children: Vec<Vec<u32>> = self
+            .fields
+            .iter()
+            .map(|&(_, code)| selected.iter().map(|&(id, _)| if code == 0 { None } else { f.children(id).iter().copied().find(|&c| f.field[c as usize] == code) }.unwrap_or(facts::NONE)).collect())
+            .collect();
+        let parents: Vec<u32> = selected.iter().map(|&(id, _)| f.parent(id).unwrap_or(facts::NONE)).collect();
+        let ints = |of: &dyn Fn(usize) -> Option<u32>| Rc::new(Column::U32((0..selected.len()).map(|i| of(i).unwrap_or(U32_NULL)).collect()));
+        let node = |x: u32| (x != facts::NONE).then_some(x);
+        let node_cols: Vec<Rc<Column>> = cols
+            .iter()
+            .map(|(_, c)| match *c {
+                SynCol::Path => path_col(),
+                SynCol::Start => ints(&|i| Some(f.start[selected[i].0 as usize])),
+                SynCol::End => ints(&|i| Some(f.end[selected[i].0 as usize])),
+                SynCol::Id => ints(&|i| Some(selected[i].0)),
+                SynCol::Parent => ints(&|i| node(parents[i])),
+                SynCol::Kind => Rc::new(Column::Sym(selected.iter().map(|&(id, _)| f.kind[id as usize]).collect())),
+                SynCol::Line => ints(&|i| Some(f.start_line[selected[i].0 as usize].checked_sub(1).expect("start lines are 1-based"))),
+                SynCol::Text => Rc::new(Column::text(source.clone(), selected.iter().map(|&(id, _)| if self.empty_text.contains(&f.kind[id as usize]) { TextCell::Val(V::text("")) } else { span(id) }).collect())),
+                SynCol::Ordinal => ints(&|i| Some(selected[i].1)),
+                SynCol::ParentStart => ints(&|i| node(parents[i]).map(|x| f.start[x as usize])),
+                SynCol::ParentEnd => ints(&|i| node(parents[i]).map(|x| f.end[x as usize])),
+                SynCol::ParentKind => Rc::new(Column::Sym(parents.iter().map(|&x| node(x).map_or(facts::NONE, |x| f.kind[x as usize])).collect())),
+                SynCol::Field(fi, part) => {
+                    let ch = &field_children[fi];
+                    match part {
+                        0 => ints(&|i| node(ch[i])),
+                        1 => ints(&|i| node(ch[i]).map(|c| f.start[c as usize])),
+                        2 => ints(&|i| node(ch[i]).map(|c| f.end[c as usize])),
+                        3 => Rc::new(Column::Sym(ch.iter().map(|&c| node(c).map_or(facts::NONE, |c| f.kind[c as usize])).collect())),
+                        _ => Rc::new(Column::text(source.clone(), ch.iter().map(|&c| node(c).map_or(TextCell::Val(V::Null), span)).collect())),
                     }
-                    SynCol::Ordinal => V::Int(ord),
-                    SynCol::ParentStart => parent.map_or(V::Null, |x| V::Int(f.start[x as usize] as i64)),
-                    SynCol::ParentEnd => parent.map_or(V::Null, |x| V::Int(f.end[x as usize] as i64)),
-                    SynCol::ParentKind => parent.map_or(V::Null, kind_v),
-                    SynCol::Field(fi, part) => match field_child(id, self.fields[*fi].1) {
-                        None => V::Null,
-                        Some(c) => match part {
-                            0 => V::Int(c as i64),
-                            1 => V::Int(f.start[c as usize] as i64),
-                            2 => V::Int(f.end[c as usize] as i64),
-                            3 => kind_v(c),
-                            _ => V::text(f.text(c)),
-                        },
-                    },
-                })
-                .collect();
-            node_rows.push(row.into_boxed_slice());
-        }
-        let mut out = vec![(self.name.clone(), Table::from_rows(schemas[0].1.clone(), node_rows))];
+                }
+            })
+            .collect();
+        let mut out = vec![(self.name.clone(), Table::new(schemas[0].1.clone(), node_cols, selected.len()))];
         let mut si = 1;
         if let Some(e) = &self.edges {
-            let rows = selected
-                .iter()
-                .filter_map(|&(id, ord)| f.parent(id).map(|par| vec![V::Text(p.clone()), V::Int(par as i64), V::Int(id as i64), V::Int(ord)].into_boxed_slice()))
-                .collect();
-            out.push((e.clone(), Table::from_rows(schemas[si].1.clone(), rows)));
+            let rows: Vec<(u32, u32, u32)> = selected.iter().zip(&parents).filter(|(_, p)| **p != facts::NONE).map(|(&(id, ord), &par)| (par, id, ord)).collect();
+            let cols = vec![
+                path_col(),
+                Rc::new(Column::U32(rows.iter().map(|r| r.0).collect())),
+                Rc::new(Column::U32(rows.iter().map(|r| r.1).collect())),
+                Rc::new(Column::U32(rows.iter().map(|r| r.2).collect())),
+            ];
+            out.push((e.clone(), Table::new(schemas[si].1.clone(), cols, rows.len())));
             si += 1;
         }
         if let Some(o) = &self.ownership {
             // Owner values over all named rows (excluded kinds included), in preorder.
-            let mut values: Vec<Vec<u32>> = Vec::new();
+            let mut cols = vec![path_col(), Rc::new(Column::U32(selected.iter().map(|&(id, _)| id).collect()))];
             for owner in self.owners.values() {
                 let ok = facts::intern(&owner.kind);
                 let mut v = vec![facts::NONE; n];
@@ -229,20 +228,9 @@ impl SyntaxSpec {
                     let val = if owner.outermost { pv.or(own) } else { own.or(pv) };
                     v[id as usize] = val.unwrap_or(facts::NONE);
                 }
-                values.push(v);
+                cols.push(Rc::new(Column::U32(selected.iter().map(|&(id, _)| if v[id as usize] == facts::NONE { U32_NULL } else { v[id as usize] }).collect())));
             }
-            let rows = selected
-                .iter()
-                .map(|&(id, _)| {
-                    let mut r = vec![V::Text(p.clone()), V::Int(id as i64)];
-                    for v in &values {
-                        let x = v[id as usize];
-                        r.push(if x == facts::NONE { V::Null } else { V::Int(x as i64) });
-                    }
-                    r.into_boxed_slice()
-                })
-                .collect();
-            out.push((o.clone(), Table::from_rows(schemas[si].1.clone(), rows)));
+            out.push((o.clone(), Table::new(schemas[si].1.clone(), cols, selected.len())));
         }
         out
     }
@@ -272,6 +260,9 @@ pub struct RelPlan {
     pub kernels: Vec<Option<crate::subst::Kernel>>,
     /// Spike A3: the node-dumping inputs produced in one pass over the facts.
     pub dump: Option<crate::subst::DumpGroup>,
+    /// Per stage, the stored tables (lowercase) whose last reader it is: dropped, with their
+    /// clause-level indexes, once it has run (`schedule_releases`).
+    pub release: Vec<Vec<String>>,
 }
 
 impl RelPlan {
@@ -347,7 +338,46 @@ impl RelPlan {
         let key = o.get("key").and_then(Json::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect()).unwrap_or_default();
         let code = o.get("code").and_then(Json::as_str).map(str::to_owned);
         let locations = o.get("locations").and_then(Json::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect()).unwrap_or_default();
-        Ok(Self { inputs: ins, input_schemas, syntax, stages, fin, key, code, per_file, locations, kernels: Vec::new(), dump: None })
+        Ok(Self { inputs: ins, input_schemas, syntax, stages, fin, key, code, per_file, locations, kernels: Vec::new(), dump: None, release: Vec::new() })
+    }
+
+    /// Computes `release` from every statement's reads (stages, deferred columns, kernels); the
+    /// final query's tables are dropped with the clause. A table no stage reads goes at the
+    /// stage that produces it (inputs: the first stage).
+    pub fn schedule_releases(&mut self) {
+        let n = self.stages.len();
+        let mut last: BTreeMap<String, usize> = BTreeMap::new();
+        for (name, _) in &self.inputs {
+            last.insert(name.to_ascii_lowercase(), 0);
+        }
+        if let Some(s) = &self.syntax {
+            for (name, _) in s.schemas() {
+                last.insert(name.to_ascii_lowercase(), 0);
+            }
+        }
+        for (i, st) in self.stages.iter().enumerate() {
+            let mut reads: Vec<String> = match st {
+                StagePlan::Query { stmt, deferred, .. } => stmt.reads.iter().chain(deferred.iter().flat_map(|(_, _, s)| s.reads.iter())).cloned().collect(),
+                StagePlan::Reach { roots, edges, .. } => roots.reads.iter().chain(edges.iter().flat_map(|e| e.reads.iter())).cloned().collect(),
+            };
+            if let Some(k) = self.kernels.get(i).and_then(Option::as_ref) {
+                reads.extend(crate::subst::kernel_reads(k));
+            }
+            for r in reads {
+                last.insert(r.to_ascii_lowercase(), i);
+            }
+            let (StagePlan::Query { name, .. } | StagePlan::Reach { name, .. }) = st;
+            last.entry(name.to_ascii_lowercase()).or_insert(i);
+        }
+        for r in &self.fin.reads {
+            last.insert(r.to_ascii_lowercase(), n);
+        }
+        self.release = vec![Vec::new(); n];
+        for (name, i) in last {
+            if i < n {
+                self.release[i].push(name);
+            }
+        }
     }
 }
 
@@ -378,12 +408,34 @@ fn store(t: Table, schema: &Schema) -> Table {
 }
 
 /// `FACTS_MEMTRACE=1`: per stored stage, its rows, the bytes its columns hold themselves
-/// (values, text payloads, gather indexes) and the process's current RSS.
-fn memtrace(name: &str, t: &Table) {
+/// (values, text payloads, gather indexes), the clause's stored tables and indexes so far, the
+/// process's current RSS and live heap, and this thread's heap peak since the previous trace.
+fn memtrace(name: &str, t: &Table, db: &Db<'_>) {
     if std::env::var_os("FACTS_MEMTRACE").is_none() {
         return;
     }
-    eprintln!("memtrace {name}: {} rows x {} cols ~{} MB, rss {} MB", t.len(), t.schema.cols.len(), t.bytes() >> 20, crate::repo::cur_rss() >> 20);
+    let (tables, indexes) = db.bytes();
+    eprintln!(
+        "memtrace {name}: {} rows x {} cols ~{} MB, db tables {} MB indexes {} MB, rss {} MB, heap {} MB, peak since last trace {} MB",
+        t.len(),
+        t.schema.cols.len(),
+        t.bytes() >> 20,
+        tables >> 20,
+        indexes >> 20,
+        crate::repo::cur_rss() >> 20,
+        crate::repo::heap_in_use() >> 20,
+        crate::repo::thread_peak() >> 20
+    );
+    if std::env::var("FACTS_MEMTRACE").is_ok_and(|v| v == "2") {
+        for (n, t) in &db.tables {
+            for (c, col) in t.schema.cols.iter().zip(&t.cols) {
+                if col.bytes() >= 1 << 20 {
+                    eprintln!("    {n}.{c}: {} MB", col.bytes() >> 20);
+                }
+            }
+        }
+    }
+    crate::repo::thread_peak_reset();
 }
 
 pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
@@ -446,7 +498,7 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
                         Err(e) => panic!("FACTS_A3_CHECK: stage {name}: SQL failed ({e}), kernel succeeded"),
                     }
                 }
-                memtrace(name, &t);
+                memtrace(name, &t, &db);
                 db.tables.insert(name.to_ascii_lowercase(), Rc::new(t));
                 out.stage_ns.push((format!("view:{name}"), ns));
             }
@@ -468,16 +520,13 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
                     let stored = Table::new(Schema::default(), stored_cols.iter().map(|&i| col_at(i)).collect(), n);
                     let mut cols: Vec<Rc<engine::Column>> = (0..schema.cols.len()).map(col_at).collect();
                     for (pos, pe, s) in deferred {
-                        let mut vals = Vec::with_capacity(n);
-                        for r in 0..n {
-                            match engine::eval_scalar(&db, s, pe, &stored, r) {
-                                Ok(v) => vals.push(v),
-                                Err(e) => {
-                                    out.failure = Some(format!("relational stage {name} deferred: {e}"));
-                                    return out;
-                                }
+                        let vals = match engine::eval_scalar_rows(&db, s, pe, &stored) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                out.failure = Some(format!("relational stage {name} deferred: {e}"));
+                                return out;
                             }
-                        }
+                        };
                         cols[*pos] = Rc::new(engine::Column::Vals(vals));
                     }
                     t = Table::new(schema.clone(), cols, n);
@@ -488,7 +537,7 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
                         eprintln!("    {:?}", t.row(r));
                     }
                 }
-                memtrace(&name, &t);
+                memtrace(&name, &t, &db);
                 db.tables.insert(name.to_ascii_lowercase(), Rc::new(t));
                 out.stage_ns.push((name.clone(), t0.elapsed().as_nanos() as u64));
             }
@@ -503,6 +552,9 @@ pub fn run(plan: &RelPlan, part: Partition<'_>) -> RelOutcome {
                 db.tables.insert(name.to_ascii_lowercase(), Rc::new(r));
                 out.stage_ns.push((name.clone(), t0.elapsed().as_nanos() as u64));
             }
+        }
+        for name in plan.release.get(si).into_iter().flatten() {
+            db.release(name);
         }
     }
     let t0 = std::time::Instant::now();
@@ -597,6 +649,11 @@ fn reach(db: &Db<'_>, roots: &Statement, edges: Option<&Statement>, forest: bool
             }
             return Err("syntax root is outside the eligible files".into());
         };
+        // Interval membership over the facts: per root, the eligible (named, not excluded) nodes
+        // of `[id, subtree_end)` in preorder; nothing per row is stored.
+        let eligible: Vec<u32> = (0..f.len() as u32).filter(|&n| f.named(n) && !spec.exclude.contains(&f.kind[n as usize])).collect();
+        let (mut roots, mut lo, mut offs) = (Vec::with_capacity(root_keys.len()), Vec::with_capacity(root_keys.len()), Vec::with_capacity(root_keys.len()));
+        let mut total = 0u32;
         for (p, id) in &root_keys {
             let V::Text(ps) = p else { return Err("syntax root path".into()) };
             if &**ps != path {
@@ -607,14 +664,16 @@ fn reach(db: &Db<'_>, roots: &Statement, edges: Option<&Statement>, forest: bool
             if id as usize >= f.len() || !f.named(id) {
                 return Err("syntax root is not an eligible node".into());
             }
-            let end = f.subtree_end[id as usize];
-            for n in id..end {
-                if f.named(n) && !spec.exclude.contains(&f.kind[n as usize]) {
-                    rows.push(vec![p.clone(), V::Int(id as i64), V::Int(n as i64)].into_boxed_slice());
-                }
-            }
+            let (a, b) = (eligible.partition_point(|&n| n < id), eligible.partition_point(|&n| n < f.subtree_end[id as usize]));
+            roots.push(id);
+            lo.push(a as u32);
+            offs.push(total);
+            total += (b - a) as u32;
         }
-        return Ok(Table::from_rows(schema, rows));
+        let (roots, lo, offs, eligible): (Rc<[u32]>, Rc<[u32]>, Rc<[u32]>, Rc<[u32]>) = (roots.into(), lo.into(), offs.into(), eligible.into());
+        let interval = |node| Rc::new(engine::Column::Interval { roots: roots.clone(), lo: lo.clone(), offs: offs.clone(), eligible: eligible.clone(), node });
+        let cols = vec![Rc::new(engine::Column::Const(V::text(path))), interval(false), interval(true)];
+        return Ok(Table::new(schema, cols, total as usize));
     }
     let et = engine::execute(db, edges.ok_or("reachability edges")?)?;
     // Adjacency by (path, src) over distinct edges; keys compare by storage class (affinity
