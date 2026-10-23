@@ -15,6 +15,12 @@
 //!     the enclosing select's partial scope visible, so its outer references are one level too
 //!     deep (read NULL) and FROM siblings resolve. Killed by
 //!     `sql::engine::tests::derived_table_correlation_follows_sqlite_scoping`.
+//! 25. R16 (node ids as parts), dropped side condition: any text literal is taken for the `':'`
+//!     separator (`sql::engine::tid_parts`).
+//! 26. R17 (constant key columns), dropped side condition: a lookup does not compare the
+//!     index's constant key parts (`sql::engine::Index::group`).
+//!
+//!     Both killed by `sql::engine::tests::key_cells_match_sqlite`.
 
 #[cfg(feature = "mutants")]
 pub fn on(n: u8) -> bool {
