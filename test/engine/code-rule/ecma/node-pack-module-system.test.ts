@@ -69,7 +69,7 @@ async function repository(git: boolean): Promise<string> {
   }
   if (git) {
     execFileSync("git", ["init", "--quiet"], { cwd: root });
-    execFileSync("git", ["add", "--force", "."], { cwd: root });
+    execFileSync("git", ["add", "--force", "--", ...Object.keys(FILES)], { cwd: root });
     execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
   }
   return root;

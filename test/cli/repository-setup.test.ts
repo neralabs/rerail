@@ -58,7 +58,7 @@ function gitRepository(path: string): string {
   mkdirSync(path, { recursive: true });
   writeFileSync(join(path, "app.ts"), "export const hi = 1;\n");
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: path });
-  execFileSync("git", ["add", "."], { cwd: path });
+  execFileSync("git", ["add", "--", "app.ts"], { cwd: path });
   execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-q", "-m", "base"], { cwd: path });
   return path;
 }

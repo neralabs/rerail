@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 import type { AuditRecorder, AuditInput, AuditResult } from "../../../src/engine/audit/audit.js";
@@ -85,7 +85,9 @@ async function mixedRepository(git: boolean): Promise<string> {
   await writeFile(join(root, "vendor", "acme", "lib.php"), "<?php\n\nfunction acme(string $value): string\n{\n    return escape_html($value);\n}\n");
   if (git) {
     execFileSync("git", ["init", "--quiet"], { cwd: root });
-    execFileSync("git", ["add", "--force", "."], { cwd: root });
+    const paths = (await readdir(FIXTURE, { recursive: true, withFileTypes: true }))
+      .filter(entry => !entry.isDirectory()).map(entry => relative(FIXTURE, join(entry.parentPath, entry.name)));
+    execFileSync("git", ["add", "--force", "--", ...paths, "vendor/acme/lib.php"], { cwd: root });
     execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
   }
   return root;
