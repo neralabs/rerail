@@ -97,5 +97,5 @@ Ceremony: `cargo test --release -p facts-b`, 14/14. `just facts-t0` and T1 were 
   Skipping unchanged inputs therefore removes only 12 % of recomputes.
 - Recompute is O(worktree) per edit: 5,500–5,700 files, 5.0M stage rows for dead code (S3 § 15.1).
 - To fit the budget, a from-scratch evaluation of dead code would need ≤ 0.5 s, i.e. ≤ 100 ns per stage row including the linker joins and the reachability fixpoint. That is 64× faster than S3's unloaded 32 s, and 80–140× faster than measured here (40–71 s p50 per worktree, depending on machine load). It would have to come from a columnar engine that does not run this clause today: facts-a refuses it at compile time.
-- Even at that speed, recomputing dead code peaks at 7.8 GB (one worktree's dataflow), against the 2 GB criterion.
+- Memory fails too with today's engine: recomputing dead code peaks at 7.8 GB footprint (one worktree's from-scratch dataflow) alone, and at 5.8 GB in the mix run, against the 2 GB criterion.
 - Recompute-vs-maintain is a valid lever only for clauses that are cheap both ways. Here those are the 3 light clauses, which hold < 0.1 % of the state. The decision for the heavy clauses must come from a design that shrinks maintained state: pruning, a shared linker, columnar arrangements. It cannot come from choosing between the two existing implementations.
