@@ -11,7 +11,7 @@ Decider-maintained. Newest entries first within each section. Numbers here are e
 | Spike B: base + delta dataflow | **done, verified** | SpikeB (Opus 5.5) | `Moti-Velz/facts-spike-b` @ `23d89d3e6` (gate binary `3019c8adf`) | B1, B2, B4, B5 pass; B3 255 MB under the strict-majority base, 195–198 MB with per-path or cluster bases |
 | Phase 1 | **complete: GO for Phase 2**, speed expectation recalibrated (see Decisions) | decider | | |
 | Phase 2 compiler, wave 1 | **merged and gated**: integration `caceb656f` (pushed); decider's own `just facts-gate --mutants` on it: 13/13 checks, 13/13 mutants, 315 s at load 1.6→5.4 | decider | `Moti-Velz/facts-engine` @ `caceb656f` | one semantic conflict fixed by `Integrate` (S2's columnar `Table` vs `t.rows` readers), no behaviour change |
-| Phase 2 compiler, wave 2 | **merged and gated**: integration `165080410` (pushed); Integrate2's `just facts-gate --mutants` 25/25 checks, 21/21 mutants (1,059 s: `views-derived` 779 s dominates; needs sharding) | decider | `Moti-Velz/facts-engine` @ `165080410` | wave 3 next |
+| Phase 2 compiler, wave 2 | **merged and gated**: integration `165080410` (pushed); Integrate2's `just facts-gate --mutants` 25/25 checks, 21/21 mutants (1,059 s: `views-derived` 779 s dominates; needs sharding) | decider | `Moti-Velz/facts-engine` @ `165080410` | wave 3 running: S7OnePass (lower text-id dump inputs, union-of-selections operator, delete `subst.rs`), S3CrossFile-3 (linker through the front end, narrowed clauses on the engine, generator memory), S6Leaf-2 (`binds`, budget `closure`, `printf`), S5Gate-3 (gate ≤ 10 min, differential re-pointed, `GATED` 50/50) |
 | Phase 2 wave 2 (historical) | S6Leaf done and merged (`8960a5db7`; 55/60 compile); ran: S1IR-2, S2PerFile-2, S3CrossFile-2, S4Schema-2, S5Gate-2, S6Leaf (new: matcher constructs so the 40 refused rules compile) | decider | slice branches rebased to `caceb656f` | |
 
 ## Gate ledger
@@ -75,6 +75,8 @@ Decider-maintained. Newest entries first within each section. Numbers here are e
 - Divergence of the 47 worktrees from a common base (B reports it; it sets per-worktree state).
 
 ## Log
+
+- Wave 3 launched (4 executors; S1 and S4 not relaunched: their remaining items folded into S7 and S3). Worktrees `s1-ir`, `s2-perfile`, `s4-schema` removed (branches kept) per the sub-worktree rule; `s7-onepass` created. `NARROWINGS.md` is ready for Jeremy (user's call to send).
 
 - Wave 2 merged by Integrate2 (S5, S1, S3, S4, S2; one `repo.rs` conflict; `physplan.rs` ported to S2's engine; `Op::Fixpoint` gains `closure`). Decider: quiet-machine A/B of S2's binary (table above); integration pushed at `165080410`; slice worktrees rebased.
 
