@@ -319,3 +319,146 @@ Per-stage sizes on the generator (`FACTS_STAGE_OUTPUTS=1`) against the SQLite ha
   4. Protocol rows, 3× under `bench-lock`: `greplay --plans none --real …spec-replay-light.json --no-oracle --track`. Expect ~8.6 GB at load. Memory is the blocker for 250 MB: arranged rows of the wide exported relations (`state-flow` exports carry about 60 columns of `nodes`), the linker base 7.4 GB, the interner.
   5. `captured-return` aggregate and `calls` atom (scratchpad decision; § 9.3, § 10 item 2).
 - Run dirs: parity `runs/*-parity-{light,dead-code}-w5c`, stage sizes `runs/*-dead-code-stages-w5`, profiles `runs/*-dead-code-sub500-prof{,2}`, exactness attempt `runs/20261023-072602-exactness-light-w5`, exports `exports/w5/`.
+
+## 15. Wave 6 (S3CrossFile-6)
+
+Status: **items 1–4 done; item 5 partial** (R36 done; `quality-conditional-1`, `captured-return` and `calls` still open).
+
+- Dead code is exact: 4,931 = 4,931, with 0 refusals.
+- Incremental ≡ from-scratch holds for all 5 running clauses: 0 differences. The comparison covers every stage, not only the findings. It ran over the 300-event prefix with sampled checks; the reason is below.
+- Memory is attributed per plan, per stage and per arrangement role.
+- The protocol rows were run 3 times, locked. Each run took about 17 min, over the 15 min guideline.
+- R36 (θ-correlations, mutant 48) is generic and registered. `quality-conditional-1` still does not run: its next refusal is an `IN (subquery)` under `OR`.
+- `captured-return` and the `calls` atom were not started.
+- Per Main's LOOP.md rule (received mid-wave), the full gate was not run. T0 and T1 were run instead (§ 15.5).
+
+Runs are in `~/rerail-bench/facts/phase-2/s3-crossfile/runs/` and exports in `exports/w6/`.
+
+### 15.1 Results
+
+| Gate / item | Target | Measured | Result | Run directory |
+|---|---|---|---|---|
+| `imports` export defect: cause | root cause | The cause was not column order. Regex named groups (`capture.BASE`, `capture.ITEMS` of a same-node `regex` in an AST rule) were looked up in a thread-local `GROUP_NAMES`. Only `eval_file` filled it, per rule, before running a rule. `xexport` calls `Input::rows` directly, so the table was empty: every group read NULL (projections) or `''` (text columns). On the oracle side, export 18 (`imports`' `tokens` seed) had `base` NULL in 52,201 of 52,201 rows and `items` `''` in all of them. `top` was right (`348 = 348` is a top-level statement's own start). The same bug changed `exported-families`' export 4 (its `imports`) in 2,990 oracle / 7,996 replay contents, and dead-code export 25 (`raw_dynamic_imports`, regex `each`) in 33 / 147 | found | — |
+| Fix (general) | no implicit binding | `eval::Input.groups`: each input carries its regex groups' capture ids from compile time, and `GROUP_NAMES` is deleted, so no caller can forget to bind. `xexport` also applies `evidence.paths` (it ignored them) and builds every relation it hands on from its IR schema: leaf inputs from `InputDef.schema`, engine stages from `Stage.schema`, by column name (`column_map`, never by position). `conform` checks every row of every leaf, summary, `file`, engine stage and export: the width must match, and each value must be stored as its column's affinity stores it (`apply_affinity` leaves it unchanged). A mismatch fails the content. Tests: `xexport::tests::{regex_groups_read_outside_eval_file, columns_by_name, rows_conform_to_the_schema}` | pass | all 10 export sets regenerated with 0 failures, i.e. 0 width/affinity mismatches over 9,010 + 19,801 contents × 5 clauses (`exports/w6/*.summary.json`) |
+| `unreachable-internal-symbols` oracle parity | 4,931 = 4,931, 0 refusals | **4,931 = 4,931, 0 missing, 0 extra**, 0 static and 0 runtime refusals (wave 5: 11,560) | **pass** | `runs/20261023-085817-parity-dead-code-w6` |
+| The other 4 clauses after the fix | still match | `exported-families`, `state-flow-project-1`, `required-contracts`, `quality-project-taxonomy`: 0 = 0 each, 0 refusals | pass | `runs/20261023-090138-parity-light-w6` |
+| Engine from-scratch side | a second dataflow per check, dropped after it | `drive::scratch`: the same real plans lowered into a new dataflow. Its only records are the checked worktree's members tagged base, so every product is base and presence is a threshold. It runs to completion, its findings and live refusals are read, then `Worker::drop_dataflow`. Refusals it raises are not counted in the run (`lower::uncounted`). A check compares findings and, when the from-scratch side refuses, the refusal sets (`refusals_differ`). The vectors keep Spike B's oracle, and `--scratch reference` keeps the reference evaluator. One check costs 3.3 s for the 4 light plans and 32 s for dead code (one 9,010-file worktree) | implemented | smoke `runs/20261023-090245-scratch-smoke-light`, `…-090427-scratch-smoke-dead-code` |
+| Negative control | the check catches delta-maintenance bugs | With mutants built in (`--features facts-b/mutants`) and `FACTS_STAGE_OUTPUTS=1`: mutant 4 (ΔR⋈ΔS dropped) and mutant 5 (count retractions ignored) each give 36 differences at the initial check. **Mutant 6 (fixpoint stops early) is not caught**, because it changes the from-scratch dataflow the same way. The from-scratch side checks delta maintenance, not the lowering's semantics; that is the reference's job on the vectors (`b-generated`, T1) | as designed | `runs/20261023-094240-scratch-control-mutant-4-light`, `…-094345-…-5-light`, `…-094442-…-6-light` |
+| Incremental ≡ from-scratch, light (4 plans), findings | 0 differences | **300-event prefix** (288 edits, 10 new-worktree edits, 1 bulk, 1 new worktree), every event's worktree checked plus 5 worktrees at load and at edits 100/200: 301 checks, 315 worktree checks, **0 differences**, 0 runtime refusals | pass | `runs/20261023-091058-exactness-light-w6` |
+| Same, every stage compared (`FACTS_STAGE_OUTPUTS=1`: 4 findings + 29 stages, 670K rows in worktree 1) | 0 differences | 300-event prefix, every 2nd event plus sweeps of 5: 151 checks, 165 worktree checks × 33 outputs, **0 differences**, 0 refusals | pass | `runs/20261023-094024-exactness-light-stages-w6` |
+| Incremental ≡ from-scratch, dead code, findings (2,570 in worktree 1) | 0 differences | 300-event prefix, every 25th event plus 2 worktrees at load and at edits 100/200: 13 checks, 18 worktree checks, **0 differences**, 0 refusals | pass | `runs/20261023-091058-exactness-dead-code-w6` |
+| Same, every stage compared (1 finding output + 96 stages incl. the linker views, 5.0M rows in worktree 1) | 0 differences | 300-event prefix, every 50th event plus 1 worktree at load and at edits 100/200: 7 checks, 9 worktree checks × 97 outputs, **0 differences**, 0 refusals | pass | `runs/20261023-094914-exactness-dead-code-stages-w6` |
+| Why the prefix and sampled checks | ≤ 15 min per run | The full replay has 1,111 events. Checking every event from scratch would take ≥ 1,111 × 3.3 s ≈ 61 min (light) and ≈ 10 h (dead code). The runs above took 24, 12, 19 and 10 min. Note: the 7 contents of the replay without retained source (§ 6) first appear after event 300: in the full replay they are 7 runtime refusals, all retracted by the end (protocol runs, `runtime_refusals_live` = []) | — | — |
+| R36 θ-correlations (Main's item 5) | generic rewrite, mutant 48, or a named refusal | `norm::Ctx::theta_body`: a subquery whose WHERE has non-equality correlations (`<=`, `>`, functions of both rows, nested subqueries reading the enclosing row) is joined with `distinct(n)` and filtered by θ, then correlated with `n` on all of `n`'s columns by grouping identity. This covers `[NOT] EXISTS`, `[NOT] IN`, scalar aggregates and the scalar `ORDER BY … LIMIT 1`. Registered in REWRITES.md (facts-b table, mutant 48 drops θ). Test `norm::tests::generated_theta_correlations`: 10 shapes, dataflow ≡ reference over 150 random table sets with NULLs and duplicates (> 1,000 rows), plus a θ NOT EXISTS over a recursion refused by name ("not stratified"). Mutant 48 fails it. Plans of the 5 running clauses: unchanged (`gnorm` node counts 386/428/30/15/1327) | pass | — |
+| `quality-conditional-1` after R36 | runs, or refused by name | Normalisation now passes `block_results` (whose θ-correlations were wave 5's refusal) and the θ-correlations of `conditional_findings_0`. It refuses `conditional_findings_0` for a different construct: `IN (subquery) under OR, NOT or CASE` (`n.qualified_name NOT IN (SELECT name FROM derived_conditionals) OR NOT EXISTS(…)`, the `physical-contract` arm). [INFERENCE] Past that, lowering `block_results` will refuse by name: its NOT EXISTS reads `fold.state` (the recursive row), so R36's identity antijoin is against the recursion. The unit test shows that shape refused as "antijoin by a recursive relation inside the recursion (not stratified)". It was not observed on qc1 itself, because the plan is refused before lowering | refused (named) | `facts-b gnorm --real` over `exports/w5/oracle-quality-conditional-1.jsonl` |
+| `captured-return` aggregate, `calls` atom | — | not started | open | — |
+
+### 15.2 Memory attribution (unlocked loads of the 40 worktrees, 0 events, `FACTS_PROFILE=1`; arranged records from differential's logging, per stage via the profiler's operator→node map)
+
+Correction to wave 5: its "8.6 GB for the 5 plans" was `spec-replay-light.json`, the **4** light plans. With dead code, all 5 plans load at **29.3 GB**.
+
+| Run | RSS loaded | Arranged records | Records sent at load | Interned strings | Exported-row cache | B / record (RSS − interner − rows − store) | Run directory |
+|---|---|---|---|---|---|---|---|
+| store only (no plan) | 38 MB | 0 | — | 11.6K / 1 MB | 0 | — | `runs/20261023-091125-mem-store-only-w6` |
+| `required-contracts` | 59 MB | 20,490 | 0.16M | 20.5K / 2 MB | 2 MB | — | `…-091129-mem-only-required-contracts-w6` |
+| `quality-project-taxonomy` | 98 MB | 5 | 17 | 11.6K / 1 MB | 0 | — | `…-091134-mem-only-quality-project-taxonomy-w6` |
+| `state-flow-project-1` | 166 MB | 3 | 13 | 11.6K / 1 MB | 6 MB | — | `…-091246-mem-only-state-flow-project-1-w6` |
+| `exported-families` | 9,697 MB | 28.33M | 282.7M | 316K / 43 MB | 72 MB | 353 | `…-091139-mem-only-exported-families-w6` |
+| `unreachable-internal-symbols` | 23,578 MB | 117.55M | 944.0M | 3.28M / 600 MB | 533 MB | 200 | `…-091254-mem-only-unreachable-internal-symbols-w6` |
+| **all 5** | **29,260 MB** | **145.91M** | **1,226.9M** | 3.29M / 600 MB | 613 MB | 201 | `…-092005-mem-all5-w6` (`profile.json` → `stages`) |
+
+Within the 145.91M arranged records of all 5 plans:
+
+| Split | Records | Share |
+|---|---|---|
+| Linker base (dead code's `views/*` stages: `link_reach` 12.4M, `linked_edges` 6.9M, `s_edge` 6.5M, `name_sub` 3.7M, `spelling` 3.5M, …) | 61.38M | 42 % |
+| Dead code outside the linker (`reachable` 17.3M, `reach_edges` 14.5M, `public_methods` 11.9M, `dead_traits` 2.2M, …) | 56.17M | 38 % |
+| `exported-families` (`public_methods` 11.9M, `traits` 6.7M, `annotation_names` 2.1M, `imports` 2.0M, …) | 28.33M | 19 % |
+| the 3 other plans | 20.5K | 0 % |
+| *of which* stages computed twice, identical in `exported-families` and dead code (`public_methods`, `annotation_names`, `imports`, `declarations`, `parameters`, `hierarchy`) | 17.81M | 12 % |
+| *by role:* keyed arrangements of node outputs (`n…:by`) | 64.51M | 44 % |
+| *by role:* presence input + output (`distinct`, `pres`, fixpoint `iterate-distinct`) | 21.53M + 21.23M | 29 % |
+| *by role:* fixpoint join arms (`iter-join-l`) | 24.41M | 17 % |
+| *by role:* group input + output | 13.28M | 9 % |
+
+Outside arrangements: the interner holds 600 MB at load (3.28M strings, almost all computed by the dead-code plan; the store's own strings are 11.6K) and 688 MB / 5.77M strings after the replay. It never frees. The exported-row cache holds 613 MB at load and 1,048 MB after the replay.
+
+Per-worktree deltas come from a `--track` run (live records of every operator output per tag, over the full replay). They are not arranged records, and the run's RSS includes the tracking map (40.1 GB at load, 62.3 GB at the end). At the end of the 1,111 events the base tag held 57.8M records (5.4 GB as rows), the 8 cluster tags 81.5M (13.6 GB) and the 46 worktree tags **239.2M (29.9 GB, 63 %)**. Per worktree, state grows linearly with divergence: records ≈ 8.2 × delta rows − 0.47M (R² 0.92), median 3.9 records per delta row (1.1–19.1). The largest worktree (523 delta entries, 1.85M delta rows) holds 10.2M records (`runs/20261023-092718-track-all5-w6`).
+
+What a Phase 3 design must change, with these numbers (nothing was optimised in this wave):
+
+1. **Arrangement pruning to what delta maintenance reads.**
+   - Presence keeps both its input and its output arrangement (42.8M, 29 %). One of the two is enough: about −21M.
+   - Keyed arrangements of node outputs (64.5M, 44 %) and fixpoint join arms (24.4M) are built per (node, key) for every consumer. Delta maintenance needs only the arrangements a bilinear term actually reads.
+2. **One plan graph across clauses.** Identical stages over the same exports are lowered once per plan today: 17.8M (12 %) are duplicates. A plan digest (REWRITES.md "CSE by expression digest", planned) removes them.
+3. **The linker as a shared base, not a per-plan view.** At 61.4M records (42 %, about 12 GB at 201 B/record) the linker is the largest single item. It is base state shared by every clause that reads `reference_edges`/`calls`, and is maintained once per repository.
+4. **One interner with compaction.** Computed strings (qualified names, link keys) are interned and never freed: 600 → 688 MB over the replay. Strings built for the linker should be ids (path id, def ordinal), not text.
+5. **Record size.** At about 200 B per arranged record (dead code; 353 B for `exported-families`' wide rows) against 40 B by hand (§ 8.2), even items 1 and 2 leave about 107M records, about 21 GB. The 250 MB target for 40 worktrees cannot be met by pruning. It needs a columnar arrangement of u32 ids, and the linker outside the per-plan dataflow.
+6. **Compaction and divergence.**
+   - Arranged records grow from 145.9M at load to 252.8M at edit 1,000 and 349.7M at the end of the replay (deterministic: equal in all 3 protocol runs). Over the same span the live per-worktree state reaches 239M records.
+   - [INFERENCE] Most of that growth is divergence (6 new worktrees, delta entries per worktree from a median of 26 up to 523). The rest is merge slack in differential's spines. This run does not separate the two. That needs a from-scratch load of the end memberships (the § 15.1 dataflow, without a replay), which was not run.
+   - Re-clustering (moving shared worktree deltas into cluster tags) is the lever for the divergence part.
+
+### 15.3 Protocol rows (3 runs under `bench-lock`; load 1.9 / 10.2 / 14.0 at start; 5 plans, 40 worktrees, the full replay: 1,111 events with 1,000 edits)
+
+Each run took 1,003–1,030 s, over the 15 min guideline (load 268–291 s, membership model 47–53 s). Counts are deterministic across runs; times are calibration.
+
+| Row | p1 | p2 | p3 | Target |
+|---|---|---|---|---|
+| RSS after loading 40 worktrees | 31,552 MB | 31,664 MB | 31,988 MB | ≤ 250 MB |
+| RSS at edit 1,000 | 42,462 MB | 42,541 MB | 42,768 MB | — |
+| RSS / footprint at end (46 worktrees) | 67.9 / 43.3 GB | 67.8 / 45.1 GB | 67.3 / 42.9 GB | — |
+| Peak RSS (`time -l`) | 71.3 GB | 71.2 GB | 70.6 GB | — |
+| Arranged records at edit 1,000 / end (count) | 252,821,796 / 349,745,074 | same | same | — |
+| Single-file edit latency p50 / p95 / p99 / max (n = 1,050) | 17.0 / 62.5 / 194 / 1,320 ms | 15.8 / 59.9 / 184 / 1,315 ms | 17.1 / 63.6 / 193 / 1,330 ms | calibration |
+| Bulk p50 / max (n = 5) | 7.1 / 19.2 s | 7.0 / 18.3 s | 7.1 / 18.7 s | — |
+| Commit p50 / max (n = 50) | 2.2 / 25.3 s | 1.7 / 24.8 s | 1.9 / 24.5 s | — |
+| New worktree p50 (n = 5); commit init | 24.4 s; 77.6 s | 23.7 s; 77.0 s | 24.4 s; 78.4 s | — |
+| Runtime refusals | 7 contents without retained source, 0 live at end | same | same | 0 live |
+| Per-worktree state vs divergence | § 15.2 (track run): ≈ 8.2 records per delta row, R² 0.92 | | | proportional |
+
+Run directories: `runs/20261023-100048-protocol-all5-p1`, `…-101758-protocol-all5-p2`, `…-103441-protocol-all5-p3`.
+
+### 15.4 Commits
+
+- `3f24e1a35`: `Input.groups` replaces `GROUP_NAMES`; `xexport` builds relations from the IR schemas and adds `conform` and the `paths` filter; 3 xexport unit tests.
+- `863732d91`: the greplay from-scratch dataflow (`drive::scratch`, `Want`, `--scratch`, `--check-every`, `--sweep`) and `lower::uncounted`.
+- `703e5b932`: R36 (`norm::Ctx::theta_body`; correlations carry `KeyMode` on both sides, type `Corr`), the REWRITES.md row and mutant 48.
+- Plus this report.
+
+### 15.5 Checks run (LOOP.md T0/T1; the full gate is the integrator's)
+
+- T0:
+  - `cargo test --release -p facts-b --features facts-b/mutants`: 14/14.
+  - `cargo test --release -p facts-a --features facts-a/mutants --bin facts-a`: 13/13 (the new xexport tests included).
+  - `FACTS_MUTANT=48 … norm::tests`: `generated_theta_correlations` fails (killed).
+- T1, the 100-event replay prefix on the vectors with the final binary:
+  - r1+r3: 101 checks, 180 worktree checks, 0 differences (`runs/20261023-103124-t1-vectors-r1r3-w6`).
+  - rt: 180/180 expected refusals refused, 0 differences (`…-103155-t1-vectors-rt-w6`).
+- The gate's registry reads REWRITES.md, so mutant 48 joins family `facts-b-unit` with no edit to `facts-gate.py`.
+- `just facts-gate --mutants` was **not** run: Main's LOOP.md ruling arrived mid-wave.
+
+### 15.6 Interface changes
+
+- `facts-a`:
+  - `eval::Input.groups: Vec<(String, Name)>` (regex group → capture id). `eval::GROUP_NAMES` is deleted.
+  - `xexport`: `column_map`, `table_rows`, `conform`. A relation that does not fit its schema now fails the content as `"<relation>: …"`.
+- `facts-b greplay`:
+  - New flags: `--scratch engine|reference` (default `engine`), `--check-every N` (default 1), `--sweep K` (worktrees per sweep, default all).
+  - `results.json` → `exactness` gains `scratch`, `scratch_dataflows`, `scratch_seconds`, `check_every`, `sweep`.
+  - New difference kind: `refusals_differ` (`incremental` vs `scratch`).
+- `lower::uncounted`.
+- `norm`: `Corr = (X, X, (KeyMode, KeyMode))` replaces the `(Aff, Aff)` correlation pairs; `Ctx::theta_body`. `decorrelate` and `rows_of` return the θ conjuncts.
+
+## 16. Resume notes (wave 6)
+
+- Exports: `exports/w6/{oracle,replay}-{dead-code,exported-families,state-flow-project-1,required-contracts,quality-project-taxonomy}.jsonl` (fixed exporter). Specs: `w6/spec-{oracle,replay}-{light,dead-code,all5}.json` and `w6/spec-replay-only-<clause>.json`.
+- Commands:
+  - Parity: `greplay --plans none --real w6/spec-oracle-dead-code.json --parity oracle-b6-jobs.tsv --no-oracle`, then `findings_parity.py RUN --clause unreachable-internal-symbols:unreachable-internal-symbols --check internal_dead_code --jobs oracle-b6-jobs.tsv --code-col 4`.
+  - Exactness: `FACTS_STAGE_OUTPUTS=1 greplay --plans none --real w6/spec-replay-<light|dead-code>.json --events …/seed-5eedb/events.jsonl --limit 300 --check-every N --sweep K`.
+  - The `qc1` exports in `exports/w5/` predate the fix. Its inputs are `syntax` relations (no regex groups); regenerate anyway before its first parity.
+- Next, in order:
+  1. `quality-conditional-1`: a generic rewrite for `IN (subquery)` under OR/NOT/CASE. In three-valued logic, `e IN S` = `CASE WHEN count(S) = 0 THEN 0 WHEN e IS NULL THEN NULL WHEN count(S.f = e) > 0 THEN 1 WHEN count(S.f IS NULL) > 0 THEN NULL ELSE 0 END`: three correlated counts, hoisted like EXISTS. Then lower `block_results`. If its θ NOT EXISTS over `fold.state` is refused as "not stratified" as inferred, it needs a row-local antijoin: an antijoin whose right side is a function of the left row and of non-recursive relations only, i.e. a filter, which is monotone. Otherwise, a narrowing.
+  2. Separate divergence from merge slack (§ 15.2 item 6): load the end-of-replay memberships from scratch and compare arranged records with the 349.7M after the replay.
+  3. Phase 3 memory items (§ 15.2): presence with one arrangement, cross-plan CSE, the linker as shared base state, id-valued linker strings, columnar records.
+  4. `captured-return` aggregate (§ 9.3; needs S6's step counts from `Closure::derive`) and the `calls` atom (§ 10 item 2).

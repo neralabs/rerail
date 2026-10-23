@@ -72,6 +72,15 @@ pub fn refusals() -> Refusals {
     REFUSALS.with(|r| r.borrow().clone())
 }
 
+/// Runs `f`, then restores the runtime-refusal counters: a check's from-scratch dataflow raises
+/// the measured run's refusals again, and those are not the run's.
+pub fn uncounted<X>(f: impl FnOnce() -> X) -> X {
+    let saved = refusals();
+    let x = f();
+    REFUSALS.with(|r| *r.borrow_mut() = saved);
+    x
+}
+
 fn refuse(what: &str) {
     REFUSALS.with(|r| *r.borrow_mut().0.entry(what.to_owned()).or_default() += 1);
     CAPTURE.with(|c| {

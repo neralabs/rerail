@@ -42,6 +42,9 @@ pub struct Input {
     pub paths: Option<Scope>,
     /// Same-node regexes with named groups (for `capture.GROUP` and regex `each`).
     pub node_regexes: Vec<Regex>,
+    /// Those regexes' group names and their capture ids in the rule's name table. The input
+    /// carries them, so its rows never depend on which rule a caller evaluated last.
+    pub groups: Vec<(String, Name)>,
     /// The input lowered by the pattern front end and planned physically (`lowered.rs`), or why
     /// not (then the leaf executor evaluates it, `Input::rows`).
     pub phys: Result<crate::lowered::Plan, String>,
@@ -329,13 +332,16 @@ impl Rule {
             }).transpose()?;
             let mut nr = Vec::new();
             node_regexes(&query.rule, &query.utils, &mut nr, &mut Default::default());
+            let mut groups: Vec<(String, Name)> = Vec::new();
             for rx in &nr {
                 for g in rx.capture_names().flatten() {
-                    names.id(g);
+                    if groups.iter().all(|(n, _)| n != g) {
+                        groups.push((g.to_owned(), names.id(g)));
+                    }
                 }
             }
             let phys = crate::lowered::lower_and_plan(ev, ast_json, &fields, &utils, grammar, &mut preds);
-            inputs.push(Input { query, fields: fields.clone(), projs, each, anchor, paths, node_regexes: nr, phys });
+            inputs.push(Input { query, fields: fields.clone(), projs, each, anchor, paths, node_regexes: nr, groups, phys });
             keys.insert(key, inputs.len() - 1);
             Ok((inputs.len() - 1, fields))
         };
@@ -532,7 +538,7 @@ impl Input {
                     // holding same-node regex's matches.
                     let text = f.text(root);
                     let base = f.start[root as usize];
-                    let gname = ev_name(&self.query, name);
+                    let gname = self.group_name(name);
                     let mut seen = Vec::new();
                     for (ri, rx) in self.node_regexes.iter().enumerate() {
                         let Some(gname) = gname.as_deref() else { continue };
@@ -623,7 +629,11 @@ impl Input {
         self.query_name_opt(n).unwrap_or(Name::MAX)
     }
     fn query_name_opt(&self, n: &str) -> Option<Name> {
-        GROUP_NAMES.with(|g| g.borrow().get(n).copied())
+        self.groups.iter().find(|(g, _)| g == n).map(|(_, id)| *id)
+    }
+
+    fn group_name(&self, id: Name) -> Option<&str> {
+        self.groups.iter().find(|(_, i)| *i == id).map(|(g, _)| g.as_str())
     }
 
     /// First-match named groups of the same-node regexes at `root`.
@@ -649,15 +659,6 @@ impl Input {
         }
         groups
     }
-}
-
-thread_local! {
-    /// Capture names of the rule being evaluated, by name (for regex groups).
-    pub static GROUP_NAMES: std::cell::RefCell<BTreeMap<String, Name>> = const { std::cell::RefCell::new(BTreeMap::new()) };
-}
-
-fn ev_name(_q: &Query, n: Name) -> Option<String> {
-    GROUP_NAMES.with(|g| g.borrow().iter().find(|(_, v)| **v == n).map(|(k, _)| k.clone()))
 }
 
 fn capture_range(ev: &ast::Eval<'_>, env: &Env, groups: &[(Name, (u32, u32), String)], n: Name) -> Option<(u32, u32)> {
@@ -803,13 +804,6 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
         if !rule.scope.matches(ctx.path) {
             continue;
         }
-        GROUP_NAMES.with(|g| {
-            let mut g = g.borrow_mut();
-            g.clear();
-            for (i, n) in rule.names.names.iter().enumerate() {
-                g.insert(n.clone(), i as Name);
-            }
-        });
         // Memoised verdicts shared by the rule's queries over this file.
         let memo = ast::FileMemo::default();
         // The physical predicates' truths, shared by the rule's lowered inputs over this file.

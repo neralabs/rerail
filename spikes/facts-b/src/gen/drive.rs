@@ -1,10 +1,13 @@
 //! `facts-b greplay`: the generated dataflow over the membership model, driven by Spike B's edit
 //! replay. Every plan is an IR repository plan lowered by the generator: the test vectors
 //! (Spike B's R1/R3 as IR, `vectors`) and real plans compiled by `rerail_facts::compile`
-//! (`real`). After every event the edited worktree (and every worktree each 100 edits) is
-//! compared with a from-scratch evaluation: the vectors with Spike B's oracle, real plans with
-//! the reference evaluator (`rerail_facts::reference::evaluate_repository`) over the worktree's
-//! member exported rows.
+//! (`real`). After every `--check-every`-th event the edited worktree (and every 100 edits the
+//! `--sweep` worktrees) is compared with a from-scratch evaluation: the vectors with Spike B's
+//! oracle, real plans with a second dataflow over the same plans whose only records are the
+//! worktree's members, tagged base, run to completion and dropped (`scratch`); with
+//! `--scratch reference`, with the reference evaluator
+//! (`rerail_facts::reference::evaluate_repository`) over the worktree's member exported rows.
+//! Findings and runtime refusals must both agree.
 use super::lower::{self, Refusals, Source, T};
 use super::norm;
 use super::real::{self, Real};
@@ -36,6 +39,55 @@ pub struct Opts {
     pub real: Option<PathBuf>,
     /// One worktree from a jobs file (path, hash, source) instead of the 40: parity runs.
     pub parity: Option<PathBuf>,
+    /// Real plans checked by the reference evaluator instead of a from-scratch dataflow.
+    pub reference_scratch: bool,
+    /// The edited worktree is checked after every n-th event.
+    pub check_every: usize,
+    /// Worktrees checked at load and every 100 edits (evenly spaced); `None`: all.
+    pub sweep: Option<usize>,
+}
+
+/// A plan's from-scratch view of one worktree: its runtime refusals when any (findings are then
+/// withheld), else its findings.
+enum Want {
+    Rows(BTreeMap<Row, i32>),
+    /// Spike B's oracle or the reference saw a tie the plan's order must refuse.
+    Tie(String),
+    /// The from-scratch dataflow's live refusals.
+    Refused(Vec<String>),
+    Error(String),
+}
+
+/// Real plans from scratch for one worktree: a second dataflow over `graphs` fed `files` as base
+/// records only (every product is base, presence a threshold), run to completion, read and
+/// dropped. Per output its findings; per plan its live refusals. Refusals it raises are not
+/// counted in the run's.
+#[allow(clippy::type_complexity)]
+fn scratch(worker: &mut timely::worker::Worker, graphs: &[(String, Rc<norm::Graph>)], src: &Source, files: &[(Sym, Cid)]) -> (BTreeMap<String, Result<BTreeMap<Row, i32>, String>>, BTreeMap<String, Result<Vec<String>, String>>) {
+    lower::uncounted(|| {
+        let probe = timely::dataflow::operators::probe::Handle::new();
+        let id = worker.next_dataflow_index();
+        let mut b = lower::build(worker, graphs.to_vec(), src.clone(), &probe, false);
+        for (p, c) in files {
+            b.files.update((BASE, (*p, *c)), 1);
+        }
+        b.files.advance_to(1);
+        b.files.flush();
+        worker.step_while(|| probe.less_than(&1));
+        let outs = b.outputs.iter().map(|(n, o)| (n.clone(), lower::full(o, BASE))).collect();
+        let refs = b.refusals.iter().map(|(n, o)| (n.clone(), lower::full(o, BASE).map(|m| m.keys().map(show).collect()))).collect();
+        drop(b);
+        worker.drop_dataflow(id);
+        (outs, refs)
+    })
+}
+
+/// `k` worktrees evenly spaced over `ws` (all of them when `k` is `None` or covers them).
+fn spread(ws: &[W], k: Option<usize>) -> Vec<W> {
+    match k {
+        Some(k) if k < ws.len() => (0..k).map(|i| ws[i * ws.len() / k]).collect(),
+        _ => ws.to_vec(),
+    }
 }
 
 fn mb(b: u64) -> f64 {
@@ -244,7 +296,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
         let probe = timely::dataflow::operators::probe::Handle::new();
         let sizes = crate::flow::register_logging(worker);
         let t_dataflow = Instant::now();
-        let mut built = lower::build(worker, graphs.clone(), src, &probe, opts.track);
+        let mut built = lower::build(worker, graphs.clone(), src.clone(), &probe, opts.track);
         let dataflow_s = t_dataflow.elapsed().as_secs_f64();
         eprintln!("dataflow built: {:.2}s, {} plan nodes", dataflow_s, graphs.iter().map(|(_, g)| g.nodes.len()).sum::<usize>());
         let mut resident = Resident::default();
@@ -324,13 +376,28 @@ pub fn run(run_dir: &Path, opts: Opts) {
         let mut missing_expected_refusals = 0usize;
         let mut live_seen: BTreeMap<String, usize> = BTreeMap::new();
         let plan_of: FxHashMap<String, usize> = real.as_ref().map(|r| r.plans.iter().enumerate().map(|(i, (n, ..))| (n.clone(), i)).collect()).unwrap_or_default();
-        let mut check = |w: W, members: &BTreeMap<W, Members>, built: &lower::Built, at: usize, differences: &mut Vec<serde_json::Value>| {
+        let reference_scratch = opts.reference_scratch;
+        // From-scratch dataflows built for checks, and the seconds they took (in `oracle_s`).
+        let mut scratch_runs = 0usize;
+        let mut scratch_s = 0.0;
+        let mut check = |worker: &mut timely::worker::Worker, w: W, members: &BTreeMap<W, Members>, built: &lower::Built, at: usize, differences: &mut Vec<serde_json::Value>| {
             let t = Instant::now();
             let files: Vec<(Sym, Cid)> = members[&w].iter().map(|(p, c)| (*p, *c)).collect();
             let vf = if vector_names.iter().any(|v| v == "r1" || v == "r3") { Some(crate::oracle::evaluate(&mut world.borrow_mut(), &files)) } else { None };
             // Member files in path order (the IR's union order for exported relations).
             let mut ordered: Vec<(String, Sym, Cid)> = files.iter().map(|(p, c)| (world.borrow().store.syms.str(*p).to_owned(), *p, *c)).collect();
             ordered.sort();
+            // Real plans from scratch: one second dataflow per check, over every real plan.
+            let fresh = match &real {
+                Some(r) if !reference_scratch => {
+                    let ts = Instant::now();
+                    let x = scratch(worker, &r.graphs, &src, &files);
+                    scratch_runs += 1;
+                    scratch_s += ts.elapsed().as_secs_f64();
+                    Some(x)
+                }
+                _ => None,
+            };
             for (name, out) in &built.outputs {
                 let plan = name.split(':').next().unwrap();
                 // The plan's live runtime refusals in w.
@@ -345,8 +412,14 @@ pub fn run(run_dir: &Path, opts: Opts) {
                 for l in &live {
                     *live_seen.entry(format!("{plan}: {l}")).or_default() += 1;
                 }
-                // From scratch: the rows, or Err(tie) where the order observed a tie.
-                let want: Result<BTreeMap<Row, i32>, String> = if let Some(&i) = plan_of.get(plan) {
+                let rows = |r: Result<BTreeMap<Row, i32>, String>| r.map_or_else(Want::Error, Want::Rows);
+                let want = if let (Some(_), Some((outs, refs))) = (plan_of.get(plan), &fresh) {
+                    match refs.get(plan).cloned().unwrap_or_else(|| Ok(Vec::new())) {
+                        Err(e) => Want::Error(format!("scratch refusals: {e}")),
+                        Ok(x) if !x.is_empty() => Want::Refused(x),
+                        Ok(_) => rows(outs.get(name).cloned().unwrap_or_else(|| Err(format!("scratch has no output {name}")))),
+                    }
+                } else if let Some(&i) = plan_of.get(plan) {
                     let r = real.as_ref().unwrap();
                     let (_, k, p, _) = &r.plans[i];
                     let exported = |id: u32| -> Result<Vec<Vec<rerail_facts::sql::value::V>>, String> {
@@ -357,44 +430,51 @@ pub fn run(run_dir: &Path, opts: Opts) {
                         }
                         Ok(rows)
                     };
-                    rerail_facts::reference::evaluate_repository(p, &exported).map(|rows| {
-                        let mut m = BTreeMap::new();
-                        for r in rows {
-                            *m.entry(r.iter().map(val::from_v).collect::<Row>()).or_default() += 1;
+                    match rerail_facts::reference::evaluate_repository(p, &exported) {
+                        Ok(rs) => {
+                            let mut m = BTreeMap::new();
+                            for r in rs {
+                                *m.entry(r.iter().map(val::from_v).collect::<Row>()).or_default() += 1;
+                            }
+                            Want::Rows(m)
                         }
-                        m
-                    })
+                        Err(e) if e.starts_with("tie") => Want::Tie(e),
+                        Err(e) => Want::Error(e),
+                    }
                 } else if plan == "rt" {
                     match vectors::rt_oracle(&mut world.borrow_mut(), &files) {
-                        (true, _) => Err("tie: row_number() order with ties between distinct rows".into()),
-                        (false, rows) => Ok(rows.into_iter().map(|r| (r, 1)).collect()),
+                        (true, _) => Want::Tie("tie: row_number() order with ties between distinct rows".into()),
+                        (false, rows) => Want::Rows(rows.into_iter().map(|r| (r, 1)).collect()),
                     }
                 } else {
-                    Ok(vectors::oracle_rows(vf.as_ref().unwrap(), plan).into_iter().map(|r| (r, 1)).collect())
+                    Want::Rows(vectors::oracle_rows(vf.as_ref().unwrap(), plan).into_iter().map(|r| (r, 1)).collect())
                 };
-                let tie = matches!(&want, Err(e) if e.starts_with("tie"));
-                if tie {
-                    let e = expected_refusals.entry(plan.to_owned()).or_default();
-                    e.0 += 1;
-                    if live.is_empty() {
-                        missing_expected_refusals += 1;
-                        differences.push(json!({"event": at, "worktree": w, "plan": name, "missing_expected_refusal": want.unwrap_err()}));
-                    } else {
-                        e.1 += 1;
+                let want = match want {
+                    // A refusal expected from scratch: the incremental side must hold it (the
+                    // same constructs, when the from-scratch side is a dataflow).
+                    Want::Tie(_) | Want::Refused(_) => {
+                        let e = expected_refusals.entry(plan.to_owned()).or_default();
+                        e.0 += 1;
+                        if live.is_empty() {
+                            missing_expected_refusals += 1;
+                        }
+                        match &want {
+                            Want::Refused(x) if *x != live => differences.push(json!({"event": at, "worktree": w, "plan": name, "refusals_differ": {"incremental": live, "scratch": x}})),
+                            Want::Tie(x) if live.is_empty() => differences.push(json!({"event": at, "worktree": w, "plan": name, "missing_expected_refusal": x})),
+                            _ => e.1 += 1,
+                        }
+                        continue;
                     }
-                    continue;
-                }
+                    Want::Error(e) => {
+                        differences.push(json!({"event": at, "worktree": w, "plan": name, "reference_error": e}));
+                        continue;
+                    }
+                    Want::Rows(x) => x,
+                };
                 if !live.is_empty() {
                     differences.push(json!({"event": at, "worktree": w, "plan": name, "unexpected_runtime_refusal": live}));
                     continue;
                 }
-                let want = match want {
-                    Ok(x) => x,
-                    Err(e) => {
-                        differences.push(json!({"event": at, "worktree": w, "plan": name, "reference_error": e}));
-                        continue;
-                    }
-                };
                 match lower::full(out, w) {
                     Err(e) => differences.push(json!({"event": at, "worktree": w, "plan": name, "error": e})),
                     Ok(got) => {
@@ -408,10 +488,11 @@ pub fn run(run_dir: &Path, opts: Opts) {
             }
             oracle_s += t.elapsed().as_secs_f64();
         };
+        let sweep = |members: &BTreeMap<W, Members>| spread(&members.keys().copied().collect::<Vec<_>>(), opts.sweep);
         let mut initial = Vec::new();
         if opts.oracle {
-            for w in members.keys().copied().collect::<Vec<_>>() {
-                check(w, &members, &built, 0, &mut differences);
+            for w in sweep(&members) {
+                check(worker, w, &members, &built, 0, &mut differences);
                 worktree_checks += 1;
                 initial.push(json!([w, built.outputs.iter().map(|(n, o)| (n.clone(), lower::full(o, w).map(|m| m.values().map(|c| *c as usize).sum::<usize>()).unwrap_or(usize::MAX))).collect::<BTreeMap<_, _>>()]));
             }
@@ -428,6 +509,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
         let mut rss_samples = vec![json!({"at": "loaded", "rss_mb": mb(rss_loaded.0), "footprint_mb": mb(rss_loaded.1)})];
         let mut fact_load_s = 0.0;
         let mut stopped = false;
+        let mut events_done = 0usize;
         for ev in &events {
             if stopped {
                 break;
@@ -481,17 +563,20 @@ pub fn run(run_dir: &Path, opts: Opts) {
                 edits_done += 1;
             }
             per_event.push(json!([ev.seq, ev.group, ev.kind, w, ev.changes.len(), ms_]));
+            events_done += 1;
             if opts.oracle {
                 let before = differences.len();
-                check(w, &members, &built, ev.seq, &mut differences);
-                worktree_checks += 1;
-                checks += 1;
+                if events_done % opts.check_every == 0 {
+                    check(worker, w, &members, &built, ev.seq, &mut differences);
+                    worktree_checks += 1;
+                    checks += 1;
+                }
                 if ev.group == "edit" && edits_done % 100 == 0 {
-                    for ww in members.keys().copied().collect::<Vec<_>>() {
-                        check(ww, &members, &built, ev.seq, &mut differences);
+                    for ww in sweep(&members) {
+                        check(worker, ww, &members, &built, ev.seq, &mut differences);
                         worktree_checks += 1;
                     }
-                    eprintln!("edit {edits_done}: all-worktree check, {} differences so far", differences.len());
+                    eprintln!("edit {edits_done}: worktree sweep, {} differences so far", differences.len());
                 }
                 if (opts.fail_fast && differences.len() > before) || differences.len() > 50 {
                     eprintln!("stopping at event {}: {} differences", ev.seq, differences.len());
@@ -574,7 +659,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
             "fact_load_seconds_total": fact_load_s,
             "rss": rss_samples,
             "resident": {"pairs": resident.held(), "contents": resident.contents(), "exported_row_bytes": facts.borrow().bytes(), "interned": nsyms, "interned_bytes": sym_bytes},
-            "exactness": {"checks": checks, "worktree_checks": worktree_checks, "differences": differences.len(), "first_differences": differences.iter().take(20).collect::<Vec<_>>(), "oracle_seconds": oracle_s, "stopped_early": stopped},
+            "exactness": {"checks": checks, "worktree_checks": worktree_checks, "differences": differences.len(), "first_differences": differences.iter().take(20).collect::<Vec<_>>(), "oracle_seconds": oracle_s, "stopped_early": stopped, "scratch": if opts.reference_scratch { "reference" } else { "engine" }, "scratch_dataflows": scratch_runs, "scratch_seconds": scratch_s, "check_every": opts.check_every, "sweep": opts.sweep},
             "initial_findings_per_worktree": initial,
             "state": state,
             "parity_rows": parity_rows,

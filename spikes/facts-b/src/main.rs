@@ -55,6 +55,13 @@ fn main() {
                 plans: arg(&args, "--plans").map(|s| s.split(',').map(str::to_owned).collect()).unwrap_or_default(),
                 real: arg(&args, "--real").map(PathBuf::from),
                 parity: arg(&args, "--parity").map(PathBuf::from),
+                reference_scratch: match arg(&args, "--scratch").as_deref() {
+                    None | Some("engine") => false,
+                    Some("reference") => true,
+                    Some(o) => panic!("--scratch {o}: engine | reference"),
+                },
+                check_every: arg(&args, "--check-every").map_or(1, |x| x.parse().unwrap()),
+                sweep: arg(&args, "--sweep").map(|x| x.parse().unwrap()),
             },
         ),
         "edits" => edits::run(

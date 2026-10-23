@@ -104,7 +104,7 @@ fn leaf_input(c: &Case, names: &mut Names) -> Result<Input, String> {
         Anchor::Capture(n) => EAnchor::Capture(names.id(n)),
         a => return Err(format!("anchor {a:?}")),
     };
-    Ok(Input { query: q, fields: c.def.fields.iter().map(|(f, _)| f.clone()).collect(), projs, each: None, anchor, paths: None, node_regexes: Vec::new(), phys: Err("pattern-check".into()) })
+    Ok(Input { query: q, fields: c.def.fields.iter().map(|(f, _)| f.clone()).collect(), projs, each: None, anchor, paths: None, node_regexes: Vec::new(), groups: Vec::new(), phys: Err("pattern-check".into()) })
 }
 
 /// The content's core relations, as the reference evaluator reads them (`views::core_rows`).
