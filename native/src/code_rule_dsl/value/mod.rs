@@ -46,7 +46,7 @@ thread_local! {
 pub struct NodeRef {
     pub start: u32,
     pub end: u32,
-    pub(crate) kind: u16,
+    pub kind: u16,
 }
 
 impl NodeRef {
