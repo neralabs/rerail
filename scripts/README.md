@@ -11,7 +11,8 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
 - `deps/`: pins that follow a dependency's version (`sync-pins.mjs`, `npm run deps:sync`): the OMP host and its release
   digests and the playground's SDK follow the OMP SDK, the ast-grep differential test's reference follows the ast-grep
   CLI. `.github/workflows/dependabot-pins.yml` runs it on Dependabot's pull requests; `npm run check` fails on drift.
-- `dev/`: a development install from this checkout (`just rerail-dev`), its restore, nuke and smoke runs.
+- `dev/`: a development install from this checkout (`just rerail-dev`), its restore, nuke and smoke runs, and the
+  dashboard scenario launcher for design review (`ui-scenario.ts`, `just ui-scenario <scenario>`).
 - `dsl/`: the code-rule DSL benchmark.
 - `generate/`: generators of committed engine and host data and the DSL reference page (manifest: `generate/README.md`).
 - `host/`: real-host runs: OMP install, host smoke, lifecycle and auth checks, the Windows install smoke.

@@ -1,20 +1,83 @@
+/**
+ * History, by session (`#sessions`, `?sessionId=<id>&host=<agent>` selects one): the repository's coding agent
+ * sessions by day, and the selected one's transcript with the violations Rerail logged and steered in it.
+ */
 import { h, setAttr, setText, setClass, chevron, searchIcon, syncChildren } from "../dom.js";
 import { fmt, plural, ago, duration, stamp, dayLabel, daysAgo, shortSessionId } from "../format.js";
 import { data, ui } from "../state.js";
-import { ensureTitle } from "../poll.js";
-import { sessionTurns, sessionCorrections, sessionViolationTotal, loadedFrom, placeCorrections, resumeCommand, openState, lastEventAt, isOpen } from "../sessions-model.js";
-import { renderTimeline } from "./timeline.js";
+import { ensureTitle, loadSession, loadSessionFindings, loadMoreSessions, loadEarlier } from "../poll.js";
+import { sessionTurns, sessionCorrections, sessionViolationTotal, loadedFrom, placeCorrections, resumeCommand, openState, lastEventAt, isOpen, violationCounts } from "../sessions-model.js";
+import { copyText, invalidate, loadMore, renderNow, toast } from "../shell.js";
+import { renderTimeline, jumpTo, placeTicks } from "../render/timeline.js";
+
+export const needs = ["rules", "sessions", "selectedSession"];
+
+/* ---------- selection ---------- */
+
+/** The load behind the current selection, while it runs; a fallback must not pre-empt a deep link's 404 check. */
+let selecting = null;
+
+/**
+ * Select a session and load it: its head and first transcript page, and its violations (the previous selection's are
+ * dropped). Resolves to the transcript's load error (`null` on success) so a caller can tell a missing session from a slow one.
+ */
+async function selectSession(id, then) {
+  ui.selectedSession = id;
+  ui.resumeOpen = false;
+  invalidate();
+  if (id === null) return null;
+  const violations = loadSessionFindings(id).catch(e => console.warn("session violations failed", e));
+  const load = loadSession(id).then(() => null, e => e);
+  selecting = load;
+  const [error] = await Promise.all([load, violations]);
+  if (selecting === load) selecting = null;
+  if (error) console.warn("session load failed", error);
+  renderNow();
+  if (then) then();
+  return error;
+}
+
+/** Scroll the transcript to its first violation. */
+function jumpToFirst() {
+  const first = document.querySelector(".tl .corr");
+  if (first) jumpTo(first.dataset.key);
+}
+
+/** Select session `id` from a link; the default one, with a note, when the daemon has no such session. */
+async function selectLinked(id, jump) {
+  const error = await selectSession(id, jump ? jumpToFirst : undefined);
+  if (error === null || !error.message.endsWith("answered 404")) return;
+  if (ui.selectedSession === id) selectSession(currentSession()?.sessionId ?? null);
+  toast(`Session ${shortSessionId(id, new URLSearchParams(location.search).get("host"))} is not in this repo`);
+}
+
+/** Entered with a session (a link, a violation's session): that one; else the one the view would show anyway. */
+export function enter(route) {
+  if (route.session !== undefined) selectLinked(route.session, route.jump === true);
+  else selectSession(ui.selectedSession ?? currentSession()?.sessionId ?? null);
+}
+
+/** No selection, or one the list no longer has: pick what the view would show anyway and load it now, as a click would. */
+export function afterPoll() {
+  if (selecting !== null) return;
+  const sess = currentSession();
+  if (sess !== null && sess.sessionId !== ui.selectedSession) selectSession(sess.sessionId);
+}
+
+/* ---------- the view ---------- */
 
 let v = null;
 /** Session whose day group was last revealed; a new selection opens its day once, then the user owns the fold. */
 let revealed = null;
+/** The session list is shown by default; hiding it lasts for the visit. */
+let listHidden = false;
 
 function dayKey(d) {
   if (d < 7) return `d${d}`;
   if (d < 30) return `w${Math.floor(d / 7)}`;
   return "older";
 }
-export const titleOf = id => data.titles.get(id) ?? "Untitled session";
+const titleOf = id => data.titles.get(id) ?? "Untitled session";
 
 function build() {
   const el = {};
@@ -25,10 +88,14 @@ function build() {
     h("button.chip", { "data-act": "sfilter", "data-i": "all" }, "All"),
     h("button.chip", { "data-act": "sfilter", "data-i": "corr" }, "With violations"),
     h("button.chip", { "data-act": "sfilter", "data-i": "open" }, "In progress"));
-  el.list = h("div.list.slist");
+  el.list = h("div.srows");
+  el.listBox = h("div.list.slist", null, h("div.slhead", null, h("span", null, "Session"), h("span", null, "Violations logged")), el.list);
   el.listEmpty = h("div.empty", { hidden: true }, h("p", null, "No sessions match."));
   el.more = h("div.smore", { hidden: true }, h("button.btn.sm", { "data-act": "sessmore" }));
-  el.title = h("h2");
+  el.title = h("h2.clamp2");
+  el.hpick = h("select", { id: "hpick", "aria-label": "Choose a session" });
+  el.hpickLabel = h("span.m", { "aria-hidden": "true" });
+  el.hpickWrap = h("h2.hpick", { hidden: true }, h("span.sel", null, el.hpickLabel, el.hpick, chevron(12)));
   el.state = h("span", { hidden: true });
   el.started = h("span"); el.dur = h("span"); el.events = h("span"); el.sid = h("span.mono");
   el.copyId = h("button.btn.sm", { "data-act": "copyid" }, "Copy id");
@@ -38,7 +105,9 @@ function build() {
   el.resumeHow = h("p", { style: "margin:0;font-size:13px", hidden: true });
   el.resumeFoot = h("span");
   el.resumeCopy = h("button.btn.sm.solid", { "data-act": "resumecopy" });
-  el.resumeBox = h("div.pask.sresume", { hidden: true }, el.resumeLbl, el.resumeText, el.resumeHow, h("div.foot", null, el.resumeFoot, el.resumeCopy));
+  el.resumeBox = h("div.pask.sresume", { hidden: true },
+    h("button.x", { "data-act": "resumetoggle", "aria-label": "Close", title: "Close" }, "✕"),
+    el.resumeLbl, el.resumeText, el.resumeHow, h("div.foot", null, el.resumeFoot, el.resumeCopy));
   el.tsum = h("span.tsum");
   el.tchips = h("span.tchips", { role: "group", "aria-label": "Event type", hidden: true },
     [["all", "All"], ["changes", "Changes"], ["commands", "Commands"], ["outside", "Outside & asks"], ["failures", "Failures"]].map(([k, l]) =>
@@ -47,21 +116,23 @@ function build() {
   el.rail = h("div.rail", { id: "rail" }, h("div.line"));
   el.tl = h("div.tl", { id: "tl" });
   el.scroll = h("div.scroll", { id: "sscroll" }, h("div.tlwrap", null, el.rail, el.tl));
-  el.empty = h("div.list", { hidden: true }, h("div.empty", null, h("h3", null, "No coding agent sessions yet"), h("p", null, "Your next Claude Code, Cursor, Codex, OMP or Pi session in this repo shows up here.")));
+  el.empty = h("div.list", { hidden: true }, h("div.empty", null, h("h3", null, "No sessions yet"), h("p", null, "Your first coding agent session in this repo shows here, with the violations it logged.")));
+  el.listToggle = h("button.ltoggle", { "data-act": "slisttoggle", "aria-pressed": "true" });
+  el.ltrow = h("div.ltrow", null, el.listToggle);
+  el.aside = h("aside", null,
+    h("div.spick", null, h("label", { for: "spick" }, "Session"), el.pick),
+    h("div.ssearch", null, searchIcon(13), el.search),
+    el.chips, el.listBox, el.listEmpty, el.more);
   el.sess = h("div.sess", null,
-    h("aside", null,
-      h("div.spick", null, h("label", { for: "spick" }, "Session"), el.pick),
-      h("div.ghead", null, h("h2", null, "Sessions"), el.lead),
-      h("div.ssearch", null, searchIcon(13), el.search),
-      el.chips, el.list, el.listEmpty, el.more),
+    el.aside,
     h("section", null, h("div.list", null,
       h("div.shead", null,
-        h("div.l1", null, el.title, el.state),
+        h("div.l1", null, el.title, el.hpickWrap, el.state),
         h("div.l3", null, el.started, el.dur, el.events, el.sid, h("span.acts", null, el.copyId, el.resume)),
         el.resumeBox),
       h("div.tfilter", null, el.tsum, el.tchips, h("label.tall", null, el.showAll, " Show all events")),
       el.scroll)));
-  el.root = h("div", null, el.empty, el.sess);
+  el.root = h("div", null, h("div.ghead.hhead", null, h("h2", null, "History by session"), el.lead), el.ltrow, el.empty, el.sess);
   v = el;
 }
 
@@ -72,7 +143,7 @@ function createListItem(item) {
   const s = item.s;
   return h("button.srow", { "data-act": "ssel", "data-i": s.sessionId, "aria-current": "false" },
     h("span.l", null, h("span.t"), h("span.m", null, h("span.state"), h("span.ev"), h("span.sid"))),
-    h("span.c.num", null, h("b"), h("span")));
+    h("span.c.num", null, h("b"), h("span.st")));
 }
 
 function updateListItem(node, item) {
@@ -92,38 +163,42 @@ function updateListItem(node, item) {
   const st = openState(s), state = node.querySelector(".state");
   setAttr(state, "class", `state ${st ?? ""}`);
   setText(state, rowState(st, s));
-  setAttr(state, "title", st ? "Last event" : "Ended");
+  setAttr(state, "title", "Last event");
   setText(node.querySelector(".ev"), `${fmt(s.eventCount)} events`);
   setText(node.querySelector(".sid"), shortSessionId(s.sessionId, s.host));
-  const c = node.querySelector(".c"), n = s.violationCount;
-  setClass(c, "zero", n === 0);
-  setText(c.firstChild, fmt(n));
-  setText(c.lastChild, plural(n, "violation"));
+  const c = node.querySelector(".c"), { logged, steered } = violationCounts(s);
+  setClass(c, "zero", logged === 0);
+  setText(c.firstChild, fmt(logged));
+  setText(c.lastChild, logged === 0 ? "" : `${fmt(steered)} steered`);
+  setAttr(c, "title", `${fmt(logged)} ${plural(logged, "violation")} logged, ${fmt(steered)} steered`);
 }
 
 function rowState(st, s) {
   if (st === "live") return `in progress · ${ago(lastEventAt(s))}`;
   if (st === "stale") return `no end recorded · ${ago(lastEventAt(s))}`;
-  return ago(s.endedAt ?? s.startedAt);
+  return ago(lastEventAt(s));
 }
 
 /**
  * The session the right column shows: the selected one (from the loaded list, else its own head, so a deep-linked
- * session past the loaded pages still shows), else the newest. `app.js` selects (and loads) the fallback.
+ * session past the loaded pages still shows), else the newest. `afterPoll` selects (and loads) the fallback.
  */
-export function currentSession() {
+function currentSession() {
   const rows = data.sessions.rows, id = ui.selectedSession;
   return rows.find(s => s.sessionId === id) ?? (id === null ? null : data.sessionDetail.get(id)?.head) ?? rows[0] ?? null;
 }
 
-export function renderSessions(root) {
+export function render(root) {
   if (v === null) build();
   if (v.root.parentNode !== root) root.replaceChildren(v.root);
   const all = data.sessions.rows;
   const sess = currentSession();
   setAttr(v.empty, "hidden", sess !== null);
   setAttr(v.sess, "hidden", sess === null);
+  setAttr(v.ltrow, "hidden", sess === null);
+  setAttr(v.lead, "hidden", sess === null);
   if (sess === null) return;
+  renderListToggle();
   renderList(all, sess);
   renderHeader(sess);
   renderTranscript(sess);
@@ -176,6 +251,27 @@ function renderList(all, sess) {
   syncChildren(v.pick, visible.slice(0, 200), s => s.sessionId, s => h("option", { value: s.sessionId }),
     (o, s) => { setText(o, `${titleOf(s.sessionId)} · ${shortSessionId(s.sessionId, s.host)}`); });
   if (v.pick.value !== sess.sessionId) v.pick.value = sess.sessionId;
+  if (listHidden) renderHeadPicker(all, sess);
+}
+
+/** List hidden: the session heading is the picker, over every loaded session (and the selected one, if past them). */
+function renderHeadPicker(all, sess) {
+  const rows = all.some(s => s.sessionId === sess.sessionId) ? all : [sess, ...all];
+  syncChildren(v.hpick, rows, s => s.sessionId, s => h("option", { value: s.sessionId }), (o, s) => { setText(o, titleOf(s.sessionId)); });
+  if (v.hpick.value !== sess.sessionId) v.hpick.value = sess.sessionId;
+  const title = titleOf(sess.sessionId);
+  setText(v.hpickLabel, title); setAttr(v.hpick, "title", title);
+}
+
+function renderListToggle() {
+  setClass(v.sess, "nolist", listHidden);
+  setAttr(v.aside, "hidden", listHidden);
+  setAttr(v.title, "hidden", listHidden);
+  setAttr(v.hpickWrap, "hidden", !listHidden);
+  setAttr(v.listToggle, "aria-pressed", String(!listHidden));
+  const label = listHidden ? "Show the session list" : "Hide the session list";
+  setAttr(v.listToggle, "title", label); setAttr(v.listToggle, "aria-label", label);
+  setText(v.listToggle, listHidden ? "Show list" : "Hide list");
 }
 
 function headerState(st, sess) {
@@ -191,7 +287,8 @@ function resumeLabel(rc, st) {
 
 function renderHeader(sess) {
   ensureTitle(sess);
-  setText(v.title, titleOf(sess.sessionId));
+  const title = titleOf(sess.sessionId);
+  setText(v.title, title); setAttr(v.title, "title", title);
   const st = openState(sess);
   setAttr(v.state, "hidden", st === null);
   setAttr(v.state, "class", st ?? "");
@@ -252,4 +349,48 @@ function renderTranscript(sess) {
       events: detail.events.length, eventCount: Math.max(sess.eventCount, detail.events.length), violations, total: total ?? violations,
     },
   });
+}
+
+/* ---------- actions ---------- */
+
+function toggleSet(set, key) {
+  if (set.has(key)) set.delete(key); else set.add(key);
+}
+
+export const actions = {
+  ssel: id => { ui.evFilter = "all"; selectSession(id); },
+  copyid: id => copyText(id, null, `Copied ${id}`),
+  jump: id => jumpTo(id),
+  etoggle: (id, b) => {
+    const wasOpen = b.parentElement.dataset.open === "true";
+    if (wasOpen) { ui.openEvents.delete(id); ui.closedEvents.add(id); } else { ui.openEvents.add(id); ui.closedEvents.delete(id); }
+    invalidate();
+  },
+  foldtoggle: id => { toggleSet(ui.openFolds, id); invalidate(); },
+  evfilter: id => { ui.evFilter = id; invalidate(); },
+  showall: () => { ui.showAll = true; ui.evFilter = "all"; invalidate(); },
+  sfilter: id => { ui.sessFilter = id; invalidate(); },
+  daytoggle: id => { toggleSet(ui.openDays, id); invalidate(); },
+  sessmore: () => loadMore(loadMoreSessions),
+  earlier: () => { const s = currentSession(); if (s) loadMore(() => loadEarlier(s.sessionId)); },
+  resumetoggle: () => { ui.resumeOpen = !ui.resumeOpen; invalidate(); },
+  slisttoggle: () => { listHidden = !listHidden; invalidate(); },
+  resumecopy: () => {
+    const s = currentSession(); if (!s) return;
+    const rc = resumeCommand(s);
+    copyText(rc.cmd ?? s.sessionId, document.getElementById("resumeText"), rc.cmd ? "Copied. Run it in your terminal." : "Copied the session id.");
+  },
+};
+
+export function onInput(el) {
+  if (el.id === "sq") { ui.sessQuery = el.value; invalidate(); }
+}
+
+export function onChange(el) {
+  if (el.id === "showAll") { ui.showAll = el.checked; ui.evFilter = "all"; invalidate(); }
+  else if (el.id === "spick" || el.id === "hpick") selectSession(el.value);
+}
+
+export function onResize() {
+  placeTicks(document.getElementById("rail"), document.getElementById("tl"));
 }
