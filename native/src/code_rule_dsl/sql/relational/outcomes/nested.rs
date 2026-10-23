@@ -46,6 +46,7 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn program(
     guard: &str,
     exports: &Slots,
     location: (&str, &str, &str),
+    memo_clause: Option<usize>,
 ) -> Result<(String, Value), String> {
     let (file, node, work) = location;
     // A node-local child need not allocate a demand/result CTE pair.
@@ -104,6 +105,7 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn program(
         definitions: vec![],
         profile: vec![],
         correlated: true,
+        memo_clause,
     };
     let slots = if fresh {
         Slots::new()
@@ -171,11 +173,27 @@ pub(super) fn emit(
     // testing a body. The node cursor delivers bounded kind postings in id order.
     // Seek the next eligible candidate instead of allocating three recursive rows
     // (and a typed child return) for every irrelevant AST node.
-    let seek = child && end && stop.is_none() && bounds.is_none() && rule.walk_filter.is_some();
+    // Three-valued native walks disable their general postings filter. A pure
+    // prefix can still prove a candidate false before any charge, value, or write
+    // becomes observable. This physical proof does not skip charged count visits
+    // or stop rules. Restrict the new shape to clauses with traversal memo scope.
+    let prefix_kinds = sql.memo_clause.is_some() && super::super::kinds(rule).is_some();
+    let filter = if rule.walk_filter.is_some() {
+        super::candidate_filter(rule, "candidate")
+    } else if prefix_kinds {
+        super::super::kind_filter(rule, "candidate")
+    } else {
+        "1".into()
+    };
+    let seek = child
+        && end
+        && stop.is_none()
+        && bounds.is_none()
+        && (rule.walk_filter.is_some() || prefix_kinds);
     let seek_after = |file: &str, after: &str, bound: &str| {
         format!(
             "(SELECT candidate.id FROM node candidate WHERE candidate.file={file} AND candidate.id>{after} AND candidate.id<={bound} AND ({}) ORDER BY candidate.id LIMIT 1)",
-            super::candidate_filter(rule, "candidate")
+            filter
         )
     };
     let first = match axis {
@@ -251,6 +269,7 @@ pub(super) fn emit(
                 "w.work"
             },
         ),
+        sql.memo_clause,
     )?;
     let (stop_sql, stop_profile) = if let Some(stop) = stop {
         program(
@@ -264,6 +283,7 @@ pub(super) fn emit(
             },
             &Slots::new(),
             ("w.file", "n.id", "w.work"),
+            sql.memo_clause,
         )?
     } else {
         ("SELECT 0".into(), Value::Null)
@@ -371,6 +391,9 @@ pub(super) fn emit(
         profile["candidatePruning"] = json!({"kinds":filter.kinds,"requiredTextTerms":filter.text,"shape":if seek {"ordered bounded kind seek"} else {"guard before utility charge"}});
         profile["candidatePruning"]["materializedFirstCandidate"] = json!(seed.is_some());
     }
+    if seek && rule.walk_filter.is_none() {
+        profile["candidatePruning"] = json!({"shape":"ordered bounded kind seek","proof":"pure prefix rejects before effects","filter":filter,"skipsChargedCountVisits":false});
+    }
     let terminal=sql.relation("completed nested traversal",format!("SELECT w.k,w.work,CASE WHEN w.own<0 THEN w.own WHEN w.stopped<0 THEN w.stopped ELSE 0 END AS failure,{low} AS low,{uncertain} AS uncertain,{open} AS open{keep_values} FROM {walk} w CROSS JOIN node n ON n.file=w.file AND n.id=w.node WHERE w.phase=2 AND (({decisive}) OR ({next}) IS NULL)"),true,"k,failure,low,uncertain,open,observable exports");
     let low = "COALESCE(t.low,0)";
     let high = "(COALESCE(t.low,0)+COALESCE(t.uncertain,0))";
@@ -416,6 +439,7 @@ impl Sql {
             guard,
             &child.writes,
             ("d.file", "d.node", "d.work"),
+            self.memo_clause,
         )?;
         let columns = child
             .writes

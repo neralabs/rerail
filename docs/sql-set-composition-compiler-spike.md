@@ -4433,3 +4433,94 @@ The next transition addresses repeated candidate visits through traversal and ov
 Its answer lifetime must span a clause/file pair rather than reset at each root.
 The transition plan specifies two failing fixtures and their expected allowance boundaries for native confirmation.
 Production integration, broader semantic gates, and the complete cold-job 100-execution gate remain open.
+
+### 2026-10-23 — Traversal utility answer lifetime
+
+The next fixtures repeat a value utility through descendant searches and overlapping roots.
+Native boundaries and the existing admission rejection must be recorded before implementation.
+
+The proposed physical shape keeps reached utility answers in an indexed, integer-only scratch relation.
+Its key contains clause, utility, file, candidate, and incoming captures. Its payload contains truth, measured cost, and exports.
+SQL performs lookup, guards the miss program, computes its cost, and publishes only completed nonfailure answers.
+The scratch cursor stores supplied integers. It cannot inspect ASTs, evaluate rules, or execute SQL.
+A materialized clause initializer clears that clause's storage once per statement execution, including prepared-statement reuse.
+Root and traversal recursion retain their current widths; answer maps do not travel inside recursive rows.
+
+This storage introduces observable writes during SELECT execution. Explicit dependency barriers must prove lookup, miss, and publication order.
+Tests must include repeated execution, skipped calls, failed misses, capture changes, nested utilities, and independent files and clauses.
+The compiler chooses this storage for clauses whose value utilities cross traversal boundaries.
+Existing local typed-column specialization remains valid where answer lifetime stays inside one root.
+No user option selects the storage shape. Performance and semantic results are pending.
+
+Native preflight confirms the planned boundaries. The repeated search fails at three and succeeds at four.
+Overlapping roots fail at seven and succeed at eight, with two matches and one value read.
+The original compiler rejects both programs. The saved rejection log records this before admission changed.
+
+The first implementation passes all 110 relational tests except the new scratch-storage unit test.
+That test exposes a planner issue for literal `IS NULL` constraints, which SQLite reports separately from `IS`.
+The cursor now accepts both constraint forms. The test includes prepared-statement reuse and null capture keys.
+
+The first profiles expose a separate SQL amplification problem:
+32 overlapping roots across two files need 3,624,895 VM instructions and 33,536 typed return cells.
+Only two answers are stored, and only two value reads occur. Memo lifetime alone does not fix traversal work.
+Each search still walks irrelevant candidates in its nested subtree.
+
+The physical change seeks bounded kind postings when a pure prefix proves rejection before effects.
+It applies to descendant searches without stop rules. Counts retain every charged visit.
+The compiler records this proof in the profile. Recursive row width does not change.
+The scratch cursor also switches to sparse typed arguments and payloads, avoiding a full-width allocation per lookup.
+Final qualification and before/after measurements remain pending.
+
+Final qualification:
+
+- All 123 unique tests pass: 111 relational tests, one workspace test, nine B023 fixtures, one adversarial test, and one corpus test.
+- Six new traversal tests cover 723 comparison jobs, including 15 profiles. The former admission test adds 26 native comparisons.
+- The storage test covers sparse slot 127, null keys, skipped publication, rejected failure publication, and prepared-statement reuse.
+- The retained suite contains 3,066 publication traces. All 111 preceding control profiles have identical SQL, output, and VM counts.
+- Formatting and both Clippy configurations pass. The optimized test build uses the recorded jemalloc shim and disables local test-executable LTO.
+- Each new profile executes one matching statement and publishes zero legacy frames. This does not establish the complete cold-job execution budget.
+
+| Fixture, across two files | First-walk VM | Final VM | First-walk return cells | Final return cells |
+| --- | ---: | ---: | ---: | ---: |
+| Two overlapping roots | 17,575 | 7,263 | 176 | 80 |
+| Eight overlapping roots | 236,767 | 28,095 | 2,240 | 320 |
+| 32 overlapping roots | 3,624,895 | 111,423 | 33,536 | 1,280 |
+| 32 repeated searches | 71,009 | 44,321 | 776 | 520 |
+| 32 disjoint roots | 166,845 | 113,469 | 1,792 | 1,280 |
+| Early match, 32 siblings | 5,459 | 3,791 | 56 | 40 |
+
+The 32-root overlap uses 32.5× fewer VM instructions. Scaling from eight to 32 roots now increases work by approximately four times.
+EXPLAIN reports bounded candidate access as `SCAN candidate VIRTUAL TABLE INDEX 0:f=i>i{k=`.
+Both versions perform two value reads and store two utility answers for the overlap fixture.
+The final representation stores 24 integer cells for those answers, independent of root count.
+Traversal rows remain 11 columns. Memo storage adds zero recursive columns.
+
+The capture-width profiles use two, four, and eight incoming bindings.
+They store six, ten, and 18 answers across two files, occupying 84, 160, and 360 integer cells.
+Native execution requires a fresh value read for each changed key.
+The first profiling assertion incorrectly expected one read per file. The evidence retains that failure and its correction.
+The Rust implementation already matched native execution; only the profiling assertion changed.
+
+Repeated-search preparation remains expensive. At 32 repetitions, generated SQL is 184,607 bytes with 623 EXPLAIN materialization sites.
+That sample spends 54.33 ms preparing and 3.12 ms executing. These are instrumented single samples, not a CPU qualification result.
+The transition plan now specifies shared traversal compilation for a proved, adjacent repeat group, followed by guarded semantic-cost replay.
+
+The frozen B023 query hash remains `84116309b7048f44b706bb74955b99a1bcb5b512d5b365b30a73f78992026aa1`.
+It reports 138 files, two matches, and 2,812,255 generated VM instructions in all three pairs.
+The VM gate passes. Median generated CPU is 131,351,500 ns versus 63,057,625 ns for the reference: **2.083039×**.
+The 2× CPU gate fails. This run is retained without a retry for a passing sample.
+Unchanged SQL and VM counts do not support a structural B023 regression or speedup claim.
+
+Artifacts:
+
+- `benchmark/relational-traversal-utility-memo.py`: reproducible native comparisons, EXPLAIN, storage counters, and profile assertions.
+- `benchmark/sql-relational-traversal-utility-memo-evidence.json`: source/binary hashes, 723 traces, 15 profiles, 12 physical comparisons, controls, and failed gates.
+- `benchmark/sql-relational-traversal-utility-memo.sql`: final overlap query.
+- `benchmark/sql-relational-traversal-utility-memo-first-walk.sql`: overlap query before bounded kind seeks.
+- `benchmark/sql-relational-traversal-utility-memo-repeats.sql`: remaining repeated-program amplification.
+- `benchmark/sql-relational-traversal-utility-memo-captures.sql`: widest capture-key fixture.
+- Raw logs: `/tmp/rerail-traversal-memo-20261023-{first,final,accepted}` and `/tmp/rerail-traversal-memo-b023-20261023-final`.
+
+The scratch relation uses writes during SELECT evaluation. Materialized dependencies and reached-call comparisons establish the tested ordering contract.
+The test-only connection runs one matching job at a time. Interleaved jobs on a shared connection are outside this contract.
+Production integration, general recursive outcomes, native depth limits, deadlines, and the whole-job 100-execution gate remain open.

@@ -18,6 +18,7 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn compile_jobs(
         definitions: vec![],
         profile: vec![],
         correlated: false,
+        memo_clause: None,
     };
     let width = plans
         .iter()
@@ -28,8 +29,20 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn compile_jobs(
     let mut payload_cases = vec![];
     let mut clauses = vec![];
     for (clause, &(plan, slots, applies, root_filter)) in plans.iter().enumerate() {
+        sql.memo_clause = super::file_memo::needed(plan).then_some(clause);
+        let reset = if sql.memo_clause.is_some() {
+            let init = sql.relation(
+                "clause utility storage initialization",
+                format!("SELECT relation_memo_reset({clause}) AS ready"),
+                true,
+                "ready",
+            );
+            format!(" CROSS JOIN {init} init ON init.ready=1")
+        } else {
+            String::new()
+        };
         let roots = Demand {
-            name: sql.relation("publication root demand",format!("SELECT ROW_NUMBER() OVER () AS k,n.file,n.id AS node,{work} AS work,ROW_NUMBER() OVER (PARTITION BY n.file ORDER BY n.id) AS ordinal FROM node n WHERE {} AND {}",usize::from(applies),root_filter),true,"k,file,node,ordinal"),
+            name: sql.relation("publication root demand",format!("SELECT ROW_NUMBER() OVER () AS k,n.file,n.id AS node,{work} AS work,ROW_NUMBER() OVER (PARTITION BY n.file ORDER BY n.id) AS ordinal FROM node n{reset} WHERE {} AND {}",usize::from(applies),root_filter),true,"k,file,node,ordinal"),
             slots: Slots::new(),
         };
         let output = if plan.fallible() {
@@ -40,6 +53,7 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn compile_jobs(
                 "1",
                 &plan.writes,
                 ("d.file", "d.node", "w.work"),
+                sql.memo_clause,
             )?;
             let walk = format!("outcome{}", sql.definitions.len());
             let empty = fields(&plan.writes, |_| "NULL".into());
@@ -122,7 +136,7 @@ pub(in crate::code_rule_dsl::sql::relational::outcomes) fn compile_jobs(
     if query.len() > 256_000 {
         return Err("publication: SQL text exceeds 256000 bytes".into());
     }
-    let mut profile = json!({"scope":"Workspace clause/file failure publication kernel","clauses":clauses,"relations":sql.profile,"outcomes":{"false":0,"true":1,"unknown":2,"depth":-1,"work":-2,"scope":-3,"value":-4},"failureColumn":4,"remainingWorkColumn":5,"initialWork":work,"publicationWidth":5+width,"nativeComposition":false,"flags":["Fallible clauses sequence roots within each file; total clauses retain set composition.","Provisional matches are withheld until the clause/file outcome is complete."],"limitations":["Work accounting covers the admitted outcome operators. Utility memo replay spans Boolean scopes and nested utility bodies at one root. Traversal utility sharing remains unproved.","Native depth/stack budgets, decisions and enumeration remain unproved.","This publication contract is for workspace local clauses. Stateless query aggregation has a different failure scope."]});
+    let mut profile = json!({"scope":"Workspace clause/file failure publication kernel","clauses":clauses,"relations":sql.profile,"outcomes":{"false":0,"true":1,"unknown":2,"depth":-1,"work":-2,"scope":-3,"value":-4},"failureColumn":4,"remainingWorkColumn":5,"initialWork":work,"publicationWidth":5+width,"nativeComposition":false,"flags":["Fallible clauses sequence roots within each file; total clauses retain set composition.","Provisional matches are withheld until the clause/file outcome is complete."],"limitations":["Work accounting covers the admitted outcome operators. Utility answers use local typed columns or clause/file keyed storage when traversal extends their lifetime. Native depth limits and deadlines remain unproved.","Native depth/stack budgets, decisions and enumeration remain unproved.","This publication contract is for workspace local clauses. Stateless query aggregation has a different failure scope."]});
     if clauses.len() == 1 {
         for key in [
             "outcomeDemand",

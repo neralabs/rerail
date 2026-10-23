@@ -1,4 +1,6 @@
 use super::super::ir::Set;
+#[path = "file_memo.rs"]
+mod file_memo;
 #[path = "memo.rs"]
 pub(super) mod memo;
 #[path = "ordered.rs"]
@@ -20,6 +22,7 @@ pub(super) struct Sql {
     definitions: Vec<String>,
     profile: Vec<Value>,
     correlated: bool,
+    memo_clause: Option<usize>,
 }
 
 fn value(input: &Demand, alias: &str, slot: usize) -> String {
@@ -186,7 +189,7 @@ impl Sql {
     }
 
     fn emit(&mut self, plan: &Plan, input: &Demand) -> Result<Output, String> {
-        if memo::region(plan) {
+        if self.memo_clause.is_none() && memo::region(plan) {
             return memo::shared(self, plan, input);
         }
         let operator = match &plan.op {
@@ -226,7 +229,10 @@ impl Sql {
                     output.name
                 )
             }
-            Op::Charge(_, child) => {
+            Op::Charge(utility, child) => {
+                if self.memo_clause.is_some() && child.reads_value() {
+                    return self.memo_utility(*utility, child, input);
+                }
                 let (query, profile) = ordered::nested::program(
                     child,
                     input,
@@ -234,6 +240,7 @@ impl Sql {
                     "d.work>0",
                     &child.writes,
                     ("d.file", "d.node", "d.work-1"),
+                    self.memo_clause,
                 )?;
                 let columns = fields(&child.writes, |slot| {
                     let index = child.writes.iter().position(|s| s == &slot).unwrap();
@@ -539,6 +546,7 @@ pub(super) fn compile(
         definitions: vec![],
         profile: vec![],
         correlated: false,
+        memo_clause: None,
     };
     let roots = Demand {
         name: sql.relation(

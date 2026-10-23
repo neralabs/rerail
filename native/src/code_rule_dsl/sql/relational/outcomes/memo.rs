@@ -5,40 +5,6 @@ use super::{Demand, Op, Plan, Slots, Sql, value};
 use serde_json::json;
 use std::collections::BTreeMap;
 
-/// Traversal keys still need a separate demand lifetime contract.
-pub(in crate::code_rule_dsl::sql::relational::outcomes) fn admit(
-    plan: &Plan,
-) -> Result<(), String> {
-    fn visit(plan: &Plan, moved: bool) -> Result<(), String> {
-        match &plan.op {
-            Op::Charge(_, body) => {
-                if body.reads_value() && moved {
-                    return Err("utility memo: cross-root or traversal utility reuse requires a shared demand contract".into());
-                }
-                visit(body, moved)?;
-            }
-            Op::All(items) | Op::Any(items) => {
-                for item in items {
-                    visit(item, moved)?;
-                }
-            }
-            Op::Not(child) => visit(child, moved)?,
-            Op::Search(_, _, child, stop)
-            | Op::Count {
-                rule: child, stop, ..
-            } => {
-                visit(child, true)?;
-                if let Some(stop) = stop {
-                    visit(stop, true)?;
-                }
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-    visit(plan, false)
-}
-
 #[path = "shared_memo.rs"]
 mod shared;
 pub(super) use shared::{compile as shared, region};
@@ -117,6 +83,9 @@ impl Local {
         plan: &Plan,
         guard: &str,
     ) -> Result<Option<String>, String> {
+        if sql.memo_clause.is_some() {
+            return Ok(None);
+        }
         let Op::Charge(utility, body) = &plan.op else {
             return Ok(None);
         };
@@ -193,6 +162,7 @@ impl Local {
             &format!("({guard}) AND d.memo_hit IS NULL AND d.work>0"),
             &body.writes,
             ("d.file", "d.node", "d.work-1"),
+            sql.memo_clause,
         )?;
         let choice = |arms: &[String]| {
             if arms.is_empty() {

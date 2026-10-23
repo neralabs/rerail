@@ -611,26 +611,45 @@ The frozen B023 VM gate passes, but the CPU gate fails at 2.02845× with unchang
 The journal retains this failed gate, full qualification results, and measured source hashes.
 Performance qualification remains open. The bounded kernel remains test-only.
 
+## Traversal value-utility replay: bounded outcome milestone
+
+Reached value-utility answers now survive traversal returns and overlapping roots within each clause/file pair.
+The compiler selects an indexed scratch relation when traversal extends answer lifetime beyond one root.
+The cursor stores integer keys and completed answers. SQL controls composition, measured costs, replay, and publication.
+Keys contain clause, utility, file, candidate, and every incoming capture.
+A materialized initializer clears clause storage once per statement execution. Prepared-statement reuse has a storage regression test.
+Failed calls never publish answers. Unknown and false answers can be reused.
+
+Native execution confirms both initial boundaries: four charges for repeated search, and eight for overlapping roots.
+Both fixtures read one value per file. Changed capture keys require separate answers and can require fresh value reads.
+The new tests cover nested utilities, captures, counts, all traversal directions, stops, reached failures, and independent clauses and files.
+The connection executes one matching job at a time; interleaved jobs on a shared connection remain outside this test-only contract.
+
+The first correct implementation still walks every irrelevant candidate.
+At 32 overlapping roots across two files, it uses 3,624,895 VM instructions and 33,536 typed return cells.
+A pure Boolean prefix now permits bounded kind seeks before any effect is reached.
+This reduces those counts to 111,423 instructions and 1,280 cells, with unchanged results and charges.
+Counts and stop rules retain their required visits. The memo store adds no recursive state columns.
+The journal records qualification results and retained profiling failures.
+
 ## Next implementation action
 
-Extend value-utility answer lifetime through ordered traversal, starting with repeated visits to the same candidate.
-Use `v = value(gt: 0)` and an `arguments` root with two identical descendant searches.
-Each search body is `all(kind(number), matches(v))`, so irrelevant node kinds do not charge the utility.
-Use `f(1,2);` and compare finite native allowances before changing the traversal admission gate.
-The expected boundary is three failing and four succeeding, with one value read.
+Reduce duplicated traversal programs in the repeated-search fixture.
+Thirty-two identical searches still emit about 185 KB of SQL, although they revisit one candidate per file.
+Begin with adjacent, capture-free descendant searches inside `all`, with no stop rule.
+Require a pure predicate prefix followed by one value-bearing utility call.
+The current 2/8/32-search profiles provide the baseline for SQL size, preparation, VM work, and materialization sites.
 
-Then use `f(g(1));` so two root demands reach the same number node.
-The expected job boundary is seven failing and eight succeeding, with two matches and one value read.
-First confirm those numbers with native execution.
-This second fixture prevents an incorrect reset of memo answers between roots.
-A warm value cache must not reduce the stored utility cost on a later root.
+Prove that the first completed traversal answer can supply later identical calls with its measured semantic cost.
+Every reached utility already has a clause/file answer, so repeated calls must replay its original cost.
+A successful or unknown traversal can be reused only with an identical input key and no intervening effect.
+An insufficient replay allowance must produce Work failure, retain provisional-publication rules, and make no value read.
+Do not reuse first-run costs for unwrapped value leaves: their warm-cache charges can differ.
 
-Design the answer lifetime at clause/file scope before admitting these programs.
-Keys must contain utility identity, file, candidate node, and all incoming captures.
-Reached failures and unknowns must retain traversal order and provisional-publication behavior.
-Measure repeated candidates, disjoint candidates, overlapping roots, changed captures, and decisive early stops.
-Keep answers outside recursive traversal frames where possible, and profile materialization and state width before selecting the shape.
-Do not remove the admission gate until both fixtures and their failure cases match native execution.
+First compare native allowances for true, false, and unknown bodies, including exhaustion on a later repetition.
+Then lower the proved repeat group to one traversal program and guarded cost replay.
+Require bounded SQL growth as repetitions increase. Preserve capture-changing, count, stop, and nonidentical controls.
+Keep the storage and scheduling choice inside SQL generation, with no runtime switch or native composition callback.
 
 Repeat the frozen B023 gates and existing work-count controls.
 Production integration, deadlines, native depth limits, general recursive outcomes, and the complete cold-job 100-execution gate remain open.

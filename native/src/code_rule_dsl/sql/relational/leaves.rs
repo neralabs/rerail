@@ -41,6 +41,7 @@ pub(in crate::code_rule_dsl::sql) fn register(
     batch: &Arc<Batch>,
 ) -> Result<Arc<AtomicUsize>> {
     super::row::register(db)?;
+    super::memo_store::register(db)?;
     super::budget_leaf::register(db, batch)?;
     let leaves = Leaves(AssertUnwindSafe(Arc::clone(batch)));
     let calls = Arc::new(AtomicUsize::new(0));

@@ -1,0 +1,76 @@
+//! Clause/file answer lifetime for utilities reached through traversal.
+//! SQL owns lookup, miss composition, charge replay, and completed-answer publication.
+use super::ordered::nested::{bridge, program};
+use super::{Demand, Op, Output, Plan, Sql, fields, value};
+use serde_json::json;
+
+pub(super) fn needed(plan: &Plan) -> bool {
+    fn moved(plan: &Plan, traversed: bool) -> bool {
+        match &plan.op {
+            Op::Charge(_, body) => (traversed && body.reads_value()) || moved(body, traversed),
+            Op::All(items) | Op::Any(items) => items.iter().any(|p| moved(p, traversed)),
+            Op::Not(p) => moved(p, traversed),
+            Op::Search(_, _, p, stop) | Op::Count { rule: p, stop, .. } => {
+                moved(p, true) || stop.as_ref().is_some_and(|p| moved(p, true))
+            }
+            _ => false,
+        }
+    }
+    moved(plan, false)
+}
+
+impl Sql {
+    pub(super) fn memo_utility(
+        &mut self,
+        utility: usize,
+        body: &Plan,
+        input: &Demand,
+    ) -> Result<Output, String> {
+        let clause = self.memo_clause.expect("clause answer scope");
+        let identity = format!(
+            "m.clause IS {clause} AND m.utility IS {utility} AND m.file IS d.file AND m.node IS d.node"
+        );
+        let keys = input
+            .slots
+            .iter()
+            .map(|&s| format!(" AND m.k{s} IS {}", value(input, "d", s)))
+            .collect::<String>();
+        let hit_exports = body
+            .writes
+            .iter()
+            .map(|s| format!(",m.o{s} AS hit{s}"))
+            .collect::<String>();
+        let lookup = self.relation("clause utility keyed lookup", format!("SELECT d.*,m.truth AS hit,m.cost AS cost{hit_exports} FROM {} d LEFT JOIN relation_memo m ON m.mode IS 0 AND {identity}{keys}", input.name), true, "demand,prior truth,cost,exports");
+        let (query, profile) = program(
+            body,
+            input,
+            false,
+            "d.hit IS NULL AND d.work>0",
+            &body.writes,
+            ("d.file", "d.node", "d.work-1"),
+            self.memo_clause,
+        )?;
+        let exports = body
+            .writes
+            .iter()
+            .enumerate()
+            .map(|(index, s)| {
+                format!(
+                    ",CASE WHEN d.hit IS NOT NULL THEN d.hit{s} ELSE r.c{} END AS e{s}",
+                    index + 2
+                )
+            })
+            .collect::<String>();
+        let tested = self.relation("clause utility reached miss or replay", format!("SELECT d.*,CASE WHEN d.hit IS NOT NULL THEN CASE WHEN d.work<d.cost THEN -2 ELSE d.hit END WHEN d.work=0 THEN -2 ELSE r.c0 END AS tested,CASE WHEN d.hit IS NOT NULL THEN MAX(0,d.work-d.cost) WHEN d.work=0 THEN 0 ELSE r.c1 END AS remaining{exports} FROM {lookup} d {}", bridge(&query, 2 + body.writes.len())), true, "demand,tested,remaining,exports");
+        self.profile.last_mut().unwrap()["childPrograms"] = json!({"miss":profile});
+        let supplied = body
+            .writes
+            .iter()
+            .map(|s| format!(" AND m.v{s} IS CASE WHEN d.tested=1 THEN d.e{s} END"))
+            .collect::<String>();
+        let columns = fields(&body.writes, |s| format!("d.e{s}"));
+        let name = self.relation("clause utility completed answer publication", format!("SELECT d.k,d.remaining AS work,COALESCE(m.truth,d.tested) AS truth{columns} FROM {tested} d LEFT JOIN relation_memo m ON m.mode IS CASE WHEN d.hit IS NULL AND d.tested>=0 THEN 1 END AND {identity}{keys} AND m.vtruth IS d.tested AND m.vcost IS (d.work-d.remaining){supplied}"), true, "k,truth,work,exports");
+        self.profile.last_mut().unwrap()["memo"] = json!({"lifetime":"statement clause/file","key":["clause","utility","file","node","all incoming captures"],"storage":"indexed integer scratch relation","recursiveStateColumnsAdded":0,"utility":utility});
+        Ok(Output { name })
+    }
+}

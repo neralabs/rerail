@@ -9,6 +9,7 @@ mod failure;
 mod ir;
 pub(super) mod leaves;
 mod lower;
+mod memo_store;
 mod outcomes;
 mod physical;
 mod recursion;

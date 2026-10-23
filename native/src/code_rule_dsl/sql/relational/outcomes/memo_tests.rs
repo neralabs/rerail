@@ -104,7 +104,7 @@ fn memo_keeps_failures_and_unreached_calls_out_of_the_cache() {
 }
 
 #[test]
-fn memo_rejects_unproved_scope_sharing() {
+fn memo_traversal_scopes_share_clause_answers() {
     for (rule, utils) in [
         (
             json!({"kind":"arguments","has":{"matches":"v"}}),
@@ -115,19 +115,11 @@ fn memo_rejects_unproved_scope_sharing() {
             json!({"outer":{"matches":"v"},"v":{"value":{"gt":0}}}),
         ),
     ] {
-        let p = policy_utils(&[rule], utils);
-        let crate::code_rule_dsl::model::ClauseKind::Forbid(
-            crate::code_rule_dsl::model::Query::Ast { matchers, .. },
-        ) = &p.inner.clauses[0].kind
-        else {
-            panic!("AST")
-        };
-        assert!(
-            super::compile_job(&[&matchers[0]], 100)
-                .err()
-                .unwrap()
-                .contains("utility memo:")
-        );
+        let rules = [rule];
+        let p = policy_utils(&rules, utils);
+        for allowance in 0..=12 {
+            check_work(&p, &rules, &["f(g(1));", "f(2);"], None, allowance);
+        }
     }
 }
 

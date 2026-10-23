@@ -129,6 +129,7 @@ pub(super) fn check_work(
                 |db, batch, _| {
                     super::super::leaves::register(db, batch).unwrap();
                     let ((actual, metrics), frames) = profiling::frame_counts(|| {
+                        let memo_start = super::super::memo_store::counts();
                         let row_start = super::super::row::ROWS.get();
                         let cell_start = super::super::row::CELLS.get();
                         let start = std::time::Instant::now();
@@ -156,7 +157,12 @@ pub(super) fn check_work(
                             .unwrap();
                         let executions = trace.count();
                         drop(trace);
-                        let metrics = json!({"typedReturnRows":super::super::row::ROWS.get()-row_start,"typedReturnCells":super::super::row::CELLS.get()-cell_start,"matchingStatements":executions,"prepareWallNs":prepare,"prepareExecuteWallNs":start.elapsed().as_nanos(),"vmSteps":stmt.get_status(rusqlite::StatementStatus::VmStep),"automaticIndexRows":stmt.get_status(rusqlite::StatementStatus::AutoIndex),"fullscanSteps":stmt.get_status(rusqlite::StatementStatus::FullscanStep)});
+                        let memo = super::super::memo_store::counts()
+                            .into_iter()
+                            .zip(memo_start)
+                            .map(|(end, start)| end - start)
+                            .collect::<Vec<_>>();
+                        let metrics = json!({"memoStorage":{"resets":memo[0],"lookups":memo[1],"hits":memo[2],"publications":memo[3],"integerCellsStored":memo[4]},"typedReturnRows":super::super::row::ROWS.get()-row_start,"typedReturnCells":super::super::row::CELLS.get()-cell_start,"matchingStatements":executions,"prepareWallNs":prepare,"prepareExecuteWallNs":start.elapsed().as_nanos(),"vmSteps":stmt.get_status(rusqlite::StatementStatus::VmStep),"automaticIndexRows":stmt.get_status(rusqlite::StatementStatus::AutoIndex),"fullscanSteps":stmt.get_status(rusqlite::StatementStatus::FullscanStep)});
                         (actual, metrics)
                     });
                     assert_eq!(frames[4], 0);

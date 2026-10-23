@@ -12,6 +12,7 @@ mod publication_tests;
 mod reached_tests;
 mod shared_memo_tests;
 mod tests;
+mod traversal_memo_tests;
 
 use super::{Compiled, ir::Set};
 use crate::code_rule_dsl::matcher::GrammarMatcher;
@@ -76,7 +77,6 @@ pub(super) fn compile(grammar: &GrammarMatcher) -> Result<Compiled, String> {
     }
     let mut lower = lower::Lower::new(grammar.language, grammar.three_valued);
     let plan = lower.plan(&grammar.matcher)?;
-    emit::memo::admit(&plan)?;
     if plan.fallible() {
         return compile_job(&[grammar], i64::MAX);
     }
@@ -140,7 +140,6 @@ pub(super) fn compile_job(grammars: &[&GrammarMatcher], work: i64) -> Result<Com
         let mut lower = lower::Lower::new(grammar.language, grammar.three_valued);
         lower.pure.program.terminals = terminals;
         let plan = lower.plan(&grammar.matcher)?;
-        emit::memo::admit(&plan)?;
         terminals = lower.pure.program.terminals;
         let roots = grammar.anchors.root_kinds().map_or("1".into(), |kinds| {
             format!(
