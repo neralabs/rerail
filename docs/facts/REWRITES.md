@@ -97,3 +97,10 @@ Each gets an R-number, side conditions from I2's fact metadata, a test and a mut
 | `ownership` kernel | none yet: a bag fixpoint with level order observed by its readers; runs as written |
 | A2's OR-branch probes | R10 |
 | "bind this stage to that fact relation" (Spike A) | R11 (with S4's views as the shared `v[sel → X]`), only under subtree closure |
+
+## Count changes
+
+The gate's `count-regression` check (`scripts/check/facts-gate.py`) compares every clause's work counts on the gate subset (`spikes/facts-a/src/counts.rs`: algebraic and physical, from `a-subset`'s `results.json`) with `benchmark/facts/subset-counts.json` as stored at the merge-base, and fails when one grows by more than 5% unless a row below names the clause (`check/clause`). The integrator commits the check's `subset-counts.json` at each merge.
+
+| clause | count | change | why |
+|---|---|---|---|

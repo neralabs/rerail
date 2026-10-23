@@ -219,7 +219,7 @@ def rewrite_mutants() -> tuple[list[tuple], list[str]]:
 
 
 BATCH_CHECKS = [f"harness-b{n}" for n in BATCH_RECORDINGS] + [f"suite-b{n}" for n in BATCH_RECORDINGS]
-LANES = {"a": ["a-replay", "a-repo", "a-subset", "a-unrewritten"], "p": ["a-pattern"], "r": ["a-vs-reference"], "b": ["b-exactness"], "g": ["b-generated"],
+LANES = {"a": ["a-replay", "a-repo", "a-subset", "a-unrewritten", "count-regression"], "p": ["a-pattern"], "r": ["a-vs-reference"], "b": ["b-exactness"], "g": ["b-generated"],
          "c": ["rerail-facts-lib", "classifier-leak", "planner-audit", "facts-a-unit", "facts-b-unit", "explain-stable", "harness-replay"],
          "v": ["views-derived"], "h": [*BATCH_CHECKS, "explain-physical"], "t": ["b-ties"]}
 # The edit replays' prefix (b-exactness, b-generated and their mutants): events 0-299 hold every
@@ -471,6 +471,45 @@ def check_a_unrewritten(d: Path, env: dict, gate_dir: Path) -> tuple[bool, str, 
     if not rewritten.exists():
         return False, "a-subset did not run", {}
     return compare_findings(rewritten, d / "results.json", "unrewritten")
+
+
+# count-regression: per clause, every work count (spikes/facts-a/src/counts.rs, algebraic and physical)
+# of a-subset against the counts stored at the merge-base (COUNTS, committed by the integrator from the
+# check's subset-counts.json); a count that grows by more than COUNT_GROWTH needs a row naming
+# `check/clause` under REWRITES.md's "## Count changes".
+COUNTS = "benchmark/facts/subset-counts.json"
+COUNT_GROWTH = 0.05
+COUNT_BASE = os.environ.get("FACTS_COUNT_BASE", "Moti-Velz/facts-engine")
+
+
+def clause_counts(results: dict) -> dict[str, dict[str, int]]:
+    return {f"{r['check']}/{c['clause']}": c["counts"] for r in results["rules"] for c in r["clauses"]}
+
+
+def check_count_regression(d: Path, gate_dir: Path) -> tuple[bool, str, dict]:
+    got_path = gate_dir / "a-subset" / "results.json"
+    if not got_path.exists():
+        return False, "a-subset did not run", {}
+    got = clause_counts(json.loads(got_path.read_text()))
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "subset-counts.json").write_text(json.dumps({"format": "rerail.facts-counts/v1", "commit": commit(), "clauses": got}, indent=1, sort_keys=True) + "\n")
+    mb = subprocess.run(["git", "merge-base", "HEAD", COUNT_BASE], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+    stored = subprocess.run(["git", "show", f"{mb}:{COUNTS}"], cwd=ROOT, capture_output=True, text=True) if mb else None
+    if not stored or stored.returncode != 0:
+        return True, f"no stored counts at the merge-base {mb[:9] or '?'} ({COUNTS}); baseline written to {d}/subset-counts.json", {}
+    want = json.loads(stored.stdout)["clauses"]
+    text = REWRITES.read_text() if REWRITES.exists() else ""
+    noted = text.split("## Count changes", 1)[1] if "## Count changes" in text else ""
+    grown, unnoted = [], []
+    for clause, counts in sorted(got.items()):
+        for k, v in sorted(counts.items()):
+            base = want.get(clause, {}).get(k)
+            if base is not None and v > base * (1 + COUNT_GROWTH) and v - base > 0:
+                grown.append(f"{clause} {k} {base}->{v}")
+                if f"{clause}" not in noted:
+                    unnoted.append(grown[-1])
+    return (not unnoted, f"{len(got)} clauses against {COUNTS} at {mb[:9]}: {len(grown)} counts grew > {COUNT_GROWTH:.0%}"
+            + (f", {len(unnoted)} without a REWRITES.md § Count changes row: {'; '.join(unnoted[:5])}" if unnoted else ""), {"grown": grown, "unnoted": unnoted})
 
 
 def check_a_pattern(d: Path, env: dict) -> tuple[bool, str, dict]:
@@ -809,6 +848,8 @@ def run_check(cid: str, gate_dir: Path, env: dict, edits: int | None) -> tuple[b
         return check_a_repo(d, env)
     if cid == "a-subset":
         return check_a_subset(d, env)
+    if cid == "count-regression":
+        return check_count_regression(d, gate_dir)
     if cid == "a-unrewritten":
         return check_a_unrewritten(d, env, gate_dir)
     if cid == "a-pattern":
@@ -894,7 +935,7 @@ def main() -> int:
     if unknown:
         print(f"facts-gate: unknown checks {unknown}; known: {all_checks}", file=sys.stderr)
         return 2
-    if "a-unrewritten" in only and "a-subset" not in only:
+    if {"a-unrewritten", "count-regression"} & set(only) and "a-subset" not in only:
         only.append("a-subset")
     gate_dir = Path(args.run_dir) if args.run_dir else RUNS / (datetime.datetime.now().strftime("%Y%m%dT%H%M%S") + "-gate")
     gate_dir.mkdir(parents=True, exist_ok=True)
