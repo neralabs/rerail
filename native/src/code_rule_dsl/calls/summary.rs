@@ -58,40 +58,40 @@ const TRANSPARENT: [&str; 6] = [
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Summary {
     /// The name others import the module by (`pkg.mod`; `pkg` for `pkg/__init__.py`).
-    pub(crate) module: Option<u32>,
+    pub module: Option<u32>,
     /// Names used by this summary, each once.
     pub(crate) names: Vec<Name>,
     /// Functions and classes, by node start.
     pub defs: Vec<Def>,
     /// `(definition, callee name)`: what each definition's own body calls. Sorted, distinct.
-    pub(crate) edges: Vec<(u32, u32)>,
+    pub edges: Vec<(u32, u32)>,
     /// Resolved value references, including callbacks and returned function values.
-    pub(crate) references: Vec<(u32, u32)>,
-    pub(crate) reference_targets: Vec<u32>,
+    pub references: Vec<(u32, u32)>,
+    pub reference_targets: Vec<u32>,
     /// Imported declarations, without run-time assignment aliases.
-    pub(crate) reference_aliases: Vec<(u32, u32)>,
+    pub reference_aliases: Vec<(u32, u32)>,
     /// Decorated methods and their syntactic decorator names.
-    pub(crate) reference_decorators: Vec<(u32, u32)>,
+    pub reference_decorators: Vec<(u32, u32)>,
     /// Every callee name any call of the file names, in a definition or not. Sorted, distinct.
-    pub(crate) targets: Vec<u32>,
+    pub targets: Vec<u32>,
     /// Module- and class-level names other code may call through: `(this module's name for it,
     /// the name it denotes)`, from imports and from assignments of a name.
-    pub(crate) aliases: Vec<(u32, u32)>,
+    pub aliases: Vec<(u32, u32)>,
     /// Module- and class-level names bound, on some path that may be the last, to a value no name
     /// denotes (a call's result, a lambda, a loop target): a call through one is unknown. Sorted,
     /// distinct.
-    pub(crate) opaque: Vec<u32>,
+    pub opaque: Vec<u32>,
     /// Modules `from m import *` reads at module level.
-    pub(crate) stars: Vec<u32>,
+    pub stars: Vec<u32>,
     /// PHP: what each class-like extends, implements and uses, and its trait adaptations:
     /// `(class or class.method, target, kind)` (`php::PARENT` and the other kinds), in
     /// declaration order. Python: each class's bases and metaclass (`BASE` and the other kinds).
-    pub(crate) supers: Vec<(u32, u32, u8)>,
+    pub supers: Vec<(u32, u32, u8)>,
     /// The file has syntax errors, or its scope table could not be built: what its definitions
     /// call is not all known.
-    pub(crate) open: bool,
+    pub open: bool,
     /// A call of the file names something unknown: its `calls` verdict is unknown there.
-    pub(crate) open_sites: bool,
+    pub open_sites: bool,
     /// The source's length, which a code rule's `maxSourceBytes` reads.
     pub(crate) bytes: u32,
 }
@@ -123,7 +123,7 @@ pub(crate) enum Callee {
 }
 
 impl Summary {
-    pub(crate) fn as_references(&self, links: super::contracts::Key) -> Self {
+    pub fn as_references(&self, links: super::contracts::Key) -> Self {
         let mut summary = self.clone();
         summary.edges = self.references.clone();
         summary.targets = self.reference_targets.clone();

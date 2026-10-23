@@ -235,7 +235,11 @@ struct Stat {
 #[derive(Default)]
 struct Out {
     stats: BTreeMap<(String, String), Stat>,
-    per_file: Vec<(u32, u32, u32, u64, u64, u64, u64)>,
+    /// (path index, bytes, nodes, parse, extract, views (core tables included), typedefs, core
+    /// tables without string values, string values) ns.
+    per_file: Vec<(u32, u32, u32, u64, u64, u64, u64, u64, u64)>,
+    /// The last file's core-table and string-value ns (`views::evaluate`).
+    last_core_ns: [u64; 2],
     view_ns: Vec<u64>,
     view_rows: Vec<u64>,
     skipped_errors: u64,
@@ -309,6 +313,21 @@ fn cg_check(f: &Facts, vdb: &Db<'_>, path: &str, out: &mut Out) {
     let refusal = t("cg_refusal");
     let rows: Vec<String> = (0..refusal.len()).map(|i| format!("{}|{}", text_of(&refusal.value(i, 0)), text_of(&refusal.value(i, 1)))).collect();
     cg_compare(out, "cg_refusal", path, rows, Vec::new());
+    // Span keys (for S1's declared keys on matcher-input rows): nodes of one kind sharing a span,
+    // over every node and over named nodes; recorded as rows = collisions.
+    for (label, named_only) in [("span.same_kind_all_nodes", false), ("span.same_kind_named_nodes", true)] {
+        let mut seen = rustc_hash::FxHashSet::default();
+        let mut hits = Vec::new();
+        for x in 0..f.len() as u32 {
+            if named_only && !f.named(x) {
+                continue;
+            }
+            if !seen.insert((f.kind[x as usize], f.start[x as usize], f.end[x as usize])) {
+                hits.push(format!("{}:{}:{}", facts::name(f.kind[x as usize]), f.start[x as usize], f.end[x as usize]));
+            }
+        }
+        cg_compare(out, label, path, hits, Vec::new());
+    }
     // Native's context rule over the facts: (owner function, nearest scope) per node.
     let n = f.len();
     let fname = |c: u32| facts::field_name(f.field[c as usize]);
@@ -579,7 +598,7 @@ fn key(row: &[V]) -> String {
 fn check_file(rules: &[Rule], targets: &[Target], views_c: &Views, f: &Facts, path: &str, source: &str, out: &mut Out, check: bool, cg: bool) -> u64 {
     let mut vns = Vec::new();
     let t0 = Instant::now();
-    let vdb = match views::evaluate(views_c, f, &mut vns) {
+    let vdb = match views::evaluate(views_c, f, &mut vns, &mut out.last_core_ns) {
         Ok(db) => db,
         Err(e) => {
             out.failures.push(format!("{path}: {e}"));
@@ -871,7 +890,8 @@ pub fn run(args: &[String]) {
                             }
                             tns = t.elapsed().as_nanos() as u64;
                         }
-                        out.per_file.push((i as u32, source.len() as u32, f.len() as u32, ns.parse, ns.extract, vns, tns));
+                        let core = out.last_core_ns;
+                        out.per_file.push((i as u32, source.len() as u32, f.len() as u32, ns.parse, ns.extract, vns, tns, core[0], core[1]));
                     }
                     out
                 })
@@ -921,9 +941,9 @@ pub fn run(args: &[String]) {
         }
     }
     per_file.sort();
-    let mut tsv = String::from("path\tbytes\tnodes\tparse_ns\textract_ns\tviews_ns\ttypedefs_ns\n");
+    let mut tsv = String::from("path\tbytes\tnodes\tparse_ns\textract_ns\tviews_ns\ttypedefs_ns\tcore_ns\tstring_value_ns\n");
     for p in &per_file {
-        tsv.push_str(&format!("{}\t{}\t{}\t{}\t{}\t{}\t{}\n", paths[p.0 as usize], p.1, p.2, p.3, p.4, p.5, p.6));
+        tsv.push_str(&format!("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n", paths[p.0 as usize], p.1, p.2, p.3, p.4, p.5, p.6, p.7, p.8));
     }
     std::fs::write(Path::new(&out_dir).join("per-file.tsv"), tsv).unwrap();
     let stage_json: Vec<Json> = stats.iter().map(|((s, c), v)| json!({"stage": s, "clause": c, "files": v.files, "rows": v.rows, "bag_mismatch": v.bag_mismatch, "order_mismatch": v.order_mismatch, "bag_examples": v.bag_examples, "examples": v.examples})).collect();
@@ -948,6 +968,8 @@ pub fn run(args: &[String]) {
         "parse_extract_ns": summary(per_file.iter().map(|p| p.3 + p.4).collect()),
         "views_ns": summary(per_file.iter().map(|p| p.5).collect()),
         "typedefs_ns": summary(per_file.iter().map(|p| p.6).collect()),
+        "core_tables_ns": summary(per_file.iter().map(|p| p.7).collect()),
+        "string_value_ns": summary(per_file.iter().map(|p| p.8).collect()),
         "annotations": annotations,
         "cg": cg_stats.iter().map(|(k, v)| (k.to_string(), json!({"files": v.files, "rows": v.rows, "files_differing": v.bag_mismatch, "examples": v.bag_examples}))).collect::<BTreeMap<_, _>>(),
     });

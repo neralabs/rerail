@@ -282,7 +282,58 @@ Texts are source slices. Native normalises names: `python_identifier` applies NF
 SELECT i.id AS node,'non-ASCII identifier (native NFKC-normalises names)' AS construct FROM identifier i WHERE rx_matches(i.name,'[^\x00-\x7F]') UNION ALL SELECT d.id,'dotted name with whitespace or a comment (native joins its identifiers)' FROM node d WHERE d.kind='dotted_name' AND d."end"-d.start<>(SELECT sum(x."end"-x.start)+count(*)-1 FROM child c JOIN node x ON x.id=c.child WHERE c.parent=d.id AND x.kind='identifier')
 ```
 
-The views resolve no binding: `self.m()`, aliases, star imports and bases are left to S3's linking rules. S3 will list any further leaf it needs (name references with native's name forms, bases, decorators), and each will be added here as a view with its differential.
+The views resolve no binding. `self.m()`, aliases, star imports and bases are resolved by native's binding analysis (`follow`, `last_bindings`, name forms), which § 3.4 exports as native computes it.
+
+### 3.4 Native call summary per content (`cgn_*`; agreed with S3)
+
+The reference graph's leaf is native's per-file `Summary`. It is **extracted by calling native's `calls::summarize`**, the entry the workspace uses: a scope table bounded by `MAX_TABLE_NODES`, read as a stub for `.pyi`. Native is changed for visibility only. Native qualifies every name through the file's `ModulePath`, so the summary is extracted per content under **symbolic module paths**, and the real module is substituted on the membership side.
+
+**Variants.** A content is summarised under three variants, plus the stub reading for contents seen at a `.pyi` path:
+
+| variant | symbolic `ModulePath` | selected by the real module path |
+|---|---|---|
+| `module` | 16 directory sentinels `\u{1}0` … `\u{1}15`, then the stem `\u{1}S`; a package | in a package, last segment not `__init__` |
+| `init` | the 16 sentinels, then `__init__`; a package | in a package, last segment `__init__`, more than one segment |
+| `unpackaged` | `ModulePath::stem` of `\u{1}S.py` (not a package) | outside any package (Ruff's stem fallback) |
+
+**Relations.** Each is a multiset of rows of texts and integers, with names spelled out:
+
+- `cgn_module(name)`
+- `cgn_def(idx, name, start, end, flags)`
+- `cgn_edge(def, name)`
+- `cgn_reference(def, name)`
+- `cgn_reference_target(name)`
+- `cgn_reference_alias(key, target)`
+- `cgn_reference_decorator(def, name)`
+- `cgn_target(name)`
+- `cgn_alias(key, target)`
+- `cgn_opaque(name)`
+- `cgn_star(name)`
+- `cgn_super(key, target, kind)`
+- `cgn_open(open, open_sites)`
+
+They are exported twice:
+
+- **`summary`**: as extracted. It is rule-independent and keyed by (content, variant, stub).
+- **`as_references[<links digest>]`**: after `Summary::as_references` with a rule's links (`siblingLinks`, `constructorFields`). It is keyed by the links' digest, a plan-level key (INVARIANTS I7). Batch 6 has one links value, shared by `internal-dead-code` and `imperative-private-functions`.
+
+**Names.** Each maximal run of `r` sentinel segments in a name is exported as the single token `\u{1}r`.
+
+**Substitution (membership side, S3).** It is defined by `cgnative::substitute` and checked by the differential.
+
+- With the real `ModulePath` `M` and the variant's symbolic length `s` (17, 17, 1), a token `\u{1}r` becomes `M.qualified(r - s + |M|)`, joined by `.`.
+- An empty prefix takes its following `.` with it.
+- The content is **refused** when:
+  - the count is negative: a relative import above the real package root;
+  - `qualified` is `None`: a real directory or stem keeps a dot after native's `file_stem`;
+  - the relative import level exceeds 17;
+  - the real module's first segment is `abc`, `typing`, `typing_extensions` or `functools`. Native compares qualified names with those modules' constants (`TRANSPARENT`, `functools.wraps`), and a symbolic module never equals them.
+- The variant is selected from the real `M` as in the table above.
+- `closure.rs`'s second spelling by path (`path_module`) is the linker's, and stays on the membership side.
+
+**Exactness.** `facts-a cg-native` compares, per corpus file, native under the real module path with the selected variant compacted and substituted, before and after `as_references` (no links, and batch 6's links). Results are in report § W2.
+
+**Export.** `facts-a cg-native --export F.jsonl.zst` writes zstd-compressed JSON lines, one per (content hash, variant, stub). The fields are `hash`, `variant`, `symbolic_len`, `stub`, `summary` (relation → rows) and `as_references` (links digest → relation → rows).
 
 ## 4. Exactness (the differential)
 

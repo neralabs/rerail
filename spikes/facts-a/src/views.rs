@@ -59,8 +59,9 @@ impl Views {
     }
 }
 
-/// The core relations of one content as engine tables.
-pub fn core_tables(f: &Facts) -> Vec<(&'static str, Table)> {
+/// The core relations of one content as engine tables; `string_value_ns` receives the time of
+/// the two string-value relations (`string_values`).
+pub fn core_tables(f: &Facts, string_value_ns: &mut u64) -> Vec<(&'static str, Table)> {
     let n = f.len();
     let cat = core_catalog();
     let int = |x: u32| if x == NONE { V::Null } else { V::Int(x as i64) };
@@ -115,7 +116,9 @@ pub fn core_tables(f: &Facts) -> Vec<(&'static str, Table)> {
             vec![V::Int(l as i64 + 1), V::Int(a as i64), V::Int(b as i64), V::Int(indent as i64)].into_boxed_slice()
         })
         .collect();
+    let t0 = std::time::Instant::now();
     let (string_value, string_value_unknown) = string_values(f);
+    *string_value_ns = t0.elapsed().as_nanos() as u64;
     let t = |name: &'static str, rows: Vec<Box<[V]>>| (name, Table::from_rows(cat[name].clone(), rows));
     vec![
         t("node", node),
@@ -181,12 +184,15 @@ pub fn store(t: Table, schema: &Schema) -> Table {
 }
 
 /// Every view of one content: the core tables and the views, by name, in a database whose path
-/// is `""` (content-level, path-free; `source_text('', s, e)` reads the content).
-pub fn evaluate<'s>(views: &Views, f: &'s Facts, ns: &mut Vec<u64>) -> Result<Db<'s>, String> {
+/// is `""` (content-level, path-free; `source_text('', s, e)` reads the content). `ns` receives
+/// each view's time; `core_ns` the core tables' (string values excluded) and the string values'.
+pub fn evaluate<'s>(views: &Views, f: &'s Facts, ns: &mut Vec<u64>, core_ns: &mut [u64; 2]) -> Result<Db<'s>, String> {
     let mut db = Db::new(f.source.as_str(), "");
-    for (name, t) in core_tables(f) {
+    let t0 = std::time::Instant::now();
+    for (name, t) in core_tables(f, &mut core_ns[1]) {
         db.tables.insert(name.to_owned(), Rc::new(t));
     }
+    core_ns[0] = (t0.elapsed().as_nanos() as u64).saturating_sub(core_ns[1]);
     ns.clear();
     for (name, st) in &views.stmts {
         let t0 = std::time::Instant::now();
