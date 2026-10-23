@@ -60,6 +60,70 @@ pub enum FileSource {
     Syntax(SyntaxTable),
     /// An earlier stage of the same plan: a rule-private relation derived from this content.
     Stage(StageId),
+    /// A relation of the content's syntactic core (SCHEMA § 1.2, I2): what the pattern front end
+    /// lowers matcher queries over.
+    Core(CoreRel),
+}
+
+/// The syntactic core and parser facts of one content, as relations (SCHEMA § 1.2/1.3). Rows in
+/// id order (`line`: line order); columns as [`CoreRel::schema`]; no declared affinity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum CoreRel {
+    /// `file(path)`: one row, the content's path in the snapshot being evaluated.
+    File,
+    /// `node(id, kind, parent, start, end, start_line, end_line, subtree_end, named, flags,
+    /// field)`: every node, preorder.
+    Node,
+    /// `child(parent, idx, child)`.
+    Child,
+    /// `field(parent, field, child, rank)`.
+    Field,
+    /// `identifier(id, name)`.
+    Identifier,
+    /// `line(no, start, end, indent)`.
+    Line,
+    /// `syntax_error()`: one row when the tree has an error or missing node, else none.
+    SyntaxError,
+    /// `string_value(id, value)`: `string`/`concatenated_string` nodes whose literal decodes to a
+    /// `str`.
+    StringValue,
+    /// `string_value_unknown(id, named_escape)`: those whose value is unknown (interpolation,
+    /// str/bytes mix, undecodable); `named_escape` = 1 when a `\N{...}` escape was seen.
+    StringValueUnknown,
+}
+
+impl CoreRel {
+    pub fn columns(self) -> &'static [&'static str] {
+        match self {
+            CoreRel::File => &["path"],
+            CoreRel::Node => &["id", "kind", "parent", "start", "end", "start_line", "end_line", "subtree_end", "named", "flags", "field"],
+            CoreRel::Child => &["parent", "idx", "child"],
+            CoreRel::Field => &["parent", "field", "child", "rank"],
+            CoreRel::Identifier => &["id", "name"],
+            CoreRel::Line => &["no", "start", "end", "indent"],
+            CoreRel::SyntaxError => &[],
+            CoreRel::StringValue => &["id", "value"],
+            CoreRel::StringValueUnknown => &["id", "named_escape"],
+        }
+    }
+
+    pub fn schema(self) -> Vec<Column> {
+        self.columns().iter().map(|c| Column::new(c, Aff::None)).collect()
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            CoreRel::File => "file",
+            CoreRel::Node => "node",
+            CoreRel::Child => "child",
+            CoreRel::Field => "field",
+            CoreRel::Identifier => "identifier",
+            CoreRel::Line => "line",
+            CoreRel::SyntaxError => "syntax_error",
+            CoreRel::StringValue => "string_value",
+            CoreRel::StringValueUnknown => "string_value_unknown",
+        }
+    }
 }
 
 /// What a repository plan may read: exported relations (over the member contents of a
@@ -218,6 +282,24 @@ pub struct AggCall<S> {
     pub arg: Option<Expr<S>>,
     pub sep: Option<Expr<S>>,
     pub distinct: bool,
+    /// For `group_concat`/`json_group_array`: whether the order it concatenates in is total.
+    pub total: Total,
+}
+
+/// Whether an order-dependent construct (`row_number()`, `LIMIT`/`OFFSET`, ordered aggregates)
+/// sees a total order (IR.md § Order). Set by the classifier on repository plans; S3's generator
+/// and S2's executor emit a tie check only for `Checked`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Total {
+    /// A per-file plan: ties are broken by input order, which is deterministic (IR.md § 4).
+    #[default]
+    InputOrder,
+    /// A repository plan whose order keys contain a candidate key of the input (no two
+    /// distinct rows tie): proven at compile time.
+    Proven,
+    /// A repository plan whose order is not proven total: a tie between distinct rows is a
+    /// run-time refusal of the clause (retractable per worktree), never a guess.
+    Checked,
 }
 
 #[derive(Clone, Debug)]
@@ -236,6 +318,8 @@ pub struct WindowFn<S> {
     pub kind: WindowKind<S>,
     pub partition: Vec<Expr<S>>,
     pub order: Vec<(Expr<S>, bool)>,
+    /// `row_number()`: whether partition + order is total.
+    pub total: Total,
 }
 
 /// A `WITH` binding: a plain relation, or a recursive fixpoint.
@@ -278,7 +362,9 @@ pub enum Rel<S> {
     /// `left UNION [ALL] right`: bag concatenation, or set union keeping first occurrences.
     Union { all: bool, left: Box<Rel<S>>, right: Box<Rel<S>> },
     /// Stable sort on input columns, then `OFFSET`/`LIMIT` (constant expressions).
-    Sort { input: Box<Rel<S>>, keys: Vec<(u16, bool)>, limit: Option<Expr<S>>, offset: Option<Expr<S>> },
+    /// `total`: whether the keys order the input totally (matters with `limit`/`offset`, and for
+    /// an ordered aggregate above).
+    Sort { input: Box<Rel<S>>, keys: Vec<(u16, bool)>, limit: Option<Expr<S>>, offset: Option<Expr<S>>, total: Total },
     /// Bindings visible in `body` (and in later bindings).
     With { bindings: Vec<(LocalId, Binding<S>)>, body: Box<Rel<S>> },
 }
@@ -336,6 +422,18 @@ pub struct InputDef {
     /// `evidence.paths`: an include/exclude glob filter on the content's path.
     pub paths: Option<Json>,
     pub schema: Vec<Column>,
+    /// The pattern front end's lowering of this input to the algebra over the content's core
+    /// relations (I3), or the construct it refuses.
+    pub algebra: Result<Lowered, String>,
+}
+
+/// A matcher input lowered to the algebra (`front::pattern`): its rows (the input's schema, in
+/// the leaf executor's order) over [`FileSource::Core`] relations only, and the relations whose
+/// non-emptiness fails the content with the given message (the executor's run-time refusals).
+#[derive(Clone, Debug)]
+pub struct Lowered {
+    pub rows: Rel<FileSource>,
+    pub refuse_if: Vec<(Rel<FileSource>, String)>,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -535,7 +633,7 @@ pub fn map_rel<S, T, X>(r: Rel<S>, f: &mut dyn FnMut(S) -> Result<T, X>) -> Resu
         Rel::Aggregate { input, keys, aggs } => Rel::Aggregate {
             input: bx(input, f)?,
             keys: keys.into_iter().map(|e| map_expr(e, f)).collect::<Result<_, _>>()?,
-            aggs: aggs.into_iter().map(|a| Ok(AggCall { f: a.f, arg: a.arg.map(|e| map_expr(e, f)).transpose()?, sep: a.sep.map(|e| map_expr(e, f)).transpose()?, distinct: a.distinct })).collect::<Result<_, _>>()?,
+            aggs: aggs.into_iter().map(|a| Ok(AggCall { f: a.f, arg: a.arg.map(|e| map_expr(e, f)).transpose()?, sep: a.sep.map(|e| map_expr(e, f)).transpose()?, distinct: a.distinct, total: a.total })).collect::<Result<_, _>>()?,
         },
         Rel::Window { input, funcs } => Rel::Window {
             input: bx(input, f)?,
@@ -550,13 +648,14 @@ pub fn map_rel<S, T, X>(r: Rel<S>, f: &mut dyn FnMut(S) -> Result<T, X>) -> Resu
                         },
                         partition: w.partition.into_iter().map(|e| map_expr(e, f)).collect::<Result<_, _>>()?,
                         order: w.order.into_iter().map(|(e, d)| Ok((map_expr(e, f)?, d))).collect::<Result<_, _>>()?,
+                        total: w.total,
                     })
                 })
                 .collect::<Result<_, _>>()?,
         },
         Rel::Distinct { input, prefix } => Rel::Distinct { input: bx(input, f)?, prefix },
         Rel::Union { all, left, right } => Rel::Union { all, left: bx(left, f)?, right: bx(right, f)? },
-        Rel::Sort { input, keys, limit, offset } => Rel::Sort { input: bx(input, f)?, keys, limit: limit.map(|e| map_expr(e, f)).transpose()?, offset: offset.map(|e| map_expr(e, f)).transpose()? },
+        Rel::Sort { input, keys, limit, offset, total } => Rel::Sort { input: bx(input, f)?, keys, limit: limit.map(|e| map_expr(e, f)).transpose()?, offset: offset.map(|e| map_expr(e, f)).transpose()?, total },
         Rel::With { bindings, body } => Rel::With {
             bindings: bindings
                 .into_iter()
@@ -1153,5 +1252,111 @@ mod tests {
         let lt = Expr::Exists { rel: Box::new(Rel::Filter { input: Box::new(scan(1, 3)), pred: cmp(CmpOp::Lt, col(0), outer(0)) }), negated: false };
         assert!(semi_join(&lt).unwrap().is_err());
         assert!(semi_join(&cmp(CmpOp::Eq, col(0), int(1))).is_none());
+    }
+}
+
+/// Calls `f` on every relation directly below `r`: its inputs, bindings and body, and the
+/// relations of the subqueries in its own expressions (not deeper; `f` recurses if it wants).
+pub fn children_mut<S>(r: &mut Rel<S>, f: &mut dyn FnMut(&mut Rel<S>)) {
+    fn subs<S>(e: &mut Expr<S>, f: &mut dyn FnMut(&mut Rel<S>)) {
+        match e {
+            Expr::Lit(_) | Expr::Col { .. } => {}
+            Expr::Exists { rel, .. } | Expr::Scalar(rel) => f(rel),
+            Expr::InRel { e, rel, .. } => {
+                subs(e, f);
+                f(rel)
+            }
+            Expr::Not(x) | Expr::Neg(x) | Expr::Plus(x) | Expr::Cast(x, _) => subs(x, f),
+            Expr::IsNull { e, .. } => subs(e, f),
+            Expr::Arith(_, a, b) | Expr::Concat(a, b) | Expr::And(a, b) | Expr::Or(a, b) | Expr::Cmp(_, a, b, _) => {
+                subs(a, f);
+                subs(b, f)
+            }
+            Expr::Is { left, right, .. } => {
+                subs(left, f);
+                subs(right, f)
+            }
+            Expr::Like { text, pattern, .. } => {
+                subs(text, f);
+                subs(pattern, f)
+            }
+            Expr::Func(_, a) => a.iter_mut().for_each(|x| subs(x, f)),
+            Expr::Case { operand, whens, else_ } => {
+                if let Some(o) = operand {
+                    subs(o, f)
+                }
+                for (w, t, _) in whens {
+                    subs(w, f);
+                    subs(t, f)
+                }
+                if let Some(x) = else_ {
+                    subs(x, f)
+                }
+            }
+            Expr::InList { e, list, .. } => {
+                subs(e, f);
+                list.iter_mut().for_each(|(x, _)| subs(x, f))
+            }
+        }
+    }
+    match r {
+        Rel::Scan { .. } | Rel::Local { .. } | Rel::Unit => {}
+        Rel::JsonEach { input, arg, on, .. } => {
+            f(input);
+            subs(arg, f);
+            if let Some(o) = on {
+                subs(o, f)
+            }
+        }
+        Rel::Join { left, right, on, .. } => {
+            f(left);
+            f(right);
+            if let Some(o) = on {
+                subs(o, f)
+            }
+        }
+        Rel::Filter { input, pred } => {
+            f(input);
+            subs(pred, f)
+        }
+        Rel::Project { input, exprs, .. } => {
+            f(input);
+            exprs.iter_mut().for_each(|e| subs(e, f))
+        }
+        Rel::Aggregate { input, keys, aggs } => {
+            f(input);
+            keys.iter_mut().for_each(|e| subs(e, f));
+            for a in aggs {
+                a.arg.iter_mut().chain(a.sep.iter_mut()).for_each(|e| subs(e, f))
+            }
+        }
+        Rel::Window { input, funcs } => {
+            f(input);
+            for w in funcs {
+                if let WindowKind::Min(e) | WindowKind::Max(e) = &mut w.kind {
+                    subs(e, f)
+                }
+                w.partition.iter_mut().for_each(|e| subs(e, f));
+                w.order.iter_mut().for_each(|(e, _)| subs(e, f));
+            }
+        }
+        Rel::Distinct { input, .. } => f(input),
+        Rel::Union { left, right, .. } => {
+            f(left);
+            f(right)
+        }
+        Rel::Sort { input, limit, offset, .. } => {
+            f(input);
+            limit.iter_mut().chain(offset.iter_mut()).for_each(|e| subs(e, f))
+        }
+        Rel::With { bindings, body } => {
+            for (_, b) in bindings {
+                match b {
+                    Binding::Plain(r) => f(r),
+                    Binding::Fix { init, step, .. } => init.iter_mut().chain(step.iter_mut()).for_each(|r| f(r)),
+                }
+            }
+            f(body)
+        }
     }
 }

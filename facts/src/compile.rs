@@ -37,6 +37,7 @@ pub fn compile_report(document: &Json, config: &Map<String, Json>, leaves: &mut 
                 file_stages: 0,
                 repo_stages: 0,
                 exports: vec![],
+                order: vec![],
             });
         }
     }
