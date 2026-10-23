@@ -64,24 +64,27 @@ person says yes.
      pick-myself`, no coding agent) is not asked.
 2. **Ask before reading** — set-up names the Git repository it ran in and asks
    whether it may read it. Outside a repository (or in your home folder) it
-   asks which folder to start with instead; `--repo <folder>` names one, which
-   is the go-ahead to read it.
+   asks which folder to start with instead (type the folder, or skip for now),
+   numbered as this step; `--repo <folder>` names one, which is the go-ahead
+   to read it.
 3. **Recommend** — the repository's files and `package.json` dependencies are
    matched against the rule packs; each pack that fits is shown with its rule
-   count, why it matched and the folder it would be added in, with the coding
-   agents found and not found. A repository that matches no rule pack is
-   offered none; it can still start, and add rule packs in the dashboard later.
-   The screen also lists the rules of those packs that will start off or
-   with options taken from the repository's own lint config (see below).
-4. **Confirm** — start, review the packs in the dashboard first (the review
-   link opens `#rule-packs?review=1` scoped to the repository and checkout,
-   and set-up asks again rather than waiting on the browser), name the coding
-   agents to connect, or pick rule packs yourself (the repository is set up
-   with no packs and no code is read). See [Rule scoping](rule-scoping.md#set-up)
-   for how each answer attaches packs.
+   count, why it matched and the folder it would be added in, and the coding
+   agents it will connect ("Will connect to: …"; `--agents` names others). A
+   repository that matches no rule pack is offered none; it can still start,
+   and add rule packs in the dashboard later. The screen also lists the rules
+   of those packs that will start off or with options taken from the
+   repository's own lint config (see below).
+4. **Confirm** — "Yes, start Rerail" (`--answer start`) installs the packs
+   shown and starts; "Change rule packs…" (`--answer choose`) picks from every
+   pack set-up fetched instead; "Not now" (`--answer not-now`) installs,
+   connects and turns on nothing. Picking rule packs yourself without a scan
+   is the question before ("Skip, I'll pick packs", `--answer pick-myself`:
+   no code is read). See [Rule scoping](rule-scoping.md#set-up) for how each
+   answer attaches packs.
 5. **Start, in this repository** — the chosen coding agents (all found,
-   unless named) are connected, the recommended packs (or the ones kept on in
-   the review) are attached to the repository, and the repository is started:
+   unless named) are connected, the recommended or chosen packs are attached
+   to the repository, and the repository is started:
    every checkout of it, the one set-up ran in included, that has not been
    stopped on its own. Other repositories stay off. Connecting writes persistent registrations, all pointing at
    `~/.rerail/current`, so hooks follow an update without being rewritten; `rerail update` registers the new version
@@ -113,8 +116,8 @@ person says yes.
    a no-op.
 6. **Summary** — the rule packs added (by name, "TSLint in web" when added in
    one folder), the rules on, the other repositories Rerail is on in, the
-   coding agents connected, and the dashboard link (`#rules`, scoped to the
-   repository and checkout). The daemon used is the active install's, which
+   coding agents connected, and the dashboard link (`#rules`, its Overview,
+   scoped to the repository and checkout). The daemon used is the active install's, which
    serves every repository; one from another version or on another port is
    replaced (`--port` picks the port). The browser opens unless
    `BROWSER=none`, the session is over SSH, or Linux has no display.
@@ -233,14 +236,21 @@ Options that do not map, or that the document rejects, are left at the port's
 defaults with a note. Rules are never turned on, a file larger than 1 MiB or a
 symlink is not read, nor is a TOML file whose arrays or inline tables nest more
 than 64 deep, and a rule the person already set in the dashboard's
-review (in that folder) keeps that setting. "I'll pick rule packs myself" takes nothing from
+review (in that folder) keeps that setting. "Skip, I’ll pick packs" takes nothing from
 the lint config, even for the packs the person then picks.
+
+**In a terminal** (stdin and stdout are TTYs, no `--relay`), each question is
+a menu: ↑/↓ (or k/j) move the `❯` from answer to answer, wrapping around, a
+digit moves it to that answer, and Enter takes the answer it is on, so typing
+`2` then Enter answers as before. Ctrl-C puts the terminal back and stops
+set-up; Ctrl-D cancels it. The folder and rule-pack prompts read a typed line.
 
 **Without a terminal** (stdin or stdout is not a TTY, as when a coding agent
 runs it), or with `--relay`, each run prints the next question for the coding
 agent to relay, as written, with one command per answer, and exits 0. The
-coding agent runs set-up again with the person's answer: `--answer <yes|other-folder|pick-myself|start|review|choose|other|skip>`,
-`--repo <folder>`, `--agents <ids>` (`omp,pi,claude-code,codex,cursor`) and
+coding agent runs set-up again with the person's answer: `--answer <allow|decline|yes|other-folder|pick-myself|start|choose|not-now|folder|skip>`,
+`--repo <folder>`, `--agents <ids>` (`omp,pi,claude-code,codex,cursor`; it
+works on its own, with any answer, and no question asks for it) and
 `--packs <id@version,…>` (the exact versions an answer installs; `none` for
 none).
 Each answer run starts from what it is told, so running one twice repeats no
@@ -309,7 +319,7 @@ rerail stop              # stop Rerail in this checkout; the daemon keeps servin
 rerail daemon start      # start the background daemon (--port, --host, --open, --dev, ...)
 rerail daemon stop       # stop the background daemon
 rerail status            # whether Rerail is started here, otherwise daemon/database/kernel
-rerail manage            # opens the rules page (--print only prints the URL)
+rerail manage            # opens the dashboard's Overview (--print only prints the URL)
 rerail session claude-code ID --open  # this session's status line and page URL; --open opens it
 rerail scan --session ID --scope repository --wait  # internal testing: inspect findings in Sessions
 rerail settings --session ID --mode log             # save this workspace's default
@@ -387,7 +397,7 @@ the repository. Two clones of one remote are one repository.
   slash-command name) starts Rerail in the current checkout and the checkouts
   inside it. In a repository that is not set up, it runs set-up's steps 2 to 6
   there first: it asks, recommends rule packs, and starts once you confirm
-  ("I'll pick rule packs myself" lists every rule pack set-up fetched, installs
+  ("Skip, I’ll pick packs" lists every rule pack set-up fetched, installs
   the ones you pick and adds each for the whole repository, without reading
   it; "None for now" sets it up with none). Until a repository is set up, its sessions are
   recorded but no rules run.

@@ -333,6 +333,7 @@ export class RerailDaemon {
       native: this.#native,
       ui: this.#ui,
       workspaceRoot: this.#workspaceRoot,
+      installedAt: this.#stores.installedAt(),
     };
   }
 

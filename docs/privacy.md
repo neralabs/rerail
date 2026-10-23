@@ -82,4 +82,4 @@ The API has no login: any program running on your machine can call it, as it can
   `~/.cache/rerail` and the `.rerail/` folder of each repository you used Rerail in.
 
 Questions about this page: [open an issue](https://github.com/neralabs/rerail/issues). Report a vulnerability as
-[SECURITY.md](SECURITY.md) describes.
+[SECURITY.md](../SECURITY.md) describes.

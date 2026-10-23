@@ -1,0 +1,27 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "projectTitle": "Rerail",
+  "description": "Rerail checks the code a coding agent writes against the repository's rules, on the developer's machine, and steers the agent to fix what breaks them. It hooks into Claude Code, Codex, Cursor, OMP and Pi, and ships rule packs ported from common linters.",
+  "folders": ["docs", "skills", "packs"],
+  "excludeFolders": ["packs/**/upstream", "packs/**/licenses", "packs/**/candidates", "skills/**/examples"],
+  "excludeFiles": [
+    "CHANGELOG.md",
+    "CODE_OF_CONDUCT.md",
+    "REVIEW.md",
+    "UPSTREAM.md",
+    "content-addressed-workspace-store.md",
+    "content-store-bulk-publication-design.md",
+    "sql-driven-transducer-execution.md",
+    "transducer-design.md",
+    "in-session-status-line-prd.md"
+  ],
+  "rules": [
+    "Install with `npx @neralabs/rerail setup` in the repository. A coding agent runs `npx @neralabs/rerail setup --relay` and asks the person each question it prints, as written.",
+    "Rerail is off in a repository until it is started there: `/rerail-start`, or `rerail start` in a terminal.",
+    "Codex invokes Rerail commands as `$rerail-…`; every other coding agent as `/rerail-…`. `/rerail` lists them all.",
+    "Rules belong to one repository. Create one with `/rerail-create`: test the draft with `rerail rules test <draft.json>` and run `rerail rules add <draft.json>` only after the person confirms it.",
+    "A rule's mode is `log` (recorded only) or `steer` (its guidance is sent to the agent).",
+    "When Rerail reports violations of your last edit, fix them, or tell the user in one line why you won't.",
+    "Rule packs are npm packages named `@neralabs/rerail-pack-<id>`; manage them with `rerail packs list`, `add`, `remove` and `recommend`."
+  ]
+}

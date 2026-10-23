@@ -15,6 +15,7 @@ structure review on PR #1 plus #25, the generated-file manifest.
 | `fixtures/<family>/<feature>/` | Engine and host test data; `<feature>` names an engine module (#10) |
 | `fixtures/packs/` | Pack-validator inputs |
 | `test/`, `integration/` | Unit and integration tests; helpers in `support/` |
+| `e2e/` | The dashboard's Playwright browser specs over seeded scenarios (`e2e/README.md`); helpers in `support/` |
 | `playground/` | The rule playground, its own npm package |
 | `scripts/generate/` | Generators of engine, host and pack data, listed in `scripts/generate/README.md` |
 
@@ -81,9 +82,10 @@ the item a `#[cfg(test)]` attribute applies to: its brace-matched body (comments
 literals skipped), or up to its `;` when it has none. `#[cfg(test)] mod tests;` declares a module in
 another file and exempts nothing after it.
 
-### 5. Test roots — target `test/`, `integration/` (+ `playground/`)
+### 5. Test roots — target `test/`, `integration/`, `e2e/` (+ `playground/`)
 
-Every test file is under `test/` or `integration/`.
+Every test file is under `test/`, `integration/` or `e2e/` (the dashboard's Playwright browser specs, kept out of
+`test/` because vitest runs every spec file under it).
 Exemptions: `playground-package` (`playground/` is its own package) and `data-roots` (upstream projects'
 copied tests). Rust `#[cfg(test)]` modules are part of the crate and not counted.
 
@@ -256,7 +258,8 @@ a `rules` directory, empty or not) starts with `packs/<id>/`.
 From every `run:` script in `.github/workflows/ci.yml`, expanded through npm scripts transitively
 (`npm run`, `npm test`, `npm --prefix <dir>`, `cd`), the gate collects what runs: `vitest` (by `--dir`,
 `--config` directory, filters, minus the package's `vitest.config.*` `exclude` globs), `node --test`,
-`pytest`, and entry points (`node`/`tsx`/`python`/`bash` files). Every test file outside the data roots
+`pytest`, `playwright test` (the spec files under its config's `testDir`), and entry points
+(`node`/`tsx`/`python`/`bash` files). Every test file outside the data roots
 runs, and every entry point that an npm script named `test*` or `conformance*` runs also runs in CI.
 Rust tests run through `cargo test`, outside this metric.
 
