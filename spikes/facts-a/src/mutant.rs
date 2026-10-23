@@ -21,6 +21,12 @@
 //!     index's constant key parts (`sql::engine::Index::group`).
 //!
 //!     Both killed by `sql::engine::tests::key_cells_match_sqlite`.
+//! 27. R18 (tree closure), dropped side condition: two edge rows with the same `dst` in one carried
+//!     group are accepted (`sql::engine::Exec::tree_walk`, condition (a)). Killed by
+//!     `sql::engine::tests::rewrite_tree_closure_equals_closure`.
+//! 29. R19 (bag recursion as a reference walk), dropped side condition: an arithmetic step column
+//!     taken for a reference to its left operand (`sql::engine::walk_ref`). Killed by
+//!     `sql::engine::tests::rewrite_walk_equals_levels`.
 
 #[cfg(feature = "mutants")]
 pub fn on(n: u8) -> bool {
