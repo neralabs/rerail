@@ -181,7 +181,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
         let mut graphs = Vec::new();
         let mut refusals_static = Vec::new();
         let vexp = vectors::exported();
-        for (name, p) in [("r1", vectors::r1()), ("r3", vectors::r3())] {
+        for (name, p) in [("r1", vectors::r1()), ("r3", vectors::r3()), ("rt", vectors::rt())] {
             if !vector_names.iter().any(|x| x == name) {
                 continue;
             }
@@ -302,16 +302,35 @@ pub fn run(run_dir: &Path, opts: Opts) {
         let mut worktree_checks = 0usize;
         let mut differences: Vec<serde_json::Value> = Vec::new();
         let mut oracle_s = 0.0;
+        // Runtime refusals checked against the from-scratch side: per plan, (worktree checks
+        // where a refusal was expected, of those refused); expected but not refused; refused
+        // without an expectation (a difference); and the live refusals seen.
+        let mut expected_refusals: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+        let mut missing_expected_refusals = 0usize;
+        let mut live_seen: BTreeMap<String, usize> = BTreeMap::new();
         let plan_of: FxHashMap<String, usize> = real.as_ref().map(|r| r.plans.iter().enumerate().map(|(i, (n, ..))| (n.clone(), i)).collect()).unwrap_or_default();
         let mut check = |w: W, members: &BTreeMap<W, Members>, built: &lower::Built, at: usize, differences: &mut Vec<serde_json::Value>| {
             let t = Instant::now();
             let files: Vec<(Sym, Cid)> = members[&w].iter().map(|(p, c)| (*p, *c)).collect();
-            let vf = if vector_names.is_empty() { None } else { Some(crate::oracle::evaluate(&mut world.borrow_mut(), &files)) };
+            let vf = if vector_names.iter().any(|v| v == "r1" || v == "r3") { Some(crate::oracle::evaluate(&mut world.borrow_mut(), &files)) } else { None };
             // Member files in path order (the IR's union order for exported relations).
             let mut ordered: Vec<(String, Sym, Cid)> = files.iter().map(|(p, c)| (world.borrow().store.syms.str(*p).to_owned(), *p, *c)).collect();
             ordered.sort();
             for (name, out) in &built.outputs {
                 let plan = name.split(':').next().unwrap();
+                // The plan's live runtime refusals in w.
+                let live: Vec<String> = match built.refusals.iter().find(|(n, _)| n == plan).map(|(_, o)| lower::full(o, w)) {
+                    Some(Ok(m)) => m.keys().map(|r| show(r)).collect(),
+                    Some(Err(e)) => {
+                        differences.push(json!({"event": at, "worktree": w, "plan": name, "refusal_error": e}));
+                        continue;
+                    }
+                    None => Vec::new(),
+                };
+                for l in &live {
+                    *live_seen.entry(format!("{plan}: {l}")).or_default() += 1;
+                }
+                // From scratch: the rows, or Err(tie) where the order observed a tie.
                 let want: Result<BTreeMap<Row, i32>, String> = if let Some(&i) = plan_of.get(plan) {
                     let r = real.as_ref().unwrap();
                     let (_, k, p, _) = &r.plans[i];
@@ -330,9 +349,30 @@ pub fn run(run_dir: &Path, opts: Opts) {
                         }
                         m
                     })
+                } else if plan == "rt" {
+                    match vectors::rt_oracle(&mut world.borrow_mut(), &files) {
+                        (true, _) => Err("tie: row_number() order with ties between distinct rows".into()),
+                        (false, rows) => Ok(rows.into_iter().map(|r| (r, 1)).collect()),
+                    }
                 } else {
                     Ok(vectors::oracle_rows(&world.borrow(), vf.as_ref().unwrap(), plan).into_iter().map(|r| (r, 1)).collect())
                 };
+                let tie = matches!(&want, Err(e) if e.starts_with("tie"));
+                if tie {
+                    let e = expected_refusals.entry(plan.to_owned()).or_default();
+                    e.0 += 1;
+                    if live.is_empty() {
+                        missing_expected_refusals += 1;
+                        differences.push(json!({"event": at, "worktree": w, "plan": name, "missing_expected_refusal": want.unwrap_err()}));
+                    } else {
+                        e.1 += 1;
+                    }
+                    continue;
+                }
+                if !live.is_empty() {
+                    differences.push(json!({"event": at, "worktree": w, "plan": name, "unexpected_runtime_refusal": live}));
+                    continue;
+                }
                 let want = match want {
                     Ok(x) => x,
                     Err(e) => {
@@ -456,7 +496,14 @@ pub fn run(run_dir: &Path, opts: Opts) {
         }
         let single: Vec<f64> = ["edit", "new_worktree_edit"].iter().flat_map(|k| lat.get(*k).cloned().unwrap_or_default()).collect();
         lat_summary.insert("single_file_all".into(), summary(&single));
+        drop(check);
         let Refusals(runtime_refusals) = lower::refusals();
+        // Live runtime refusals at the end, per plan and worktree.
+        let runtime_refusals_live: Vec<serde_json::Value> = built
+            .refusals
+            .iter()
+            .flat_map(|(plan, o)| members.keys().filter_map(move |w| lower::full(o, *w).ok().filter(|m| !m.is_empty()).map(|m| json!({"plan": plan, "worktree": w, "refusals": m.keys().map(|r| show(r)).collect::<Vec<_>>()}))))
+            .collect();
         let (nsyms, sym_bytes) = val::syms_footprint();
         // Per-worktree state (with --track): live records per tag over every operator output.
         let state = if opts.track {
@@ -499,6 +546,10 @@ pub fn run(run_dir: &Path, opts: Opts) {
             "plans": graphs.iter().map(|(n, g)| json!({"plan": n, "nodes": g.nodes.len()})).collect::<Vec<_>>(),
             "refused_static": refusals_static,
             "runtime_refusals": runtime_refusals,
+            "runtime_refusals_live": runtime_refusals_live,
+            "runtime_refusals_seen": live_seen,
+            "expected_refusals": expected_refusals.iter().map(|(p, (e, r))| (p.clone(), json!({"expected": e, "refused": r}))).collect::<BTreeMap<_, _>>(),
+            "missing_expected_refusals": missing_expected_refusals,
             "events": events.len(),
             "model": {"clusters": model.clusters.iter().map(|(t, (ws, m))| json!({"tag": t, "worktrees": ws, "paths": m.len()})).collect::<Vec<_>>(), "cost": model.cost, "flat_cost": model.flat_cost, "seconds": model_s, "base_paths": model.base.len()},
             "load": {"store_seconds": load_store_s, "levels_and_deltas_seconds": load_s, "rss_store_mb": mb(rss_store.0), "rss_loaded_mb": mb(rss_loaded.0), "per_level_ms": per_level_ms},

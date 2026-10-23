@@ -51,13 +51,21 @@ type Arr<'s, Tm, V2> = Arranged<'s, TraceAgent<ValSpine<Row, (W, V2), Tm, R>>>;
 pub type Source = Rc<dyn Fn(u32, Sym, Cid) -> Rc<[Row]>>;
 
 /// Runtime refusals (exact-or-refuse at run time): an order a construct observes was not total,
-/// a bare value was ambiguous, or a scalar raised. Counted per construct; any nonzero count means
-/// the affected findings are withheld, never guessed.
+/// a bare value was ambiguous, or a scalar raised. Counted per construct (every occurrence, for
+/// the report); the refusals raised inside an operator's evaluation are also records of the
+/// dataflow (see [`REFUSED`]), so a refusal is live per (plan, worktree) exactly while its cause
+/// is, and the affected findings are withheld, never guessed.
 #[derive(Default, Debug, Clone)]
 pub struct Refusals(pub BTreeMap<String, u64>);
 
+/// Tag bit of a refusal record `(t | REFUSED, [construct])`: a signed difference of view t's
+/// refusals from its parent's, like any record. Split from the data right where it is raised.
+pub const REFUSED: W = 1 << 31;
+
 thread_local! {
     static REFUSALS: RefCell<Refusals> = RefCell::new(Refusals::default());
+    /// While an operator evaluates one view: the refusals it raises.
+    static CAPTURE: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
 }
 
 pub fn refusals() -> Refusals {
@@ -66,6 +74,25 @@ pub fn refusals() -> Refusals {
 
 fn refuse(what: &str) {
     REFUSALS.with(|r| *r.borrow_mut().0.entry(what.to_owned()).or_default() += 1);
+    CAPTURE.with(|c| {
+        if let Some(v) = c.borrow_mut().as_mut() {
+            v.push(what.to_owned());
+        }
+    });
+}
+
+/// Runs `f`, returning its result and the distinct refusals it raised.
+fn captured<X>(f: impl FnOnce() -> X) -> (X, Vec<String>) {
+    let outer = CAPTURE.with(|c| c.borrow_mut().replace(Vec::new()));
+    let x = f();
+    let mut got = CAPTURE.with(|c| std::mem::replace(&mut *c.borrow_mut(), outer)).unwrap_or_default();
+    got.sort();
+    got.dedup();
+    (x, got)
+}
+
+fn refusal_row(at: &str, what: &str) -> Row {
+    vec![Val::Text(val::sym(&format!("{at}: {what}")))]
 }
 
 /// A refusal raised outside the operators (a per-file producer's failure for a content).
@@ -216,9 +243,12 @@ fn presence<'s, Tm: timely::progress::Timestamp + differential_dataflow::lattice
     )
 }
 
-/// Group recompute: per key, logic over each tag's view, emitted as differences.
-fn group<'s>(input: Arr<'s, T, Row>, logic: Rc<dyn Fn(&Row, &[(&Row, R)]) -> Vec<(Row, R)>>, sentinel: bool, name: &str) -> C<'s, T> {
-    input
+/// Group recompute: per key, logic over each tag's view, emitted as differences. Returns the
+/// output and the refusal records (`(t, [construct])`, differences like the output's): a group
+/// whose logic refuses in view t yields no rows there and one live refusal.
+fn group<'s>(input: Arr<'s, T, Row>, logic: Rc<dyn Fn(&Row, &[(&Row, R)]) -> Vec<(Row, R)>>, sentinel: bool, name: &str) -> (C<'s, T>, C<'s, T>) {
+    let at = name.to_owned();
+    let all = input
         .reduce_abelian::<_, ValBuilder<Row, (W, Row), T, R>, ValSpine<Row, (W, Row), T, R>, _, _>(
             &format!("{name}:group-out"),
             move |k, vals: &[(&(W, Row), R)], out: &mut Vec<((W, Row), R)>| {
@@ -239,31 +269,39 @@ fn group<'s>(input: Arr<'s, T, Row>, logic: Rc<dyn Fn(&Row, &[(&Row, R)]) -> Vec
                     }
                     m.into_iter().filter(|(r, c)| *c != 0 && !(sentinel && r.is_empty())).collect()
                 };
-                let eval = |members: Vec<(&Row, R)>| -> Vec<(Row, R)> {
+                // A view's output rows followed by its refusal records (tag bit REFUSED).
+                let eval = |members: Vec<(&Row, R)>| -> Vec<(Row, R, bool)> {
                     if members.is_empty() && !sentinel {
                         return Vec::new();
                     }
-                    if members.iter().any(|(_, c)| *c < 0) {
-                        refuse("negative group member (inconsistent delta)");
-                        return Vec::new();
+                    let (rows, refused) = captured(|| {
+                        if members.iter().any(|(_, c)| *c < 0) {
+                            refuse("negative group member (inconsistent delta)");
+                            return Vec::new();
+                        }
+                        logic(k, &members)
+                    });
+                    if !refused.is_empty() {
+                        return refused.iter().map(|w| (refusal_row(&at, w), 1, true)).collect();
                     }
-                    logic(k, &members)
+                    rows.into_iter().map(|(r, c)| (r, c, false)).collect()
                 };
+                let tagged = |t: W, flag: bool| if flag { t | REFUSED } else { t };
                 let base = eval(view(BASE));
-                for (r, c) in &base {
-                    out.push(((BASE, r.clone()), *c));
+                for (r, c, f) in &base {
+                    out.push(((tagged(BASE, *f), r.clone()), *c));
                 }
                 for &t in &tags_at {
                     if t == BASE {
                         continue;
                     }
-                    for (r, c) in eval(view(t)) {
-                        out.push(((t, r), c));
+                    for (r, c, f) in eval(view(t)) {
+                        out.push(((tagged(t, f), r), c));
                     }
                     let p = tags::parent(t);
                     let below = if p == BASE { base.clone() } else { eval(view(p)) };
-                    for (r, c) in below {
-                        out.push(((t, r), -c));
+                    for (r, c, f) in below {
+                        out.push(((tagged(t, f), r), -c));
                     }
                 }
                 differential_dataflow::consolidation::consolidate(out);
@@ -273,7 +311,15 @@ fn group<'s>(input: Arr<'s, T, Row>, logic: Rc<dyn Fn(&Row, &[(&Row, R)]) -> Vec
                 vec.extend(upds.drain(..).map(|(v, t, r)| ((key.clone(), v), t, r)));
             },
         )
-        .as_collection(|_k, (w, r)| (*w, r.clone()))
+        .as_collection(|_k, (w, r)| (*w, r.clone()));
+    split_refusals(all)
+}
+
+/// Splits records tagged `t | REFUSED` (refusals of view t) from the data.
+fn split_refusals<'s>(all: C<'s, T>) -> (C<'s, T>, C<'s, T>) {
+    let data = all.clone().filter(|(w, _)| w & REFUSED == 0);
+    let refused = all.filter(|(w, _)| w & REFUSED != 0).map(|(w, r)| (w & !REFUSED, r));
+    (data, refused)
 }
 
 // --------------------------------------------------------------------------------------------
@@ -410,7 +456,8 @@ fn window_logic(order: Vec<(X, bool)>, kind: WindowKind<RepoSource>) -> Rc<dyn F
                 }
                 keyed.sort_by(|a, b| order_cmp(&a.0, &b.0, &desc));
                 for w in keyed.windows(2) {
-                    if order_cmp(&w[0].0, &w[1].0, &desc) == Ordering::Equal && members[w[0].1].0 != members[w[1].1].0 {
+                    // Mutant 9: tie detection disabled (the tie is broken by representation order).
+                    if order_cmp(&w[0].0, &w[1].0, &desc) == Ordering::Equal && members[w[0].1].0 != members[w[1].1].0 && !crate::mutant::on(9) {
                         refuse("row_number() over an order with ties between distinct rows (input-order dependent)");
                         return Vec::new();
                     }
@@ -480,6 +527,8 @@ fn distinct_prefix_logic(prefix: usize) -> Rc<dyn Fn(&Row, &[(&Row, R)]) -> Vec<
 pub struct Built {
     pub files: InputSession<T, (W, (Sym, Cid)), R>,
     pub outputs: Vec<(String, Out)>,
+    /// Per plan: its live runtime refusals, `(tag, [construct])` differences like the outputs'.
+    pub refusals: Vec<(String, Out)>,
 }
 
 /// A stage's stored row: each column under its declared affinity (CTAS).
@@ -504,6 +553,8 @@ struct Lower<'s> {
     /// Arrangements and presences by (node, key), shared by every operator that reads them.
     arrs: FxHashMap<(NodeId, String), Arr<'s, T, Row>>,
     press: FxHashMap<(NodeId, String), Arr<'s, T, ()>>,
+    /// Refusal records raised by the plan's operators (tag, [construct]).
+    refused: Vec<C<'s, T>>,
 }
 
 /// Does node `n` read the fixpoint variable `var` (directly or below)?
@@ -560,25 +611,45 @@ impl<'s> Lower<'s> {
             Op::Var(_) => panic!("fixpoint variable outside its fixpoint"),
             Op::Map { input, exprs } => {
                 let exprs = exprs.clone();
-                self.node(*input).flat_map(move |(w, row)| {
+                let at = format!("n{n}");
+                let all = self.node(*input).flat_map(move |(w, row)| {
                     let vr = val::row_to_v(&row);
                     let mut out = Vec::with_capacity(exprs.len());
-                    for e in &exprs {
-                        if let rerail_facts::ir::Expr::Col { depth: 0, col } = e {
-                            out.push(row[*col as usize]);
-                            continue;
+                    let (ok, refused) = captured(|| {
+                        for e in &exprs {
+                            if let rerail_facts::ir::Expr::Col { depth: 0, col } = e {
+                                out.push(row[*col as usize]);
+                                continue;
+                            }
+                            match ev(e, &vr) {
+                                Some(v) => out.push(val::from_v(&v)),
+                                None => return false,
+                            }
                         }
-                        match ev(e, &vr) {
-                            Some(v) => out.push(val::from_v(&v)),
-                            None => return None,
-                        }
+                        true
+                    });
+                    match refused.first() {
+                        Some(r) => Some((w | REFUSED, refusal_row(&at, r))),
+                        None => ok.then_some((w, out)),
                     }
-                    Some((w, out))
-                })
+                });
+                let (data, refused) = split_refusals(all);
+                self.refused.push(refused);
+                data
             }
             Op::Filter { input, pred } => {
                 let pred = pred.clone();
-                self.node(*input).filter(move |(_, row)| ev(&pred, &val::row_to_v(row)).and_then(|v| sv::truth(&v)) == Some(true))
+                let at = format!("n{n}");
+                let all = self.node(*input).flat_map(move |(w, row)| {
+                    let (keep, refused) = captured(|| ev(&pred, &val::row_to_v(&row)).and_then(|v| sv::truth(&v)) == Some(true));
+                    match refused.first() {
+                        Some(r) => Some((w | REFUSED, refusal_row(&at, r))),
+                        None => keep.then_some((w, row)),
+                    }
+                });
+                let (data, refused) = split_refusals(all);
+                self.refused.push(refused);
+                data
             }
             Op::Affinity { input, affs } => {
                 let affs = affs.clone();
@@ -628,17 +699,23 @@ impl<'s> Lower<'s> {
                         key_of(&row, &kk, &mut vr).map(|k| (k, (w, row)))
                     })
                     .arrange_by_key_named(&format!("n{n}:group-in"));
-                group(arr, agg_logic(keys.clone(), aggs.clone(), *width), *keyless, &format!("n{n}"))
+                let (data, refused) = group(arr, agg_logic(keys.clone(), aggs.clone(), *width), *keyless, &format!("n{n}"));
+                self.refused.push(refused);
+                data
             }
             Op::Window { input, part, order, kind } => {
                 let arr = self.arr(*input, part);
-                group(arr, window_logic(order.clone(), kind.clone()), false, &format!("n{n}"))
+                let (data, refused) = group(arr, window_logic(order.clone(), kind.clone()), false, &format!("n{n}"));
+                self.refused.push(refused);
+                data
             }
             Op::DistinctPrefix { input, prefix } => {
                 let p = *prefix;
                 let key: Key = (0..p).map(|c| (super::norm::col(c), KeyMode::Group)).collect();
                 let arr = self.arr(*input, &key);
-                group(arr, distinct_prefix_logic(p), false, &format!("n{n}"))
+                let (data, refused) = group(arr, distinct_prefix_logic(p), false, &format!("n{n}"));
+                self.refused.push(refused);
+                data
             }
             Op::Fix { var, init, step } => self.fix(*var, init.clone(), step.clone()),
         };
@@ -951,33 +1028,42 @@ impl<'i> ViewLower<'i> {
     }
 }
 
+/// Maintains a collection's consolidated contents in an `Out` map.
+fn capture<'s>(c: C<'s, T>, probe: &Handle<T>) -> Out {
+    let out: Out = Rc::default();
+    let o = out.clone();
+    c.consolidate()
+        .inspect(move |(k, _t, d)| {
+            let mut o = o.borrow_mut();
+            let e = o.entry(k.clone()).or_default();
+            *e += d;
+            if *e == 0 {
+                o.remove(k);
+            }
+        })
+        .probe_with(probe);
+    out
+}
+
 /// Build one dataflow evaluating every graph's outputs over the tagged `files` input.
 pub fn build(worker: &mut timely::worker::Worker, graphs: Vec<(String, Rc<Graph>)>, src: Source, probe: &Handle<T>, track_on: bool) -> Built {
     worker.dataflow::<T, _, _>(|scope| {
         let (files_in, files) = scope.new_collection::<(W, (Sym, Cid)), R>();
         let mut outputs = Vec::new();
+        let mut refusals = Vec::new();
         for (name, g) in graphs {
             let n = g.nodes.len();
             let gi = outputs.len();
-            let mut lw = Lower { scope, g: g.clone(), files: files.clone(), src: src.clone(), done: vec![None; n], track: track_on.then_some(gi * 100_000), arrs: FxHashMap::default(), press: FxHashMap::default() };
+            let mut lw = Lower { scope, g: g.clone(), files: files.clone(), src: src.clone(), done: vec![None; n], track: track_on.then_some(gi * 100_000), arrs: FxHashMap::default(), press: FxHashMap::default(), refused: Vec::new() };
             for (clause, node, _) in &g.outputs {
                 let c = lw.node(*node);
-                let out: Out = Rc::default();
-                let o = out.clone();
-                c.consolidate()
-                    .inspect(move |(k, _t, d)| {
-                        let mut o = o.borrow_mut();
-                        let e = o.entry(k.clone()).or_default();
-                        *e += d;
-                        if *e == 0 {
-                            o.remove(k);
-                        }
-                    })
-                    .probe_with(probe);
-                outputs.push((format!("{name}:{clause}"), out));
+                outputs.push((format!("{name}:{clause}"), capture(c, probe)));
             }
+            let none: Vec<((W, Row), T, R)> = Vec::new();
+            let refused = lw.refused.drain(..).fold(none.to_stream(scope).as_collection(), |a, c| a.concat(c));
+            refusals.push((name.clone(), capture(refused, probe)));
         }
-        Built { files: files_in, outputs }
+        Built { files: files_in, outputs, refusals }
     })
 }
 

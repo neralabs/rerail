@@ -90,6 +90,33 @@ pub fn r3() -> Plan<RepoSource> {
     findings("r3", Rel::With { bindings: vec![(0, fix)], body: Box::new(scoped) })
 }
 
+/// RT, a constructed tie (gate mutant 9): `SELECT path, qualname FROM (SELECT *, row_number()
+/// OVER (PARTITION BY path, name ORDER BY name) AS rn FROM cand) WHERE rn = 1`. The order is not
+/// total (marked `Checked`): a file defining one name under two qualnames (methods of two
+/// classes) is a tie between distinct rows, so the worktree's findings must be a live runtime
+/// refusal while such a file is a member, and the plain rows otherwise.
+pub fn rt() -> Plan<RepoSource> {
+    let cand = scan(R1_CAND, &["name", "path", "qualname"]);
+    let win = Rel::Window { input: Box::new(cand), funcs: vec![ir::WindowFn { kind: ir::WindowKind::RowNumber, partition: vec![c(0, 1), c(0, 0)], order: vec![(c(0, 0), false)], total: ir::Total::Checked }] };
+    let first = Rel::Filter { input: Box::new(win), pred: eq(c(0, 3), Expr::Lit(ir::Lit::Int(1))) };
+    findings("rt", project(first, vec![c(0, 1), c(0, 2)], &["path", "qualname"]))
+}
+
+/// RT from scratch over a worktree's files: whether a tie exists, and the rows when none does.
+pub fn rt_oracle(w: &mut World, files: &[(Sym, Cid)]) -> (bool, Vec<Row>) {
+    let mut by_key: std::collections::BTreeMap<(Sym, Sym), std::collections::BTreeSet<Sym>> = std::collections::BTreeMap::new();
+    for &(p, c) in files {
+        for (n, pp, q) in w.r1_cand(p, c) {
+            by_key.entry((pp, n)).or_default().insert(q);
+        }
+    }
+    if by_key.values().any(|qs| qs.len() > 1) {
+        return (true, Vec::new());
+    }
+    let rows: std::collections::BTreeSet<(Sym, Sym)> = by_key.iter().map(|((pp, _), qs)| (*pp, *qs.iter().next().unwrap())).collect();
+    (false, rows.into_iter().map(|(pp, q)| vec![t(w, pp), t(w, q)]).collect())
+}
+
 pub fn exported() -> Vec<ir::ExportedRelation> {
     let e = |id, name: &str, n: &[&str]| ir::ExportedRelation { id, name: name.into(), schema: cols(n), distinct: false, ordered: false, producer: 0 };
     vec![
