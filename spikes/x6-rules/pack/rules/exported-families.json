@@ -1,0 +1,216 @@
+{
+ "id": "exported-families",
+ "alias": "ef",
+ "violation": {
+  "code": "public_triple",
+  "message": "Public execution family coverage",
+  "anchor": "witness.span"
+ },
+ "inputs": {
+  "raw_execution_calls": {
+   "evidence": {
+    "as": "row",
+    "query": {
+     "ast": {
+      "language": "python",
+      "syntax": "valid",
+      "rule": {
+       "all": [
+        {
+         "kind": "call"
+        },
+        {
+         "has": {
+          "any": [
+           {
+            "all": [
+             {
+              "kind": "identifier"
+             },
+             {
+              "all": [
+               {
+                "pattern": "$CALLEE"
+               },
+               {
+                "matches": "b5-common-3"
+               },
+               {
+                "regex": "_lazy$|^lazy_"
+               }
+              ]
+             }
+            ]
+           },
+           {
+            "all": [
+             {
+              "kind": "attribute"
+             },
+             {
+              "has": {
+               "all": [
+                {
+                 "pattern": "$CALLEE"
+                },
+                {
+                 "matches": "b5-common-3"
+                },
+                {
+                 "regex": "_lazy$|^lazy_"
+                }
+               ],
+               "stopBy": "neighbor",
+               "field": "attribute"
+              }
+             }
+            ]
+           }
+          ],
+          "stopBy": "neighbor",
+          "field": "function"
+         }
+        },
+        {
+         "inside": {
+          "all": [
+           {
+            "kind": "block"
+           },
+           {
+            "inside": {
+             "all": [
+              {
+               "kind": "function_definition"
+              },
+              {
+               "not": {
+                "inside": {
+                 "kind": "function_definition",
+                 "stopBy": "end"
+                }
+               }
+              },
+              {
+               "pattern": "$OWNER"
+              },
+              {
+               "inside": {
+                "all": [
+                 {
+                  "kind": "decorated_definition"
+                 },
+                 {
+                  "has": {
+                   "all": [
+                    {
+                     "kind": "decorator"
+                    },
+                    {
+                     "regex": "^@\\s*(?:\\w+\\.)*direct_legacy[^.\\s(]*"
+                    }
+                   ],
+                   "stopBy": "neighbor"
+                  }
+                 }
+                ],
+                "stopBy": "neighbor"
+               }
+              }
+             ],
+             "stopBy": "neighbor"
+            }
+           }
+          ],
+          "stopBy": "end"
+         }
+        }
+       ]
+      }
+     }
+    },
+    "project": {
+     "owner": "capture.OWNER.startByte",
+     "name": "capture.CALLEE"
+    }
+   }
+  }
+ },
+ "stages": [
+  {
+   "name": "traits",
+   "query": "SELECT d.*,EXISTS(SELECT 1 FROM py_decorators x WHERE (x.__path=d.__path AND x.owner=d.__start) AND rx_matches(x.name,'(?:legacy_sync|legacy_module_sync|direct_legacy_module_sync)$')) AS legacy_sync,EXISTS(SELECT 1 FROM py_decorators x WHERE (x.__path=d.__path AND x.owner=d.__start) AND rx_matches(x.name,'(?:legacy_async|legacy_module_async|direct_legacy_module_async)$')) AS legacy_async,(EXISTS(SELECT 1 FROM py_decorators x WHERE (x.__path=d.__path AND x.owner=d.__start) AND rx_matches(x.name,'pure_lazy|apply_lazy_to_public_lazy_methods|(?:^|\\.)lazy$')) OR (substr(d.name,1,1)<>'_' AND rx_matches(d.name,'_lazy$') AND EXISTS(SELECT 1 FROM py_decorators x WHERE (x.__path=d.__path AND x.owner=d.__start OR x.__path=d.__path AND x.owner=d.class_start) AND rx_matches(x.name,'pure_lazy|apply_lazy_to_public_lazy_methods|(?:^|\\.)lazy$')))) AS lazy_decorated,\n EXISTS(SELECT 1 FROM py_decorators x WHERE (x.__path=d.__path AND x.owner=d.__start OR x.__path=d.__path AND x.owner=d.class_start) AND rx_matches(x.name,'(?:^|\\.)(?:internal_api|private_api|private_public_api)$')) AS private_api,(NOT EXISTS(SELECT 1 FROM py_decorators x WHERE (x.__path=d.__path AND x.owner=d.__start) AND rx_matches(x.name,'abstractmethod$')) AND NOT EXISTS(SELECT 1 FROM py_decorators x WHERE (x.__path=d.__path AND x.owner=d.__start OR x.__path=d.__path AND x.owner=d.class_start) AND rx_matches(x.name,'(?:^|\\.)(?:internal_api|private_api|private_public_api)$')) AND NOT (d.kind='function' AND d.__path IN ('l2055_lazy_result/lazy_reads.py','l2055_lazy_result/lazy_writes.py','l2055_lazy_result/transform.py') AND instr(d.name,'lazy_')=1 AND (rx_matches(d.name,'_lazy$') OR EXISTS(SELECT 1 FROM proj_annotation_names a WHERE a.symbol=d.id AND lower(a.name) IN ('lazyresult','lazyseq','serverplan')))) AND NOT coalesce((d.__path IN ('l2055_lazy_result/execution_context.py','l2055_lazy_result/lazy_result.py','l2055_lazy_result/lazy_seq.py','l2055_lazy_result/transform.py') AND d.class_name IN ('BatchContext','EagerContext','LazyResult','LazySeq','OnAccessContext')),0) AND NOT coalesce((d.class_name IS NOT NULL AND (trim(d.return_annotation,' ' || char(39) || char(34))=d.class_name OR instr(trim(d.return_annotation,' ' || char(39) || char(34)),d.class_name || '[')=1)),0) AND ((rx_replace(d.name,'_(?:lazy|async|sync)$','') IN ('aggregate','commit','commit_branch','count','create_branch','cursor_paginate','cursor_paginate_with_total','delete_by_id','delete_by_key','delete_by_key_many','delete_many','execute','execute_one','exists','find_object_branches','find_object_revisions','first','fts_search','get_history','graph','graph_query','insert','insert_many','insert_many_raw','keyset_paginate','keyset_paginate_with_total','query','query_unfiltered','read','read_version','rollback','search','select_at_revision','select_many','select_one','table_exists','traverse','update','update_by_key','update_by_key_many','update_many','upsert','upsert_many','vector_search','write','write_version') AND (rx_matches(d.__path,'(?:/graph_query|/schema_transaction|/transaction|/versioned_transactions)') OR rx_matches(lower(coalesce(d.class_name,'')),'(?:connection|query|schematransaction|transaction|versioned)') OR EXISTS(SELECT 1 FROM proj_annotation_names a WHERE a.symbol=d.id AND lower(a.name) IN ('databaseconnection','lazyresult','lazyseq','readtransaction','serverplan','versioneddatabaseconnection','versionedreadtransaction','versionedwritetransaction','writetransaction')))) OR (rx_matches(d.name,'_lazy$') OR EXISTS(SELECT 1 FROM proj_annotation_names a WHERE a.symbol=d.id AND lower(a.name) IN ('lazyresult','lazyseq','serverplan'))) OR EXISTS(SELECT 1 FROM py_decorators x WHERE (x.__path=d.__path AND x.owner=d.__start) AND rx_matches(x.name,'(?:legacy_sync|legacy_module_sync|direct_legacy_module_sync)$')) OR EXISTS(SELECT 1 FROM py_decorators x WHERE (x.__path=d.__path AND x.owner=d.__start) AND rx_matches(x.name,'(?:legacy_async|legacy_module_async|direct_legacy_module_async)$')))) AS execution_surface,\n coalesce((SELECT json_group_array(name) FROM (SELECT name FROM proj_parameters p WHERE p.symbol=d.id ORDER BY p.__start,p.__path)),'[]') AS params,\n EXISTS(SELECT 1 FROM py_decorators x WHERE (x.__path=d.__path AND x.owner=d.__start) AND rx_matches(x.name,'(?:^|\\.)direct_legacy[^.]*$')) AND EXISTS(SELECT 1 FROM raw_execution_calls e WHERE e.__path=d.__path AND e.owner=d.__start\n AND (e.name IN ('_fetchall','_fetchone','execute','execute_async','execute_fire_and_forget','execute_grammar','execute_grammar_fetchall','execute_grammar_fetchone','execute_raw','fetchall','fetchall_raw','fetchone','fetchone_raw','grammar_effect_lazy','grammar_fetchall','grammar_fetchall_async','grammar_fetchone','grammar_fetchone_async','grammar_row_lazy','grammar_rows_lazy','raw_execute') OR instr(e.name,'execute_grammar')=1 OR instr(e.name,'grammar_fetch')=1)\n AND (rx_matches(e.name,'_lazy$') OR instr(e.name,'lazy_')=1)) AS direct_lazy_wrapper\n FROM proj_declarations d",
+   "indexes": [
+    [
+     "id"
+    ]
+   ]
+  },
+  {
+   "name": "surfaces",
+   "query": "SELECT *,CASE WHEN mixed THEN name ELSE rx_replace(name,'_(?:lazy|async|sync)$','') END AS base_name,\n CASE WHEN mixed AND scope='method' THEN '__invalid_mixed_name__' WHEN rx_matches(name,'_lazy$') THEN 'lazy' WHEN rx_matches(name,'_async$') THEN 'async'\n WHEN legacy_async THEN 'async' ELSE 'sync' END AS slot FROM (\n SELECT d.id AS symbol,d.name,d.legacy_async,d.execution_surface,'function' AS scope,r.export_module AS owner,r.export_module || char(0) || r.export_name AS ordinal,\n rx_matches(lower(d.name),'lazy') AND rx_matches(lower(d.name),'async|sync') AS mixed\n FROM proj_exported_roots r JOIN traits d ON d.id=r.symbol WHERE d.kind='function' AND substr(d.name,1,1)<>'_' AND instr(d.__path,'_internal/')<>1\n UNION ALL\n SELECT d.id,d.name,d.legacy_async,d.execution_surface,'method',c.name,d.name,\n rx_matches(lower(d.name),'lazy') AND rx_matches(lower(d.name),'async|sync')\n FROM (SELECT DISTINCT symbol FROM proj_exported_roots) r JOIN traits c ON c.id=r.symbol AND c.kind='class'\n JOIN proj_public_methods p ON p.owner=c.id JOIN traits d ON d.id=p.symbol\n WHERE NOT c.private_api AND NOT d.private_api AND NOT rx_matches(c.name,'Protocol$|^Async')\n AND NOT EXISTS(SELECT 1 FROM py_bases b WHERE b.__path=c.__path AND b.owner=c.__start AND instr(b.name,'Protocol')>0))",
+   "indexes": [
+    [
+     "scope",
+     "owner",
+     "base_name"
+    ]
+   ]
+  },
+  {
+   "name": "slots",
+   "query": "SELECT * FROM (\n SELECT *,min(ordinal) OVER (PARTITION BY scope,owner,base_name,slot) AS first_ordinal,\n row_number() OVER (PARTITION BY scope,owner,base_name,slot ORDER BY ordinal DESC,symbol) AS selected\n FROM surfaces WHERE NOT (scope='function' AND mixed)) WHERE selected=1",
+   "indexes": [
+    [
+     "scope",
+     "owner",
+     "base_name"
+    ],
+    [
+     "symbol"
+    ]
+   ]
+  },
+  {
+   "name": "family_groups",
+   "query": "SELECT scope,owner,base_name,\n (SELECT symbol FROM slots x WHERE x.scope=s.scope AND x.owner=s.owner AND x.base_name=s.base_name ORDER BY x.first_ordinal,x.slot LIMIT 1) AS exemplar,\n max(CASE WHEN slot='sync' THEN symbol END) AS sync_id,max(CASE WHEN slot='async' THEN symbol END) AS async_id,max(CASE WHEN slot='lazy' THEN symbol END) AS lazy_id,\n max(mixed) AS mixed,max(execution_surface) AS execution_surface,\n (SELECT json_group_array(json_array(slot,symbol)) FROM (SELECT slot,symbol FROM slots x WHERE x.scope=s.scope AND x.owner=s.owner AND x.base_name=s.base_name ORDER BY slot)) AS implementations\n FROM slots s GROUP BY scope,owner,base_name",
+   "indexes": [
+    [
+     "exemplar"
+    ]
+   ]
+  },
+  {
+   "name": "eligible_groups",
+   "query": {
+    "$option": "executionOnly",
+    "cases": {
+     "true": "SELECT g.* FROM family_groups g JOIN traits d ON d.id=g.exemplar WHERE g.mixed OR (NOT ((g.base_name IN ('plan','query','query_unfiltered') AND d.__path IN ('l2050_transaction/transaction.py','l7200_versioned_transactions/versioned_transactions.py') AND g.owner IN ('ReadTransaction','WriteTransaction','LazyVersionedReadTransaction','LazyVersionedWriteTransaction'))\n OR (g.owner='CacheTransaction' AND g.base_name IN ('commit','rollback')) OR (g.owner='BaseMigration' AND g.base_name='rollback')\n OR (g.base_name='execute_ddl' AND (g.owner IN ('SchemaTransaction','AsyncSchemaTransaction') OR d.__path='l2000_connection/schema_transaction.py'))\n OR (rx_matches(g.owner,'Connection$') AND g.base_name='table_exists')\n OR (g.sync_id IS NULL AND g.async_id IS NULL AND g.lazy_id IS NOT NULL AND (instr(lower(g.base_name),'bootstrap')>0 OR instr(lower(g.owner),'bootstrap')>0 OR g.base_name IN ('check_ddl_lockdown','column_exists','physical_table_exists_many','seal_table_exists_cache')))\n OR g.owner IN ('LazyVersionedReadTransaction','LazyVersionedWriteTransaction','SyncSessionHandle','AsyncSessionHandle','SyncVersionHandle','AsyncVersionHandle')\n OR rx_matches(g.owner,'^(?:Sync|Async|Lazy).*(?:Transaction|SchemaTransaction|SessionHandle|VersionHandle)$')) AND coalesce(g.execution_surface,0))",
+     "false": "SELECT g.* FROM family_groups g JOIN traits d ON d.id=g.exemplar WHERE g.mixed OR NOT ((g.base_name IN ('plan','query','query_unfiltered') AND d.__path IN ('l2050_transaction/transaction.py','l7200_versioned_transactions/versioned_transactions.py') AND g.owner IN ('ReadTransaction','WriteTransaction','LazyVersionedReadTransaction','LazyVersionedWriteTransaction'))\n OR (g.owner='CacheTransaction' AND g.base_name IN ('commit','rollback')) OR (g.owner='BaseMigration' AND g.base_name='rollback')\n OR (g.base_name='execute_ddl' AND (g.owner IN ('SchemaTransaction','AsyncSchemaTransaction') OR d.__path='l2000_connection/schema_transaction.py'))\n OR (rx_matches(g.owner,'Connection$') AND g.base_name='table_exists')\n OR (g.sync_id IS NULL AND g.async_id IS NULL AND g.lazy_id IS NOT NULL AND (instr(lower(g.base_name),'bootstrap')>0 OR instr(lower(g.owner),'bootstrap')>0 OR g.base_name IN ('check_ddl_lockdown','column_exists','physical_table_exists_many','seal_table_exists_cache')))\n OR g.owner IN ('LazyVersionedReadTransaction','LazyVersionedWriteTransaction','SyncSessionHandle','AsyncSessionHandle','SyncVersionHandle','AsyncVersionHandle')\n OR rx_matches(g.owner,'^(?:Sync|Async|Lazy).*(?:Transaction|SchemaTransaction|SessionHandle|VersionHandle)$'))"
+    }
+   }
+  },
+  {
+   "name": "families",
+   "query": "SELECT *,json_array(scope,owner,base_name,implementations) AS family FROM (\n SELECT *,row_number() OVER (PARTITION BY scope,base_name,implementations ORDER BY owner) AS selected FROM eligible_groups) WHERE mixed OR selected=1",
+   "indexes": [
+    [
+     "family"
+    ]
+   ]
+  },
+  {
+   "name": "triple_violations",
+   "query": "SELECT 'invalid_mixed_lazy_execution_name' AS issue,symbol,json_array(scope,owner,base_name,ordinal) AS family FROM surfaces WHERE scope='function' AND mixed\n UNION ALL SELECT 'invalid_mixed_lazy_execution_name',exemplar,family FROM families WHERE mixed\n UNION ALL SELECT 'missing_sync',exemplar,family FROM families WHERE NOT mixed AND sync_id IS NULL AND async_id IS NOT NULL\n UNION ALL SELECT 'missing_async',exemplar,family FROM families WHERE NOT mixed AND async_id IS NULL AND sync_id IS NOT NULL\n UNION ALL SELECT 'missing_lazy',exemplar,family FROM families WHERE NOT mixed AND lazy_id IS NULL\n UNION ALL SELECT 'missing_legacy_sync',f.sync_id,f.family FROM families f JOIN traits s ON s.id=f.sync_id JOIN traits l ON l.id=f.lazy_id WHERE NOT f.mixed AND s.params=l.params AND NOT s.legacy_sync\n UNION ALL SELECT 'missing_legacy_async',f.async_id,f.family FROM families f JOIN traits s ON s.id=f.async_id JOIN traits l ON l.id=f.lazy_id WHERE NOT f.mixed AND s.params=l.params AND NOT s.legacy_async\n UNION ALL SELECT 'missing_lazy_decorator',f.lazy_id,f.family FROM families f JOIN traits s ON s.id=f.lazy_id WHERE NOT f.mixed AND NOT s.lazy_decorated\n UNION ALL SELECT 'direct_wrapper_bypasses_lazy_owner',symbol,family FROM (\n SELECT f.family,s.symbol,row_number() OVER (PARTITION BY f.family ORDER BY d.__path,d.__start,s.symbol) AS selected\n FROM families f JOIN slots s ON s.scope=f.scope AND s.owner=f.owner AND s.base_name=f.base_name JOIN traits d ON d.id=s.symbol\n WHERE NOT f.mixed AND f.lazy_id IS NOT NULL AND s.slot IN ('sync','async') AND d.direct_lazy_wrapper) WHERE selected=1"
+  }
+ ],
+ "query": "SELECT d.__path AS path,d.__start AS start_byte,d.__end AS end_byte,v.issue,v.family FROM triple_violations v JOIN traits d ON d.id=v.symbol",
+ "key": [
+  "family",
+  "issue"
+ ],
+ "code": "issue",
+ "findings": {
+  "detail": "issue || ':' || family"
+ }
+}

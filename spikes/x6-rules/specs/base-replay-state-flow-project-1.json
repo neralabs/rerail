@@ -1,0 +1,9 @@
+[
+ {
+  "rule": "/Users/tim/orca/workspaces/rerail/facts-engine/.worktrees/x6-rules/spikes/x6-rules/original/data-layer-serverplan-state-tripwires.json",
+  "clauses": [
+   "state-flow-project-1"
+  ],
+  "exports": "/Users/tim/rerail-bench/facts/phase-2/s3-crossfile/exports/w6/replay-state-flow-project-1.jsonl"
+ }
+]

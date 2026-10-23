@@ -1,0 +1,9 @@
+[
+ {
+  "rule": "/Users/tim/orca/workspaces/rerail/facts-engine/.worktrees/x6-rules/spikes/x6-rules/original/data-layer-public-api-triples.json",
+  "clauses": [
+   "exported-families"
+  ],
+  "exports": "/Users/tim/rerail-bench/facts/phase-2/s3-crossfile/exports/w6/oracle-exported-families.jsonl"
+ }
+]
