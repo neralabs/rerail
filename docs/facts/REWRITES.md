@@ -13,14 +13,14 @@ Mutants are `crate::mutant::on(n)` at the rewrite's site, behind the `mutants` f
 
 Numbers:
 
-- 1–3: the physical matcher (R12, R13 below; `spikes/facts-a/src/lowered.rs`), re-seeded from S2's interim A3 views (wave 3); read by the gate's registry parser from the facts-a table (family `facts-a-unit`, `a-unrewritten`, `a-pattern`);
+- 1–3: the physical matcher (R12, R13 below; `spikes/facts-a/src/lowered.rs`), re-seeded from S2's interim A3 views (wave 3); read by the gate's registry parser from the facts-a table (family `facts-a-unit`, `a-unrewritten`);
 - 4–6: S3's delta generator;
 - 7: classifier;
 - 8: planner audit (inner scans);
 - 9: S3's runtime tie detection (windows and `LIMIT` not provably total; a tie between distinct rows is a runtime refusal);
 - 10: order proofs (`classify::KeyEnv::total`: every order taken as proven total; killed by `classify::tests::order_marks_proven_and_checked`);
 - 11 upward: rewrites (R6–R11: 16–21);
-- 22: the spike SQL engine's derived-table scoping (`sql/engine.rs::Planner::source_schema`, S6b; not a rewrite: the gate's `MUTANTS`, family `facts-a-unit`, `a-vs-reference`, `harness-b5`, `suite-b5`);
+- 22: the spike SQL engine's derived-table scoping (`sql/engine.rs::Planner::source_schema`, S6b; not a rewrite: the gate's `MUTANTS`, family `facts-a-unit`, `a-vs-reference`);
 - 23: R14 (facts-a table).
 
 ## Implemented

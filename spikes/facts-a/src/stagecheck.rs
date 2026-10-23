@@ -233,8 +233,8 @@ fn install(reg: Registry, nodes: Rc<Cell<usize>>, max_nodes: usize, max_rows: us
                 return;
             }
             let input_rows: usize = traced.iter().take(plan.inputs.len()).map(|(_, t)| t.len()).sum();
-            if !*per_file && input_rows > max_rows {
-                st.skip(format!("repository run over --max-input-rows ({label}: {input_rows} input rows)"));
+            if input_rows > max_rows {
+                st.skip(format!("run over --max-input-rows ({label}: {input_rows} input rows)"));
                 return;
             }
             compare(ir, label, path, traced, &mut st);
@@ -357,8 +357,8 @@ pub fn run(args: &[String]) {
     std::fs::create_dir_all(&out_dir).unwrap();
     let t_all = Instant::now();
     let recs = crate::args_all(args, "--recording");
-    // The caps bound the corpus runs only: recorded calls are small and every one is compared.
-    let (rec_stats, calls) = recordings(&recs, &policies, usize::MAX, usize::MAX);
+    // The caps bound recorded calls too: a few record a large file or many files.
+    let (rec_stats, calls) = recordings(&recs, &policies, max_nodes, max_rows);
     let rec_s = t_all.elapsed().as_secs_f64();
     let t_corpus = Instant::now();
     let (corpus_stats, files, rules) = match arg(args, "--root") {

@@ -222,6 +222,21 @@ struct Agg {
     seen: HashSet<DKey>,
 }
 
+/// SQLite passes a JSON function's result (`json_array`, `json_quote`) to another with its JSON
+/// subtype: `json_array` and `json_group_array` embed it as JSON instead of quoting the text. The
+/// subtype is the argument expression's, as the engine's planner reads it.
+fn json_subtype<S>(arg: Option<&Expr<S>>) -> bool {
+    matches!(arg, Some(Expr::Func(Func::JsonArray | Func::JsonQuote, _)))
+}
+
+/// One element of a JSON array: JSON-subtype text embedded as JSON, anything else as `json_of`.
+fn json_elem(v: &V, subtype: bool) -> serde_json::Value {
+    match v {
+        V::Text(t) if subtype => serde_json::from_str(t).unwrap_or_else(|_| json_of(v)),
+        _ => json_of(v),
+    }
+}
+
 fn json_of(v: &V) -> serde_json::Value {
     match v {
         V::Null => serde_json::Value::Null,
@@ -233,7 +248,8 @@ fn json_of(v: &V) -> serde_json::Value {
 
 impl Agg {
     /// Folds one row's value; true when a `min`/`max` took it (strictly better than before).
-    fn add(&mut self, f: AggFn, distinct: bool, v: Option<V>, sep: Option<V>) -> Result<bool, Error> {
+    /// `subtype`: the argument is a JSON function's result (`json_subtype`).
+    fn add(&mut self, f: AggFn, distinct: bool, v: Option<V>, sep: Option<V>, subtype: bool) -> Result<bool, Error> {
         if f == AggFn::CountStar {
             self.count += 1;
             return Ok(false);
@@ -244,7 +260,7 @@ impl Agg {
             if distinct && !self.seen.insert(sv::dkey(&v)) {
                 return Ok(false);
             }
-            self.json.push(json_of(&v));
+            self.json.push(json_elem(&v, subtype));
             return Ok(false);
         }
         if v.is_null() {
@@ -548,7 +564,7 @@ impl<'a, S> Evaluator<'a, S> {
                     });
                     let mut picked = false;
                     for ((state, a), (v, sep)) in g.0.iter_mut().zip(aggs).zip(vals) {
-                        picked |= state.add(a.f, a.distinct, v, sep)?;
+                        picked |= state.add(a.f, a.distinct, v, sep, json_subtype(a.arg.as_ref()))?;
                     }
                     if picked {
                         g.1 = Some(row.clone());
@@ -1072,7 +1088,7 @@ impl<'a, S> Evaluator<'a, S> {
             Func::JsonArray => {
                 let mut items = Vec::with_capacity(args.len());
                 for i in 0..args.len() {
-                    items.push(json_of(&a(i)?));
+                    items.push(json_elem(&a(i)?, json_subtype(args.get(i))));
                 }
                 V::text(&serde_json::Value::Array(items).to_string())
             }
