@@ -482,8 +482,11 @@ export class SqliteSessionReader {
           (SELECT ${events.observedAt} FROM ${events} WHERE ${events.sessionId} = page.session_id
             ORDER BY ${events.sequence} DESC LIMIT 1) AS lastEventAt,
           (SELECT count(*) FROM ${auditViolations} WHERE ${auditViolations.sessionId} = page.session_id) AS violationCount,
-          (SELECT count(*) FROM ${auditViolations}
-            WHERE ${auditViolations.sessionId} = page.session_id AND ${auditViolations.logged} = 0) AS steeredViolations
+          -- Steered is everything not logged: counted as total minus logged, both index-only (the logged count reads the
+          -- partial index audit_violations_key_logged); "logged = 0" would read every violation row of the session.
+          (SELECT count(*) FROM ${auditViolations} WHERE ${auditViolations.sessionId} = page.session_id)
+            - (SELECT count(*) FROM ${auditViolations}
+              WHERE ${auditViolations.sessionId} = page.session_id AND ${auditViolations.logged} = 1) AS steeredViolations
         FROM (
           SELECT * FROM ${sessions}
           WHERE ${and(matching, continuing) ?? sql`1 = 1`}
