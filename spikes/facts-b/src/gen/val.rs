@@ -103,6 +103,17 @@ impl Val {
             },
         }
     }
+
+    /// The value's word (M2's export blocks store a block in 32 bits a value when every word
+    /// fits).
+    pub fn to_bits(self) -> u64 {
+        self.0
+    }
+
+    /// A word from [`Val::to_bits`].
+    pub fn from_bits(b: u64) -> Val {
+        Val(b)
+    }
 }
 
 impl fmt::Debug for Val {

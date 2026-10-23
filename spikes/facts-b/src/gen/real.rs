@@ -167,4 +167,30 @@ impl Real {
             Some(rows) => rows.as_array().unwrap().iter().map(|r| r.as_array().unwrap().iter().map(json_val).collect()).collect(),
         })
     }
+
+    /// Spec items (programs) with an exports file.
+    pub fn programs(&self) -> usize {
+        self.files.len()
+    }
+
+    /// Every export of program `k` for (path, content hash), its JSON line parsed once: (global
+    /// export id, rows). A content the producer failed on, or without a line, is an error.
+    pub fn program_rows(&self, k: usize, path: &str, hash: &str) -> Result<Vec<(u32, Vec<Row>)>, String> {
+        let f = &self.files[k];
+        let Some(&(off, len)) = f.index.get(&(path.to_owned(), hash.to_owned())) else {
+            return Err(format!("no exports for {path} {hash}"));
+        };
+        let mut buf = vec![0u8; len as usize];
+        {
+            let mut file = f.file.borrow_mut();
+            file.seek(SeekFrom::Start(off)).unwrap();
+            file.read_exact(&mut buf).unwrap();
+        }
+        let j: Json = serde_json::from_slice(&buf).unwrap();
+        if let Some(fail) = j["failure"].as_str() {
+            return Err(format!("{path}: per-file producer failed: {fail}"));
+        }
+        let Some(m) = j["exports"].as_object() else { return Ok(Vec::new()) };
+        Ok(m.iter().map(|(id, rows)| ((k as u32 + 1) * STRIDE + id.parse::<u32>().unwrap(), rows.as_array().unwrap().iter().map(|r| r.as_array().unwrap().iter().map(json_val).collect()).collect())).collect())
+    }
 }
