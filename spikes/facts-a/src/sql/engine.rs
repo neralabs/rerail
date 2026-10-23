@@ -1147,8 +1147,16 @@ pub(crate) struct PSelect {
     pub(crate) order_keys: Vec<PE>,
     pub(crate) distinct: bool,
     pub(crate) out: Schema,
-    /// Per output column, whether it has BLOB affinity (`Planner::blob`).
-    pub(crate) out_blob: Vec<bool>,
+    /// Per output column, its typing as a compound arm (`Planner::arm_col`).
+    pub(crate) arm: Vec<ArmCol>,
+    /// A grouped select's bare columns (`(item, column)` its select list, `HAVING` and `ORDER
+    /// BY` read outside aggregates, through their subqueries) that must agree within a group:
+    /// empty with one `min()`/`max()` (`extremum`). SQLite reads them from an arbitrary row of
+    /// the group, so two distinct values (storage class and value) are a run-time refusal.
+    pub(crate) bare: Vec<(u16, u16)>,
+    /// Exactly one `min()`/`max()` (others alongside; `same_call`s are one): the representative
+    /// is the row it took (the group's last while it took none), as SQLite documents.
+    pub(crate) extremum: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1170,7 +1178,9 @@ pub(crate) enum PCte {
     Plain { slot: usize, q: PQuery },
     /// `tree`: R18/R19 may run (not under `FACTS_REWRITES=0`); each checks its side conditions
     /// per execution and falls back to the operator below it.
-    Recursive { slot: usize, batch: usize, init: Vec<PBody>, rec: Vec<PBody>, distinct: bool, tree: bool, schema: Schema },
+    /// `real`: the columns typed REAL, whose integers every arm's rows read as reals (then
+    /// neither the closure nor R18/R19 runs).
+    Recursive { slot: usize, batch: usize, init: Vec<PBody>, rec: Vec<PBody>, distinct: bool, tree: bool, schema: Schema, real: Vec<u16> },
 }
 
 #[derive(Clone, Debug)]
@@ -1184,8 +1194,16 @@ pub struct PQuery {
     pub(crate) limit: Option<PE>,
     pub(crate) offset: Option<PE>,
     pub out: Schema,
-    /// Per output column, whether it has BLOB affinity (`Planner::blob`).
-    pub(crate) out_blob: Vec<bool>,
+    /// Per output column, its type as a FROM subquery, CTE or statement sees it (`query_ty`;
+    /// `out`'s affinities are these types' IR affinities).
+    pub(crate) ty: Vec<Ty>,
+    /// The right-most arm's first column's type (a scalar or `IN` subquery's comparisons).
+    pub(crate) first: Ty,
+    /// Whether the body is a compound (its values need not match its types).
+    pub(crate) compound: bool,
+    /// Columns whose integers read as reals (`real_cols`): set where the query is a FROM
+    /// subquery or a CTE.
+    pub(crate) real: Vec<u16>,
 }
 
 #[derive(Clone, Debug)]
@@ -1214,9 +1232,9 @@ pub type Catalog = HashMap<String, Schema>;
 struct ScopeItem {
     name: String,
     schema: Schema,
-    /// Per column, whether it has BLOB affinity (SQLite's for a column declared without a type:
-    /// above an expression's none in a comparison).
-    blob: Vec<bool>,
+    /// Per column, its type (BLOB for a column declared without a type: above an expression's
+    /// none in a comparison).
+    ty: Vec<Ty>,
 }
 struct Scope {
     items: Vec<ScopeItem>,
@@ -1237,7 +1255,7 @@ struct SubBound {
 pub struct Planner<'c> {
     catalog: &'c Catalog,
     scopes: Vec<Scope>,
-    ctes: Vec<(String, usize, Schema, bool, Vec<bool>)>,
+    ctes: Vec<(String, usize, Schema, bool, Vec<Ty>)>,
     subs: Vec<SubPlan>,
     n_slots: usize,
     bounds: Vec<SubBound>,
@@ -1359,45 +1377,334 @@ pub(crate) fn plan_with(sql: &str, catalog: &Catalog, rewrites: bool) -> Result<
     Ok(Statement { root, subs: p.subs, n_slots: p.n_slots, reads, texts: p.texts })
 }
 
+/// [`plan`] for a stage, whose rows are stored as SQLite's `CREATE TABLE … AS` stores them
+/// ([`stage_checked`]).
+pub fn plan_stage(sql: &str, catalog: &Catalog) -> Result<Statement, String> {
+    stage_checked(plan(sql, catalog)?)
+}
+
+/// A stage's statement, refused when a column has FLEXNUM type, as the front end refuses it
+/// (`front::sql::lower_stage`): CTAS stores it converting texts to numbers and keeping integral
+/// reals, which no declared affinity expresses.
+pub(crate) fn stage_checked(stmt: Statement) -> Result<Statement, String> {
+    if let Some(i) = stmt.root.ty.iter().position(|t| *t == Ty::Flex) {
+        return Err(format!("stage column {}: FLEXNUM affinity (a compound whose left-most arm CASTs to a numeric type, or a column of one) stored by CREATE TABLE … AS", stmt.root.out.cols[i]));
+    }
+    Ok(stmt)
+}
+
 /// Plans a scalar expression over one table's columns (a `deferred` column).
 pub fn plan_scalar(sql: &str, schema: &Schema) -> Result<(PE, Statement), String> {
     let e = parse::parse_expr(sql)?;
     let catalog = Catalog::new();
     let mut p = Planner { catalog: &catalog, scopes: Vec::new(), ctes: Vec::new(), subs: Vec::new(), n_slots: 0, bounds: Vec::new(), reads: Vec::new(), texts: Vec::new(), rewrites: crate::lowered::rewrites() };
-    p.scopes.push(Scope { items: vec![ScopeItem { name: "__row".into(), schema: schema.clone(), blob: stored_blob(schema) }], aliases: Vec::new(), aggs: Vec::new(), wins: Vec::new(), allow_agg: false });
+    p.scopes.push(Scope { items: vec![ScopeItem { name: "__row".into(), schema: schema.clone(), ty: stored_types(schema) }], aliases: Vec::new(), aggs: Vec::new(), wins: Vec::new(), allow_agg: false });
     let pe = p.expr(&e)?;
-    let stmt = Statement { root: PQuery { ctes: vec![], body: PBody::Compound(Box::new(PBody::Select(Box::new(empty_select()))), SetOp::UnionAll, Box::new(PBody::Select(Box::new(empty_select()))), Schema::default()), order: vec![], order_on_output: false, limit: None, offset: None, out: Schema::default(), out_blob: vec![] }, subs: p.subs, n_slots: p.n_slots, reads: p.reads, texts: p.texts };
+    let stmt = Statement { root: PQuery { ctes: vec![], body: PBody::Compound(Box::new(PBody::Select(Box::new(empty_select()))), SetOp::UnionAll, Box::new(PBody::Select(Box::new(empty_select()))), Schema::default()), order: vec![], order_on_output: false, limit: None, offset: None, out: Schema::default(), ty: vec![], first: Ty::None, compound: true, real: vec![] }, subs: p.subs, n_slots: p.n_slots, reads: p.reads, texts: p.texts };
     Ok((pe, stmt))
 }
 
 fn empty_select() -> PSelect {
-    PSelect { items: vec![], probes: vec![], or_probes: vec![], ranges: vec![], level: vec![], post: vec![], konst: vec![], grouped: false, group_by: vec![], aggs: vec![], having: None, wins: vec![], proj: vec![], order_keys: vec![], distinct: false, out: Schema::default(), out_blob: vec![] }
+    PSelect { items: vec![], probes: vec![], or_probes: vec![], ranges: vec![], level: vec![], post: vec![], konst: vec![], grouped: false, group_by: vec![], aggs: vec![], having: None, wins: vec![], proj: vec![], order_keys: vec![], distinct: false, out: Schema::default(), arm: vec![], bare: vec![], extremum: false }
 }
 
-/// A stored table's columns' BLOB affinity: a stored column whose declared type gives no
-/// affinity (none declared, or a CTAS column whose expression had none) has BLOB affinity.
-fn stored_blob(schema: &Schema) -> Vec<bool> {
-    schema.affs.iter().map(|a| *a == Aff::None).collect()
+/// An expression's SQLite 3.53.2 affinity (`sqlite3ExprAffinity`), as `rerail_facts::front::sql`
+/// tracks it: `None` is an expression's no affinity; `Blob` a stored column's with no declared
+/// type (or `CAST(… AS BLOB)`, or a compound column demoted by [`settle`]), which ranks above it
+/// in a comparison; `Flex` (FLEXNUM) is numeric in a comparison and converts nothing on read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Ty {
+    None,
+    Blob,
+    Text,
+    Numeric,
+    Integer,
+    Real,
+    Flex,
 }
 
-/// A body's output columns' BLOB affinity: its left-most arm's.
-fn body_blob(b: &PBody) -> Vec<bool> {
-    match b {
-        PBody::Select(s) => s.out_blob.clone(),
-        PBody::Compound(l, ..) => body_blob(l),
+impl Ty {
+    /// The IR affinity (BLOB and none are both `Aff::None`; FLEXNUM is numeric).
+    fn aff(self) -> Aff {
+        match self {
+            Ty::None | Ty::Blob => Aff::None,
+            Ty::Text => Aff::Text,
+            Ty::Numeric | Ty::Flex => Aff::Numeric,
+            Ty::Integer => Aff::Integer,
+            Ty::Real => Aff::Real,
+        }
+    }
+    /// An expression of IR affinity `a` (`CAST` targets: `BLOB` is `Blob`).
+    fn of(a: Aff) -> Ty {
+        match a {
+            Aff::None => Ty::None,
+            Aff::Text => Ty::Text,
+            Aff::Numeric => Ty::Numeric,
+            Aff::Integer => Ty::Integer,
+            Aff::Real => Ty::Real,
+        }
+    }
+    /// `sqlite3ExprDataType` of a column, subquery or `CAST` of this affinity: the storage
+    /// classes it may hold (0x01 numeric, 0x02 text, 0x04 blob).
+    fn data_type(self) -> u8 {
+        match self {
+            Ty::Numeric | Ty::Integer | Ty::Real | Ty::Flex => 0x05,
+            Ty::Text => 0x06,
+            Ty::None | Ty::Blob => 0x07,
+        }
     }
 }
 
-/// `value::comparison_affinity` with BLOB affinity told apart from none: per operand its
-/// affinity (`Aff::None` for both) and whether it is BLOB. SQLite (`sqlite3CompareAffinity`): when
-/// both operands have an affinity (BLOB included) and neither is numeric, neither converts; so a
-/// TEXT operand compared with a BLOB one converts nothing, where with an expression of no
-/// affinity it converts that expression to text. Every other case is `comparison_affinity`'s.
-fn blob_comparison_affinity((a, a_blob): (Aff, bool), (b, b_blob): (Aff, bool)) -> (Aff, Aff) {
-    if (a == Aff::Text && b_blob) || (b == Aff::Text && a_blob) {
+/// A stored table's columns' types: a column whose declared type gives no affinity (none
+/// declared, or a CTAS column whose expression had none) has BLOB affinity.
+fn stored_types(schema: &Schema) -> Vec<Ty> {
+    schema.affs.iter().map(|a| if *a == Aff::None { Ty::Blob } else { Ty::of(*a) }).collect()
+}
+
+/// The comparison affinities of two operands (`sqlite3CompareAffinity`): `comparison_affinity`,
+/// except that a TEXT operand compared with a BLOB one converts nothing (both have an affinity,
+/// neither numeric), where with an expression of no affinity it converts that expression.
+fn cmp_ty(a: Ty, b: Ty) -> (Aff, Aff) {
+    if (a == Ty::Text && b == Ty::Blob) || (b == Ty::Text && a == Ty::Blob) {
         return (Aff::None, Aff::None);
     }
-    sv::comparison_affinity(a, b)
+    sv::comparison_affinity(a.aff(), b.aff())
+}
+
+/// The comparison affinities when an operand is a compound subquery (scalar or `IN`), whose
+/// values need not match its affinity: SQLite applies the comparison's one affinity to both
+/// operands (`front::sql::cmp_aff_both`).
+fn cmp_ty_both(a: Ty, b: Ty) -> (Aff, Aff) {
+    let x = if a.aff().numeric_class() || b.aff().numeric_class() {
+        Aff::Numeric
+    } else {
+        match cmp_ty(a, b) {
+            (Aff::None, y) => y,
+            (x, _) => x,
+        }
+    };
+    (x, x)
+}
+
+/// One output column of one select (a compound's arm): its expression's type, its
+/// `sqlite3ExprDataType` and whether it is a `CAST`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ArmCol {
+    ty: Ty,
+    dt: u8,
+    cast: bool,
+}
+
+/// `sqlite3SubqueryColumnTypes`' first phase over one column of a compound's arms (text order):
+/// the first arm's type; while it is none and another arm follows, the data types of the arms
+/// passed over accumulate and the next arm's type is taken. The type, the arm it came from and
+/// the accumulated data types. Mutant 33 stops at the left-most arm.
+fn walk_arms(arms: &[ArmCol]) -> (Ty, usize, u8) {
+    let (mut ty, mut j, mut m) = (arms[0].ty, 0, 0u8);
+    while ty <= Ty::None && j + 1 < arms.len() && !crate::mutant::on(33) {
+        m |= arms[j].dt;
+        j += 1;
+        ty = arms[j].ty;
+    }
+    (ty, j, m)
+}
+
+/// The second phase: a TEXT or numeric type of a compound (`post`: the arms as typed after the
+/// first phase) becomes BLOB when an arm after `j` may hold a number (TEXT) or a text (numeric);
+/// a numeric one whose left-most arm is a `CAST` becomes FLEXNUM.
+fn settle(ty: Ty, j: usize, mut m: u8, post: &[ArmCol]) -> Ty {
+    if ty < Ty::Text || post.len() < 2 {
+        return ty;
+    }
+    for a in &post[j + 1..] {
+        m |= a.dt;
+    }
+    let mut ty = ty;
+    if (ty == Ty::Text && m & 0x01 != 0) || (ty >= Ty::Numeric && m & 0x02 != 0) {
+        ty = Ty::Blob;
+    }
+    if ty >= Ty::Numeric && post[0].cast {
+        ty = Ty::Flex;
+    }
+    ty
+}
+
+/// A body's arms (its selects in text order).
+fn body_arms<'b>(b: &'b PBody, out: &mut Vec<&'b [ArmCol]>) {
+    match b {
+        PBody::Select(s) => out.push(&s.arm),
+        PBody::Compound(l, _, r, _) => {
+            body_arms(l, out);
+            body_arms(r, out);
+        }
+    }
+}
+
+/// A query's column types as a FROM subquery, CTE or statement sees them
+/// (`sqlite3SubqueryColumnTypes` over its arms), and the type of the right-most arm's first
+/// column (what a scalar subquery or `IN (SELECT …)` compares with: SQLite reads a compound's
+/// last select).
+fn query_ty(arms: &[&[ArmCol]]) -> (Vec<Ty>, Ty) {
+    let w = arms[0].len();
+    let cols = (0..w)
+        .map(|i| {
+            let col: Vec<ArmCol> = arms.iter().map(|a| a[i]).collect();
+            let (ty, j, m) = walk_arms(&col);
+            settle(ty, j, m, &col)
+        })
+        .collect();
+    (cols, arms.last().and_then(|a| a.first()).map_or(Ty::None, |c| c.ty))
+}
+
+/// The columns of a compound read as a FROM subquery or CTE that convert integers to reals
+/// (`OP_RealAffinity` on a REAL column; texts and reals unchanged).
+fn real_cols(compound: bool, ty: &[Ty]) -> Vec<u16> {
+    if !compound {
+        return Vec::new();
+    }
+    (0..ty.len() as u16).filter(|&i| ty[i as usize] == Ty::Real).collect()
+}
+
+/// `t` with the integers of columns `real` read as reals (`real_cols`).
+fn real_read(mut t: Table, real: &[u16]) -> Table {
+    for &c in real {
+        let Some(col) = t.cols.get(c as usize) else { continue };
+        if (0..t.len as u32).any(|r| matches!(col.get(r), V::Int(_))) {
+            let vals = (0..t.len as u32)
+                .map(|r| match col.get(r) {
+                    V::Int(i) => V::Real(i as f64),
+                    v => v,
+                })
+                .collect();
+            t.cols[c as usize] = Rc::new(Column::Vals(vals));
+        }
+    }
+    t
+}
+
+/// Whether two cells are the same value of the same storage class (NULL is NULL): a bare
+/// column's agreement within a group (the reference's `identical`).
+fn cells_identical(a: &Cell<'_>, b: &Cell<'_>) -> bool {
+    fn class(c: &Cell<'_>) -> u8 {
+        match c {
+            Cell::Null | Cell::Own(V::Null) => 0,
+            Cell::Int(_) | Cell::Own(V::Int(_)) => 1,
+            Cell::Real(_) | Cell::Own(V::Real(_)) => 2,
+            Cell::Text(_) | Cell::RcT(_) | Cell::Sym(_) | Cell::Tid(..) | Cell::Own(V::Text(_)) => 3,
+        }
+    }
+    match (a, b) {
+        (Cell::Tid(k1, s1, e1), Cell::Tid(k2, s2, e2)) => s1 == s2 && e1 == e2 && k1.eq(k2),
+        _ => match (class(a), class(b)) {
+            (0, 0) => true,
+            (1, 1) => matches!((a.to_v(), b.to_v()), (V::Int(x), V::Int(y)) if x == y),
+            (2, 2) => matches!((a.to_v(), b.to_v()), (V::Real(x), V::Real(y)) if x == y),
+            (3, 3) => cmp_cells(a, b) == Ordering::Equal,
+            _ => false,
+        },
+    }
+}
+
+/// A bound row's column as a cell (NULL for an unbound or null-extended row).
+fn row_cell<'r>(r: &RowRef<'r>, col: u16) -> Cell<'r> {
+    match r.t {
+        Some(t) if r.r != NULL_ROW => t.cols.get(col as usize).map_or(Cell::Null, |c| c.cell(r.r)),
+        _ => Cell::Null,
+    }
+}
+
+/// Calls `f(item, col)` for each column of the select `d` scope levels out (`d = 0`: the select
+/// `pe` belongs to) that `pe` reads, through its subqueries (`subs`): a derived table, a CTE body
+/// or a compound arm stays on its level, a subquery expression is one level in (the reference's
+/// `ir::cols_read`).
+fn cols_read_at(pe: &PE, d: u16, subs: &[SubPlan], f: &mut dyn FnMut(u16, u16)) {
+    match pe {
+        PE::Col { depth, item, col } => {
+            if *depth == d {
+                f(*item, *col)
+            }
+        }
+        PE::Lit(_) | PE::Agg(_) | PE::Win(_) => {}
+        PE::Not(x) | PE::Neg(x) | PE::Cast(x, _) | PE::IsNull(x, _) => cols_read_at(x, d, subs, f),
+        PE::Cmp(_, l, r, _) | PE::Arith(_, l, r) | PE::Concat(l, r) | PE::And(l, r) | PE::Or(l, r) | PE::Is(l, r, _) | PE::Like(l, r, _) => {
+            cols_read_at(l, d, subs, f);
+            cols_read_at(r, d, subs, f);
+        }
+        PE::Func(_, a) => a.iter().for_each(|x| cols_read_at(x, d, subs, f)),
+        PE::Case { operand, whens, else_, .. } => {
+            if let Some(o) = operand {
+                cols_read_at(o, d, subs, f);
+            }
+            for (w, t) in whens {
+                cols_read_at(w, d, subs, f);
+                cols_read_at(t, d, subs, f);
+            }
+            if let Some(x) = else_ {
+                cols_read_at(x, d, subs, f);
+            }
+        }
+        PE::InList { e, list, .. } => {
+            cols_read_at(e, d, subs, f);
+            list.iter().for_each(|(x, _)| cols_read_at(x, d, subs, f));
+        }
+        PE::InSub { e, sub, .. } => {
+            cols_read_at(e, d, subs, f);
+            query_reads_at(&subs[*sub].q, d + 1, subs, f);
+        }
+        PE::Exists { sub, .. } | PE::Scalar(sub) => query_reads_at(&subs[*sub].q, d + 1, subs, f),
+    }
+}
+
+/// [`cols_read_at`] over every expression of a query on level `d`.
+fn query_reads_at(q: &PQuery, d: u16, subs: &[SubPlan], f: &mut dyn FnMut(u16, u16)) {
+    fn body(b: &PBody, d: u16, subs: &[SubPlan], f: &mut dyn FnMut(u16, u16)) {
+        let s = match b {
+            PBody::Select(s) => s,
+            PBody::Compound(l, _, r, _) => {
+                body(l, d, subs, f);
+                return body(r, d, subs, f);
+            }
+        };
+        for it in &s.items {
+            match &it.src {
+                Src::JsonEach(arg) => cols_read_at(arg, d, subs, f),
+                Src::Derived(id) => query_reads_at(&subs[*id].q, d, subs, f),
+                Src::Global(_) | Src::Cte(_) => {}
+            }
+        }
+        let mut e = |pe: &PE| cols_read_at(pe, d, subs, f);
+        for p in s.probes.iter().flatten().chain(s.or_probes.iter().flatten().flatten()) {
+            p.exprs.iter().for_each(&mut e);
+        }
+        for r in s.ranges.iter().flatten() {
+            r.lo.iter().chain(&r.hi).for_each(|(x, ..)| e(x));
+        }
+        s.level.iter().chain(&s.post).flatten().chain(&s.konst).chain(&s.group_by).for_each(&mut e);
+        for a in &s.aggs {
+            a.arg.iter().chain(&a.sep).for_each(&mut e);
+        }
+        s.having.iter().for_each(&mut e);
+        for w in &s.wins {
+            w.partition.iter().chain(w.order.iter().map(|(x, _)| x)).chain(w.func.iter().map(|(_, x)| x)).for_each(&mut e);
+        }
+        s.proj.iter().chain(&s.order_keys).for_each(&mut e);
+    }
+    for cte in &q.ctes {
+        match cte {
+            PCte::Plain { q, .. } => query_reads_at(q, d, subs, f),
+            PCte::Recursive { init, rec, .. } => init.iter().chain(rec).for_each(|b| body(b, d, subs, f)),
+        }
+    }
+    body(&q.body, d, subs, f);
+    for x in q.limit.iter().chain(&q.offset) {
+        cols_read_at(x, d, subs, f);
+    }
+}
+
+/// Two aggregate calls SQLite folds into one: the same call, or the same function over the same
+/// column (any other two count as two; the reference's rule).
+fn same_call(a: &AggSpec, b: &AggSpec) -> bool {
+    std::ptr::eq(a, b) || (a.f == b.f && a.distinct == b.distinct && matches!((&a.arg, &b.arg), (Some(PE::Col { depth: d1, item: i1, col: c1 }), Some(PE::Col { depth: d2, item: i2, col: c2 })) if d1 == d2 && i1 == i2 && c1 == c2))
 }
 
 impl<'c> Planner<'c> {
@@ -1426,7 +1733,9 @@ impl<'c> Planner<'c> {
             if self_ref {
                 ctes.push(self.recursive_cte(cte)?);
             } else {
-                let pq = self.query(&cte.q)?;
+                // A compound CTE's REAL columns read integers as reals (`real_cols`).
+                let mut pq = self.query(&cte.q)?;
+                pq.real = real_cols(pq.compound, &pq.ty);
                 let mut schema = pq.out.clone();
                 if let Some(cols) = &cte.cols {
                     if cols.len() != schema.cols.len() {
@@ -1435,12 +1744,20 @@ impl<'c> Planner<'c> {
                     schema.cols = cols.clone();
                 }
                 let slot = self.new_slot();
-                self.ctes.push((lc(&cte.name), slot, schema, false, pq.out_blob.clone()));
+                self.ctes.push((lc(&cte.name), slot, schema, false, pq.ty.clone()));
                 ctes.push(PCte::Plain { slot, q: pq });
             }
         }
         let body = self.body(&q.body, Some(q))?;
-        let out = body.schema().clone();
+        // Column types over the arms (`query_ty`); a column's affinity is its type's.
+        let (ty, first) = {
+            let mut arms = Vec::new();
+            body_arms(&body, &mut arms);
+            query_ty(&arms)
+        };
+        let mut out = body.schema().clone();
+        out.affs = ty.iter().map(|t| t.aff()).collect();
+        let compound = matches!(body, PBody::Compound(..));
         // ORDER BY: a simple select's keys were appended by `body`; a compound's resolve against
         // its output columns.
         let (order, order_on_output) = match &body {
@@ -1461,8 +1778,7 @@ impl<'c> Planner<'c> {
         let limit = q.limit.as_ref().map(|e| self.const_expr(e)).transpose()?;
         let offset = q.offset.as_ref().map(|e| self.const_expr(e)).transpose()?;
         self.ctes.truncate(cte_mark);
-        let out_blob = body_blob(&body);
-        Ok(PQuery { ctes, body, order, order_on_output, limit, offset, out, out_blob })
+        Ok(PQuery { ctes, body, order, order_on_output, limit, offset, out, ty, first, compound, real: Vec::new() })
     }
 
     fn const_expr(&mut self, e: &Expr) -> Result<PE, String> {
@@ -1503,18 +1819,80 @@ impl<'c> Planner<'c> {
         }
         let slot = self.new_slot();
         let batch = self.new_slot();
-        let blob = body_blob(&init[0]);
-        self.ctes.push((lc(&cte.name), batch, schema.clone(), true, blob.clone()));
-        let mut rec = Vec::new();
-        for a in &arms[first_rec..] {
-            if !body_refs(a, &cte.name) {
-                return Err("non-recursive arm after a recursive arm".into());
-            }
-            rec.push(self.body(a, None)?);
+        let steps = &arms[first_rec..];
+        if !steps.iter().all(|a| body_refs(a, &cte.name)) {
+            return Err("non-recursive arm after a recursive arm".into());
         }
+        // Column types over every arm (SQLite 3.53.2 types a recursive CTE as a compound),
+        // column by column while the steps' references to the CTE read its columns as typed so
+        // far: an earlier column's final type, a later one's none; the column itself none while
+        // the arms are walked (`walk_arms`), then the walk's type (`settle`). The trial plans of
+        // the steps are dropped (`trial_steps`).
+        let mut init_arms: Vec<Vec<ArmCol>> = Vec::new();
+        for b in &init {
+            let mut a = Vec::new();
+            body_arms(b, &mut a);
+            init_arms.extend(a.into_iter().map(<[ArmCol]>::to_vec));
+        }
+        let w = schema.cols.len();
+        let mut ty = vec![Ty::None; w];
+        for i in 0..w {
+            let now = |ty: &[Ty], own: Ty| (0..w).map(|j| if j < i { ty[j] } else if j == i { own } else { Ty::None }).collect::<Vec<_>>();
+            let col = |post: &[Vec<ArmCol>]| init_arms.iter().chain(post).map(|a| a[i]).collect::<Vec<_>>();
+            let walked = self.trial_steps(&cte.name, batch, &schema, &now(&ty, Ty::None), steps)?;
+            let (t, j, m) = walk_arms(&col(&walked));
+            ty[i] = if t >= Ty::Text {
+                let post = self.trial_steps(&cte.name, batch, &schema, &now(&ty, t), steps)?;
+                settle(t, j, m, &col(&post))
+            } else {
+                t
+            };
+        }
+        schema.affs = ty.iter().map(|t| t.aff()).collect();
+        let (rec, _) = self.plan_steps(&cte.name, batch, &schema, &ty, steps)?;
+        self.ctes.push((lc(&cte.name), slot, schema.clone(), false, ty.clone()));
+        // Every arm's rows read through the REAL columns (the step reads the previous level
+        // converted too); the closure and R18/R19 do not convert, so they do not run then.
+        let real = real_cols(true, &ty);
+        Ok(PCte::Recursive { slot, batch, init, rec, distinct, tree: self.rewrites, schema, real })
+    }
+
+    /// A recursive CTE's step arms planned with the CTE's columns typed `ty` (in scope as the
+    /// batch `batch` while they plan): their bodies and their arms' column typing.
+    fn plan_steps(&mut self, name: &str, batch: usize, schema: &Schema, ty: &[Ty], steps: &[&Body]) -> Result<(Vec<PBody>, Vec<Vec<ArmCol>>), String> {
+        let mut schema = schema.clone();
+        schema.affs = ty.iter().map(|t| t.aff()).collect();
+        let w = schema.cols.len();
+        self.ctes.push((lc(name), batch, schema, true, ty.to_vec()));
+        let mut planned = || -> Result<(Vec<PBody>, Vec<Vec<ArmCol>>), String> {
+            let (mut bodies, mut arms) = (Vec::new(), Vec::new());
+            for a in steps {
+                let b = self.body(a, None)?;
+                if b.schema().cols.len() != w {
+                    return Err("recursive arm width".into());
+                }
+                let mut ac = Vec::new();
+                body_arms(&b, &mut ac);
+                arms.extend(ac.into_iter().map(<[ArmCol]>::to_vec));
+                bodies.push(b);
+            }
+            Ok((bodies, arms))
+        };
+        let r = planned();
         self.ctes.pop();
-        self.ctes.push((lc(&cte.name), slot, schema.clone(), false, blob));
-        Ok(PCte::Recursive { slot, batch, init, rec, distinct, tree: self.rewrites, schema })
+        r
+    }
+
+    /// [`plan_steps`]' arm typing, its plans dropped: the subqueries, slots, texts and reads it
+    /// added are removed again.
+    fn trial_steps(&mut self, name: &str, batch: usize, schema: &Schema, ty: &[Ty], steps: &[&Body]) -> Result<Vec<Vec<ArmCol>>, String> {
+        let mark = (self.subs.len(), self.n_slots, self.texts.len(), self.reads.len());
+        let r = self.plan_steps(name, batch, schema, ty, steps);
+        self.subs.truncate(mark.0);
+        self.n_slots = mark.1;
+        self.texts.truncate(mark.2);
+        self.reads.truncate(mark.3);
+        r.map(|(_, arms)| arms)
     }
 
     fn body(&mut self, b: &Body, order_of: Option<&Query>) -> Result<PBody, String> {
@@ -1529,19 +1907,19 @@ impl<'c> Planner<'c> {
                 if pl.schema().cols.len() != pr.schema().cols.len() {
                     return Err("compound arms differ in width".into());
                 }
-                // SQLite: a compound's column names come from its left-most arm; its affinity is
-                // the left-most arm's.
+                // SQLite: a compound's column names come from its left-most arm; its column types
+                // from every arm (`query_ty`).
                 let schema = pl.schema().clone();
                 Ok(PBody::Compound(Box::new(pl), *op, Box::new(pr), schema))
             }
         }
     }
 
-    fn source_schema(&mut self, src: &Source) -> Result<(Src, Schema, Vec<bool>, String), String> {
+    fn source_schema(&mut self, src: &Source) -> Result<(Src, Schema, Vec<Ty>, String), String> {
         match src {
             Source::Table(name) => {
                 let l = lc(name);
-                if let Some((_, slot, schema, rec, blob)) = self.ctes.iter().rev().find(|c| c.0 == l) {
+                if let Some((_, slot, schema, rec, ty)) = self.ctes.iter().rev().find(|c| c.0 == l) {
                     if *rec {
                         if let Some(b) = self.bounds.last_mut() {
                             b.recursive_ref = true;
@@ -1550,12 +1928,12 @@ impl<'c> Planner<'c> {
                             b.recursive_ref = true;
                         }
                     }
-                    return Ok((Src::Cte(*slot), schema.clone(), blob.clone(), name.clone()));
+                    return Ok((Src::Cte(*slot), schema.clone(), ty.clone(), name.clone()));
                 }
                 let schema = self.catalog.get(&l).ok_or_else(|| format!("no such table: {name}"))?.clone();
                 self.reads.push(l);
-                let blob = stored_blob(&schema);
-                Ok((Src::Global(name.clone()), schema, blob, name.clone()))
+                let ty = stored_types(&schema);
+                Ok((Src::Global(name.clone()), schema, ty, name.clone()))
             }
             Source::Func(f, args) => {
                 if !f.eq_ignore_ascii_case("json_each") || args.len() != 1 {
@@ -1566,7 +1944,7 @@ impl<'c> Planner<'c> {
                     cols: ["key", "value", "type", "atom", "id", "parent", "fullkey", "path"].iter().map(|s| s.to_string()).collect(),
                     affs: vec![Aff::None; 8],
                 };
-                Ok((Src::JsonEach(arg), schema, vec![false; 8], f.clone()))
+                Ok((Src::JsonEach(arg), schema, vec![Ty::None; 8], f.clone()))
             }
             Source::Sub(q) => {
                 // SQLite scoping: a FROM subquery sees the enclosing select's outer scopes, never
@@ -1578,9 +1956,10 @@ impl<'c> Planner<'c> {
                 let id = self.subquery(q);
                 self.scopes.extend(own);
                 let id = id?;
-                let schema = self.subs[id].q.out.clone();
-                let blob = self.subs[id].q.out_blob.clone();
-                Ok((Src::Derived(id), schema, blob, String::new()))
+                // A compound's REAL columns read integers as reals (`real_cols`).
+                let q = &mut self.subs[id].q;
+                q.real = real_cols(q.compound, &q.ty);
+                Ok((Src::Derived(id), q.out.clone(), q.ty.clone(), String::new()))
             }
         }
     }
@@ -1605,11 +1984,11 @@ impl<'c> Planner<'c> {
         self.scopes.push(Scope { items: Vec::new(), aliases: Vec::new(), aggs: Vec::new(), wins: Vec::new(), allow_agg: false });
         let mut items = Vec::new();
         for fi in &s.from {
-            let (src, schema, blob, name) = self.source_schema(&fi.source)?;
+            let (src, schema, ty, name) = self.source_schema(&fi.source)?;
             let alias = fi.alias.clone().unwrap_or(name);
             let lateral = matches!(&src, Src::JsonEach(arg) if max_item(arg).is_some());
             items.push(PItem { src, width: schema.cols.len(), left: fi.kind == JoinKind::Left, lateral });
-            self.scopes.last_mut().unwrap().items.push(ScopeItem { name: lc(&alias), schema, blob });
+            self.scopes.last_mut().unwrap().items.push(ScopeItem { name: lc(&alias), schema, ty });
         }
         // Result aliases.
         let mut aliases = Vec::new();
@@ -1781,10 +2160,25 @@ impl<'c> Planner<'c> {
             };
             order_keys.push(pe);
         }
-        let out_blob = proj.iter().map(|p| self.blob(p)).collect();
+        let arm = proj.iter().map(|p| self.arm_col(p)).collect();
         let scope = self.scopes.pop().unwrap();
         let grouped = !group_by.is_empty() || !scope.aggs.is_empty();
-        Ok(PSelect { items, probes, or_probes, ranges, level, post, konst, grouped, group_by, aggs: scope.aggs, having, wins: scope.wins, proj, order_keys, distinct: s.distinct, out, out_blob })
+        // Bare columns (the decider's ruling, SQLite 3.53.2): with one min()/max() the
+        // representative is its row; otherwise the columns read outside aggregates must agree
+        // within a group. Mutant 31 drops that check.
+        let extrema: Vec<&AggSpec> = scope.aggs.iter().filter(|a| matches!(a.f, AggFn::Min | AggFn::Max)).collect();
+        let extremum = !extrema.is_empty() && extrema.iter().all(|b| same_call(extrema[0], b));
+        let mut bare: Vec<(u16, u16)> = Vec::new();
+        if grouped && !extremum && !crate::mutant::on(31) {
+            for pe in proj.iter().chain(&order_keys).chain(&having) {
+                cols_read_at(pe, 0, &self.subs, &mut |i, c| {
+                    if !bare.contains(&(i, c)) {
+                        bare.push((i, c));
+                    }
+                });
+            }
+        }
+        Ok(PSelect { items, probes, or_probes, ranges, level, post, konst, grouped, group_by, aggs: scope.aggs, having, wins: scope.wins, proj, order_keys, distinct: s.distinct, out, arm, bare, extremum })
     }
 
     fn col_name(&self, depth: u16, item: u16, col: u16) -> Option<String> {
@@ -1793,32 +2187,48 @@ impl<'c> Planner<'c> {
     }
 
     fn affinity(&self, pe: &PE) -> Aff {
+        self.ty(pe).aff()
+    }
+
+    /// `pe`'s type (`sqlite3ExprAffinity`): a column's (BLOB for one with no declared type,
+    /// `stored_types`; a subquery's or CTE's per `query_ty`), a `CAST`'s target (`BLOB`: BLOB),
+    /// a scalar subquery's right-most arm's first column's; none for any other expression.
+    fn ty(&self, pe: &PE) -> Ty {
         match pe {
             PE::Col { depth, item, col } => {
                 let s = self.scopes.len() - 1 - *depth as usize;
-                self.scopes[s].items[*item as usize].schema.affs[*col as usize]
+                self.scopes[s].items[*item as usize].ty.get(*col as usize).copied().unwrap_or(Ty::None)
             }
-            PE::Cast(_, a) => *a,
-            PE::Scalar(id) => self.subs[*id].q.out.affs.first().copied().unwrap_or(Aff::None),
-            _ => Aff::None,
+            PE::Cast(_, Aff::None) => Ty::Blob,
+            PE::Cast(_, a) => Ty::of(*a),
+            PE::Scalar(id) => self.subs[*id].q.first,
+            _ => Ty::None,
         }
     }
 
-    /// Whether `pe` has BLOB affinity: a column with no declared type (`stored_blob`), a
-    /// subquery or CTE column that is such a column, `CAST(… AS BLOB)`, a scalar subquery
-    /// selecting one. SQLite ranks it above an expression's no affinity
-    /// (`sqlite3CompareAffinity`: both sides with an affinity and neither numeric compare
-    /// without conversion; one side with none takes the other's).
-    fn blob(&self, pe: &PE) -> bool {
+    /// `sqlite3ExprDataType`: the storage classes `pe` may hold (0x01 numeric, 0x02 text, 0x04
+    /// blob; 0 for NULL), as the front end computes it.
+    fn data_type(&self, pe: &PE) -> u8 {
         match pe {
-            PE::Col { depth, item, col } => {
-                let s = self.scopes.len() - 1 - *depth as usize;
-                self.scopes[s].items[*item as usize].blob.get(*col as usize).copied().unwrap_or(false)
-            }
-            PE::Cast(_, a) => *a == Aff::None,
-            PE::Scalar(id) => self.subs[*id].q.out_blob.first().copied().unwrap_or(false),
-            _ => false,
+            PE::Lit(Lit::Null) => 0,
+            PE::Lit(Lit::Text(_)) => 0x02,
+            PE::Lit(_) => 0x01,
+            PE::Col { .. } | PE::Cast(..) | PE::Scalar(_) => self.ty(pe).data_type(),
+            PE::Concat(..) => 0x06,
+            PE::Case { whens, else_, .. } => whens.iter().map(|(_, t)| t).chain(else_.as_deref()).fold(0, |m, x| m | self.data_type(x)),
+            PE::Agg(_) | PE::Win(_) | PE::Func(..) => 0x07,
+            PE::Not(_) | PE::Neg(_) | PE::Cmp(..) | PE::Arith(..) | PE::And(..) | PE::Or(..) | PE::InList { .. } | PE::InSub { .. } | PE::Exists { .. } | PE::IsNull(..) | PE::Is(..) | PE::Like(..) => 0x01,
         }
+    }
+
+    /// A select output column's typing as a compound arm.
+    fn arm_col(&self, pe: &PE) -> ArmCol {
+        ArmCol { ty: self.ty(pe), dt: self.data_type(pe), cast: matches!(pe, PE::Cast(..)) }
+    }
+
+    /// Whether `pe` is a scalar subquery over a compound (its value need not match its type).
+    fn loose(&self, pe: &PE) -> bool {
+        matches!(pe, PE::Scalar(id) if self.subs[*id].q.compound)
     }
 
     fn resolve(&mut self, table: Option<&str>, name: &str) -> Result<PE, String> {
@@ -1849,7 +2259,7 @@ impl<'c> Planner<'c> {
     }
 
     fn cmp_affs(&self, l: &PE, r: &PE) -> (Aff, Aff) {
-        blob_comparison_affinity((self.affinity(l), self.blob(l)), (self.affinity(r), self.blob(r)))
+        if self.loose(l) || self.loose(r) { cmp_ty_both(self.ty(l), self.ty(r)) } else { cmp_ty(self.ty(l), self.ty(r)) }
     }
 
     fn expr(&mut self, e: &Expr) -> Result<PE, String> {
@@ -2021,8 +2431,10 @@ impl<'c> Planner<'c> {
                 if self.subs[id].q.out.cols.len() != 1 {
                     return Err("IN subquery must return one column".into());
                 }
-                let sub = (self.subs[id].q.out.affs[0], self.subs[id].q.out_blob.first().copied().unwrap_or(false));
-                let aff = blob_comparison_affinity((self.affinity(&pe), self.blob(&pe)), sub);
+                // The right-most arm's first column's type; a compound (or a compound scalar
+                // on the left) compares with one affinity on both sides.
+                let q = &self.subs[id].q;
+                let aff = if q.compound || self.loose(&pe) { cmp_ty_both(self.ty(&pe), q.first) } else { cmp_ty(self.ty(&pe), q.first) };
                 PE::InSub { e: Box::new(pe), sub: id, not: *not, aff }
             }
             Expr::Exists { q, not } => PE::Exists { sub: self.subquery(q)?, not: *not },
@@ -2759,7 +3171,7 @@ fn walk_shape<'p>(batch: usize, init: &'p [PBody], rec: &'p [PBody], distinct: b
 /// level by level; decided by the plan alone, identical for every file.
 pub(crate) fn closure_applies(cte: &PCte) -> bool {
     match cte {
-        PCte::Recursive { batch, init, rec, distinct, schema, .. } => closure_shape(*batch, init, rec, *distinct, schema.cols.len()).is_some(),
+        PCte::Recursive { batch, init, rec, distinct, schema, real, .. } => real.is_empty() && closure_shape(*batch, init, rec, *distinct, schema.cols.len()).is_some(),
         PCte::Plain { .. } => false,
     }
 }
@@ -2823,13 +3235,17 @@ impl<'d, 'a> Exec<'d, 'a> {
                     let t = self.query(q, outer);
                     self.slots.borrow_mut()[*slot] = Some(Rc::new(t));
                 }
-                PCte::Recursive { slot, batch, init, rec, distinct, tree, schema } => {
-                    let t = match self.closure(*batch, init, rec, *distinct, *tree, schema, outer) {
-                        Some(t) => t,
-                        None => match tree.then(|| self.walk(*batch, init, rec, *distinct, schema, outer)).flatten() {
+                PCte::Recursive { slot, batch, init, rec, distinct, tree, schema, real } => {
+                    let t = if !real.is_empty() {
+                        self.recursive(*batch, init, rec, *distinct, schema, real, outer)
+                    } else {
+                        match self.closure(*batch, init, rec, *distinct, *tree, schema, outer) {
                             Some(t) => t,
-                            None => self.recursive(*batch, init, rec, *distinct, schema, outer),
-                        },
+                            None => match tree.then(|| self.walk(*batch, init, rec, *distinct, schema, outer)).flatten() {
+                                Some(t) => t,
+                                None => self.recursive(*batch, init, rec, *distinct, schema, real, outer),
+                            },
+                        }
                     };
                     self.slots.borrow_mut()[*slot] = Some(Rc::new(t));
                 }
@@ -2840,7 +3256,7 @@ impl<'d, 'a> Exec<'d, 'a> {
         let limit = q.limit.as_ref().map(|e| self.const_int(e, outer));
         let offset = q.offset.as_ref().map(|e| self.const_int(e, outer)).unwrap_or(0).max(0) as usize;
         if q.order.is_empty() && limit.is_none_or(|l| l < 0) && offset == 0 {
-            return Table { schema: q.out.clone(), ..t }.truncate(width);
+            return real_read(Table { schema: q.out.clone(), ..t }.truncate(width), &q.real);
         }
         let mut perm: Vec<u32> = (0..t.len() as u32).collect();
         if !q.order.is_empty() {
@@ -2862,7 +3278,7 @@ impl<'d, 'a> Exec<'d, 'a> {
             _ => perm.len(),
         };
         let idx: Rc<[u32]> = perm[start..end].into();
-        Table { schema: q.out.clone(), ..t.truncate(width) }.select(idx)
+        real_read(Table { schema: q.out.clone(), ..t.truncate(width) }.select(idx), &q.real)
     }
 
     fn const_int(&self, e: &PE, outer: Option<&Frame<'_>>) -> i64 {
@@ -3492,12 +3908,14 @@ impl<'d, 'a> Exec<'d, 'a> {
     }
 
     /// Semi-naive fixpoint, level by level. Each level's rows are views (gathers) over the arms'
-    /// sources, so a closure over a relation stores row indexes, not values.
-    fn recursive(&self, batch: usize, init: &[PBody], rec: &[PBody], distinct: bool, schema: &Schema, outer: Option<&Frame<'_>>) -> Table {
+    /// sources, so a closure over a relation stores row indexes, not values. Each arm's rows read
+    /// the integers of the CTE's REAL columns (`real`) as reals.
+    #[allow(clippy::too_many_arguments)]
+    fn recursive(&self, batch: usize, init: &[PBody], rec: &[PBody], distinct: bool, schema: &Schema, real: &[u16], outer: Option<&Frame<'_>>) -> Table {
         let width = schema.cols.len();
         let mut seen = Distinct::new(width);
         let mut admit = |t: Table, queue: &mut Vec<Table>| {
-            let t = Table { schema: schema.clone(), ..t }.truncate(width);
+            let t = real_read(Table { schema: schema.clone(), ..t }.truncate(width), real);
             let t = if distinct {
                 let keep: Vec<u32> = (0..t.len()).filter(|&r| seen.insert(&t, r)).map(|r| r as u32).collect();
                 if keep.len() == t.len() { t } else { t.select(keep.into()) }
@@ -3845,10 +4263,11 @@ impl<'d, 'a> Exec<'d, 'a> {
         let mut out = Out::new(s, self);
         if s.grouped {
             // Groups in first-seen order: key (interned ids of the group values' distinctness
-            // keys) -> (agg states, representative binding).
+            // keys) -> (agg states, representative binding, whether the one min()/max() took a
+            // row of the group).
             let mut gids: Vec<Interner> = s.group_by.iter().map(|_| Interner::default()).collect();
             let mut groups: FxHashMap<Vec<u32>, usize> = FxHashMap::default();
-            let mut states: Vec<(Vec<AggState>, Vec<Kept>)> = Vec::new();
+            let mut states: Vec<(Vec<AggState>, Vec<Kept>, bool)> = Vec::new();
             self.join(s, &tables, outer, &mut |f| {
                 let ctx = EvalCtx { frame: *f, aggs: None, wins: None };
                 let key: Vec<u32> = s
@@ -3861,30 +4280,45 @@ impl<'d, 'a> Exec<'d, 'a> {
                     })
                     .collect();
                 let gi = *groups.entry(key).or_insert_with(|| {
-                    states.push((s.aggs.iter().map(|_| AggState::default()).collect(), Vec::new()));
+                    states.push((s.aggs.iter().map(|_| AggState::default()).collect(), Vec::new(), false));
                     states.len() - 1
                 });
-                let (st, rep) = &mut states[gi];
-                let mut extremum_updated = false;
+                let (st, rep, picked) = &mut states[gi];
+                let mut took = false;
                 for (a, spec) in st.iter_mut().zip(&s.aggs) {
                     let v = spec.arg.as_ref().map(|e| self.eval(e, &ctx));
                     let sep = spec.sep.as_ref().map(|e| self.eval(e, &ctx));
-                    if a.update(spec, v, sep) {
-                        extremum_updated = true;
-                    }
+                    took |= a.update(spec, v, sep);
                 }
-                // Bare columns read the row a lone min()/max() chose, else the last row.
-                let lone_extremum = s.aggs.len() == 1 && matches!(s.aggs[0].f, AggFn::Min | AggFn::Max);
-                if rep.is_empty() || !lone_extremum || extremum_updated {
+                // Bare columns (SQLite 3.53.2, the decider's ruling): with one min()/max() the
+                // row it took last (each row while it took none: every argument NULL so far);
+                // otherwise the last row, every bare column agreeing with the rows before.
+                let take = if rep.is_empty() {
+                    true
+                } else if s.extremum {
+                    took || !*picked
+                } else {
+                    if let Some(&(i, c)) = s.bare.iter().find(|&&(i, c)| !cells_identical(&row_cell(&rep[i as usize].row(), c), &row_cell(&f.rows[i as usize], c))) {
+                        let (a, b) = (row_cell(&rep[i as usize].row(), c).to_v(), row_cell(&f.rows[i as usize], c).to_v());
+                        self.fail(format!("bare column: column {c} of FROM item {i} takes two distinct values in one group ({a:?}, {b:?}), and SQLite reads an arbitrary row"));
+                        return ControlFlow::Break(());
+                    }
+                    true
+                };
+                *picked |= took;
+                if take {
                     rep.clear();
                     rep.extend(f.rows.iter().map(Kept::of));
                 }
                 ControlFlow::Continue(())
             });
-            if s.group_by.is_empty() && states.is_empty() {
-                states.push((s.aggs.iter().map(|_| AggState::default()).collect(), Vec::new()));
+            if self.failed() {
+                return Table::empty(s.out.clone());
             }
-            for (st, rep) in states {
+            if s.group_by.is_empty() && states.is_empty() {
+                states.push((s.aggs.iter().map(|_| AggState::default()).collect(), Vec::new(), false));
+            }
+            for (st, rep, _) in states {
                 let aggs: Vec<V> = st.into_iter().zip(&s.aggs).map(|(a, spec)| a.finish(spec)).collect();
                 let refs: Vec<RowRef<'_>> = if rep.is_empty() { vec![UNBOUND; s.items.len()] } else { rep.iter().map(Kept::row).collect() };
                 let ctx = EvalCtx { frame: Frame { rows: &refs, parent: outer }, aggs: Some(&aggs), wins: None };
@@ -4613,16 +5047,22 @@ impl AggState {
                     }
                 }
             }
-            AggFn::Sum | AggFn::Total => match sv::to_numeric(&v) {
-                Some(V::Int(i)) if self.sum_f.is_none() => match self.sum_i.unwrap_or(0).checked_add(i) {
+            // SQLite's sum() adds an integer, or a text reading as one, as an integer
+            // (`sqlite3_value_numeric_type`); anything else makes the sum a REAL (the reference's
+            // rule: `'12abc'` adds 12.0, `'abc'` 0.0).
+            AggFn::Sum | AggFn::Total => match sv::compare_affinity(&v, Aff::Numeric) {
+                V::Int(i) if self.sum_f.is_none() => match self.sum_i.unwrap_or(0).checked_add(i) {
                     Some(s) => self.sum_i = Some(s),
                     None => self.sum_f = Some(self.sum_i.unwrap_or(0) as f64 + i as f64),
                 },
-                Some(V::Int(i)) => self.sum_f = Some(self.sum_f.unwrap() + i as f64),
-                Some(V::Real(f)) => {
-                    self.sum_f = Some(self.sum_f.unwrap_or(self.sum_i.unwrap_or(0) as f64) + f);
+                _ => {
+                    let x = match sv::to_numeric(&v) {
+                        Some(V::Int(i)) => i as f64,
+                        Some(V::Real(f)) => f,
+                        _ => 0.0,
+                    };
+                    self.sum_f = Some(self.sum_f.unwrap_or(self.sum_i.unwrap_or(0) as f64) + x);
                 }
-                _ => {}
             },
             AggFn::CountStar | AggFn::JsonGroupArray => {}
         }
@@ -4988,13 +5428,9 @@ mod tests {
             "SELECT DISTINCT k || ':' || v || ':' || p FROM a",
             // UNION representative (ruling 2): equal values of different storage classes (`2`,
             // `2.0`) within and across columns of different affinities, with and without the
-            // compound's ORDER BY, after UNION ALL. Outside the ruling and reported to the
-            // decider: GROUP BY's row for a group (SQLite 3.53 reads keys and bare columns from
-            // the row of the one min()/max() aggregate, else from the group's first row; the
-            // engine from a lone min/max's row, else the last), and a compound used as a FROM
-            // subquery or CTE (SQLite gives its column the left-most arm's affinity, or BLOB when
-            // the arms' types disagree, and converts on read under REAL; the engine converts
-            // nothing), so the compounds here are top-level.
+            // compound's ORDER BY, after UNION ALL. Rulings (c) (bare columns) and (d) (compound
+            // column types) have their own differentials (`bare_columns_match_sqlite`,
+            // `compound_types_match_sqlite`); the compounds here are top-level.
             "SELECT v FROM a UNION SELECT v FROM a WHERE k IS NOT NULL",
             "SELECT v FROM a UNION SELECT v FROM b",
             "SELECT k, v FROM a UNION SELECT v, k FROM b UNION SELECT p, v FROM a",
@@ -5038,8 +5474,8 @@ mod tests {
             for name in ["a", "b"] {
                 let cols = ["k", "v", "p"];
                 // Declared types; `b`'s may be none (BLOB affinity, ruling 1). `a`'s are always
-                // declared: an untyped column holds `3` and `3.0` alike, and a GROUP BY over it
-                // reads the group's row differently from SQLite (outside the rulings, reported).
+                // declared: an untyped column holds `3` and `3.0` alike, so a GROUP BY over it
+                // could refuse a bare column (`bare_columns_match_sqlite` covers that).
                 let decl: Vec<(Aff, &str)> = cols.iter().map(|_| affs[if name == "b" { rnd(5) as usize } else { 1 + rnd(4) as usize }]).collect();
                 let n = rnd(12) as usize;
                 let konst = [V::Null, V::text("p"), V::Int(7), V::text("7")][rnd(4) as usize].clone();
@@ -5129,7 +5565,13 @@ mod tests {
                 db.tables.insert("c".into(), Rc::new(Table::new(schema, ecols, n)));
             }
             for q in queries {
-                let t = execute(&db, &plan(q, &catalog).unwrap()).unwrap();
+                // A GROUP BY over a concatenation whose parts disagree within a group (a NULL
+                // part makes every key NULL) is refused (ruling (c), `bare_columns_match_sqlite`).
+                let t = match execute(&db, &plan(q, &catalog).unwrap()) {
+                    Ok(t) => t,
+                    Err(e) if e.starts_with("bare column") => continue,
+                    Err(e) => panic!("round {round}: {q}: {e}; {desc}"),
+                };
                 let mut got: Vec<String> = (0..t.len()).map(|r| t.row(r).iter().map(render).collect::<Vec<_>>().join(",")).collect();
                 let mut stmt = conn.prepare(q).unwrap();
                 let w = stmt.column_count();
@@ -5156,5 +5598,275 @@ mod tests {
                 assert_eq!(got, want, "round {round}: {q}; {desc}");
             }
         }
+    }
+
+    /// One random database three ways: in the bundled SQLite (3.53.2), as the engine's tables and
+    /// as `rerail_facts::reference` reads them (through the front end's lowering).
+    struct Three {
+        conn: rusqlite::Connection,
+        catalog: Catalog,
+        db: Db<'static>,
+        front: rerail_facts::front::sql::Catalog,
+        rows: Vec<Vec<Vec<V>>>,
+        desc: String,
+    }
+
+    fn render_row(r: &[V]) -> String {
+        r.iter()
+            .map(|v| match v {
+                V::Null => "N".to_string(),
+                V::Int(i) => format!("I{i}"),
+                V::Real(f) => format!("R{f}"),
+                V::Text(s) => format!("T{s}"),
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    fn sorted(rows: impl Iterator<Item = Vec<V>>) -> Vec<String> {
+        let mut v: Vec<String> = rows.map(|r| render_row(&r)).collect();
+        v.sort();
+        v
+    }
+
+    impl Three {
+        /// Tables `a`, `b` (`k`, `v`, `p` of random declared types, none included; values mixing
+        /// integers, integral and fractional reals, numeric and other texts, NULLs; `p` from a
+        /// small domain, so groups on it hold several rows).
+        fn random(rnd: &mut dyn FnMut(u64) -> u64) -> Three {
+            let mut t = Three { conn: rusqlite::Connection::open_in_memory().unwrap(), catalog: Catalog::new(), db: Db::new("", ""), front: Default::default(), rows: Vec::new(), desc: String::new() };
+            let types = ["", "INT", "TEXT", "REAL", "NUMERIC"];
+            for name in ["a", "b"] {
+                let decl: Vec<&str> = (0..3).map(|_| types[rnd(5) as usize]).collect();
+                let value = |rnd: &mut dyn FnMut(u64) -> u64| match rnd(9) {
+                    0 => V::Null,
+                    1..=3 => V::Int(rnd(4) as i64),
+                    4 => V::Real(rnd(4) as f64),
+                    5 => V::Real(rnd(8) as f64 / 2.0),
+                    6 => V::text(&rnd(4).to_string()),
+                    7 => V::text(&format!("{}.5", rnd(3))),
+                    _ => V::text(["a", "b", "", "x1", "1e0", " 2"][rnd(6) as usize]),
+                };
+                let raw: Vec<Vec<V>> = (0..rnd(8))
+                    .map(|_| {
+                        let p = [V::Null, V::Int(1), V::text("1"), V::Real(1.0), V::text("p")][rnd(5) as usize].clone();
+                        vec![value(rnd), value(rnd), p]
+                    })
+                    .collect();
+                t.conn.execute(&format!("CREATE TABLE {name}(k {}, v {}, p {})", decl[0], decl[1], decl[2]), []).unwrap();
+                for r in &raw {
+                    let sql_v = |v: &V| match v {
+                        V::Null => rusqlite::types::Value::Null,
+                        V::Int(i) => rusqlite::types::Value::Integer(*i),
+                        V::Real(f) => rusqlite::types::Value::Real(*f),
+                        V::Text(s) => rusqlite::types::Value::Text(s.to_string()),
+                    };
+                    t.conn.execute(&format!("INSERT INTO {name} VALUES (?1, ?2, ?3)"), rusqlite::params_from_iter(r.iter().map(sql_v))).unwrap();
+                }
+                let affs: Vec<Aff> = decl.iter().map(|d| Aff::of_type(d)).collect();
+                let stored: Vec<Vec<V>> = raw.iter().map(|r| r.iter().zip(&affs).map(|(v, a)| sv::apply_affinity(v.clone(), *a)).collect()).collect();
+                let cols = ["k", "v", "p"];
+                let schema = Schema { cols: cols.iter().map(|c| c.to_string()).collect(), affs: affs.clone() };
+                let ecols = (0..3).map(|c| Rc::new(Column::Vals(stored.iter().map(|r| r[c].clone()).collect()))).collect();
+                t.catalog.insert(name.into(), schema.clone());
+                t.db.tables.insert(name.into(), Rc::new(Table::new(schema, ecols, stored.len())));
+                let fschema = cols.iter().zip(&affs).map(|(c, a)| rerail_facts::ir::Column::new(c, *a)).collect();
+                t.front.insert(name, rerail_facts::ir::AnySource::Input(t.rows.len() as u32), fschema);
+                t.desc.push_str(&format!("{name}{decl:?} {:?}; ", raw.iter().map(|r| render_row(r)).collect::<Vec<_>>()));
+                t.rows.push(stored);
+            }
+            t
+        }
+
+        fn sqlite(&self, sql: &str) -> Vec<String> {
+            let mut stmt = self.conn.prepare(sql).unwrap_or_else(|e| panic!("SQLite: {sql}: {e}"));
+            let w = stmt.column_count();
+            let rows: Vec<Vec<V>> = stmt
+                .query_map([], |row| {
+                    Ok((0..w)
+                        .map(|i| match row.get::<_, rusqlite::types::Value>(i).unwrap() {
+                            rusqlite::types::Value::Null => V::Null,
+                            rusqlite::types::Value::Integer(i) => V::Int(i),
+                            rusqlite::types::Value::Real(f) => V::Real(f),
+                            rusqlite::types::Value::Text(s) => V::text(&s),
+                            rusqlite::types::Value::Blob(_) => unreachable!("no blob values"),
+                        })
+                        .collect())
+                })
+                .unwrap()
+                .map(Result::unwrap)
+                .collect();
+            sorted(rows.into_iter())
+        }
+
+        /// `CREATE TABLE … AS sql`, read back.
+        fn sqlite_ctas(&self, sql: &str) -> Vec<String> {
+            self.conn.execute(&format!("CREATE TABLE ctas AS {sql}"), []).unwrap();
+            let r = self.sqlite("SELECT * FROM ctas");
+            self.conn.execute("DROP TABLE ctas", []).unwrap();
+            r
+        }
+
+        /// The engine's rows; `stage`: planned as a stage and stored as `rel::store` stores it.
+        /// The rewrites (R14, R18, R19) have their own differentials and stay off here: under
+        /// their mutants (29: `n + 1` read as `n`) the recursive queries would not end.
+        fn engine(&self, sql: &str, stage: bool) -> Result<Vec<String>, String> {
+            let stmt = plan_with(sql, &self.catalog, false)?;
+            let stmt = if stage { stage_checked(stmt)? } else { stmt };
+            let t = execute(&self.db, &stmt)?;
+            let schema = stmt.schema();
+            let cols: Vec<Rc<Column>> = t.cols.iter().take(schema.cols.len()).zip(&schema.affs).map(|(c, a)| if stage { Column::with_aff(c, *a) } else { c.clone() }).collect();
+            let t = Table::new(schema.clone(), cols, t.len());
+            Ok(sorted((0..t.len()).map(|r| t.row(r))))
+        }
+
+        /// The reference's rows (statement or stage).
+        fn reference(&self, sql: &str, stage: bool) -> Result<Vec<String>, String> {
+            use rerail_facts::front::sql::{lower_query, lower_stage};
+            use rerail_facts::ir::{AnySource, Stage, StageDef};
+            use rerail_facts::reference::{Evaluator, evaluate_stages};
+            let q = parse::parse_query(sql)?;
+            let src = |s: &AnySource| match s {
+                AnySource::Input(i) => Ok(self.rows[*i as usize].clone()),
+                s => Err(format!("unexpected source {s:?}")),
+            };
+            if stage {
+                let (rel, schema) = lower_stage(&q, &self.front, &mut 0)?;
+                let (done, refusal) = evaluate_stages(&[Stage { name: "s".into(), schema, def: StageDef::Query { rel } }], |_| None, &src);
+                return match refusal {
+                    Some(e) => Err(e),
+                    None => Ok(sorted(done[0].iter().cloned())),
+                };
+            }
+            let (rel, _) = lower_query(&q, &self.front, &mut 0)?;
+            Ok(sorted(Evaluator::new(&src).rel(&rel, &[])?.into_iter()))
+        }
+
+        /// Checks `sql` (`stage`: as a stage): the engine gives the reference's result exactly,
+        /// rows or a refusal of the same kind (`bare column`, `FLEXNUM`), and (`sqlite`) SQLite's
+        /// rows whenever it gives rows. Returns whether it refused.
+        fn check(&self, sql: &str, stage: bool, sqlite: bool, failures: &mut Vec<String>) -> bool {
+            let (got, want) = (self.engine(sql, stage), self.reference(sql, stage));
+            let kind = |e: &str| if e.starts_with("bare column") { "bare" } else if e.contains("FLEXNUM") { "flexnum" } else { "other" };
+            let agree = match (&got, &want) {
+                (Ok(g), Ok(w)) => g == w,
+                (Err(g), Err(w)) => kind(g) == kind(w) && kind(g) != "other",
+                _ => false,
+            };
+            let lite = if stage { self.sqlite_ctas(sql) } else { self.sqlite(sql) };
+            if !agree || (sqlite && got.as_ref().is_ok_and(|g| *g != lite)) {
+                let sqlite = lite;
+                failures.push(format!("{sql}\n  engine    {got:?}\n  reference {want:?}\n  SQLite    {sqlite:?}\n  {}", self.desc));
+            }
+            got.is_err()
+        }
+    }
+
+    fn xorshift(mut seed: u64) -> impl FnMut(u64) -> u64 {
+        move |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        }
+    }
+
+    /// The decider's ruling (c) on aggregate bare columns against SQLite 3.53.2 and the
+    /// reference: with exactly one `min()`/`max()` (others alongside; the same call twice is
+    /// one) the row it took, every argument NULL the group's last; otherwise a bare column read
+    /// by the select list, `HAVING` or `ORDER BY` (through a correlated subquery too) with two
+    /// distinct values in a group is refused (`bare column`), and agreeing ones are SQLite's.
+    /// Mutant 31 (the check dropped) fails it.
+    #[test]
+    fn bare_columns_match_sqlite() {
+        let queries = [
+            "SELECT a.p, a.k, min(a.v) FROM a GROUP BY a.p",
+            "SELECT a.p, a.k, max(a.v), count(*) FROM a GROUP BY a.p",
+            "SELECT a.p, a.k, count(*), max(a.v), sum(a.k), group_concat(a.k) FROM a GROUP BY a.p",
+            "SELECT a.k, a.v, min(a.k) FROM a",
+            "SELECT a.p, a.k, min(a.v), min(a.v) FROM a GROUP BY a.p",
+            "SELECT a.p, a.k FROM a GROUP BY a.p HAVING min(a.v) IS NOT NULL",
+            "SELECT b.p, b.v, max(b.k), sum(b.k) FROM b GROUP BY b.p HAVING max(b.k) IS NOT NULL",
+            // The one min()'s row among join rows tied on it: the engine and the reference take
+            // the first in text-order nested-loop order, SQLite the first in its join order (it
+            // may put `b` outside), so this one is compared with the reference only (reported
+            // to the decider, phase-2-s8-perfile.md § 10).
+            "SELECT a.p, b.v, min(a.k) FROM a, b WHERE b.p = a.p GROUP BY a.p",
+            "SELECT a.p, b.k, max(b.v) FROM a LEFT JOIN b ON b.k = a.k GROUP BY a.p",
+            "SELECT a.v, count(*) FROM a GROUP BY a.v",
+            "SELECT a.p, a.k FROM a GROUP BY a.p",
+            "SELECT a.p, a.k, min(a.v), max(a.v) FROM a GROUP BY a.p",
+            "SELECT a.p, a.k, min(a.v), min(a.k) FROM a GROUP BY a.p",
+            "SELECT k || ':' || v, count(*) FROM a GROUP BY k || ':' || v",
+            "SELECT a.p, count(*) FROM a GROUP BY a.p HAVING a.k IS NOT NULL",
+            "SELECT a.p, count(*) FROM a GROUP BY a.p ORDER BY a.k",
+            "SELECT a.k, count(*) FROM a",
+            "SELECT a.p, (SELECT count(*) FROM b WHERE b.k = a.k) FROM a GROUP BY a.p",
+            "SELECT a.p, count(*) FROM a JOIN b ON b.p = a.p GROUP BY a.p",
+            "SELECT t.x, t.k, count(*) FROM (SELECT p AS x, k FROM a) AS t GROUP BY t.x",
+        ];
+        let mut rnd = xorshift(0x5851_f42d_4c95_7f2d);
+        let (mut failures, mut refused, mut total) = (Vec::new(), 0usize, 0usize);
+        for _ in 0..150 {
+            let t = Three::random(&mut rnd);
+            for q in queries {
+                total += 1;
+                refused += t.check(q, false, !q.contains("FROM a, b"), &mut failures) as usize;
+            }
+        }
+        let qs: std::collections::BTreeSet<&str> = failures.iter().filter_map(|f| f.lines().next()).collect();
+        assert!(failures.is_empty(), "{} of {total} differ, queries {qs:#?}; first:\n{}", failures.len(), failures.iter().take(4).cloned().collect::<Vec<_>>().join("\n"));
+        // Both outcomes occur: rows compared and refusals.
+        assert!(refused > 0 && refused * 2 < total, "refused {refused} of {total}");
+    }
+
+    /// The decider's ruling (d) on compound column types against SQLite 3.53.2 and the
+    /// reference: FROM subqueries and CTEs (recursive ones typed over all arms) walk the arms
+    /// past none, demote to BLOB, read REAL columns' integers as reals; a `CAST` in the
+    /// left-most arm compares numerically and converts nothing, a stage holding such a column
+    /// is refused (FLEXNUM); a compound in `IN (SELECT …)` or a scalar subquery compares with the
+    /// right-most arm's type on both sides. Mutant 33 (the walk stops at the left-most arm)
+    /// fails it.
+    #[test]
+    fn compound_types_match_sqlite() {
+        let queries: &[(&str, bool)] = &[
+            ("SELECT x FROM (SELECT v AS x FROM a UNION ALL SELECT k FROM b)", false),
+            ("SELECT x, x = '1', x = 1 FROM (SELECT v AS x FROM a UNION ALL SELECT k FROM b)", false),
+            ("SELECT x FROM (SELECT 1 AS x UNION ALL SELECT v FROM a)", false),
+            ("SELECT x, x = '1' FROM (SELECT k + 0 AS x FROM a UNION SELECT v FROM b)", false),
+            ("SELECT x FROM (SELECT NULL AS x UNION ALL SELECT k FROM a UNION ALL SELECT 2)", false),
+            ("WITH t AS (SELECT k AS x FROM a UNION SELECT v FROM b) SELECT x, x = '1', x = 1 + 0 FROM t", false),
+            ("WITH t AS (SELECT 1 AS x UNION ALL SELECT v FROM a) SELECT t.x, b.k FROM t JOIN b ON b.k = t.x", false),
+            ("SELECT t.x, b.v FROM (SELECT v AS x FROM a UNION ALL SELECT 'a' UNION ALL SELECT k FROM b) AS t, b WHERE t.x = b.v", false),
+            ("SELECT x, x = '1' FROM (SELECT CAST(v AS REAL) AS x FROM a UNION ALL SELECT k FROM b)", false),
+            ("SELECT x, x = b.v FROM (SELECT CAST(k AS INT) AS x FROM a UNION ALL SELECT 4.0) AS t, b", false),
+            ("SELECT x FROM (SELECT k + 0 AS x FROM a UNION ALL SELECT v FROM b UNION ALL SELECT p FROM a)", false),
+            ("SELECT x FROM (SELECT x FROM (SELECT v AS x FROM a UNION ALL SELECT k FROM b) WHERE x IS NOT NULL)", false),
+            ("SELECT x, y FROM (SELECT CAST(k AS TEXT) AS x, v AS y FROM a UNION ALL SELECT 1, 'z' FROM b) WHERE x = y", false),
+            ("WITH RECURSIVE w(x, n) AS (SELECT v, 0 FROM a UNION ALL SELECT x, n + 1 FROM w WHERE n < 2) SELECT x, n, x = '1', x = 1 + 0 FROM w", false),
+            ("WITH RECURSIVE w(x, n) AS (SELECT 1, 0 UNION ALL SELECT a.v, n + 1 FROM w, a WHERE n < 1) SELECT x, n, x = '1' FROM w", false),
+            ("WITH RECURSIVE w(x, y, n) AS (SELECT k, v, 0 FROM a UNION ALL SELECT y, x, n + 1 FROM w WHERE n < 2) SELECT x, y, n, x = 1 + 0, y = 1 + 0 FROM w", false),
+            ("WITH RECURSIVE w(x, n) AS (SELECT k, 0 FROM a UNION SELECT b.v, n + 1 FROM w, b WHERE n < 2) SELECT x, n FROM w", false),
+            ("SELECT a.k, a.v IN (SELECT k FROM b UNION ALL SELECT v FROM b) FROM a", false),
+            ("SELECT a.k, a.v = (SELECT k FROM b UNION ALL SELECT v FROM b) FROM a", false),
+            ("SELECT a.k, (SELECT k FROM b UNION ALL SELECT v FROM b) = a.v FROM a", false),
+            ("SELECT a.k, a.v IN (SELECT v FROM b UNION SELECT 1) FROM a", false),
+            ("SELECT v AS x FROM a UNION ALL SELECT k FROM b", true),
+            ("SELECT 1 AS x UNION ALL SELECT v FROM a", true),
+            ("SELECT k AS x, v AS y FROM a UNION SELECT v, 'z' FROM b", true),
+            ("SELECT CAST(v AS INT) AS x FROM a UNION ALL SELECT 4.0", true),
+            ("SELECT x FROM (SELECT CAST(v AS INT) AS x FROM a UNION ALL SELECT k FROM b)", true),
+            ("SELECT v AS x, v || '' AS y, CAST(k AS REAL) AS z FROM a", true),
+        ];
+        let mut rnd = xorshift(0x2545_f491_4f6c_dd1d);
+        let (mut failures, mut total) = (Vec::new(), 0usize);
+        for _ in 0..150 {
+            let t = Three::random(&mut rnd);
+            for (q, stage) in queries {
+                total += 1;
+                t.check(q, *stage, true, &mut failures);
+            }
+        }
+        assert!(failures.is_empty(), "{} of {total} differ; first:\n{}", failures.len(), failures.iter().take(4).cloned().collect::<Vec<_>>().join("\n"));
     }
 }

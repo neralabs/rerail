@@ -27,6 +27,7 @@ Numbers:
 - 24: R15 (facts-b table: S3's delta generator, family `facts-b-unit`, `b-generated`).
 - 25, 26: R16, R17 (facts-a table, S8);
 - 27: R18, 29: R19 (facts-a table, S8b; S8b takes odd numbers from 27, S3-5 even from 28).
+- 31, 33: the spike SQL engine's SQLite 3.53.2 rulings (c) bare columns (`Planner::select`'s refusal check) and (d) compound column types (`walk_arms`); not rewrites: the gate's `MUTANTS`, family `facts-a-unit` (S8c).
 
 ## Implemented
 

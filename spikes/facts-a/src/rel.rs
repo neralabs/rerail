@@ -296,7 +296,7 @@ impl RelPlan {
                 continue;
             }
             let q = st["query"].as_str().ok_or("stage query")?;
-            let stmt = engine::plan(q, &catalog).map_err(|e| format!("stage {name}: {e}"))?;
+            let stmt = engine::plan_stage(q, &catalog).map_err(|e| format!("stage {name}: {e}"))?;
             let mut schema = stmt.schema().clone();
             // CTAS declared types (TEXT/INT/NUM/REAL/none) from expression affinity.
             let mut deferred = Vec::new();

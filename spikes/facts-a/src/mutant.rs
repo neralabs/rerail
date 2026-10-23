@@ -27,6 +27,13 @@
 //! 29. R19 (bag recursion as a reference walk), dropped side condition: an arithmetic step column
 //!     taken for a reference to its left operand (`sql::engine::walk_ref`). Killed by
 //!     `sql::engine::tests::rewrite_walk_equals_levels`.
+//! 31. SQL bare columns (the decider's ruling (c); not a rewrite: the gate's `MUTANTS`): a grouped
+//!     select without one `min()`/`max()` does not check its bare columns, so one whose rows
+//!     disagree within a group reads the group's last row instead of being refused
+//!     (`sql::engine::Planner::select`). Killed by `sql::engine::tests::bare_columns_match_sqlite`.
+//! 33. SQL compound column types (ruling (d); the gate's `MUTANTS`): the arm walk stops at the
+//!     left-most arm, so a compound column whose first arm has no affinity takes none
+//!     (`sql::engine::walk_arms`). Killed by `sql::engine::tests::compound_types_match_sqlite`.
 
 #[cfg(feature = "mutants")]
 pub fn on(n: u8) -> bool {

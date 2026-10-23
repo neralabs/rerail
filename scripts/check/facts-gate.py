@@ -49,7 +49,8 @@ The subset is deterministic: every corpus file whose sha256(relative path)[0] % 
 holding an oracle finding (1,150 files of 9,010). It is hard-linked under SUBSET.
 
 Mutants (`--mutants`): MUTANTS (4-6 S3's delta generator, 7 the classifier, 8 the plan audit, 9 S3's
-runtime tie check, 10 the order-totality proof, 22 the spike SQL engine's derived-table scoping) plus
+runtime tie check, 10 the order-totality proof, 22 the spike SQL engine's derived-table scoping, 31 its
+bare-column refusal, 33 its compound column typing) plus
 every mutant of docs/facts/REWRITES.md's registry tables (rerail-facts rewrites, family rerail-facts-lib
 and the corpus differential a-unrewritten; facts-a physical rewrites R12-R14, family facts-a-unit,
 a-unrewritten and a-pattern); each runs the checks of its family with `FACTS_MUTANT=<n>`, every check in
@@ -155,6 +156,10 @@ MUTANTS = [
     (10, "order-proven-total", "rerail-facts", "classify.rs::KeyEnv::total", "every order is marked proven total (no runtime tie check)", ["rerail-facts-lib"]),
     (22, "sql-derived-scope", "facts-a", "sql/engine.rs::Planner::source_schema", "a FROM-subquery is planned with the enclosing select's partial scope visible (wrong correlation depth)",
      ["facts-a-unit", "a-vs-reference"]),
+    (31, "sql-bare-columns", "facts-a", "sql/engine.rs::Planner::select", "a bare column whose rows disagree within a group (no single min/max) reads the group's last row instead of being refused",
+     ["facts-a-unit"]),
+    (33, "sql-compound-types", "facts-a", "sql/engine.rs::walk_arms", "a compound's column type stops at the left-most arm (no walk past an arm of no affinity)",
+     ["facts-a-unit"]),
 ]
 REWRITES = ROOT / "docs/facts/REWRITES.md"
 # The checks each registry table's mutants run: rerail-facts rewrites (logical) have their unit
