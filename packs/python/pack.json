@@ -1526,13 +1526,6 @@
       "on": false
     },
     {
-      "id": "ruff-isc001-single-line-implicit-string-concatenation",
-      "document": "rules/ruff-isc001-single-line-implicit-string-concatenation.json",
-      "title": "Ruff ISC001: Single line implicit string concatenation",
-      "group": "Ruff",
-      "on": false
-    },
-    {
       "id": "ruff-isc003-explicit-string-concatenation",
       "document": "rules/ruff-isc003-explicit-string-concatenation.json",
       "title": "Ruff ISC003: Explicit string concatenation",
@@ -3181,13 +3174,6 @@
       "id": "ruff-up024-os-error-alias",
       "document": "rules/ruff-up024-os-error-alias.json",
       "title": "Ruff UP024: Os error alias",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-up025-unicode-kind-prefix",
-      "document": "rules/ruff-up025-unicode-kind-prefix.json",
-      "title": "Ruff UP025: Unicode kind prefix",
       "group": "Ruff",
       "on": false
     },
